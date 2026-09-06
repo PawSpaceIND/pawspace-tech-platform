@@ -1,0 +1,41 @@
+{
+  "wave": "3A - adversarial verification of Wave 2 refutations",
+  "findings_verified": [
+    {
+      "id": "W2-B3-R01",
+      "claim": "the ?customerId= parameter on the customer self-service family is NOT a cross-tenant read - provider, foreign-customer and anonymous callers are all refused",
+      "verdict": "CONFIRMED, and widened",
+      "executable": "tests/ptja-w3a-customer-cross-tenant.test.mjs",
+      "what_the_hunt_did_not_cover": "The original probe reached EIGHT routes and lived under /tmp, so it was neither reproducible nor representative: a sweep of app/api finds 54 routes that read a caller-supplied customerId. R01-e now asserts structurally that every one of them applies SOME authorization, and R01-f that the eight customer-facing ones specifically gate on ownership rather than on a bare permission - the W2-17 defect class, where bookings.view admitted any onboarded provider because the service_provider role holds it too.",
+      "measured": "Of 54 routes reading a caller-supplied customerId, 31 use requireCustomerOwnership and 23 use a permission instead. Routes applying NEITHER: 0. The 23 are staff surfaces, where a permission is the correct gate.",
+      "cases": "24 behavioural cases (8 routes x provider session / foreign customer session / anonymous), all refused 401 or 403; R01-d non-vacuity proves the victim's OWN session passes the same gate and is refused for another id; R01-e and R01-f are the structural sweep.",
+      "sessions": "Real platform sessions issued through the real issuePlatformSession and upsertIdentityBinding - partner_otp for the provider, customer_otp for both customers. No hand-forged cookie."
+    },
+    {
+      "id": "W2-B3-R03",
+      "claim": "the public contact-form abuse gate is not off-by-one or bypassable by a missing IP header - it admits exactly 5 per window and fails closed without an IP",
+      "verdict": "CONFIRMED",
+      "executable": "tests/ptja-w3a-public-contact-abuse-gate.test.mjs",
+      "cases": [
+        "R03-01 the boundary is exactly 5 accepted then 429 - pinned, not merely 'some are refused'",
+        "R03-02 an absent cf-connecting-ip is refused rather than sharing one bucket",
+        "R03-03 an exhausted IP does not poison a different IP",
+        "R03-04 refused attempts keep counting, so the limit cannot be ridden back down",
+        "R03-05 the gate runs BEFORE the body parse, so unparseable bodies cannot flood past it",
+        "R03-06 NON-VACUITY: an honest first submission is accepted and writes a lead"
+      ],
+      "note": "`attempts > RATE_LIMIT` with RATE_LIMIT=5 is only correct because the increment precedes the read. R03-01 pins that exact boundary, which is why the >= sabotage turns it red."
+    }
+  ],
+  "sabotage": [
+    {"control": "requireCustomerOwnership admits everyone", "result": "RED - 17 of 27 cases"},
+    {"control": "the ownership gate stops comparing subject_id to the requested id", "result": "RED - 9 cases"},
+    {"control": "the abuse gate's > becomes >=", "result": "RED - R03-01, R03-03"},
+    {"control": "a missing cf-connecting-ip shares one 'unknown' bucket", "result": "RED - R03-02"},
+    {"control": "the abuse gate moved after the body parse", "result": "RED - R03-05"}
+  ],
+  "not_claimed": [
+    "R01 verifies refusal on the GET surfaces of the eight named routes. It does not enumerate every method on every one of the 54.",
+    "The rate-limit window expiry (10 minutes) is not exercised; these cases all run inside one window."
+  ]
+}

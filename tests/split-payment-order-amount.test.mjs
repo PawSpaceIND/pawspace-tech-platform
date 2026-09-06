@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 installWorkersHooks("__PAY_DB__", "__PAY_ENV__");
 
@@ -49,6 +50,7 @@ function seed({ total = TOTAL, dueNow = TOTAL, paymentStatus = "created", schedu
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,status TEXT,total_amount REAL)");
   sqlite.exec("CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT,method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER)");
   sqlite.exec("CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY,service_code TEXT,customer_id TEXT,total_amount REAL,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT,paid_at INTEGER,payment_ref TEXT,created_at INTEGER,updated_at INTEGER)");
+  installFinancialLifecycleSchema(sqlite);
   const now = Date.UTC(2026, 6, 1);
   sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-1','CUS-1','boarding','confirmed',?)").run(total);
   sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-1','BK-1','CUS-1',?,?,'INR','card',?,?,'razorpay','pidem','{}',?,?)")

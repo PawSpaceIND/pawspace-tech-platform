@@ -1,0 +1,340 @@
+name: Deploy release preview
+
+# Exact-SHA deploy of a release candidate to its OWN isolated preview environment, for the
+# preview/UAT verification gate. Manual only (workflow_dispatch) — never auto-runs, never touches
+# production, and deliberately never touches the SHARED pawspace-staging Worker or D1: a release
+# preview that reused those would overwrite another workstream's deploy and write into a database
+# other testers are reading.
+#
+# TWO CHECKOUTS, and the separation is the point.
+#
+#   infra/      the commit that carries this workflow and its tools. Once the bootstrap has merged
+#               that is the default-branch commit the run was dispatched from.
+#   candidate/  the product release candidate, at exactly the sha the caller supplied.
+#
+# They are separate because a release candidate has no reason to contain preview tooling. The first
+# version of this workflow used ONE checkout and then ran `scripts/release-preview-config.mjs` and
+# `tests/e2e/release-preview-gate.mjs` out of it — which works only while the candidate happens to be
+# a branch that also carries the infrastructure. Pointed at a candidate that does not, it fails on a
+# missing file, and the failure looks like a broken candidate rather than a broken assumption.
+#
+# So: TOOLS always run from infra/, PRODUCT is always built, migrated and deployed from candidate/,
+# and the tools are pointed at the candidate's artifact by an explicit path argument. Nothing is ever
+# executed out of candidate/scripts or candidate/tests, and no product source is ever taken from
+# infra/.
+#
+# It deploys a COMMIT, not a branch: the candidate checkout is by sha, and the job then verifies that
+# what it checked out really is that sha, so a branch that moves between dispatch and checkout cannot
+# be deployed under an approved sha's name.
+#
+# Required repo/environment config (added once by ops — never pasted in chat, never committed):
+#   Secrets:   CLOUDFLARE_API_TOKEN                    (Workers Scripts: Edit, D1: Edit)
+#              CLOUDFLARE_ACCOUNT_ID
+#              PRODUCTION_D1_ID                        supplied ONLY so the job can refuse to match it
+#              SHARED_STAGING_D1_ID                    supplied ONLY so the job can refuse to match it
+#              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
+#              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
+#              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#   Variables: RELEASE_PREVIEW_WORKER_NAME             the dedicated preview Worker
+#              RELEASE_PREVIEW_D1_ID                   the dedicated preview D1
+#
+# Generate each credential fresh (`openssl rand -hex 32`) and never reuse a value that has appeared in
+# this repository, a chat, or a build log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "release-preview" to confirm the isolated release-preview deploy'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact 40-character commit sha of the PRODUCT candidate to deploy'
+        required: true
+        default: ''
+
+# Two preview deploys must not overlap: they share one Worker and one D1, so a second deploy landing
+# mid-verification would leave the gate reporting on code that is no longer hosted.
+concurrency:
+  group: pawspace-release-preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: ${{ github.event.inputs.confirm == 'release-preview' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-release-preview
+    steps:
+      - name: Validate the requested sha
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$EXPECTED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "expected_sha must be a full 40-character commit sha." >&2
+            exit 1
+          fi
+
+      # A — the INFRASTRUCTURE checkout: this workflow's own commit, and the tools beside it.
+      - name: Checkout infrastructure tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+          fetch-depth: 0
+
+      # B — the CANDIDATE checkout: the product, at exactly the sha that was approved.
+      - name: Checkout the product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+          path: candidate
+          fetch-depth: 0
+
+      - name: Record the three shas independently
+        id: shas
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          INFRA_SHA="$(git -C infra rev-parse HEAD)"
+          CANDIDATE_SHA="$(git -C candidate rev-parse HEAD)"
+          echo "workflow_bootstrap_sha=$INFRA_SHA" | tee -a "$GITHUB_OUTPUT"
+          echo "candidate_sha=$CANDIDATE_SHA"      | tee -a "$GITHUB_OUTPUT"
+          echo "requested_sha=$EXPECTED_SHA"       | tee -a "$GITHUB_OUTPUT"
+
+          # The candidate must be exactly what was asked for, and unmodified.
+          if [ "$CANDIDATE_SHA" != "$EXPECTED_SHA" ]; then
+            echo "candidate/ is at $CANDIDATE_SHA, not the requested $EXPECTED_SHA — refusing to deploy." >&2
+            exit 1
+          fi
+          if [ -n "$(git -C candidate status --porcelain)" ]; then
+            echo "candidate/ working tree is dirty — refusing to deploy a modified artifact." >&2
+            exit 1
+          fi
+
+          # The candidate is NOT expected to carry preview tooling, and must never be asked to.
+          for tool in scripts/release-preview-config.mjs tests/e2e/release-preview-gate.mjs; do
+            if [ -e "candidate/$tool" ]; then
+              echo "note: candidate also contains $tool — it will NOT be used; tools run from infra/."
+            fi
+          done
+          test -f infra/scripts/release-preview-config.mjs
+          test -f infra/tests/e2e/release-preview-gate.mjs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the candidate's dependencies
+        working-directory: candidate
+        run: npm run install:ci
+
+      - name: Verify the preview D1 is not production
+        id: isolation
+        # The comparison happens INSIDE the runner and emits one word. Neither id is echoed, logged or
+        # written to an output — a database identifier in a build log is readable by anyone with
+        # repository read access. isolated=false fails the step, so nothing downstream can run.
+        env:
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+        run: |
+          set -euo pipefail
+          # A MISSING comparator is not "different". Isolation that cannot be checked is not isolation,
+          # so every id must be present before any of them is compared.
+          if [ -z "${RELEASE_PREVIEW_D1_ID:-}" ] || [ -z "${PRODUCTION_D1_ID:-}" ] || [ -z "${SHARED_STAGING_D1_ID:-}" ] || [ -z "${RELEASE_PREVIEW_WORKER_NAME:-}" ]; then
+            echo "isolated=false" >> "$GITHUB_OUTPUT"
+            echo "RELEASE_PREVIEW_D1_ID, PRODUCTION_D1_ID, SHARED_STAGING_D1_ID and RELEASE_PREVIEW_WORKER_NAME must all be configured." >&2
+            exit 1
+          fi
+          case "$(printf '%s' "$RELEASE_PREVIEW_WORKER_NAME" | tr '[:upper:]' '[:lower:]')" in
+            pawspace|pawspace-prod|pawspace-production|pawspace-staging|pawspace-uat)
+              echo "isolated=false" >> "$GITHUB_OUTPUT"
+              echo "RELEASE_PREVIEW_WORKER_NAME names a shared or production Worker — refusing." >&2
+              exit 1 ;;
+          esac
+          if [ "$RELEASE_PREVIEW_D1_ID" = "$PRODUCTION_D1_ID" ]; then
+            echo "isolated=false" >> "$GITHUB_OUTPUT"
+            echo "The preview D1 is the production D1 — refusing to migrate or deploy." >&2
+            exit 1
+          fi
+          # A preview that lands on the shared staging database corrupts other testers' data just as
+          # surely as one that lands on production. Nothing was checking for it until now.
+          if [ "$RELEASE_PREVIEW_D1_ID" = "$SHARED_STAGING_D1_ID" ]; then
+            echo "isolated=false" >> "$GITHUB_OUTPUT"
+            echo "The preview D1 is the shared staging D1 — refusing to migrate or deploy." >&2
+            exit 1
+          fi
+          echo "isolated=true" >> "$GITHUB_OUTPUT"
+          echo "isolated=true"
+
+      # PRODUCT is built from the candidate, and only from the candidate.
+      - name: Build the candidate (vinext)
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        run: npm run build
+
+      # TOOL from infra/, applied to the CANDIDATE's artifact by explicit path.
+      - name: Configure the dedicated preview against the candidate artifact
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        env:
+          RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          RELEASE_SHA: ${{ github.event.inputs.expected_sha }}
+          # Handed over so the tool can VALIDATE them before anything is deployed: it refuses a value
+          # that is missing, shorter than the floor stage-config.mjs already enforces, or shaped like the
+          # hand-written credentials this repository has published. They are never written into the
+          # artifact — the step further down installs them as encrypted Worker secrets.
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node infra/scripts/release-preview-config.mjs candidate/dist/server/wrangler.json
+
+      - name: Record the currently deployed preview version (rollback reference)
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        continue-on-error: true
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+        run: |
+          set -euo pipefail
+          # Captured BEFORE the new deploy, so a rollback target exists even if this deploy is bad.
+          npx wrangler deployments list --name "$WORKER" > "$GITHUB_WORKSPACE/rollback-reference.txt" 2>&1 || \
+            echo "no previous deployment for $WORKER (first preview deploy)" > "$GITHUB_WORKSPACE/rollback-reference.txt"
+          echo "--- previous preview deployment (rollback target) ---"
+          cat "$GITHUB_WORKSPACE/rollback-reference.txt"
+
+      # Migrations and application configuration are the CANDIDATE's, read from candidate/.
+      - name: Migrate ONLY the isolated preview D1
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+        run: |
+          set -euo pipefail
+          # Addressed by id, so the migration cannot land on a database chosen by name resolution.
+          if [ -d migrations ]; then
+            npx wrangler d1 migrations apply "$PREVIEW_D1" --remote
+          else
+            echo "No migrations directory in the candidate; the route creates its own tables on first request."
+          fi
+
+      - name: Deploy the dedicated preview Worker from the candidate build
+        id: deploy
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          DEPLOY_LOG="$(mktemp)"
+          trap 'rm -f "$DEPLOY_LOG"' EXIT
+          npx wrangler deploy --message "release-preview $EXPECTED_SHA" 2>&1 | tee "$DEPLOY_LOG"
+          PREVIEW_URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n 1)"
+          if [ -z "$PREVIEW_URL" ]; then
+            echo "Wrangler did not report a workers.dev URL for the deployed preview." >&2
+            exit 1
+          fi
+          echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Install UAT credentials as Worker secrets
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: |
+          set -euo pipefail
+          # Piped over stdin so no value is ever a command argument or echoed into the log.
+          for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT; do
+            printf '%s' "${!name}" | npx wrangler secret put "$name" --name "$WORKER"
+          done
+
+      - name: Verify the DEPLOYED sha is the candidate sha
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          # `wrangler deploy --message` is exposed by `versions list --json`; require the exact
+          # release-preview message so a partial sha or unrelated version can never satisfy this gate.
+          npx wrangler versions list --json --name "$WORKER" > versions.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const expected = process.env.EXPECTED_SHA;
+          const expectedMessage = `release-preview ${expected}`;
+          const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+          const strings = [];
+          const collect = (value) => {
+            if (typeof value === "string") strings.push(value);
+            else if (Array.isArray(value)) value.forEach(collect);
+            else if (value && typeof value === "object") Object.values(value).forEach(collect);
+          };
+          collect(versions);
+          if (!strings.includes(expectedMessage)) {
+            console.error(`No deployed version message exactly matches ${expectedMessage} — deployment drift.`);
+            process.exit(1);
+          }
+          console.log(`deployed_sha=${expected}`);
+          console.log("deployed_sha matches the product candidate sha.");
+          NODE
+          echo "deployed_sha=$EXPECTED_SHA"
+
+      # GATE from infra/, run against the HOSTED candidate. cwd is candidate/ so that `npx wrangler`
+      # resolves from the candidate's own install; the script itself is never taken from candidate/.
+      - name: Post-deploy gate (runner-local; nothing sensitive leaves this job)
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        working-directory: candidate
+        env:
+          PREVIEW_WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          # Namespaces every identifier the gate creates. run_id alone is not enough: a re-ATTEMPT of
+          # the same run would reuse it, and the second attempt's bookings would replay the first
+          # attempt's instead of creating their own — the gate would quietly stop testing creation.
+          # Non-secret, and safe to appear in the report.
+          PREVIEW_RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+          # The gate creates the support tables a fresh preview database lacks, from the CANDIDATE's own
+          # DDL. Passed explicitly: reading the schema out of the infrastructure checkout instead would
+          # create tables the deployed code never agreed to.
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+        run: node --experimental-strip-types "$GITHUB_WORKSPACE/infra/tests/e2e/release-preview-gate.mjs"
+
+      - name: Upload sanitized evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preview-evidence
+          path: |
+            candidate/release-preview-report.json
+            rollback-reference.txt
+          if-no-files-found: warn
+
+      - name: Where to test
+        if: ${{ steps.isolation.outputs.isolated == 'true' }}
+        run: |
+          echo "Release preview URL        : ${{ steps.deploy.outputs.preview_url }}"
+          echo "workflow/bootstrap sha : ${{ steps.shas.outputs.workflow_bootstrap_sha }}"
+          echo "product candidate sha  : ${{ steps.shas.outputs.candidate_sha }}"

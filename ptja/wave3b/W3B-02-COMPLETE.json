@@ -1,0 +1,42 @@
+{
+  "wave": "3B - Tier B: do the FIXED findings' tests actually bite?",
+  "status": "COMPLETE - 51 of 51 findings now covered by a sabotage-verified test",
+  "why": "51 of 62 findings named an executable test; only 8 recorded sabotage evidence. A test that passes on both the old and the new code proves nothing. Every finding's own production control - taken from that ledger entry's fix_file and fix_note, never guessed - was reverted and the named test re-run.",
+  "result": {"bit_correctly": 48, "shadowed_and_fixed": 3, "no_coverage_added": 1},
+  "shadowed_tests_found_and_fixed": [
+    {
+      "id": "W2-08-F05",
+      "case": "the sandbox statutory export cannot be labelled with a period the run is not dated in",
+      "why_it_was_green": "createSandboxStatutoryExport carries TWO independent controls - period_mismatch, and assertPeriodOpen(exportPeriod) on the very next line. The fixture ran a July-dated run against a LOCKED July, so removing period_mismatch entirely still refused, with 'period_locked'.",
+      "fix": "unlocked world, so a mismatched label is the only possible refusal; the reason asserted; a non-vacuity case proves the honest export succeeds"
+    },
+    {
+      "id": "W2-B4-M03",
+      "case": "a provider session cannot opt out a lead through the bot-call path",
+      "why_it_was_green": "the handler assertion was `notEqual(status, 201)`. With the handler's own permission weakened to one a provider holds, the handler ADMITTED the caller and then answered 500 on the write - and 500 is not 201, so the case passed. A crash satisfied an assertion meant to prove a refusal.",
+      "fix": "assert status 403 exactly, and that the body names Permission denied"
+    },
+    {
+      "id": "W2-B4-M04",
+      "case": "an external URL cannot be presented as the uploaded object",
+      "why_it_was_green": "`ok === false` was satisfied by the OBJECT-KEY BINDING check further down redeemMediaUploadGrant - a URL is not the key the grant was issued for, so it was refused either way. Disabling the URL guard entirely left the case green.",
+      "fix": "assert the refusal code/message is external_url_refused"
+    }
+  ],
+  "uncovered_control_found": {
+    "control": "issueMediaUploadGrant refuses a fileName containing '://', a backslash or a slash - a traversal and URL guard one step before the object key is minted",
+    "measured": "disabling that condition entirely left the whole 33-case W2-B4 suite green: nothing exercised it",
+    "added": "M04-10b, four hostile file names plus a non-vacuity case that a plain name is still accepted"
+  },
+  "method_defects_in_my_own_verification": [
+    "The harness first replaced only the FIRST occurrence of an anchor. For W2-17-F01/F03/F04 the first 'customers.view' sits in a PROSE COMMENT, so three sabotages silently edited documentation and reported 'no case went red' - three FALSE shadowed-test findings, caught only because three in a row was implausible. Fixed to replace every occurrence and print the count.",
+    "Five sabotages were no-ops or wrong-anchor and had to be redone before any verdict was recorded: W2-08-F05 (period_start and period_end were both in July, so the derived period was identical), W2-B2-R03 (the replacement code still began '4900', which is what the test matches on), W2-B2-R05 (only the >= bound was changed; a full ISO timestamp still sorts after a date-only bound, so only the <= side is observable), W2-B3-C04 (added a placeholder with no matching bind), W2-B3-C08 (returned NULL, which the code correctly fails closed on, so the control was never isolated), W2-B1-P05 (anchored on the approve-claim rather than the refresh freeze).",
+    "Recorded in full because a verification tool that produces false negatives is the same defect class this audit exists to hunt, and because 'the test did not go red' is only evidence when the sabotage provably changed behaviour."
+  ],
+  "gates": {"full_suite": "3582/3582", "typecheck": "clean", "lint": "0 errors, 56 pre-existing warnings"},
+  "not_claimed": [
+    "This verifies that each finding's named test DETECTS the removal of that finding's control. It does not re-audit whether the control is the right one, nor whether the original finding was correctly diagnosed.",
+    "W2-B2-R04 (cash flow) and W2-B4-M06 (quiet-hours override scope) have no test and remain open on business decisions.",
+    "Tier C - the coverage gaps PTJA-FINDINGS.json records, where the Wave 2 hunt never probed at all - is NOT done."
+  ]
+}

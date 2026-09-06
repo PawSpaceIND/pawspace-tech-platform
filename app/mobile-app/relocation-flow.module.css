@@ -1,6 +1,6 @@
-.flow{display:grid;gap:12px}
+.flow{display:grid;gap:12px}.flow header{position:relative;overflow:hidden;padding:16px;border-radius:18px;background:linear-gradient(135deg,#01261f,#0d5746);color:#fff}.flow header:after{content:"";position:absolute;right:-36px;bottom:-54px;width:130px;height:130px;border:1px solid #ffffff2b;border-radius:50%}
 .flow header small{font-size:10px;letter-spacing:1px;color:var(--ps-accent,#E6B34E)}
-.flow header h3{margin:2px 0 0}
+.flow header h3{position:relative;z-index:1;margin:2px 0 0;font-size:20px;letter-spacing:-.05em}
 .kind{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kind button{display:grid;gap:2px;text-align:left;padding:12px;border-radius:14px;border:1px solid var(--ps-border);background:var(--ps-surface);color:inherit;cursor:pointer}
 .kind button small{font-size:11px;opacity:.8}

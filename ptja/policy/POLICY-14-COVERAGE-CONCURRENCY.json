@@ -1,0 +1,51 @@
+{
+  "item": "W3-CC (ledger item 5), closing PTJA-P1-F40",
+  "title": "Optimistic concurrency on city coverage saves",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (7 of 10 failing), then GREEN. Six sabotage reversions.",
+
+  "measured_before": {
+    "what_f40_fixed": "The version bump moved into SQL so concurrent saves became monotonic, and RETURNING replaced a second SELECT so each operator was handed the row their own statement wrote rather than the other operator's.",
+    "what_f40_left_open": "The LOST UPDATE itself. B loads the city, A removes a pincode, B saves the list they loaded before A's change, and the pincode is quietly back in service with nobody told. Closing it needed the caller to send the version it read - an API contract change - and a decision about what the operator sees on conflict."
+  },
+
+  "approved_rules_implemented": {
+    "contract": "saveCityLaunchConfig takes baseVersion. Required on UPDATE, absent on CREATE - a new city has nothing to be stale against, and requiring it there would block every new city.",
+    "refusal": "409 Conflict, carrying yourVersion, latestVersion and the coverage actually stored, so the operator can see what changed rather than just being told to try again.",
+    "message": "Names the reload explicitly. A conflict the operator cannot resolve is a broken screen, not a safety control - CC-07 pins that reloading and saving on the new version works.",
+    "audit": "A rejected save writes a city_launch_config_audit row with action update_rejected_version_conflict, naming who tried, what they tried to write, and both versions. Recording only accepted writes would leave the trail saying two operators agreed when one was overruled.",
+    "no_silent_last_write_wins": "The stored coverage after a conflict is the winner's own, never a blend."
+  },
+
+  "why_the_check_is_in_sql": "The comparison and the write are ONE statement: the UPDATE fires only while the row still carries the declared version. A read-then-compare in JavaScript is the same race with more steps. The JS pre-check ahead of it exists to produce the informative 409 body; sabotage D removes the SQL guard and CC-09 - two saves from the same base - goes red, which is what pins that the SQL half is doing the work.",
+
+  "a_correction_to_my_own_test": "CC-01 was written asserting only that a save without a base version is refused. Sabotage showed that shadowed: with the check deleted, an absent version reads as NaN, fails the staleness comparison and returns 409. Both refuse, but 'you did not say which version you read' and 'the version you read has moved' are different things to tell an operator, and only one is fixed by reloading. CC-01 now asserts the 400 and the base_version_required code, and A2 fails it.",
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/ptja-p1-regressions.test.mjs P1-F40 concurrent case: previously asserted that two concurrent saves BOTH succeed with distinct monotonic versions. Under the approved rule exactly one may win, so it now asserts that - and still asserts the winner's version is monotonic from the base it declared, which is the guarantee the case was written for. The serial case is unchanged apart from declaring its base version.",
+    "tests/ptja-w1-f38-city-kill-switch.test.mjs: its saveCity helper now reads the current version before each save, which is what an operator's screen does. No F38 assertion changed."
+  ],
+
+  "regression": {
+    "file": "tests/ptja-w3-coverage-concurrency.test.mjs",
+    "cases": 10,
+    "red_before": "7 of 10 failing.",
+    "sabotage_verification": [
+      "A base-version requirement removed -> NOTHING red at first (shadowed by the 409). CC-01 tightened; A2 then fails CC-01.",
+      "B stale version accepted, last-write-wins restored -> CC-03, CC-04, CC-05, CC-06, CC-09, CC-10 red",
+      "C conflict not audited -> CC-06 red",
+      "D SQL guard removed, only the JS pre-check left -> CC-09 red",
+      "E route redacts the conflict again -> CC-10 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "ui": "app/control/city-control-panel.tsx is not updated to send baseVersion or to render the conflict. The API contract and its refusal are in place and tested; wiring the screen is front-end work carried with the other UI item.",
+    "other_versioned_writers": "Only city_launch_configs was audited for this. Whether any other operator-editable record has the same lost-update shape was not swept here."
+  },
+
+  "gates": {"focused": "10/10", "full_suite": "3388/3388", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

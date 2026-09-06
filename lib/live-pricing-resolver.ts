@@ -13,7 +13,8 @@ type Row=Record<string,unknown>;
  */
 export async function resolveLivePrice(db:Db,input:{packageCode:string;fallbackPrice:number;scheduledStart:string;cityId:string;zoneId?:string;quantity?:number}):Promise<{price:number;source:"pricing_control"|"fallback_default"}>{
   await ensurePricingControlRuntime(db);
-  const row=await db.prepare("SELECT * FROM service_packages WHERE package_code=? AND active=1").bind(input.packageCode).first<Row>();
+  const scheduledDate=input.scheduledStart.slice(0,10);
+  const row=await db.prepare("SELECT * FROM service_packages WHERE package_code=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(input.packageCode,scheduledDate,scheduledDate).first<Row>();
   if(!row)return{price:input.fallbackPrice,source:"fallback_default"};
   const pkg:PricingPackage={
     id:String(row.id),serviceCode:String(row.service_code),packageCode:String(row.package_code),name:String(row.name),description:String(row.description),

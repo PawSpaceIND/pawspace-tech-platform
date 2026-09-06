@@ -1,0 +1,136 @@
+name: Release UI closure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "ui-closure" to confirm preview-only UI verification'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact 40-character product SHA deployed to the isolated release preview'
+        required: true
+        default: ''
+      preview_url:
+        description: 'Isolated release-preview or staging workers.dev URL'
+        required: true
+        default: ''
+      target_environment:
+        description: 'Secret scope that owns the matching UAT access code'
+        required: true
+        type: choice
+        default: 'pawspace-release-preview'
+        options:
+          - pawspace-release-preview
+          - pawspace-staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-release-ui-closure
+  cancel-in-progress: false
+
+jobs:
+  ui-closure:
+    if: ${{ github.event.inputs.confirm == 'ui-closure' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_environment }}
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - name: Validate candidate and preview inputs
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          PREVIEW_URL: ${{ github.event.inputs.preview_url }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$EXPECTED_SHA" | grep -Eq '^[0-9a-f]{40}$' || { echo 'expected_sha must be a full 40-character SHA' >&2; exit 1; }
+          printf '%s' "$PREVIEW_URL" | grep -Eq '^https://[A-Za-z0-9.-]+\.workers\.dev/?$' || { echo 'preview_url must be an HTTPS workers.dev URL' >&2; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - run: npm ci
+      - name: Blocking application build
+        run: npm run build
+
+      - name: Install Chromium for the preview browser gate
+        run: npx playwright install --with-deps chromium
+
+      - name: Run button, role and responsive visual closure against isolated preview
+        env:
+          PREVIEW_URL: ${{ github.event.inputs.preview_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node scripts/release-ui-closure.mjs --base="$PREVIEW_URL" --json=release-ui-closure-report.json
+
+      - name: Run signed-in customer acceptance against isolated preview
+        env:
+          PREVIEW_URL: ${{ github.event.inputs.preview_url }}
+        run: node scripts/customer-ui-acceptance-v2.mjs --base="$PREVIEW_URL" --json=customer-ui-acceptance-report.json
+
+      - name: Print actionable UI closure failures
+        if: ${{ always() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path = 'release-ui-closure-report.json';
+          if (!fs.existsSync(path)) {
+            console.log('No release UI closure report was produced.');
+          } else {
+            const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const visual = Array.isArray(report.visualFailures) ? report.visualFailures : [];
+            const controls = Array.isArray(report.controlFailures) ? report.controlFailures : [];
+            console.log(`visual_failures=${visual.length}`);
+            for (const item of visual) {
+              const reasons = Array.isArray(item.failures) ? item.failures.join(' || ') : '';
+              console.log(`VISUAL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} viewport=${item.viewport || 'unknown'} status=${item.status ?? 'unknown'} :: ${reasons}`);
+            }
+            console.log(`control_failures=${controls.length}`);
+            for (const item of controls) {
+              console.log(`CONTROL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} result=${item.result || 'unknown'} text=${JSON.stringify(item.text || '')} :: ${item.error || item.mutationAttempt || item.requestSeen || item.navigationSeen || 'no detail'}`);
+            }
+          }
+
+          const customerPath = 'customer-ui-acceptance-report.json';
+          if (!fs.existsSync(customerPath)) {
+            console.log('No signed-in customer acceptance report was produced.');
+          } else {
+            const customer = JSON.parse(fs.readFileSync(customerPath, 'utf8'));
+            console.log(`customer_cases=${customer.summary?.total ?? 0}`);
+            console.log(`customer_failures=${customer.summary?.failed ?? customer.failures?.length ?? 0}`);
+            for (const item of customer.failures || []) {
+              console.log(`CUSTOMER ${item.name || 'unknown'} :: ${item.detail || 'no detail'}`);
+            }
+            if (customer.sittingProfileRateEvidence) {
+              console.log(`SITTING_PROFILE_RATE_EVIDENCE ${JSON.stringify(customer.sittingProfileRateEvidence)}`);
+            }
+          }
+          NODE
+
+      - name: Upload UI closure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ui-closure-evidence
+          path: |
+            release-ui-closure-report.json
+            customer-ui-acceptance-report.json
+          if-no-files-found: warn

@@ -58,7 +58,19 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk,guards));
  const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk,guards));
  const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk,guards));
- const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${placeholders})`,chunk,guards));
+ // Refunds are counted in every state that means the money actually MOVED, not just the gateway's own.
+ // This matched the literal 'processed', which is written ONLY by the Razorpay refund.processed webhook
+ // path. The cross-vertical STAFF refund workflow in app/api/booking-operations declares its state
+ // machine as {requested:[approved,rejected], approved:[processing], processing:[completed]} and
+ // terminates at 'completed' - a value this never matched - so every refund settled by staff through the
+ // ops console was invisible here. Measured: a fully refunded Rs 5,000 month reported refunds 0 and
+ // grooming at 100% contribution margin, when its true known contribution was zero. A vertical with
+ // heavy manual refunds looked like the most profitable one on the board.
+ //
+ // 'requested' and 'rejected' are deliberately excluded: an unapproved or refused request has moved no
+ // money. This is the same set the refund ceiling in app/api/grooming-payment-sandbox already uses, so
+ // the two agree on what "refunded" means.
+ const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status IN ('processing','processed','completed') AND booking_id IN (${placeholders})`,chunk,guards));
  const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk,guards));
  const tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk,guards));
 

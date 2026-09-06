@@ -40,7 +40,13 @@ export async function computeTrainerMonthlyIncentive(db:Db,input:{trainerId:stri
  await ensureTrainerIncentiveTables(db);
  if(!/^\d{4}-\d{2}-01$/.test(input.monthStart))throw new Error("monthStart must be the first day of a month");
  const[year,month]=input.monthStart.split("-").map(Number);
- const monthEndDate=new Date(year,month,0).toISOString().slice(0,10);
+ // Built in UTC. `new Date(year,month,0)` is midnight LOCAL, so in any timezone ahead of UTC (IST
+ // included) toISOString() rolls back a day and the last day of the month silently dropped out of the
+ // window: identical data returned achievedValue 500000 / incentive 8500 under TZ=UTC and 250000 / 4500
+ // under TZ=Asia/Kolkata - a 47% underpayment, because the monthly ladder is tiered so the loss is a
+ // step, not a shave. lib/grooming-incentive-engine.ts already carried this fix; its three siblings did
+ // not.
+ const monthEndDate=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
 
  const orderValue=await monthlyOrderValue(db,input.trainerId,input.monthStart,monthEndDate);
  const revenueIncentive=orderValue>140000?money((orderValue-140000)*0.20):0;

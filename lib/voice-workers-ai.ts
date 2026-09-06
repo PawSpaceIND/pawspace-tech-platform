@@ -14,10 +14,21 @@
  */
 
 import { type VoiceSttProvider, type VoiceTtsProvider, disconnectedStt, disconnectedTts } from "./ai-voice-uat";
+import { assertSafeVoiceUrl, decodeInlineAudio, isInlineAudioReference, safeVoiceFetch, VoiceFetchRefused } from "./voice-safe-fetch";
+import { asSpeechFailure, DEFAULT_SPEECH_TIMEOUT_MS, VoiceSpeechError, withSpeechDeadline } from "./voice-speech-failures";
 
 type Env = Record<string, unknown>;
 type AiBinding = { run: (model: string, input: Record<string, unknown>) => Promise<Record<string, unknown>> };
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
+
+export const DEFAULT_VOICE_STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
+export const DEFAULT_VOICE_TTS_MODEL = "@cf/myshell-ai/melotts";
+
+/** One deadline for both halves of the speech stack, overridable per deployment. */
+export function speechTimeoutMs(env: Env): number {
+  const configured = Number(val(env, "VOICE_SPEECH_TIMEOUT_MS"));
+  return Number.isFinite(configured) && configured >= 1000 && configured <= 60_000 ? configured : DEFAULT_SPEECH_TIMEOUT_MS;
+}
 
 /** Workers AI is available when the `AI` binding is bound to this Worker. */
 export function workersAiConfigured(env: Env): boolean {
@@ -25,56 +36,67 @@ export function workersAiConfigured(env: Env): boolean {
   return Boolean(ai && typeof ai.run === "function");
 }
 
-/** SSRF guard: an http(s) audio reference is only fetched when its host is on an explicit allowlist
- * (VOICE_AUDIO_ALLOWED_HOSTS, comma-separated). Private/link-local/loopback hosts and non-http
- * protocols are always rejected - so a caller-supplied audioRef can never make the server reach cloud
- * metadata (169.254.169.254 / IMDS) or internal-only services. Prefer passing a data: URL. */
+/**
+ * SSRF guard for caller-supplied audio references.
+ *
+ * The rules now live in lib/voice-safe-fetch.ts and are shared with every other voice path, because the
+ * version that lived here covered only this one. It matched private ranges as string prefixes (so
+ * "10." also rejected the public 100.x, and 172.16/12 was the only correctly-bounded range), and it
+ * then called plain fetch() - which follows redirects, so an allowlisted host answering
+ * 302 -> http://169.254.169.254/ walked straight past it. There was also no timeout, no size bound and
+ * no media-type check.
+ *
+ * Kept as a named function because it is the guard this module's contract is about: an https audio
+ * reference is fetched only when its host is on VOICE_AUDIO_ALLOWED_HOSTS and is not loopback,
+ * RFC1918, link-local, carrier-NAT, an internal suffix or a cloud metadata endpoint (169.254.169.254 /
+ * IMDS and friends) - at the original URL and at every redirect hop.
+ */
 function assertFetchableAudioUrl(ref: string, allowedHosts: string[]) {
-  let url: URL;
-  try { url = new URL(ref); } catch { throw new Error("Invalid audio reference"); }
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Unsupported audio URL protocol");
-  const host = url.hostname.toLowerCase();
-  const isPrivate = host === "localhost" || host === "0.0.0.0" || host === "::1" || host === "[::1]"
-    || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host) || host.endsWith(".internal") || host.endsWith(".local");
-  if (isPrivate) throw new Error("Audio URL host is not allowed");
-  if (!allowedHosts.includes(host)) throw new Error("Audio URL host is not on the allowlist");
+  return assertSafeVoiceUrl(ref, { allowedHosts });
 }
 
-/** Resolve audio bytes from a data: URL or an allowlisted https reference, for feeding into Whisper. */
-async function audioBytes(audioRef: string, allowedHosts: string[] = []): Promise<number[]> {
+/** Resolve audio bytes from an inline data: URL or an allowlisted https reference, for Whisper. */
+async function audioBytes(audioRef: string, allowedHosts: string[] = [], timeoutMs?: number): Promise<number[]> {
   const ref = String(audioRef || "").trim();
-  if (!ref) throw new Error("An audio reference is required");
-  if (ref.startsWith("data:")) {
-    const base64 = ref.slice(ref.indexOf(",") + 1);
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return Array.from(bytes);
+  if (!ref) throw new VoiceSpeechError("stt", "malformed_output", "An audio reference is required");
+  try {
+    if (isInlineAudioReference(ref)) return Array.from(decodeInlineAudio(ref).bytes);
+    assertFetchableAudioUrl(ref, allowedHosts);
+    const fetched = await safeVoiceFetch(ref, { allowedHosts, ...(timeoutMs ? { timeoutMs } : {}) });
+    return Array.from(fetched.bytes);
+  } catch (error) {
+    if (error instanceof VoiceFetchRefused) throw new VoiceSpeechError("stt", error.code === "timeout" ? "timeout" : "unsafe_audio", error.message);
+    throw error;
   }
-  assertFetchableAudioUrl(ref, allowedHosts);
-  const response = await fetch(ref);
-  if (!response.ok) throw new Error(`Unable to fetch audio (${response.status})`);
-  return Array.from(new Uint8Array(await response.arrayBuffer()));
 }
 
 /** Cloudflare Workers AI STT (Whisper). Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
   if (!workersAiConfigured(env)) return disconnectedStt;
-  const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || "@cf/openai/whisper";
+  const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || DEFAULT_VOICE_STT_MODEL;
+  const timeoutMs = speechTimeoutMs(env);
   const allowedHosts = val(env, "VOICE_AUDIO_ALLOWED_HOSTS").split(",").map(h => h.trim().toLowerCase()).filter(Boolean);
   return {
     provider: "workers_ai", status: "connected",
     async transcribe(input: { audioRef: string; language?: string | null }) {
       const startedAt = Date.now();
-      const audio = await audioBytes(input.audioRef, allowedHosts);
-      const result = await ai.run(model, { audio });
-      const textOut = String(result.text ?? result.transcription ?? "").trim();
+      const audio = await audioBytes(input.audioRef, allowedHosts, timeoutMs);
+      let result: Record<string, unknown>;
+      try { result = await withSpeechDeadline("stt", ai.run(model, { audio }), timeoutMs); }
+      catch (error) { throw asSpeechFailure("stt", error); }
+      // A result with no transcript FIELD is a broken contract; a transcript field that is empty is a
+      // legitimate answer about silence. Conflating them either hides a broken model or turns a quiet
+      // caller into an error, so they are separated.
+      if (!result || typeof result !== "object") throw new VoiceSpeechError("stt", "malformed_output", "STT model returned no result object");
+      const field = result.text ?? result.transcription;
+      if (field == null) throw new VoiceSpeechError("stt", "malformed_output", "STT model returned no transcript field");
+      if (typeof field !== "string") throw new VoiceSpeechError("stt", "malformed_output", `STT model returned a ${typeof field} transcript`);
+      const textOut = field.trim();
       // Whisper on Workers AI does not return a scalar confidence; surface it when present, else a
       // conservative value when we got text (STT confidence, not answer confidence - never fabricated high).
       const raw = Number(result.confidence);
       const confidence = Number.isFinite(raw) ? raw : (textOut ? 0.9 : 0);
-      return { text: textOut, confidence, latencyMs: Date.now() - startedAt };
+      return { text: textOut, confidence, latencyMs: Date.now() - startedAt, empty: textOut.length === 0 };
     },
   };
 }
@@ -82,16 +104,27 @@ export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
 /** Cloudflare Workers AI TTS. Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
   if (!workersAiConfigured(env)) return disconnectedTts;
-  const ai = env.AI as AiBinding, model = val(env, "VOICE_TTS_MODEL") || "@cf/myshell-ai/melotts";
+  const ai = env.AI as AiBinding, model = val(env, "VOICE_TTS_MODEL") || DEFAULT_VOICE_TTS_MODEL;
+  const timeoutMs = speechTimeoutMs(env);
   return {
     provider: "workers_ai", status: "connected",
     async synthesize(input: { text: string; language?: string | null }) {
       const startedAt = Date.now();
-      const result = await ai.run(model, { prompt: input.text, lang: input.language || "en" });
+      if (!String(input.text ?? "").trim()) throw new VoiceSpeechError("tts", "malformed_output", "Nothing to synthesise");
+      let result: Record<string, unknown>;
+      try { result = await withSpeechDeadline("tts", ai.run(model, { prompt: input.text, lang: input.language || "en" }), timeoutMs); }
+      catch (error) { throw asSpeechFailure("tts", error); }
+      if (!result || typeof result !== "object") throw new VoiceSpeechError("tts", "malformed_output", "TTS model returned no result object");
+      if (result.audio != null && typeof result.audio !== "string") throw new VoiceSpeechError("tts", "malformed_output", `TTS model returned a ${typeof result.audio} audio field`);
       const base64 = String(result.audio ?? "").trim();
-      if (!base64) throw new Error("TTS model returned no audio");
-      // return a self-contained data URL the in-app player can play directly (nothing leaves the stack)
-      return { audioRef: `data:audio/mpeg;base64,${base64}`, latencyMs: Date.now() - startedAt };
+      if (!base64) throw new VoiceSpeechError("tts", "empty_output", "TTS model returned no audio");
+      // A self-contained data URL the in-app player can play directly (nothing leaves the stack), and
+      // it is decoded once here so a model returning something that is not base64 audio is caught now
+      // rather than handed onward as a playable reference.
+      const audioRef = `data:audio/mpeg;base64,${base64}`;
+      try { decodeInlineAudio(audioRef); }
+      catch (error) { throw new VoiceSpeechError("tts", "unsafe_audio", error instanceof VoiceFetchRefused ? error.message : "TTS model returned unusable audio"); }
+      return { audioRef, latencyMs: Date.now() - startedAt };
     },
   };
 }

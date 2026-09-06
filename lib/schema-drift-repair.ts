@@ -23,6 +23,10 @@ type Row = Record<string, unknown>;
 /** Columns a table must have, with the DDL fragment used to add each one if it is missing. */
 const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: string; why: string }> = [
   {
+    table: "scheduling_reservations", column: "attempt_id", definition: "text",
+    why: "app/api/uat-scheduling verifies and rolls back a reservation attempt by this column; keyed on (group_id, created_at) it could delete a concurrent request's committed rows",
+  },
+  {
     table: "finance_close_periods", column: "checklist_json", definition: "text NOT NULL DEFAULT '[]'",
     why: "lib/gst-accounting.ts created this table without the column that app/api/finance-control/route.ts writes",
   },
@@ -33,6 +37,18 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
   {
     table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
     why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
+  },
+  {
+    table: "order_notifications", column: "delivery_status", definition: "TEXT NOT NULL DEFAULT 'pending'",
+    why: "notification rows must durably distinguish inbox persistence from downstream communication delivery so failed queue attempts remain retryable",
+  },
+  {
+    table: "order_notifications", column: "delivery_attempts", definition: "INTEGER NOT NULL DEFAULT 0",
+    why: "notification delivery attempts must remain durable and auditable across retries",
+  },
+  {
+    table: "order_notifications", column: "delivery_error", definition: "TEXT",
+    why: "failed communication queue attempts must preserve a durable recovery reason instead of being silently swallowed",
   },
 ];
 
@@ -56,11 +72,6 @@ export async function repairSchemaDrift(db: Db) {
       await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run();
       repaired.push(`${item.table}.${item.column}`);
     } catch (error) {
-      // This used to swallow the failure AND still report the column as repaired, so a genuinely failed
-      // ALTER resolved successfully and every caller carried on against a table that still lacks the
-      // column. Only one failure is benign: a concurrent request winning the race and adding it first,
-      // which fails with "duplicate column name". Distinguish them by re-reading the schema - accept
-      // only if the column is actually there now, and otherwise fail closed so the caller knows.
       const after = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
       if (!after.results.some(row => String(row.name) === item.column)) throw error;
     }

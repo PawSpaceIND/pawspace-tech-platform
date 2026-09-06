@@ -1,0 +1,38 @@
+{
+  "wave": "3A - adversarial verification of the nine Wave 2 refutations",
+  "status": "COMPLETE - 9 of 9 verified",
+  "why_this_wave_existed": "ptja/PTJA-FINDINGS.json records Wave 3 as NOT PERFORMED: 125 of 129 verifier agents died on session limits. Its own words: 'EVERY FINDING BELOW IS UNVERIFIED... MUST NOT be treated as confirmed defects.' A sweep of the ledgers showed 51 of 62 findings named an executable test and 11 named none - and those 11 were precisely the nine REFUTATIONS plus the two items still open on a business decision. A refutation is a finding closed with 'this is actually safe'. Nine of them had no test at all. That is the audit's own defect class - unknown or absent treated as satisfied - pointed at the audit's own conclusions.",
+  "verified": [
+    {"id": "W2-07-PAY-R01", "subject": "Razorpay webhook signature verified before any state change; absent/whitespace secret fails closed", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-payment-webhook-verification.test.mjs"},
+    {"id": "W2-07-PAY-R02", "subject": "an event id replayed under a different event type does not re-run the money path", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-payment-webhook-verification.test.mjs"},
+    {"id": "W2-B3-R01", "subject": "?customerId= on the customer self-service family is not a cross-tenant read", "verdict": "CONFIRMED and WIDENED from 8 routes to all 54", "file": "tests/ptja-w3a-customer-cross-tenant.test.mjs"},
+    {"id": "W2-B3-R02", "subject": "the caller-supplied outbound recipient cannot be pointed at another customer", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-outbound-recipient-binding.test.mjs"},
+    {"id": "W2-B3-R03", "subject": "the public contact-form abuse gate is not off-by-one nor bypassable without an IP", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-public-contact-abuse-gate.test.mjs"},
+    {"id": "W2-B4-M-R01", "subject": "the voice provider callback ignores unsigned, wrong, stale and replayed payloads", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-voice-callback-verification.test.mjs"},
+    {"id": "W2-B4-M-R02", "subject": "proof media cannot cross bookings, sessions or purpose slots", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-proof-media-binding.test.mjs"},
+    {"id": "W2-B4-M-R03", "subject": "taxi-proof's missing null-check is inert because the loader throws 404", "verdict": "CONFIRMED and GENERALISED to all five proof routes", "file": "tests/ptja-w3a-proof-route-missing-record.test.mjs"},
+    {"id": "W2-B4-M-R04", "subject": "the anonymous AI web-chat capture does not feed the auto-dialler", "verdict": "CONFIRMED", "file": "tests/ptja-w3a-chat-lead-containment.test.mjs"}
+  ],
+  "outcome": "All nine refutations hold. None was wrong. That is a real result and not a foregone one - it means the Wave 2 hunter's judgement on what was NOT a defect was sound, and it is now reproducible instead of resting on scripts that lived under /tmp and were discarded.",
+  "coverage_the_hunt_did_not_have": [
+    "W2-B3-R01 probed 8 routes; 54 read a caller-supplied customerId. The structural sweep now covers all of them: 31 gate on ownership, 23 on a permission, ZERO on neither.",
+    "W2-B4-M-R03 examined taxi; boarding and food have the same missing null-check and nobody had checked whether their loaders throw or return null. All five now answer 404.",
+    "W2-B4-M-R04's containment is now asserted structurally, so a future sweep cannot quietly wire the anonymous lead table into an outbound path."
+  ],
+  "shadowed_tests_caught_by_sabotage": [
+    "A2-01 (payment replay) passed while proving nothing: with no internal refund case the replayed refund died as orphan_gateway_refund regardless. Its own non-vacuity control failed and exposed it.",
+    "MR01-05 (absent voice secret) passed under the sabotage that made an empty secret VERIFY. EXOTEL_WEBHOOK_SECRET is one of the six provider secret names, so removing it also disconnects the adapter and the route refuses one layer earlier. Fixed by asserting the refusal reason and adding MR01-10/MR01-11 at the verifier itself."
+  ],
+  "fixture_failures_caught_before_they_became_false_proof": [
+    "The proof-route file first reported 500 for all five routes including the two that DO null-check - canonical_bookings, provider_work_orders, booking_payments and taxi_trips were absent, so the 500 was 'no such table'. Every DDL is now copied verbatim from its owning source rather than guessed.",
+    "The outbound-recipient file first failed on a SQLite bind error: a transactional message with no bookingId is hard-suppressed as booking_link_required and never reaches the outbox, which would have made every case vacuous. The fixture now asserts the message is genuinely queued before dispatching it."
+  ],
+  "sabotage_summary": "22 distinct production controls were reverted one at a time and each confirmed to turn the named cases red: 4 payment, 2 ownership, 3 abuse-gate, 4 voice, 2 containment/proof-loader, 3 outbound-recipient, 5 proof-media-binding, minus overlaps. No case in this wave is asserted without a sabotage that moves it.",
+  "gates": {"full_suite": "3581/3581", "typecheck": "clean", "lint": "0 errors, 56 pre-existing warnings"},
+  "not_claimed": [
+    "No external provider was contacted. No credential exists in any environment for Razorpay, Exotel, WhatsApp or any other integration, so nothing here verifies an INTEGRATION - only the receiving and refusing boundaries against crafted input.",
+    "This wave verifies the nine REFUTATIONS. The 51 findings marked FIXED name executable tests, but only 8 record sabotage evidence in their ledgers; re-verifying that those tests actually bite is Tier B and has NOT been done.",
+    "The coverage gaps recorded in PTJA-FINDINGS.json - domains and modalities the Wave 2 hunt never probed - are Tier C and have NOT been done.",
+    "W2-B2-R04 (cash flow) and W2-B4-M06 (quiet-hours override scope) remain open on business decisions, not on verification."
+  ]
+}

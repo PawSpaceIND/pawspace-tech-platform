@@ -7,7 +7,7 @@ import * as nodeModule from "node:module";
 // Two test-only resolve hooks so the REAL route/engine sources run unmodified in node:
 // 1. "cloudflare:workers" resolves to a stub whose env.DB reads the current per-test D1 shim.
 // 2. Extensionless relative imports fall back to .ts (Node's ESM loader vs the bundler).
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;}};";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -73,6 +73,26 @@ function freshDb() {
   sqlite = new DatabaseSync(":memory:");
   hideReservations = false;
   globalThis.__SCHED_DB__ = makeD1(sqlite, { hide: () => hideReservations });
+  seedCanonicalPets();
+}
+
+/**
+ * Boarding now refuses before reserving unless every selected pet is a canonical record owned by the
+ * booking customer with verified vaccination (issue #197 item 4 — a modified client must not be able to
+ * hold capacity for someone else's pet or an unvaccinated one). These fixtures predate that rule, so the
+ * pets the boarding cases book are seeded here. Ownership and vaccination refusals are proven separately
+ * in tests/boarding-reservation-authority.test.mjs; this file is about capacity and assignment.
+ */
+function seedCanonicalPets() {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const now = Date.now();
+  // A pet belongs to exactly one customer, so each booking customer gets its own. The overnight-capacity
+  // case below books as two different customers, which is why it now names two different pets — the same
+  // pet id under two owners would (correctly) be refused as someone else's pet.
+  for (const [petId, customerId] of [["Bruno", "cus_hardening"], ["Bruno2", "cus_other"], ["x", "c"]]) {
+    sqlite.prepare("INSERT OR REPLACE INTO canonical_pets (id,customer_id,name,species,vaccination_status,created_at,updated_at) VALUES (?,?,?,'dog','verified',?,?)")
+      .run(petId, customerId, petId, now, now);
+  }
 }
 
 const routeModule = await import("../app/api/uat-scheduling/route.ts");
@@ -180,7 +200,7 @@ test("route: boarding with a chosen host reserves, and overnight capacity still 
   assert.equal(first.body.data.provider.id, "host_maya_rohan");
   // host_maya_rohan has capacity 4: a second overlapping stay must still be insertable (the
   // double-booking guard is per-appointment for slot services, capacity-summed for overnight).
-  const second = await post(reserve({ clientRequestId: "board-2", customerId: "cus_other", serviceCode: "boarding", preferredProviderId: "host_maya_rohan", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString() }));
+  const second = await post(reserve({ clientRequestId: "board-2", customerId: "cus_other", petIds: ["Bruno2"], serviceCode: "boarding", preferredProviderId: "host_maya_rohan", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString() }));
   assert.equal(second.status, 200, JSON.stringify(second.body));
   assert.equal(second.body.data.provider.id, "host_maya_rohan");
   const rows = sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE provider_id='host_maya_rohan' AND status!='cancelled'").get();
@@ -339,6 +359,9 @@ test("contract: the double-booking guard and restore-on-failure are present in s
   assert.match(routeSource, /class SlotConflictError extends Error/);
   assert.match(routeSource, /WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\? AND status!='cancelled' AND scheduled_start<\? AND scheduled_end>\?\)/);
   assert.match(routeSource, /COALESCE\(SUM\(capacity_units\),0\)/, "overnight services guard on capacity, not blanket overlap");
-  assert.match(routeSource, /const restore=async\(\)/);
+  assert.match(routeSource, /restore=async\(\)=>\{/);
+  assert.match(routeSource, /AND NOT EXISTS \(SELECT 1 FROM scheduling_reservations other/);
+  assert.match(routeSource, /other\.\$\{SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE\}/);
+  assert.match(routeSource, /SLOT_LOST_DURING_REASSIGN/);
   assert.match(routeSource, /securityAudit\(db,actor,`scheduling\.\$\{input\.action\}`/);
 });

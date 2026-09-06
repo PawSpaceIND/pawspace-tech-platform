@@ -1,0 +1,89 @@
+{
+  "finding": "F27",
+  "domain": "04-scheduling",
+  "title": "A customer's own reserve fabricated the provider roster and overrode Ops-published availability windows",
+  "severity": "P1",
+  "class": "business-logic",
+  "status": "fixed",
+  "evidence_class": "real_execution",
+  "file": "app/api/uat-scheduling/route.ts",
+  "symbol": "seedUatRoster",
+
+  "rule_source": "backend/src/scheduling.ts:94 makes published availability an eligibility rule ('No published availability on <date>' / 'Requested time is outside roster on <date>'). app/api/provider-capacity-control POST set_availability is the authorized Ops write path for the same table: scheduling.manage, source 'operations'. backend/src/domain.ts:116-125 declares the complete set of authored sources in ProviderAvailability.source: partner_app | operations | roster. 'uat_roster' is not one of them. No business rule was invented here - the platform's own declaration of what counts as authored availability is applied.",
+
+  "reproduction": "scratchpad repro driving the real routes: (p12) one customer POST /api/uat-scheduling against an empty scheduling_availability table; (p13) an authorized operator POST /api/provider-capacity-control {action:'set_availability',providerId:'groom_arun',windows:['09:00-11:00']} followed by a customer POST /api/uat-scheduling for 15:00-17:00 IST on the same date.",
+
+  "measured_before": {
+    "p12": "reserve: 200 train_kiran. scheduling_availability written by ONE unprivileged request: [{source:'uat_roster', n:300, providers:3, from:'2026-09-25', to:'2027-01-02'}]. Provider- or Ops-authored rows: 0. Sample row: {id:'uat_train_kiran_2026-09-25_blr-east', windows_json:'[\"09:00-19:00\"]', source:'uat_roster'}.",
+    "p13": "ops set_availability: 201 windows ['09:00-11:00'], one row source 'operations'. Customer books 15:00-17:00 IST: 200 groom_arun. Rows after: the operations 09:00-11:00 row plus three synthetic 09:00-19:00 uat_roster rows. Reservation written: {group_id:'F27-OUT-1', provider_id:'groom_arun', status:'assigned'}."
+  },
+
+  "measured_after": {
+    "p12": "reserve: 409 NO_SCHEDULE_AVAILABLE, reasons ['No published availability on 2026-09-25']. scheduling_availability rows written: 0.",
+    "p13": "customer books 15:00-17:00 IST: 409 NO_SCHEDULE_AVAILABLE, reasons ['Requested time is outside roster on 2026-09-25']. Rows after: the operations row only. Reservations: none.",
+    "p14 (PAWSPACE_SCHEDULING_ENV=uat declared)": "15:00-17:00 IST on the narrowed provider: 409. 09:00-11:00 IST, exactly the published window: 200 groom_arun. Seeding still runs for providers who published nothing."
+  },
+
+  "consequence_closed": "The eligibility rule the engine enforces was satisfiable by the party it constrains. A provider who had published nothing was assigned and offered work up to 100 days out in hours they never agreed to, and Ops could not narrow a provider's hours at all: the window they published was simply joined by a synthetic 09:00-19:00 row, because listAvailability returned every row for provider+date and the engine's check is roster.some(...). There was no environment flag anywhere in the scheduling domain, so a production runtime fabricated roster exactly as a UAT one did. Secondary: one unprivileged request performed 300 INSERTs.",
+
+  "blast_radius_found_during_fix": "Four independent consumers read scheduling_availability as evidence and all four believed the synthetic rows: app/api/provider-assignment-recovery canTake, lib/universal-replacement-recovery selectCapacitySafeReplacement, lib/training-session-lifecycle rosterCovers ('Trainer has no roster availability covering <date>'), and lib/unit-economics utilisation. The first three now read through the shared authoritative helper.",
+
+  "fix": {
+    "new_file": "lib/scheduling-roster-authority.ts",
+    "rules": [
+      "Seeding is a capability and requires an explicit PAWSPACE_SCHEDULING_ENV=uat. An absent or empty variable is not a declaration and unlocks nothing - the same reasoning and the same shape as lib/payment-environment.ts, which this audit introduced for PAWSPACE_PAYMENT_ENV. PAWSPACE_<DOMAIN>_ENV is the platform's own naming convention (payment, voice, maps, media, whatsapp, communication, identity).",
+      "Even with seeding declared on, a provider-date that a provider or Ops has authored is not seeded over.",
+      "On the read side, where authored rows exist for a provider-date, only those rows are returned to the eligibility engine. This is the load-bearing half: turning seeding off cannot retract rows already in the table, and the seeder writes 100 days forward, so by the time Ops narrows a date the synthetic row for it is usually already there."
+    ],
+    "files_changed": [
+      "lib/scheduling-roster-authority.ts (new)",
+      "app/api/uat-scheduling/route.ts",
+      "app/api/provider-assignment-recovery/route.ts",
+      "lib/universal-replacement-recovery.ts",
+      "lib/training-session-lifecycle.ts",
+      "wrangler.runtime-d1.jsonc"
+    ]
+  },
+
+  "regression": {
+    "file": "tests/ptja-w1-f27-roster-authority.test.mjs",
+    "cases": 6,
+    "sabotage_verification": [
+      "Env gate removed, both other rules intact -> case 1 fails ('an undeclared runtime does not let a customer's reserve write provider availability'), 5 pass.",
+      "Seed-side authored skip removed, env gate and read rule intact -> case 3 fails ('an Ops-published window bounds the day a customer may book'), 5 pass.",
+      "Read-side authored-wins rule removed, env gate and seed skip intact -> case 5 fails ('a synthetic row already in the table cannot re-open a day Ops narrows afterwards'), 5 pass.",
+      "Fix restored -> 6/6 pass. Each of the three rules is locked independently by exactly one case."
+    ],
+    "non_vacuity_controls": [
+      "case 2: a declared UAT runtime still seeds and still reserves - the gate is a declaration, not a shutdown. Passes in every sabotage state.",
+      "case 4: a request exactly inside the Ops-published window still reserves as groom_arun - publishing a window bounds a provider, it does not make them unbookable. Passes in every sabotage state."
+    ]
+  },
+
+  "test_updates": {
+    "reason": "Turning the seeder off by default made 56 assertions across 14 suites fail, every one of them a UAT harness that books through the real reserve path with no Ops-published availability. Each now DECLARES PAWSPACE_SCHEDULING_ENV=uat, which is what that harness actually is. No assertion was dropped or weakened anywhere.",
+    "declared_env": [
+      "tests/helpers/grooming-journey-harness.mjs (covers grooming-golden-journey, ptja-identity-spine, scheduling-reservation-leases, payment-order-cross-customer-runtime)",
+      "tests/grooming-booking-swarm-runtime.test.mjs",
+      "tests/boarding-reservation-authority.test.mjs",
+      "tests/scheduling-hardening.test.mjs",
+      "tests/training-hardening.test.mjs",
+      "tests/ptja-p0-regressions.test.mjs sittingWorld",
+      "tests/ptja-p1-regressions.test.mjs schedulingWorld",
+      "tests/ptja-w1-leftover-regressions.test.mjs reserveWorld",
+      "wrangler.runtime-d1.jsonc (the workerd harness for tests/runtime-d1-worker.ts)"
+    ],
+    "source_matchers_repointed": [
+      "tests/universal-gps-lateness-recovery.test.mjs - the availability query moved into listAuthoritativeAvailability; the matcher names the call instead of the inlined SQL. What it asserts is unchanged.",
+      "tests/training-hardening.test.mjs - same, for rosterCovers."
+    ],
+    "not_updated": "tests/e2e100-t1-customer-booking.test.mjs and tests/e2e100-t2-provider-operations.test.mjs needed no change: they dispatch to the suites above, and went green when those did."
+  },
+
+  "gates": {
+    "full_repository_regression": "3139/3139",
+    "typecheck": "clean",
+    "lint": "0 errors",
+    "runtime_d1_workerd": "the exact CI invocation run locally against wrangler.runtime-d1.jsonc returned {\"ok\":true} with every assertion at its expected cardinality"
+  }
+}

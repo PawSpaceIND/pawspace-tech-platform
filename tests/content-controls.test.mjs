@@ -75,6 +75,11 @@ const callAs = async (method, bodyOrQuery, email) => {
 
 const NOW = Date.now();
 const DAY = 86_400_000;
+/** A REAL staff identity of a named role, so an authority claim is not made by the preview bypass. */
+function seedStaffIdentity(email, roleCode) {
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)")
+    .run(`usr-${email}`, email, email.split("@")[0], roleCode, NOW, NOW);
+}
 function seedCustomerIdentity(email) {
   sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)").run(`usr-${email}`, email, email.split("@")[0], "customer", NOW, NOW);
 }
@@ -173,7 +178,15 @@ test("real execution: the public GET needs no identity; admin view and mutations
   assert.equal(publicBody.data.blocks[0].bodyMd, "Keep coats dry and book indoor slots.");
   // Staff overview via preview actor includes drafts + truth flags
   await saveContentBlock(db, { title: "Draft only staff can see", bodyMd: "Internal work in progress.", placement: "faq", actorId: "m" });
-  const admin = await call("GET", "view=admin");
+  // PTJA-W3C. This used call(), which drives http://localhost and therefore obtained its authority
+  // from the development-preview superuser - permissions ["*"]. A REFUSAL proven that way is stronger
+  // than the role it names (a superset actor refused implies a lesser one refused), which is why the
+  // rest of this suite's gating cases are sound. A PERMIT is not: "the preview superuser could read
+  // this" says nothing about whether an ADMIN may. The positive half now presents a real admin.
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  seedStaffIdentity("content.admin@pawspace.test", "admin");
+  const admin = await callAs("GET", "view=admin", "content.admin@pawspace.test");
   assert.equal(admin.status, 200, JSON.stringify(admin.body));
   assert.equal(admin.body.data.metrics.draft, 1);
   assert.equal(admin.body.data.truth.publicReadServesPublishedOnly, true);

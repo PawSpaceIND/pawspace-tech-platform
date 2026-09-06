@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 // Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
 // per-test SQLite-backed D1 shim and whose other keys read a mutable test env object, so the REAL
@@ -48,7 +49,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
+function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
   sqlite = new DatabaseSync(":memory:");
   globalThis.__MONEY_DB__ = makeD1(sqlite);
   globalThis.__MONEY_ENV__ = env;
@@ -65,6 +66,7 @@ const subscriptionWalletRoute = await import("../app/api/subscription-wallet/rou
 const missionRoute = await import("../app/api/revenue-mission-control/route.ts");
 const { creditWallet, redeemWalletForBooking, walletBalance } = await import("../lib/pawspace-wallet-governance.ts");
 const { redeemPoints, runPawPointsEarnSweep, pawPointsBalance } = await import("../lib/paw-points-governance.ts");
+const { grantGoodwillPoints } = await import("../lib/paw-points-governance.ts");
 const { quoteCoupon, consumeCouponQuote } = await import("../lib/coupon-governance.ts");
 const { mutateSubscriptionWallet } = await import("../lib/subscription-wallet.ts");
 const { payStayBalance } = await import("../lib/stay-split-payments.ts");
@@ -106,12 +108,14 @@ async function postWebhook(eventId, payload, { secret = "uat-test-secret", signa
   }));
   return { status: response.status, body: await parseBody(response) };
 }
+const NOW = 1_800_000_000_000;
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const capturedEvent = (bookingId, amountSubunits, paymentId = "pay_TEST1") => ({
-  event: "payment.captured", created_at: Math.floor(Date.now() / 1000),
+  event: "payment.captured", created_at: Math.floor(NOW / 1000),
   payload: { payment: { entity: { id: paymentId, order_id: "order_TEST1", amount: amountSubunits, currency: "INR", notes: { booking_id: bookingId } } } },
 });
-
-const NOW = Date.now();
 const DAY = 86_400_000;
 // Exact DDL copied verbatim from the owning sources: app/api/canonical-bookings/route.ts
 // (canonical_customers/canonical_bookings/booking_payments) and the grooming refund surface
@@ -121,6 +125,7 @@ function baseTables() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  installFinancialLifecycleSchema(sqlite);
 }
 function seedCustomer(id = "cus_m1", phone = "+91-9000000021", email = "meera@example.in") {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(id, "blr", `Customer ${id}`, phone, email, NOW, NOW);
@@ -140,7 +145,7 @@ function seedCustomerIdentity(email, customerId) {
 // ---- 1. Webhook: signature-first, verify-first capture, idempotent, exact reconciliation -------
 
 test("real execution: webhook refuses unsigned/badly-signed/unconfigured requests before touching any state", async () => {
-  freshDb({}); baseTables();
+  freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox" }); baseTables();
   // No sandbox secret configured -> 503 fail-closed
   const unconfigured = await postWebhook("evt_1", capturedEvent("B1", 200000), { secret: "anything" });
   assert.equal(unconfigured.status, 503);
@@ -158,7 +163,12 @@ test("real execution: webhook refuses unsigned/badly-signed/unconfigured request
 
 test("real execution: verify-first — a 'created' payment is only captured by a correctly signed webhook, reconciliation matches booking_payments exactly, duplicates ignored", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  const ok = await postWebhook("evt_10", capturedEvent("B1", 200000));
+  /* One event, posted twice. capturedEvent() stamps created_at from the live clock on EVERY call, and
+   * gateway_webhook_events correctly rejects an event id replayed with a DIFFERENT payload hash - so
+   * building the replay separately made this assertion pass only when both posts landed inside the same
+   * wall-clock second. Reusing the identical body is what actually exercises duplicate detection. */
+  const captured = capturedEvent("B1", 200000);
+  const ok = await postWebhook("evt_10", captured);
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(ok.body.environment, "sandbox");
   assert.equal(ok.body.status, "processed");
@@ -169,7 +179,7 @@ test("real execution: verify-first — a 'created' payment is only captured by a
   assert.equal(recon.reconciliation_status, "matched");
   assert.equal(recon.variance_amount, 0);
   // Same gateway event id replayed -> duplicate, no second effect
-  const dup = await postWebhook("evt_10", capturedEvent("B1", 200000));
+  const dup = await postWebhook("evt_10", captured);
   assert.equal(dup.body.duplicate, true);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_gateway_events").get().n, 1);
 });
@@ -186,10 +196,11 @@ test("real execution: capture amount mismatch and refund flow both land in the e
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='capture_amount_mismatch'").get().n, 1);
   assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id='B1'").get().status, "created", "a mismatched capture must NOT flip the canonical payment");
   // Correct capture then a full refund via internal refund case
-  await postWebhook("evt_21", capturedEvent("B1", 200000));
+  const captured = await postWebhook("evt_21", capturedEvent("B1", 200000));
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
   sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES ('RC1','B1','PAY-B1',2000,'customer cancellation','approved','finance:uat',?,?)").run(NOW, NOW);
   const refunded = await postWebhook("evt_22", {
-    event: "refund.processed", created_at: Math.floor(Date.now() / 1000),
+    event: "refund.processed", created_at: Math.floor(NOW / 1000),
     payload: { refund: { entity: { id: "rfnd_1", payment_id: "pay_TEST1", order_id: "order_TEST1", amount: 200000, currency: "INR" } }, payment: { entity: { id: "pay_TEST1", notes: { booking_id: "B1" } } } },
   });
   assert.equal(refunded.body.status, "processed", JSON.stringify(refunded.body));
@@ -211,7 +222,9 @@ test("contract: verify-first pins EVERY LIVE online payment to 'created' regardl
   assert.doesNotMatch(bookings, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "a mode-name allowlist is exactly what let 'full' and 'split' through");
   assert.doesNotMatch(bookings, /!isSubscription/, "and a subscription carve-out is what let a LIVE subscription self-declare capture");
   const webhook = fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts", import.meta.url), "utf8");
-  assert.ok(webhook.indexOf("safeEqual(expected,signature)") < webhook.indexOf("JSON.parse(raw)"), "signature verification must run before the payload is even parsed");
+  const lifecycle = fs.readFileSync(new URL("../lib/financial-lifecycle.ts", import.meta.url), "utf8");
+  assert.match(webhook, /acceptRazorpayWebhook\(db,\{rawBody:raw,signature,webhookSecret:gate\.secret/, "the route passes the exact raw body to the lifecycle verifier");
+  assert.ok(lifecycle.indexOf("verifyRazorpayRawBody(input.rawBody") < lifecycle.indexOf("JSON.parse(input.rawBody)"), "signature verification must run before the payload is parsed");
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   assert.match(gateway, /url\.pathname==="\/api\/razorpay-webhook"/, "webhook stays on the public (signature-authenticated) gateway list");
   assert.match(gateway, /stay-balance"\)return "scheduling\.book"/);
@@ -364,6 +377,21 @@ test("REGRESSION lib/coupon-governance.ts: two concurrent consumes of different 
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_quotes WHERE status='open'").get().n, 1);
 });
 
+test("REGRESSION coupon idempotency: one key with different contexts leaves exactly one complete mutation", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", total: 1500 }); seedBooking({ id: "B2", total: 1500 });
+  const db = globalThis.__MONEY_DB__;
+  const input = { code: "UATCARE100", customerId: "cus_m1", serviceCode: "grooming", cityId: "blr", channel: "customer_app", packageCode: "pkg", orderValue: 1500, paymentMode: "full", isSubscription: false };
+  const q1 = await quoteCoupon(db, input, {}), q2 = await quoteCoupon(db, input, {});
+  const race = await Promise.allSettled([
+    consumeCouponQuote(db, { quoteId: q1.quoteId, bookingId: "B1", customerId: "cus_m1", idempotencyKey: "coupon-shared-key" }),
+    consumeCouponQuote(db, { quoteId: q2.quoteId, bookingId: "B2", customerId: "cus_m1", idempotencyKey: "coupon-shared-key" }),
+  ]);
+  assert.equal(race.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(String(race.find(result => result.status === "rejected").reason), /different redemption/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions WHERE idempotency_key='coupon-shared-key'").get().n, 1);
+  assert.deepEqual(sqlite.prepare("SELECT status,COUNT(*) n FROM coupon_quotes GROUP BY status ORDER BY status").all().map(row => ({ ...row })), [{ status: "consumed", n: 1 }, { status: "open", n: 1 }]);
+});
+
 // ---- 5. Referral: qualify -> reward -> reserve -> reverse with exact amounts --------------------
 
 test("real execution: referral chain pays the configured reward exactly and reverses it exactly once", async () => {
@@ -455,6 +483,22 @@ test("REGRESSION lib/subscription-wallet.ts: a raced double release cannot hand 
   assert.deepEqual(counters, { sessions_reserved: 2, sessions_consumed: 0 }, "B2's reservation must survive: only B1's 2 credits were released, once");
 });
 
+test("REGRESSION subscription idempotency: one reserve key cannot mutate two bookings", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", total: 1200 }); seedBooking({ id: "B2", total: 1200 });
+  const db = globalThis.__MONEY_DB__;
+  const { ensureSubscriptionWalletTables } = await import("../lib/subscription-wallet.ts");
+  await ensureSubscriptionWalletTables(db); seedSubscription({});
+  const race = await Promise.allSettled([
+    mutateSubscriptionWallet(db, { subscriptionId: "SUB1", action: "reserve", bookingId: "B1", credits: 1, idempotencyKey: "reserve-shared-key", actorId: "cus" }),
+    mutateSubscriptionWallet(db, { subscriptionId: "SUB1", action: "reserve", bookingId: "B2", credits: 1, idempotencyKey: "reserve-shared-key", actorId: "cus" }),
+  ]);
+  assert.equal(race.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(String(race.find(result => result.status === "rejected").reason), /different mutation/i);
+  assert.equal(sqlite.prepare("SELECT sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB1'").get().sessions_reserved, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_subscription_usage").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM subscription_wallet_events WHERE idempotency_key='reserve-shared-key'").get().n, 1);
+});
+
 // ---- 7. Stay balance -> payment truth (task 2) + route governance ------------------------------
 
 async function seedSplitStay({ bookingId = "SB1", total = 4000, dueNow = 2000, customer = "cus_m1" } = {}) {
@@ -521,7 +565,8 @@ test("REGRESSION lib/revenue-mission-control.ts: stay balance captures now appea
 
 test("real execution: payment-reconciliation console lists webhook exceptions and dismisses them with a governed note", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch -> exception
+  const mismatch = await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch -> exception
+  assert.equal(mismatch.body.reason, "capture_amount_mismatch", JSON.stringify(mismatch.body));
   const list = await call(reconciliationRoute.GET, "GET", "status=open");
   assert.equal(list.status, 200, JSON.stringify(list.body));
   assert.equal(list.body.data.exceptions.length, 1);
@@ -534,4 +579,86 @@ test("real execution: payment-reconciliation console lists webhook exceptions an
   assert.equal(dismissed.body.data.status, "dismissed");
   const after = await call(reconciliationRoute.GET, "GET", "status=open");
   assert.equal(after.body.data.exceptions.length, 0);
+});
+
+// =====================================================================================================
+// PTJA-W2-MKT-01 (ledger W2-09-M01) — wallet credit and PawPoints stack to 120% of the order value
+//
+// redeemWalletForBooking and redeemPoints each computed their cap independently against
+// canonical_bookings.total_amount, and neither writes the booking down, so the two instruments applied
+// to the SAME booking sum past what the order is worth.
+//
+// MEASURED through the two real routes on one customer session: a Rs 5,000 booking, a Rs 5,000 wallet
+// balance and 5,000 PawPoints. POST /api/pawspace-wallet -> 201 {"walletUsed":4545.45,"bonus":454.55,
+// "appliedValue":5000}. POST /api/paw-points {"points":5000} -> 201 {"pointsRedeemed":2000,
+// "discountApplied":1000}. Neither call refused; neither knew about the other. Rs 6,000 of discount on a
+// Rs 5,000 order, from two ordinary self-service calls with no staff involved, and
+// canonical_bookings.total_amount still 5000. lib/unit-economics.ts then books all Rs 6,000 as real
+// discount against a Rs 5,000 GMV line, so contribution goes negative with nothing flagging it.
+//
+// PawPoints' MAX_REDEEM_FRACTION margin cap does not help: it is measured on the GROSS total, so it
+// survives intact even after the wallet has already covered 100% of the booking.
+//
+// The ceiling was never wrong - it was measured per instrument. Each redemption now caps against what
+// is still PAYABLE on the booking, via lib/booking-credit-application.ts, which reads what every
+// instrument has already applied. The margin cap stays exactly as it is, on the gross total; it is now
+// the tighter of the two that binds. No incentive policy is invented.
+// =====================================================================================================
+
+async function stackingWorld({ total = 5000, wallet = 5000, points = 5000 } = {}) {
+  freshDb(); baseTables(); seedBooking({ id: "STACK", total });
+  const db = globalThis.__MONEY_DB__;
+  if (wallet > 0) await creditWallet(db, { customerId: "cus_m1", amount: wallet, source: "goodwill", idempotencyKey: "stack-wc", actorId: "finance:uat" });
+  if (points > 0) await grantGoodwillPoints(db, { customerId: "cus_m1", points, reason: "service recovery probe", actorId: "ops:uat", idempotencyKey: "stack-pp" });
+  const applied = async () => {
+    const { creditsAppliedToBooking } = await import("../lib/booking-credit-application.ts");
+    return creditsAppliedToBooking(db, "STACK");
+  };
+  return { db, applied };
+}
+
+test("REGRESSION lib/pawspace-wallet-governance.ts + lib/paw-points-governance.ts: wallet and points together cannot exceed the order value", async () => {
+  const { db, applied } = await stackingWorld();
+
+  const walletLeg = await redeemWalletForBooking(db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletLeg.appliedValue, 5000, "the wallet alone legitimately covers the whole Rs 5,000 booking");
+  assert.equal(await applied(), 5000, "so the booking has already received its full value in credit");
+
+  await assert.rejects(
+    redeemPoints(db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" }),
+    /payable|redeemable|discount/i,
+    "points must not add discount to a booking that is already fully covered",
+  );
+  assert.equal(await applied(), 5000, "total credit applied must never exceed the Rs 5,000 order value");
+});
+
+test("REGRESSION: the same ceiling holds when points are redeemed first", async () => {
+  // Order must not decide the outcome - the defect was symmetric.
+  const { db, applied } = await stackingWorld({ total: 5000 });
+  const pointsLeg = await redeemPoints(db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(pointsLeg.discountApplied, 1000, "the 20% margin cap still binds first: Rs 1,000 on a Rs 5,000 booking");
+
+  const walletLeg = await redeemWalletForBooking(db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletLeg.appliedValue, 4000, "the wallet may only cover what is still payable");
+  assert.equal(await applied(), 5000, "and the two together come to exactly the order value, never past it");
+});
+
+test("REGRESSION: each instrument alone still works, and the margin cap is unchanged", async () => {
+  // Non-vacuity. Refusing the second instrument outright, or tightening the points cap, would satisfy
+  // the cases above and break both products.
+  const soloWallet = await stackingWorld({ total: 5000, points: 0 });
+  const walletOnly = await redeemWalletForBooking(soloWallet.db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletOnly.appliedValue, 5000, "wallet alone still covers a whole booking, bonus included");
+
+  const soloPoints = await stackingWorld({ total: 5000, wallet: 0 });
+  const pointsOnly = await redeemPoints(soloPoints.db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(pointsOnly.discountApplied, 1000, "points alone still redeem up to the unchanged 20% margin cap");
+  assert.equal(pointsOnly.pointsRedeemed, 2000, "for the same number of points as before");
+
+  // and a partial wallet spend still leaves room for points
+  const mixed = await stackingWorld({ total: 5000 });
+  await redeemWalletForBooking(mixed.db, { customerId: "cus_m1", bookingId: "STACK", walletAmount: 1000, actorId: "cus_m1" });
+  const rest = await redeemPoints(mixed.db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(rest.discountApplied, 1000, "Rs 1,100 of wallet value leaves the full 20% margin cap available");
+  assert.equal(await mixed.applied(), 2100, "Rs 1,100 wallet value + Rs 1,000 points, well inside the order value");
 });

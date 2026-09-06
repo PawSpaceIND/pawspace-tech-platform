@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { readFileSync } from "node:fs";
 
 // lib modules import each other extensionlessly; this installs the resolver on every supported Node.
 installWorkersHooks("__CRM_DB__");
@@ -117,8 +118,15 @@ test("real execution: /api/crm create persists a contact + lead work item that t
   db.prepare(findStatement(crmRoute, "INSERT INTO crm_tasks")).run(`TASK-${now}`, "CU-77001", "First response to new lead", "Neha", now + 600000, "High", "Open", now);
   db.prepare(findStatement(crmRoute, "INSERT INTO lead_work_items")).run(`LEAD-${now}`, "CU-77001", "Website", "Grooming", "Neha", "Sales Manager", now, now + 600000, now + 1800000, 0, 0, now + 600000, now, now);
 
-  const owners = db.prepare(findStatement(crmRoute, "SELECT owner,COUNT(*) count FROM lead_work_items")).all();
-  assert.equal(owners.length, 1, "owner load-balancing query runs against real rows");
+  // The owner load-balancing query moved into lib/lead-owner-identity when lead ownership stopped being
+  // a list of first names, so it is read from there rather than from the route. The guarantee is
+  // unchanged - the balancing query runs against real rows - and it is now stronger, because the query
+  // it reads only counts staff who have a live login. [PTJA-W3-CO]
+  const ownerModule = readFileSync(new URL("../lib/lead-owner-identity.ts", import.meta.url), "utf8");
+  const balancing = /SELECT COUNT\(\*\) FROM lead_work_items w WHERE w\.owner=u\.email/.test(ownerModule);
+  assert.ok(balancing, "the owner load-balancing query must still exist, in the authority that now owns it");
+  assert.match(ownerModule, /JOIN app_users u ON lower\(u\.email\)=lower\(m\.employee_email\)/,
+    "and it must only consider members with a real login");
 
   const list = db.prepare(findStatement(crmRoute, "SELECT * FROM crm_contacts ORDER BY updated_at")).all();
   assert.equal(list.length, 1);

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import styles from "./provider-tracking-card.module.css";
 
 type ProviderRole = "Groomer" | "Trainer" | "Sitter";
@@ -12,38 +11,28 @@ export default function ProviderTrackingCard({
   name: string;
   eta?: string;
 }) {
-  const [toast, setToast] = useState("");
-  const flash = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
-  };
   return (
     <article className={styles.card} data-provider-tracking={role.toLowerCase()}>
-      {toast && <div className={styles.toast}>{toast}</div>}
-      <div className={styles.map} aria-label={`${role} live GPS route preview`}>
+      <div className={styles.map} aria-label={`${role} UAT tracking placeholder`}>
         <span>A</span>
         <i>{role === "Groomer" ? "✦" : role === "Trainer" ? "⌁" : "♡"}</i>
         <span>B</span>
       </div>
       <div className={styles.copy}>
-        <small>LIVE GPS & ETA · TEST MODE</small>
-        <b>{name} is travelling to the service address</b>
-        <span>{eta} away · route refreshed just now</span>
+        <small>LOCATION SHARING · NOT CONNECTED IN UAT</small>
+        <b>{name} is assigned to this booking</b>
+        <span>{eta}</span>
         <p>
-          Tracking starts when the {role.toLowerCase()} marks “On the way” and
-          ends at verified arrival. Primary and secondary contacts can follow
-          the ETA while PawSpace Ops monitors delays and safety alerts.
+          The booking lifecycle can record “On the way” and arrival. A live map,
+          background GPS, ETA calculation and external safety escalation require
+          the production location and communications integrations.
         </p>
-        <em>
-          {role === "Sitter"
-            ? "Sitter check-in and check-out are GPS verified; continuous home-location tracking is not shown during care."
-            : "Continuous location is not shown after the provider arrives and the service begins."}
-        </em>
+        <em>No location is collected or displayed by this UAT placeholder.</em>
       </div>
       <div className={styles.actions}>
-        <button onClick={() => flash("Live route map is not connected in UAT yet.")}>Open live route</button>
-        <button onClick={() => flash(`Opening secure chat with your ${role.toLowerCase()}. UAT does not deliver a live message yet.`)}>Message {role.toLowerCase()}</button>
-        <button className={styles.help} onClick={() => flash("Safety help logged. In production this connects you to PawSpace Ops immediately.")}>Safety help</button>
+        <button disabled title="Live location is not connected">Live route unavailable</button>
+        <button disabled title="Secure provider chat is not connected">Message unavailable</button>
+        <button className={styles.help} disabled title="Production safety escalation is not connected">Safety help unavailable</button>
       </div>
     </article>
   );

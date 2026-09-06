@@ -13,6 +13,8 @@
  * earn / redeem / grant safe to retry.
  */
 
+import { remainingPayableForCredit } from "./booking-credit-application";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -105,11 +107,16 @@ export async function redeemPoints(db: Db, input: { customerId: string; points: 
   const balance = await pawPointsBalance(db, input.customerId);
   if (balance <= 0) throw new Error("You have no PawPoints to redeem yet");
   const bookingTotal = Number(booking.total_amount || 0);
-  const maxDiscount = Math.floor(bookingTotal * MAX_REDEEM_FRACTION);
+  // The margin cap is unchanged and still measured on the GROSS total - but it was the ONLY ceiling,
+  // and being gross it survived intact even after wallet credit had already covered 100% of the
+  // booking. The tighter of the two now binds: a redemption may never take a booking's applied credit
+  // past what the order is worth.
+  const payable = await remainingPayableForCredit(db, input.bookingId, bookingTotal);
+  const maxDiscount = Math.min(Math.floor(bookingTotal * MAX_REDEEM_FRACTION), Math.floor(payable));
   let pointsUsed = Math.min(requested, balance);
   let discount = Math.floor(pointsUsed * REDEEM_RUPEE_PER_POINT);
   if (discount > maxDiscount) { discount = maxDiscount; pointsUsed = Math.ceil(discount / REDEEM_RUPEE_PER_POINT); }
-  if (discount <= 0) throw new Error("Not enough points for a redeemable discount on this booking");
+  if (discount <= 0) throw new Error(payable > 0 ? "Not enough points for a redeemable discount on this booking" : "This booking is already fully covered by credit you have applied, so there is nothing left to discount");
   // Guarded debit: the ledger row is only written while the live SUM can still cover the spend
   // inside the same statement, so concurrent redemptions on different bookings can never drive the
   // points balance negative (the balance read above is advisory only).
@@ -122,6 +129,38 @@ export async function redeemPoints(db: Db, input: { customerId: string; points: 
     throw error;
   }
   return { bookingId: input.bookingId, pointsRedeemed: pointsUsed, discountApplied: discount, balance: await pawPointsBalance(db, input.customerId) };
+}
+
+/**
+ * A cancelled booking must not strand points that were already redeemed on it. Restoration is
+ * append-only and deterministic per booking, so approval retries repair partial cancellation work
+ * without ever double-crediting the customer.
+ */
+export async function restoreRedeemedPointsForCancelledBooking(db: Db, input: { customerId: string; bookingId: string; actorId: string }) {
+  await ensurePawPointsTables(db);
+  const redeemed = await db.prepare("SELECT customer_id,points FROM paw_points_ledger WHERE idempotency_key=?")
+    .bind(`redeem:booking:${input.bookingId}`).first<Row>();
+  if (!redeemed) return { bookingId: input.bookingId, pointsRestored: 0, alreadyRestored: false, notRequired: true, balance: await pawPointsBalance(db, input.customerId) };
+  if (String(redeemed.customer_id) !== input.customerId) throw new Error("Redeemed PawPoints belong to another customer");
+  const points = Math.max(0, -Math.round(Number(redeemed.points || 0)));
+  if (!points) return { bookingId: input.bookingId, pointsRestored: 0, alreadyRestored: false, notRequired: true, balance: await pawPointsBalance(db, input.customerId) };
+  const result = await post(db, {
+    customerId: input.customerId,
+    entryType: "cancellation_restore",
+    points,
+    reason: `Restored after cancelled booking ${input.bookingId}`,
+    sourceType: "booking_cancellation",
+    bookingId: input.bookingId,
+    idempotencyKey: `restore:cancelled-booking:${input.bookingId}`,
+    createdBy: input.actorId,
+  });
+  return {
+    bookingId: input.bookingId,
+    pointsRestored: result.duplicatePrevented ? 0 : result.points,
+    alreadyRestored: result.duplicatePrevented,
+    notRequired: false,
+    balance: await pawPointsBalance(db, input.customerId),
+  };
 }
 
 export async function pawPointsHistory(db: Db, customerId: string) {

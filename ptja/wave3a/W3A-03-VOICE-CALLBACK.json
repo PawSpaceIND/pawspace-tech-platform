@@ -1,0 +1,40 @@
+{
+  "wave": "3A - adversarial verification of Wave 2 refutations",
+  "findings_verified": [
+    {
+      "id": "W2-B4-M-R01",
+      "claim": "the voice provider callback does NOT act on an unsigned, wrongly-signed, stale or replayed payload, and an absent secret refuses rather than unlocks",
+      "verdict": "CONFIRMED",
+      "executable": "tests/ptja-w3a-voice-callback-verification.test.mjs",
+      "why_this_one_mattered_most": "The route is gateway-allowlisted on purpose - a carrier has no cookie - so it is reachable by any anonymous caller on the internet. The only thing between an anonymous POST and the call state machine is this shared-secret check, and the hunter's probe of it lived under /tmp and was discarded.",
+      "cases": [
+        "MR01-01 unsigned -> 401, state stays 'dialing', no provider event row",
+        "MR01-02 wrong signature -> 401, no state change",
+        "MR01-03 correct signature over a 600s-old timestamp -> 401 outside the freshness window",
+        "MR01-04 byte-identical replay -> 200 duplicate applied=false, state unchanged, ONE event row",
+        "MR01-05 unconfigured world -> 401 'Telephony provider is not connected' (see shadowing note)",
+        "MR01-07 sign-then-swap: a signature over a different body does not validate the swapped body",
+        "MR01-08 rewriting the timestamp header invalidates the signature - it is signed material",
+        "MR01-09 a malformed or absent timestamp is refused, never defaulted to now",
+        "MR01-10 an absent or whitespace secret refuses AT THE VERIFIER, with non-vacuity",
+        "MR01-11 an absent secret does not accept Basic credentials either, with non-vacuity",
+        "MR01-06 NON-VACUITY: a correct fresh callback IS applied and DOES move the state machine"
+      ],
+      "assertion_strength": "every refusal asserts the call state is still 'dialing' and no voice_call_provider_events row exists. A 401 that had already advanced the state machine would have passed a status-only assertion."
+    }
+  ],
+  "shadowing_caught_and_fixed": [
+    "MR01-05 was SHADOWED. The claim 'an absent secret refuses rather than unlocks' cannot be tested through the route: EXOTEL_WEBHOOK_SECRET is one of the six names in VOICE_TELEPHONY_SECRET_NAMES, so removing it also makes selectTelephonyProvider return the disconnected adapter, and the route answers 'Telephony provider is not connected' BEFORE any signature work. The sabotage that makes an empty secret VERIFY left MR01-05 green. Fixed by (a) asserting the refusal REASON in MR01-05 so it is honest about which layer refused, and (b) adding MR01-10/MR01-11 which call verifyVoiceWebhookSignature directly - where the claim actually lives. Both go red under that sabotage.",
+    "This is defence in depth working as intended - two independent layers - but it is also exactly how a test can look like proof and not be."
+  ],
+  "sabotage": [
+    {"control": "an absent secret returns verified:true", "result": "RED - MR01-10, MR01-11 (and NOT MR01-05, which is what exposed the shadowing)"},
+    {"control": "the 300s signature freshness window", "result": "RED - MR01-03"},
+    {"control": "the safeEqual signature comparison", "result": "RED - MR01-02, MR01-07, MR01-08"},
+    {"control": "the INSERT OR IGNORE provider-event idempotency check", "result": "RED - MR01-04"}
+  ],
+  "not_claimed": [
+    "No real carrier traffic. No telephony credential exists in any environment, so no call has ever been placed.",
+    "The oversized-payload bound (413) and the Basic mechanism against a live provider are not exercised end to end."
+  ]
+}

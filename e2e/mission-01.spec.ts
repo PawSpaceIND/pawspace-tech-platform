@@ -1,0 +1,54 @@
+import { expect, test } from '@playwright/test';
+
+test('Mission 06: full autonomous login', async ({ page }) => {
+  page.setDefaultTimeout(10000);
+  await page.goto('/');
+  const login = page.getByRole('button', { name: /login/i }).or(page.getByRole('link', { name: /login/i })); await login.first().click();
+
+  const dialog = page.getByRole('dialog', { name: /customer login/i });
+  const phone = dialog.getByLabel('Phone number');
+  await phone.waitFor();
+  await phone.fill('9876543210');
+  console.log('STEP 1 OK: phone filled');
+
+  await dialog.getByRole('button', { name: /send otp/i }).click();
+  console.log('STEP 2 OK: send otp clicked');
+
+  const otpInput = dialog.getByLabel('OTP code');
+  try {
+    await expect(otpInput).toBeVisible({ timeout: 10000 });
+  } catch (error) {
+    const visibleText = await dialog.innerText().catch(() => '<customer login dialog unavailable>');
+    console.log('--- OTP INPUT TIMEOUT: DIALOG TEXT ---');
+    console.log(visibleText.slice(0, 1500));
+    console.log('--- END OTP INPUT TIMEOUT ---');
+    throw error;
+  }
+
+  const otpText = await dialog.innerText();
+  console.log('--- OTP SCREEN ---');
+  console.log(otpText.slice(0, 1500));
+  const m = otpText.match(/\b(\d{6})\b/) || otpText.match(/\b(\d{4})\b/);
+  const code = m ? m[1] : '';
+  console.log('DETECTED CODE:', code);
+  expect(code, `Sandbox OTP code missing from dialog: ${otpText.slice(0, 500)}`).toMatch(/^\d{6}$/);
+
+  await otpInput.fill(code);
+  console.log('STEP 3 OK: code filled');
+
+  const verifyResponsePromise = page.waitForResponse(response => response.url().includes('/api/customer-otp') && response.request().method() === 'POST');
+  await dialog.getByRole('button', { name: /verify & continue/i }).click();
+  const verifyResponse = await verifyResponsePromise;
+  const verifyBody = await verifyResponse.text();
+  expect(verifyResponse.ok(), `OTP verify failed (${verifyResponse.status()}): ${verifyBody}`).toBeTruthy();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('heading', { name: /who needs grooming/i })).toBeVisible();
+  await page.waitForTimeout(2500);
+  console.log('URL NOW:', page.url());
+  await page.screenshot({ path: 'e2e/shots/05-loggedin.png', fullPage: true });
+  const dash = await page.locator('body').innerText();
+  console.log('LOGGED IN (no phone prompt):', !/Enter your phone number/.test(dash));
+  console.log('--- AFTER LOGIN ---');
+  console.log(dash.slice(0, 2500));
+  console.log('--- END ---');
+});

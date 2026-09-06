@@ -1,0 +1,57 @@
+{
+  "item": "W2-B4-M06",
+  "title": "The quiet-hours override, bounded to the approved reasons",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (14 of 14 failing), then GREEN; three route-level cases added as the wiring landed.",
+
+  "measured_before": {
+    "setup": "Clock at 03:00 IST, deep inside the 21:00-09:00 window, two POSTs to /api/haptik-outbound as an admin holding marketing.manage.",
+    "without_force": "201 {connected:true, dialled:0, reason:'Quiet hours (21:00-09:00 IST): no outbound calls placed. Pass force to override for an urgent callback.'} - refused at the gate.",
+    "with_force": "201 with NO quiet-hours reason at all - the gate was passed and execution continued into the dial loop, on a FIVE THOUSAND contact lead-follow-up campaign.",
+    "audit": "The security_audit_events row read outcome 'completed' with nothing saying an override had been used.",
+    "prior_state": "An earlier fix in this audit made the override auditable. It did not bound it - 'an urgent callback' stayed a phrase in an error message rather than a rule anybody could check."
+  },
+
+  "approved_rules_implemented": {
+    "permitted": ["customer_requested_callback","active_safety_incident","imminent_booking_access_failure","payment_or_booking_failure_within_12h","active_relocation_or_transit","emergency_escalation_existing_conversation"],
+    "forbidden": ["promotion","lead_followup","subscription_sales","payment_chasing","routine_operations"],
+    "unknown_codes": "REFUSED. Absence of a rule is not permission, and an override nobody has classified is not an emergency.",
+    "permission": "manager (communications.manage) except designated emergency roles, and the emergency carve-out applies ONLY to emergency reason codes - otherwise it would just be a second manager permission handed to more people",
+    "traceability": "a reason code AND a booking or case reference AND a written reason, each refused individually",
+    "single_attempt": "one call. The policy validator refuses any ceiling above 1, because 'one call attempt initially' and 'no bulk overrides' are the same rule read twice and a ceiling above one is a bulk override with a smaller number on it.",
+    "audit": "every override logged with actor, role, reason code, case reference, reason, contact count and time - and every REFUSAL logged too, because the refusal is the more interesting record: it is the one that shows somebody tried",
+    "compliance_review": "threshold-based over a rolling window. A review queue listing everybody who ever placed one urgent call is a queue nobody reads."
+  },
+
+  "outside_quiet_hours": "No override is needed and none is recorded. If the gate applied around the clock, ordinary daytime calling would start requiring override paperwork and the control would be worked around within a week.",
+
+  "the_measured_campaign_now": "lead_followup is a named forbidden reason, so the exact request measured cannot be forced at all; and a contact count of 5000 is refused even under a permitted reason. Both are regression cases.",
+
+  "a_correction_to_my_own_test": "The first version of the route case omitted the HAPTIK_OUTBOUND_API_KEY / HAPTIK_OUTBOUND_URL stubs and did not control the clock, so it was measuring the not-connected refusal rather than the quiet-hours gate - reverting the route still passed it. Sabotage caught that it proved nothing. The boundary is now stubbed exactly as the original finding stubbed it, and the clock is pinned to 03:00 IST.",
+
+  "configurable": "The `quiet_hours_override_policy` domain in Control Center, scoped by service and city: the quiet window, the permitted, forbidden and emergency reason codes, the permissions, the contact ceiling, and the review threshold and window. The validator refuses permitting any of the five forbidden reasons, refuses a code that is both permitted and forbidden, refuses an emergency reason that is not also permitted, refuses a ceiling above one, and refuses dropping the case-reference requirement.",
+
+  "regression": {
+    "file": "tests/ptja-w2-b4-quiet-hours-override.test.mjs",
+    "cases": 17,
+    "red_before": "14 of 14 failing.",
+    "sabotage_verification": [
+      "An unknown reason code waved through -> the unknown-code case fails.",
+      "Bulk overrides allowed again -> the single-attempt case and the measured-campaign case fail.",
+      "The emergency carve-out extended to every reason -> the carve-out case fails.",
+      "Refusals stop being logged -> the refusal-log case fails.",
+      "The route stops consulting the policy -> the route case fails (after that case was corrected to be load-bearing).",
+      "Fix restored -> 17/17."
+    ],
+    "non_vacuity_controls": [
+      "outside quiet hours the call goes ahead and nothing is recorded as an override",
+      "a designated emergency role CAN act on an emergency without finding a manager",
+      "a permitted, single-contact override is granted - the urgent callback the control exists to permit is still possible",
+      "a single override does not trigger a compliance review"
+    ]
+  },
+
+  "gates": {"focused":"17/17","full_repository_regression":"3296/3296","typecheck":"clean","lint":"0 errors","merge_or_deploy":"none"}
+}

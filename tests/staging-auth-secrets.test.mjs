@@ -78,10 +78,10 @@ test("no authentication secret has a committed usable fallback", () => {
 });
 
 /** Run the real script in a throwaway directory with a stub build output. */
-function runStageConfig(env) {
+function runStageConfig(env, buildVars = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stage-config-"));
   fs.mkdirSync(path.join(dir, "dist", "server"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: {} }));
+  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: buildVars }));
   const script = new URL("../scripts/stage-config.mjs", import.meta.url).pathname;
   try {
     const stdout = execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -135,6 +135,10 @@ test("real execution: with every secret supplied, only NON-SECRET config is writ
   // The non-secret staging settings are written…
   assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox", "sandbox payments are preserved");
   assert.equal(result.config.vars.PAWSPACE_UAT_LOGIN, "on", "the UAT login flag is a non-secret var and is preserved");
+  assert.equal(result.config.vars.PAWSPACE_MAPS_ENV, "sandbox", "Maps stays locked to sandbox");
+  assert.equal(result.config.vars.PAWSPACE_COMMUNICATION_ENV, "uat", "communications stay locked to UAT");
+  assert.equal(result.config.vars.META_WHATSAPP_UAT_DELIVERY_ENABLED, "true", "Meta delivery can run only through its UAT allow-list gate");
+  assert.equal(result.config.vars.PAWSPACE_MEDIA_ENV, "uat", "media stays in the UAT policy environment");
   assert.equal(result.config.name, "pawspace-staging", "existing behaviour is preserved");
   // …but NONE of the three credentials may land in `vars`. Writing them there makes them plaintext
   // Worker variables — the exact defect #170 exists to close. They are installed as Worker secrets.
@@ -162,26 +166,62 @@ test("real execution: no credential appears in the deploy output", () => {
 });
 
 test("the workflow supplies all three from GitHub secrets", () => {
+  const deployStep = workflow.slice(workflow.indexOf("- name: Deploy to staging"), workflow.indexOf("- name: Certify deployed isolation"));
   for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
     assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must come from secrets.${name}`);
+    assert.match(deployStep, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must be in scope for the one attributed deploy`);
     assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}`), `${name} must not come from a repository VARIABLE, which is not secret`);
   }
 });
 
+test("the workflow forwards configured vendor sandbox secrets without requiring or serializing them", () => {
+  const vendorSecrets = [
+    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
+    "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY", "META_WHATSAPP_UAT_ACCESS_TOKEN",
+    "META_WHATSAPP_PHONE_NUMBER_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_APP_SECRET",
+    "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST", "META_WHATSAPP_TEMPLATE_ALLOWLIST",
+    "PAWSPACE_COMMUNICATION_PROVIDER_URL", "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN",
+    "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET", "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST",
+  ];
+  const deployStep = workflow.slice(workflow.indexOf("- name: Deploy to staging"), workflow.indexOf("- name: Certify deployed isolation"));
+  for (const name of vendorSecrets) {
+    assert.match(deployStep, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must come from a GitHub secret`);
+  }
+  assert.match(deployStep, /optionalNames\.filter\(name => process\.env\[name\]\)/,
+    "missing optional vendor secrets must stay absent instead of being uploaded as blank values");
+});
+
+test("real execution: an approved private R2 bucket is bound only when its staging variable is supplied", () => {
+  const withoutBucket = runStageConfig(GOOD);
+  assert.ok(!withoutBucket.config.r2_buckets, "no bucket variable must not fabricate a media binding");
+  const withBucket = runStageConfig({ ...GOOD, STAGING_R2_BUCKET_NAME: "pawspace-uat-private-media" });
+  assert.deepEqual(withBucket.config.r2_buckets, [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: "pawspace-uat-private-media" }]);
+});
+
 test("the workflow installs all three as Cloudflare Worker SECRETS, not plain vars", () => {
-  // The runtime credentials must reach the Worker through `wrangler secret put` (encrypted secret
-  // bindings), never through the serialized wrangler.json. Deploy remains from the repo ROOT.
-  assert.match(workflow, /wrangler\s+secret\s+put/, "the workflow must install the credentials as Worker secrets");
+  // The runtime credentials reach the Worker through Wrangler's encrypted secrets file, never through
+  // the serialized wrangler.json. This must be the SAME deploy that carries the exact-SHA message:
+  // `wrangler secret put` creates and deploys a newer version and would erase that attribution.
+  assert.match(workflow, /wrangler\s+deploy[^\n]*--secrets-file\s+"\$SECRETS_FILE"/, "the deploy must upload encrypted Worker secrets with the code");
+  assert.doesNotMatch(workflow, /wrangler\s+secret\s+put/, "the workflow must not create a later unattributed Worker version");
   for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
     assert.match(workflow, new RegExp(name), `${name} must be provisioned by the deploy workflow`);
   }
-  assert.match(workflow, /--name\s+pawspace-staging/, "secrets are put onto the pawspace-staging worker");
-  // The value is piped over stdin, never passed as a shell argument that could land in a process
-  // listing or a build log.
-  assert.match(workflow, /printf\s+'%s'\s+"\$\{!name\}"\s*\|\s*npx\s+wrangler\s+secret\s+put/, "secret values must be piped over stdin, not echoed");
+  assert.match(workflow, /writeFileSync\(process\.env\.SECRETS_FILE, JSON\.stringify\(values\), \{ mode: 0o600 \}\)/,
+    "the temporary secrets file must be owner-readable only and populated without echoing values");
+  assert.match(workflow, /trap 'rm -f "\$SECRETS_FILE"' EXIT/, "the temporary secrets file must always be removed");
   // Root deploy is preserved; the obsolete dist/server deploy must not reappear.
-  assert.match(workflow, /run:\s*npx wrangler deploy/, "deploy stays at the repo root");
+  assert.match(workflow, /npx wrangler deploy/, "the workflow must deploy through Wrangler");
   assert.doesNotMatch(workflow, /cd dist\/server && npx wrangler deploy/, "the obsolete dist/server deploy path must not return");
+});
+
+test("the documented terminal deploy stops before Wrangler when setup or validation fails", () => {
+  const guide = read("docs/STAGING_DEPLOY.md");
+  const terminal = guide.slice(guide.indexOf("### Path B — from a terminal"), guide.indexOf("## Optional integrations"));
+  assert.match(terminal, /```bash\s+set -euo pipefail\s+npm run install:ci/,
+    "the terminal block must enable fail-fast mode before its first command");
+  assert.match(terminal, /node scripts\/stage-config\.mjs[\s\S]*npx wrangler deploy/,
+    "configuration validation must run before deployment");
 });
 
 // ---------------------------------------------------------------------------
@@ -412,4 +452,38 @@ test("NO file in the repository gives any UAT credential a committed fallback", 
   };
   walk(".");
   assert.deepEqual([...new Set(offenders)].sort(), [], "these give a UAT credential a usable committed value");
+});
+
+// --- the build output must not decide what a deployment runs -------------------------------------
+// vite.config.ts writes vars {PAWSPACE_LOCAL_PREVIEW:"on", PAWSPACE_SCHEDULING_ENV:"uat"} into
+// dist/server/wrangler.json. stage-config.mjs used to spread those into the staging config, so
+// deployed staging shipped PAWSPACE_LOCAL_PREVIEW:"on" - two thirds of the local-preview gate, with
+// only an unset NODE_ENV refusing an authentication-free actor.
+const BUILD_VARS = { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" };
+
+test("real execution: development-only vars in the build output never reach the staging config", () => {
+  const result = runStageConfig(GOOD, BUILD_VARS);
+  assert.equal(result.code, 0, `the deploy still configures: ${result.stderr || ""}`);
+  assert.ok(!("PAWSPACE_LOCAL_PREVIEW" in result.config.vars),
+    `PAWSPACE_LOCAL_PREVIEW must not be deployed: ${JSON.stringify(result.config.vars)}`);
+  assert.doesNotMatch(result.raw, /PAWSPACE_LOCAL_PREVIEW/, "and must not survive anywhere in the written config");
+});
+
+test("real execution: staging still DECLARES the environment values it genuinely needs", () => {
+  // Non-vacuity, and the reason this is a declaration rather than a deletion. Dropping
+  // PAWSPACE_SCHEDULING_ENV would stop governed commercial terms being seeded and break staging
+  // completions; it is present because staging asked for it, not because the build leaked it.
+  const result = runStageConfig(GOOD, BUILD_VARS);
+  assert.equal(result.config.vars.PAWSPACE_SCHEDULING_ENV, "uat");
+  assert.equal(result.config.vars.PAWSPACE_DEPLOYMENT_ENV, "staging");
+  assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox");
+});
+
+test("real execution: an unseen build var cannot ride in either", () => {
+  // The build output is not trusted as a source of deployment configuration at all, so a var nobody
+  // has thought about yet is dropped rather than inherited.
+  const result = runStageConfig(GOOD, { ...BUILD_VARS, SOME_FUTURE_DEV_VAR: "on" });
+  assert.equal(result.code, 0);
+  assert.ok(!("SOME_FUTURE_DEV_VAR" in result.config.vars),
+    `staging declares its vars; it does not inherit them: ${JSON.stringify(result.config.vars)}`);
 });

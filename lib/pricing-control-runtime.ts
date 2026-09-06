@@ -53,17 +53,16 @@ seeds.push(
 const pricingSchemaEnsured=new WeakSet<Db>();
 const pricingPackagesSeeded=new WeakSet<Db>();
 
-export async function ensurePricingControlSchema(db:Db){if(pricingSchemaEnsured.has(db))return;await db.batch([
+export async function ensurePricingControlSchema(db:Db){if(pricingSchemaEnsured.has(db))return;const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('service_packages','dynamic_pricing_rules','pricing_audit_events')").all<Record<string,unknown>>().catch(()=>({results:[] as Record<string,unknown>[]}));if(new Set(rows.results.map(row=>String(row.name))).size!==3)await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS service_packages (id text PRIMARY KEY NOT NULL,service_code text NOT NULL,package_code text NOT NULL UNIQUE,name text NOT NULL,description text NOT NULL,base_price real NOT NULL,currency text DEFAULT 'INR' NOT NULL,tax_inclusive integer DEFAULT 1 NOT NULL,slot_minutes integer NOT NULL,blocking_minutes integer NOT NULL,active integer DEFAULT 1 NOT NULL,version integer DEFAULT 1 NOT NULL,effective_from text NOT NULL,effective_to text,updated_by text NOT NULL,updated_at integer NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS dynamic_pricing_rules (id text PRIMARY KEY NOT NULL,name text NOT NULL,service_code text NOT NULL,package_code text,city_id text DEFAULT 'blr' NOT NULL,zone_id text,rule_type text NOT NULL,days_json text DEFAULT '[]' NOT NULL,start_time text,end_time text,effective_from text NOT NULL,effective_to text,adjustment_type text NOT NULL,adjustment_value real NOT NULL,coupon_policy text DEFAULT 'stackable' NOT NULL,priority integer DEFAULT 100 NOT NULL,status text DEFAULT 'draft' NOT NULL,version integer DEFAULT 1 NOT NULL,updated_by text NOT NULL,updated_at integer NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS pricing_audit_events (id text PRIMARY KEY NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,action text NOT NULL,before_json text,after_json text NOT NULL,actor_id text NOT NULL,reason text NOT NULL,created_at integer NOT NULL)"),
 ]);pricingSchemaEnsured.add(db);}
 
 export async function seedCanonicalPricingPackages(db:Db){
-  if(pricingPackagesSeeded.has(db))return;
-  await ensurePricingControlSchema(db);const now=Date.now();
-  await db.batch(seeds.map(item=>db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)")
-    .bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now)));
+  if(pricingPackagesSeeded.has(db))return;await ensurePricingControlSchema(db);
+  const ids=seeds.map(item=>item.id);const row=await db.prepare(`SELECT COUNT(*) n FROM service_packages WHERE id IN (${ids.map(()=>"?").join(",")})`).bind(...ids).first<Record<string,unknown>>();
+  if(Number(row?.n||0)!==seeds.length){const now=Date.now();await db.batch(seeds.map(item=>db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now)));}
   pricingPackagesSeeded.add(db);
 }
 

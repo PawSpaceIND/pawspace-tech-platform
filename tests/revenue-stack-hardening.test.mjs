@@ -162,14 +162,16 @@ test("reconciliation: mission booked === P&L revenue for the same seeded canonic
 test("reconciliation: revenue-crm team revenue === mission net collected — the fabricated leaderboard array is gone", async () => {
   freshDb(); seedCanonical();
   const missionId = await activeMissionWithBackfill();
-  // First GET creates the CRM engine tables and seeds leads (owners exist, zero conversions yet).
+  // First GET initializes/reads the CRM engine only; synthetic owners must not be seeded.
   const first = await call(crmEngineRoute.GET, "GET");
   assert.equal(first.status, 200, JSON.stringify(first.body).slice(0, 300));
   // Attribute the two real bookings to owners through the real conversion column.
   const now = Date.now();
   sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,converted_booking_id,recycle_cycle,opt_out,created_at,updated_at) VALUES ('LEAD-C1','cus_1','Website','Grooming','Neha','Sales Manager','qualified','day_1',1,?,?,?,0,0,'B1',0,0,?,?)").run(now, now, now, now, now);
   sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,converted_booking_id,recycle_cycle,opt_out,created_at,updated_at) VALUES ('LEAD-C2','cus_2','Website','Boarding','Priya','Sales Manager','qualified','day_1',1,?,?,?,0,0,'B2',0,0,?,?)").run(now, now, now, now, now);
-  // Second GET refreshes the still-provisional leaderboard rows from canonical truth.
+  // Refresh is an explicit staff write; GET stays observational.
+  const refreshed = await call(crmEngineRoute.POST, "POST", { action: "refresh_leaderboard" });
+  assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
   const second = await call(crmEngineRoute.GET, "GET");
   assert.equal(second.status, 200);
   const stats = second.body.stats, leaderboard = second.body.leaderboard;
@@ -186,9 +188,8 @@ test("reconciliation: revenue-crm team revenue === mission net collected — the
   assert.equal(neha.eligible_revenue, 800, "1000 captured - 200 refunded");
   assert.equal(neha.refunds, 200);
   for (const row of leaderboard) assert.equal(row.incentive_amount, 0);
-  // Owners with no conversions report honest zeros, not fabricated 19-25k figures.
-  const sanjay = leaderboard.find((row) => row.employee_name === "Sanjay");
-  assert.equal(sanjay.eligible_revenue, 0);
+  // Owners absent from real CRM work must not be fabricated into the leaderboard.
+  assert.equal(leaderboard.some((row) => row.employee_name === "Sanjay"), false, "GET must not seed a synthetic owner row");
 });
 
 // ---- 3. Command center + leadership reporting -------------------------------------------------
@@ -222,6 +223,10 @@ test("real execution: leadership report snapshots the command truth and replays 
   assert.equal(generate.body.data.duplicatePrevented, false);
   const replay = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "mission", idempotencyKey: "run-1" });
   assert.equal(replay.body.data.duplicatePrevented, true, "same idempotency key never creates a second run");
+  const rebound = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "daily", idempotencyKey: "run-1" });
+  assert.equal(rebound.status, 409, "the same key cannot be rebound to a different reporting period");
+  const badClock = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "mission", idempotencyKey: "run-bad-clock", asOf: "not-a-number" });
+  assert.equal(badClock.status, 400, "an invalid snapshot clock is rejected instead of producing a corrupt report");
   const directory = await call(leadershipRoute.GET, "GET", `missionId=${missionId}`);
   assert.equal(directory.status, 200);
   assert.equal(directory.body.runs.length, 1);

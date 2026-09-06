@@ -75,6 +75,18 @@ async function verifyUatToken(env:UatEnv,token:string):Promise<string|null>{
  return obj.email;
 }
 
+// Coalesce only simultaneously in-flight identity reads. Nothing is cached after the read settles, so a
+// role/status change is visible to the next request while a 100-way staging burst does not send 100
+// byte-identical staff/role lookups to D1.
+const uatActorReads=new WeakMap<Db,Map<string,Promise<Row|null>>>();
+async function readUatActorRow(db:Db,email:string){
+ let byEmail=uatActorReads.get(db);if(!byEmail){byEmail=new Map();uatActorReads.set(db,byEmail);}
+ const running=byEmail.get(email);if(running)return running;
+ const pending=db.prepare("SELECT u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null)
+  .finally(()=>{if(byEmail!.get(email)===pending)byEmail!.delete(email);});
+ byEmail.set(email,pending);return pending;
+}
+
 /**
  * Resolve a staff actor from a valid UAT cookie. Returns null unless UAT login is enabled, the cookie
  * verifies, AND the email is an active app_users row. Fail-closed at every step: an unknown email, a
@@ -86,15 +98,13 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  if(!token)return null;
  const email=await verifyUatToken(env,token);
  if(!email)return null;
- const user=await db.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Row>().catch(()=>null);
- // No synthesised identity. A cookie proves someone knew the access code; it does not decide who they
- // are or what they may do — the staff directory does.
+ const user=await readUatActorRow(db,email);
+ // One authoritative read keeps the fail-closed identity + role contract while avoiding a second D1
+ // round-trip on every authenticated staging request. A missing role remains NULL and grants nothing.
  if(!user||String(user.status)!=="active")return null;
  const roleCode=String(user.role_code||"").trim();
- if(!roleCode)return null;
- const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
- if(!role)return null; // a role with no definition grants nothing, rather than everything
- const permissions=parsePermissions(role.permissions_json);
+ if(!roleCode||user.permissions_json===null||user.permissions_json===undefined)return null;
+ const permissions=parsePermissions(user.permissions_json);
  return{email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
 }
 

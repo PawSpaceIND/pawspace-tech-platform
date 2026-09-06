@@ -1,0 +1,36 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-06",
+  "status": "REPORTED - NOT FIXED",
+  "title": "Seven customer-facing verticals hardcode the fixture customer TST-101, so none of them can work for a real signed-in customer",
+  "how_it_surfaced": "Probing the screen-sweep backlog in a browser. /food issued GET /api/customer-account?customerId=TST-101 while a real customer session was present. Grepping that identifier found the same constant on six more pages.",
+  "sites": [
+    "app/boarding/page.tsx:10",
+    "app/sitting/page.tsx:16",
+    "app/walking/page.tsx:22",
+    "app/taxi/canonical-taxi-page.tsx:14",
+    "app/food/canonical-food-page.tsx:8",
+    "app/funeral-memorial/page.tsx:6",
+    "app/relocation/page.tsx:7"
+  ],
+  "the_decision_was_already_made_and_never_propagated": "app/training/page.tsx:14 carries the comment 'This page used to hardcode customer TST-101 with pets TST-PET-BRUNO/TST-PET-PEPPER', and tests/training-customer-wiring.test.mjs pins 'books the signed-in customer's own dogs, never a fixture identity'. The fix was applied to exactly one vertical. So this is not a product question - it is a decision already taken, applied once.",
+  "measured_consequence": [
+    "Anonymous, public host: GET /api/customer-account?customerId=TST-101 -> 401 {\"error\":\"Authentication required\"}.",
+    "Preview host (localhost + NODE_ENV=development): 404 {\"error\":\"Canonical customer not found\"} - the development-preview actor is why these pages appear to 'work' locally at all.",
+    "Signed in as someone else: the route applies requireCustomerOwnership(db,actor,customerId), and cross-tenant refusal is already proven by tests/ptja-w3a-customer-cross-tenant.test.mjs (R01-e: every route taking a caller-supplied customerId applies SOME authorization). A real customer asking for TST-101 is refused.",
+    "So on any real host every one of these seven pages is non-functional for every customer: anonymous gets 401, signed-in gets refused for asking about an account that is not theirs."
+  ],
+  "severity": "Launch-blocking breadth. Together with P1-04 (the grooming landing page), eight of the customer-facing service surfaces have no working authenticated journey. Training is the one vertical proven working end to end (P1-02, P1-03).",
+  "not_a_data_exposure": "No customer data is exposed by this. The ownership control is what refuses these requests - it is working. The defect is that the pages ask the wrong question, not that the server answers it.",
+  "why_not_fixed_here": "Seven pages, each needing session wiring, its own pet loading and its own service-location resolution - substantial feature work per vertical rather than a targeted audit fix, and each one needs its own browser verification the way Training got. Reported with the full site list so it can be scheduled, not half-done.",
+  "not_claimed": [
+    "The seven pages were found by grep and one browser observation (/food). Only /food was driven in a browser; the other six are identified by the same constant at the same kind of call site, not individually driven.",
+    "Every measurement is local. No production or staging system was touched."
+  ],
+  "refuted_from_the_same_sweep": [
+    "/boarding returning an API 500 does NOT reproduce: nav 200, 1089 characters, no failing API call.",
+    "/partner-mobile is not a 404: it renders and fails closed with 'Verified provider identity required' for a visitor with no provider identity - correct behaviour.",
+    "/partner/funeral and /team/relocation-enquiries are thin because they render honest empty states ('No request assigned.', 'No enquiries submitted yet.'), not because they are broken."
+  ],
+  "still_open_from_the_sweep": "/food/manage (30 chars), /food/subscription-invoice (54) and /food/subscription-payment (71) render almost nothing without a query parameter. Whether anything links to them without one has not been established."
+}

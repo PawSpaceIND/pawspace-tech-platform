@@ -65,7 +65,7 @@ test("a database missing other modules names them rather than reporting their ab
   assert.equal(analytics.money.gmv, 12000, "the reads that worked report the truth");
   assert.equal(analytics.money.collected, 12000, "including the money, which is the number that was wrong");
   assert.ok(analytics.degraded, "and the modules it could not read are named");
-  assert.deepEqual(analytics.degraded.sources.sort(), ["customer experience tickets", "providers"]);
+  assert.deepEqual(analytics.degraded.sources.sort(), ["customer experience tickets", "providers", "refunds", "split payment schedules"]);
   assert.match(analytics.degraded.entries[0].reason, /no such table/);
 });
 
@@ -139,6 +139,9 @@ test("a new swallowing read cannot be added without recording what it lost", asy
     "lead-sla-governance.ts", "live-leaderboard.ts", "partner-job-feed.ts", "partner-settlement-governance.ts",
     "payroll-engine.ts", "platform-security.ts", "referral-governance.ts", "sales-productivity-governance.ts",
     "host-badges.ts", "host-reviews.ts", "tds-governance.ts",
+    // Fail-closed statutory helpers (not yet live): cold-tenant reads of the TCS/TDS ledgers degrade to an
+    // empty set the same way tds-governance.ts does. Baselined by name so the debt stays visible and finite.
+    "tcs-governance.ts", "tds-tcs-reconciliation.ts",
   ];
   const { readdir } = await import("node:fs/promises");
   const dir = new URL("../lib/", import.meta.url);

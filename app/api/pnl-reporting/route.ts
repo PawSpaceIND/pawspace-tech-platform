@@ -1,7 +1,7 @@
+import{authError,database,requirePermission,resolveActor}from"../../../lib/server-auth";
 import{generatePnlReport}from"../../../lib/pnl-reporting";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
 
 function defaultMonths(){
   const now=new Date(),toMonth=`${now.getUTCFullYear()}-${String(now.getUTCMonth()+1).padStart(2,"0")}`;
@@ -12,6 +12,12 @@ function defaultMonths(){
 
 export async function GET(request:Request){
   try{
+    // A full profit-and-loss statement is finance-restricted data. This route previously read it
+    // through a local database() helper with no actor resolution at all, so it answered anyone;
+    // every sibling finance surface (gst-accounting, people-finance, partner-finance) authorizes
+    // on finance.view, and so does this one now.
+    const actor=await resolveActor(request);
+    requirePermission(actor,"finance.view");
     const url=new URL(request.url);
     const defaults=defaultMonths();
     const fromMonth=url.searchParams.get("fromMonth")||defaults.fromMonth;
@@ -21,5 +27,7 @@ export async function GET(request:Request){
     const db=await database();
     const report=await generatePnlReport(db,{fromMonth,toMonth});
     return json({data:report});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to generate P&L report"},500);}
+  // authError keeps governed responses intact and redacts everything else, so an unexpected
+  // failure can no longer return a raw internal message to an unauthenticated caller.
+  }catch(error){return authError(error,"Unable to generate P&L report");}
 }

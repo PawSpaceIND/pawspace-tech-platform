@@ -47,6 +47,8 @@ export async function GET(request:Request){
         db.prepare("SELECT invoice_number,status,net_amount,issued_at FROM booking_invoices WHERE booking_id=?").bind(row.booking_id).first<Row>(),
       ]);
       const pricing=parseJson<Record<string,unknown>>(row.pricing_json,{});
+      const addOns=Array.isArray(pricing.addOns)?pricing.addOns.filter((item):item is string=>typeof item==="string"):[];
+      const safetyRequirements=Array.isArray(pricing.requirements)?pricing.requirements.filter((item):item is string=>typeof item==="string"):[];
       jobs.push({
         bookingId:String(row.booking_id),workOrderId:String(row.work_order_id),providerId:String(row.provider_id),providerName:String(row.provider_name),providerModel:String(row.provider_model),
         status:String(row.booking_status),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
@@ -55,6 +57,8 @@ export async function GET(request:Request){
         pets:pets.results.map(pet=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status)})),
         payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:String(row.payment_status),amount:Number(row.payment_amount||0),amountDueNow:Number(row.amount_due_now||0)},
         subscription:pricing.subscription?String(pricing.subscription):null,
+        addOns,
+        safetyRequirements,
         proof:proof?{beforePhotoRef:proof.before_photo_ref?String(proof.before_photo_ref):null,afterPhotoRef:proof.after_photo_ref?String(proof.after_photo_ref):null,checklist:parseJson<string[]>(proof.checklist_json,[]),completionNotes:proof.completion_notes?String(proof.completion_notes):null,updatedAt:Number(proof.updated_at||0)}:null,
         invoice:invoice?{invoiceNumber:String(invoice.invoice_number),status:String(invoice.status),netAmount:Number(invoice.net_amount||0),issuedAt:Number(invoice.issued_at||0)}:null,
         events:events.results.map(item=>({eventType:String(item.event_type),entityType:String(item.entity_type),actorId:String(item.actor_id),detail:parseJson<Record<string,unknown>>(item.detail_json,{}),occurredAt:Number(item.occurred_at||0)})),

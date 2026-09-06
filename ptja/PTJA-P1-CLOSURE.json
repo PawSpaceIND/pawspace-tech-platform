@@ -1,0 +1,265 @@
+{
+  "scope": "The highest-risk P1 findings only, in the six risk categories named by the user: authorization or cross-tenant exposure; client-controlled money; irreversible deletion or corruption; false KYC/provider eligibility; payment/refund/revenue misstatement; fail-open policy enforcement.",
+  "verified": 23,
+  "reproduced": 21,
+  "refuted_or_corrected": 4,
+  "fixed": [
+    {
+      "id": "F50",
+      "commit": "6e3ffcd",
+      "title": "Revoking a mandated verification left the provider in the assignment pool",
+      "correction": "syncProviderPoolEligibility applies the platform's own live=0 de-listing, at all three doors an outcome arrives through - manual record, automated run, and the IDfy callback."
+    },
+    {
+      "id": "F36",
+      "commit": "e68c21c",
+      "title": "uat-scheduling had no authorization of its own",
+      "severity_corrected": "Raised as a live cross-tenant write; it is NOT one. Executed through the production chain (worker -> session gateway -> api gateway) all four privileged actions are refused 403. Defence-in-depth gap. Fixing it brought the route into the repo's guarded sweep, which then caught an anonymous GET serving the whole day board including every customer_id, and a validate-before-authorize ordering."
+    },
+    {
+      "id": "F51",
+      "commit": "9c5c2c8",
+      "title": "An automated re-run erased a human inspector's recorded failure and note",
+      "correction": "The callback boundary's own rule - a non-decision may not overwrite a decision - applied to the sibling path."
+    },
+    {
+      "id": "F29",
+      "commit": "d6d6a78",
+      "title": "A stand-down of 0 read back as the default 6",
+      "title_corrected": "The frozen title said a limit of 4 yields more than 4. Refuted by execution: 4 reads back as 4. The defect is specific to 0 and any falsy value."
+    },
+    {
+      "id": "F35",
+      "commit": "d6d6a78",
+      "title": "A non-numeric capacity was accepted and made a host permanently unbookable behind a false SLOT_TAKEN"
+    },
+    {
+      "id": "F52",
+      "commit": "babf69d",
+      "title": "Concurrent activation minted two provider identities, the orphan unreachable by every application-keyed control",
+      "correction": "One conditional UPDATE claims the identity; both callers converge on it."
+    },
+    {
+      "id": "F23",
+      "commit": "2d13fe7",
+      "title": "Lifecycle idempotency keys were not bound to the record or action",
+      "scope": "One defect, five instances - walking, sitting, taxi, boarding stay, training session. A key reused elsewhere is now a conflict, not a duplicate."
+    },
+    {
+      "id": "F16",
+      "commit": "ca9ea30",
+      "title": "A stay balance key was globally unique, so a second booking settled with no capture event"
+    },
+    {
+      "id": "F3",
+      "commit": "ca9ea30",
+      "title": "A lead assignment key returned another lead's record as success, and starved the real lead"
+    },
+    {
+      "id": "D7",
+      "commit": "eb3527b",
+      "title": "Read-side-effects gate restated to protect DOMAIN tables",
+      "note": "Not a finding. Fallout from F36: this gate was passing only because the route it guards was unguarded."
+    }
+  ],
+  "reported_not_fixed": [
+    {
+      "id": "F49",
+      "severity": "P0-class",
+      "title": "A fully onboarded, activated, live boarding host is never written into boarding_host_profiles",
+      "why_not_fixed": "Unbuilt feature, not a defect to patch. The only writers of that table in the whole repository are the hardcoded seed in lib/boarding-governance.ts and scripts/uat-demo-seed.sql. Creating a row for a real host needs area, species, guest capacity, one-family and medication answers that onboarding does not collect - product decisions.",
+      "blast_radius": "Executed: the real host is INVISIBLE, not visible-and-unbookable. The customer GET returns 200 listing only the four fictional seed hosts, with no error and no empty state. Meet-and-greet rejects the real host and accepts a seed host. At launch, 100% of boarding supply shown to customers is seed data and 100% of genuinely onboarded hosts are unreachable and unpayable.",
+      "decision_needed": "This is the actual-provider verification blocker for Boarding."
+    },
+    {
+      "id": "F53",
+      "severity": "P1",
+      "title": "dog_walking and pet_taxi have no verification category at all",
+      "partially_refuted": "The fail-open half is REFUTED. The checklist's else-branch does return passed:true but reports {category:null, note:\"No verification category mandate is defined...\"} - an accurately-reported ABSENCE, not a silently-passed gate.",
+      "why_not_fixed": "Confirmed unfixable in configuration: setCategoryMandate refuses walker/dog_walker/pet_taxi/driver, and VERIFICATION_CATEGORY_BY_VERTICAL is a module const reachable from no API. Adding a category means deciding WHICH checks a walker and a driver must clear - a policy decision.",
+      "blast_radius": "These are the roles that take a dog out alone or drive it unaccompanied. Their only identity gate is a single staff click on the application-level verification_status, with no document and no per-check evidence row."
+    },
+    {
+      "id": "F38",
+      "severity": "P1",
+      "title": "Pausing a city, or deleting a pincode, does not stop serviceability or fulfilment",
+      "why_not_fixed": "resolveCityServiceCoverage honours the setting correctly and has NO production caller - it is referenced only from a test. Wiring it into reserve, booking and service-location means deciding what happens to in-flight bookings, which error a paused city returns, and whether staff can override. Product decisions.",
+      "blast_radius": "Executed end to end: staff paused Bengaluru (201, version 2, audited) and a customer session then reserved, confirmed, paid and received turn-by-turn directions into it. Deleting a pincode behaved identically. Pause is the only lever Ops has to stop taking orders in a city and it is inert against the money path."
+    },
+    {
+      "id": "F30",
+      "severity": "P1",
+      "title": "Travel buffer and daily job limit are enforced only in application code",
+      "why_not_fixed": "The atomic guard checks raw interval overlap; extending it to a buffer term and a per-day count is a real change to the reservation SQL under concurrency. The overnight branch already carries its capacity term into SQL, so the pattern exists - but this needs its own design pass and load testing, not a same-session patch.",
+      "measured": "Sequentially both rules are enforced with the exact refusal reasons. Interleaved, both commit: a 0-minute gap against a 30-minute configured buffer, and 3 jobs against a configured limit of 2."
+    },
+    {
+      "id": "F34",
+      "severity": "P1",
+      "title": "A reservation dated two days in the past is scheduled, confirmed and paid",
+      "why_not_fixed": "Refusing a past scheduledStart needs a boundary decision - strictly now, or a grace window for late entry and back-dated Ops corrections - and a large number of suites seed fixed past dates. Cheap to fix once the boundary is chosen; not mine to choose.",
+      "measured": "Customer session alone: reserve 200, booking 201, payment captured 1899, provider work order assigned, for an appointment two days before the wall clock. No call mentions the date."
+    },
+    {
+      "id": "F22",
+      "severity": "P0-class",
+      "title": "decline/no_show/*_unavailable regress a completed or cancelled booking to reassignment_needed",
+      "why_not_fixed": "The fix is a source-state guard per action per vertical - which states may a decline leave? That is a lifecycle policy decision across Sitting, Walking and Boarding, and the verifier found the recovery paths differ by vertical.",
+      "partially_refuted": "'Can never be restored' is exact for Boarding and for every cancelled booking. Sitting and Walking do have a forward path, but only by handing the finished booking to a DIFFERENT provider who re-runs the whole journey - assign_replacement rewrote provider_id on an already-completed booking."
+    },
+    {
+      "id": "F24",
+      "severity": "P1",
+      "title": "A customer can self-cancel an in_service booking and receive a 100% refund",
+      "why_not_fixed": "changeLockStatuses is a POLICY VALUE, currently [\"completed\",\"cancelled\"]. Whether in_service should be change-locked, and what a mid-service cancellation should refund, is a commercial decision. Note observe mode overwrites refundPercent to 100 regardless, so both policy shapes give 100%.",
+      "measured": "Rs 1,899 refunded after the service was delivered, per booking, unlimited, by a customer-only session."
+    },
+    {
+      "id": "F13",
+      "severity": "P1",
+      "title": "PAWSPACE_PAYMENT_ENV unset or empty disables verify-first",
+      "why_not_fixed": "The fix is one line, but it is a deployment-policy decision: what does an unconfigured environment MEAN? The codebase has a strong precedent for the fail-closed answer - IDFY_WEBHOOK_SECRET absent means 503 and nothing is accepted - but applying it here changes behaviour for every environment that does not set the var.",
+      "verifier_note": "Latent, not live: scripts/stage-config.mjs and scripts/release-preview-config.mjs both write \"sandbox\" explicitly, staging certification already fails on \"\", and there is no production deploy path at all."
+    },
+    {
+      "id": "F14",
+      "severity": "P1",
+      "title": "Boarding catalogue GET advertises the old price while the quote POST charges the new one",
+      "why_not_fixed": "GET reads boarding_commercial_packages, POST reads service_packages via resolveLivePrice. Making them agree means choosing which table is the catalogue of record for Boarding - a pricing-ownership decision. PTJA-P0-01 does NOT close it: the effective-window fix only restores agreement in the fallback case.",
+      "measured": "Page advertises Rs 699, quote charges Rs 1,500; 2 pets 2 nights = Rs 6,000 against Rs 2,796 advertised. Runs both directions. Requires no authenticated actor - both handlers are on the gateway's no-permission list."
+    },
+    {
+      "id": "F27",
+      "severity": "P1",
+      "title": "A customer's own reserve fabricates roster windows over Ops-published availability",
+      "why_not_fixed": "seedUatRoster on the reserve path is load-bearing for the entire UAT environment - removing it leaves no availability and NO_SCHEDULE_AVAILABLE everywhere. Separating seeded UAT roster from Ops-published availability is an environment-design decision.",
+      "measured": "Ops published 09:00-10:00 under scheduling.manage; a customer session reserved 15:00-17:00 and its request minted a 09:00-19:00 uat_roster row plus forward-dated coverage, with no audit row. The control at 20:00 was refused, so the roster gate itself works."
+    },
+    {
+      "id": "F5",
+      "severity": "P1",
+      "title": "Any customer can rebind another customer's app install through the public OTP verify endpoint",
+      "why_not_fixed": "identifyInstall's ON CONFLICT DO UPDATE needs an ownership rule: may an install ever legitimately move between customers - a shared device, a resold phone, a family account? That is a product decision about device identity.",
+      "scope_corrected": "A victim who ALREADY has an App-Inbound lead keeps it (funnel_producer_marks is customer-keyed). The lead-sweep erasure is prospective; the acquisition-attribution transfer is immediate and unconditional."
+    },
+    {
+      "id": "F32",
+      "severity": "P2 (DOWNGRADED)",
+      "title": "Second lease expiry leaves the assignment decision assigned and the offer pending",
+      "why_not_fixed": "Downgraded by the verifier and the corruption framing rejected: nothing committed is destroyed, customer checkout is correctly blocked by the guard trigger, and Ops can repair it by reassigning or cancelling. The wrong error surfaces upstream because the confirmation routes gate on the decision."
+    },
+    {
+      "id": "F15",
+      "severity": "REFUTED",
+      "title": "A Sitting/Boarding price decomposition that does not add up",
+      "refutation": "Eight governed Sitting bookings across petCount 1-3 and both payment modes, each run twice: (basePricePerPet + extraPetPrice*(n-1)) * billableUnits equals total_amount equals booking_payments.amount equals the quote, every time. Split legs sum exactly. Tampered totals are refused 409. Rs 0 exposure. The only real weakness is that pricing_json omits petCount and the total, so reconstruction needs pet_ids_json - a reporting inconvenience, P2."
+    }
+  ],
+  "method": "Five bundled verifier passes, each instructed to try to REFUTE. Every finding fixed below was then independently reproduced a second time by its own regression, observed red before a line of production code changed.",
+  "round_2": {
+    "note": "Second verification round over the 8 P1s the first five bundles did not cover. Both verifier agents for this round were killed by session-limit resets, so these were verified directly rather than by bundle.",
+    "verified": 6,
+    "fixed": 5,
+    "findings": [
+      {
+        "id": "F28",
+        "disposition": "FIXED",
+        "commit": "ad897d4",
+        "severity": "P0-class in effect",
+        "title": "A booking is confirmed and PAID for a date that was never reserved",
+        "measured": "reserve 2026-11-20 -> 200 assigned. reserve 2026-11-27 under the SAME clientRequestId -> 200 'assigned'. scheduling_reservations still holds only 11-20. POST /api/canonical-bookings for 11-27 -> 201 confirmed, booking_payments 1899 captured. The customer holds a paid booking for a day with no capacity held, against a provider whose slot is a week earlier.",
+        "correction": "Two doors closed with checks the codebase already applied elsewhere: the reserve replay refuses a different window under the same group (the same unbound-key rule as F23/F16/F3), and canonical-bookings checks the booking window against the reservation for every service, not just dog_training and boarding."
+      },
+      {
+        "id": "F31",
+        "disposition": "FIXED",
+        "commit": "8d2631e",
+        "title": "Recovery returns the failing provider as its own capacity-safe replacement",
+        "measured": "With two other live, available, collision-free providers in the zone, all three call shapes (excludeProviderId absent, undefined, blank) returned the provider ON the booking being recovered, with checks {service, zone, availability, collisionFree, capacity} all true. Passing an explicit exclusion for a DIFFERENT provider also returned it.",
+        "correction": "The booking's own provider_id is authoritative about who is being replaced and is always excluded; the caller's exclusion is honoured on top."
+      },
+      {
+        "id": "F1",
+        "disposition": "FIXED",
+        "commit": "ff33302",
+        "title": "A booking converts the newest open lead regardless of service",
+        "measured": "A customer with an older Grooming enquiry (rep A) and a newer Boarding enquiry (rep B) who books GROOMING had the conversion written onto the BOARDING lead. Rep A loses the credit, the boarding pipeline reports a sale it never made, and the grooming lead stays open chasing a customer who has already bought.",
+        "correction": "Prefer the open lead for the service actually booked, newest first within that service, using columns both rows already carry. With no service match the existing newest-open-lead behaviour is unchanged - crediting nobody would be a product decision."
+      },
+      {
+        "id": "F2",
+        "disposition": "FIXED",
+        "commit": "d37f380",
+        "title": "A breached SLA clock is counted as BOTH met and breached",
+        "measured": "A real productivity run over two first-response clocks - one breached then answered late, one met on time - reported {firstResponseClocks:2, firstResponseMet:2, firstResponseBreached:1}. Three outcomes from two clocks; a rep who missed the SLA is credited with meeting it.",
+        "correction": "COUNT only: a clock carrying breached_at did not meet its SLA whatever its later status. The state machine is untouched - what a late answer means operationally is a product decision."
+      },
+      {
+        "id": "F40",
+        "disposition": "PARTIALLY FIXED",
+        "commit": "2ae030a",
+        "title": "Concurrent city-coverage saves both claim the same version and audit the other operator's coverage",
+        "measured": "version was computed in JS from a stale read and written as excluded.version, so both concurrent saves wrote N+1. After moving the bump into SQL both callers STILL reported version 3, because the row was read back with a second SELECT that ran after both writes - each operator was returned and audited the OTHER's coverage as their own save.",
+        "correction": "SQL-side monotonic version, and RETURNING instead of a re-read so each caller gets the row its own statement wrote.",
+        "not_fixed": "The LOST UPDATE itself. Operator A's coverage is still silently replaced by B's. Refusing a save whose base version moved needs the caller to send the version it read - an API contract change and a product decision about what the operator sees on conflict."
+      },
+      {
+        "id": "F39",
+        "disposition": "CONFIRMED - LAUNCH BLOCKER, NOT FIXED",
+        "severity": "P1",
+        "title": "A second city cannot be made bookable at all",
+        "measured": "Confirmed structurally: service_zone_mappings has exactly ONE writer in the entire repository (lib/service-zones.ts:158) and it hardcodes city_id='blr'; PINCODE_ZONE_MAP is a frozen module const with no writer.",
+        "why_not_fixed": "Building a coverage-management API for new cities is a feature, not a defect patch: who may add coverage, how a pincode is validated, how zones are named and mapped. This is the multi-city launch blocker and belongs with F38."
+      },
+      {
+        "id": "F4",
+        "disposition": "PARTIALLY REFUTED BY INSPECTION - NOT FIXED",
+        "severity": "P1",
+        "title": "SLA auto-reassignment parks a breached lead in a fallback queue nothing reads",
+        "refutation": "The 'nothing reads it' half is REFUTED: lib/revenue-mission-command-center.ts counts lead_assignments with employee_email IS NULL as 'unassigned' on a command-centre surface. The queue is surfaced, though nothing works it.",
+        "not_executed": "The 'hands it straight back to the agent that failed it' half was NOT reproduced by execution. Mechanism identified by reading: runLeadSlaGovernance takes failingAgent from the CURRENT assignment row, so once a lead is parked with employee_email NULL the next cycle passes excludeEmployeeEmail:null and the original agent is eligible again. Fixing it needs a policy decision - for how long is an agent excluded from a lead they failed."
+      },
+      {
+        "id": "F33",
+        "disposition": "NOT VERIFIED",
+        "severity": "P1",
+        "title": "A provider is told 'available, 0 restrictions remaining' while a future-dated suspension is active",
+        "why": "The verifier bundle for this finding was killed by a session-limit reset, and the surface that reports 'restrictions remaining' was not located within the time available. lib/provider-workspace.ts's booking-window eligibility check uses correct interval overlap and is NOT that surface. Recorded as unverified rather than assumed."
+      }
+    ]
+  },
+  "totals_after_round_2": {
+    "frozen_findings": 55,
+    "verified": 34,
+    "fixed": 21,
+    "reported_not_fixed": 13,
+    "unverified": 21,
+    "unverified_breakdown": {
+      "P1": 2,
+      "P2": 16,
+      "P3": 2
+    },
+    "note": "21 fixed findings plus 2 additional holes surfaced by the repository's own guarded-route sweep during F36 (an anonymous GET serving the whole day board including every customer_id, and payload validation running before identity) = 23 corrections."
+  },
+  "wave1_leftovers_closed_later": {
+    "note": "These were in reported_not_fixed at the end of the first pass and were closed in the continuation, each with a permanent executable regression verified red before the fix.",
+    "closed": {
+      "F5": "install takeover — first-claim rule in lib/app-to-revenue-funnel.ts",
+      "F22": "terminal-state guard in sitting/walking/boarding lifecycle",
+      "F34": "future-window rule on the uat-scheduling reserve path",
+      "F13": "closed as W2-07-PAY-003 (explicit PAWSPACE_PAYMENT_ENV)",
+      "F49": "boarding activation refuses without a boarding host profile"
+    },
+    "regressions": "tests/ptja-w1-leftover-regressions.test.mjs (12 cases); F13 in tests/ptja-p1-regressions.test.mjs (W2-PAY-07)"
+  },
+  "wave1_leftovers_still_open": {
+    "F53": "dog_walking and pet_taxi have no verification category — which checks those services must require is a compliance decision, not an engineering one",
+    "F38": "pausing a city / deleting a pincode does not stop serviceability",
+    "F30": "travel buffer and daily job limit enforced only in application code, no DB constraint",
+    "F24": "a customer can self-cancel an in_service booking and receive a 100% refund — the refund a late cancellation earns is a pricing/policy decision",
+    "F14": "boarding catalogue GET advertises the old price while the quote POST charges the new one",
+    "F27": "a customer's own reserve fabricates roster windows over Ops-published availability",
+    "F32": "second lease expiry leaves the assignment decision assigned and the offer pending",
+    "F15": "a Sitting/Boarding price decomposition that does not add up"
+  }
+}

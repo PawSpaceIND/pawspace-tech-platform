@@ -3,6 +3,7 @@ import{governSittingBooking}from"../../../lib/sitting-governance";
 import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"../../../lib/stay-split-payments";
 import{requireSittingQuoteSandboxCapture}from"../../../lib/sitting-payment-governance";
 import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution";
+import{BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,findCustomerReplay,hasForeignReplayConflict,hasReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer}from"../../../lib/booking-replay-governance";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -16,7 +17,7 @@ type Input={
 };
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
-const sameInstant=(a:unknown,b:unknown)=>new Date(String(a)).getTime()===new Date(String(b)).getTime();
+import{sameInstant}from"../../../lib/booking-window-instant";
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Sitting booking blocked",{status:403});}
 async function ensureTables(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -33,16 +34,19 @@ async function failure(error:unknown){if(error instanceof Response){const messag
 export async function POST(request:Request){try{
  sameOriginWrite(request);const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);
  const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);
- const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Row>();if(prior)return json({data:await readBundle(db,prior,true)});
+ const replayInput={customerId:input.customer.id,serviceCode:"pet_sitting",idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Row>();
  if(!assignment||String(assignment.status)!=="assigned")return json({error:"Scheduling must be assigned before Sitting confirmation"},409);
  if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The sitter does not match the scheduling decision"},409);
- const reservations=await db.prepare("SELECT id,provider_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Row>();
+ const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Row>();
+ if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);
  if(reservations.results.length!==1)return json({error:"Sitting Gate 1 requires exactly one canonical care reservation"},409);
  const reservation=reservations.results[0];if(String(reservation.provider_id)!==input.provider.id)return json({error:"The Sitting reservation belongs to a different provider"},409);
+ if(String(reservation.service_code)!=="pet_sitting")return json({error:"Scheduling group is not a Sitting reservation"},409);
+ if(String(reservation.city_id)!==input.cityId||String(reservation.zone_id)!==input.zoneId)return json({error:"The Sitting city/zone does not match the scheduling reservation"},409);
  if(!sameInstant(reservation.scheduled_start,input.scheduledStart)||!sameInstant(reservation.scheduled_end,input.scheduledEnd))return json({error:"Sitting booking window does not match the canonical reservation"},409);
  const capture=await requireSittingQuoteSandboxCapture(db,{quoteId:input.sittingQuoteId,amount:input.amountDueNow});
- const governed=await governSittingBooking(db,{quoteId:input.sittingQuoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:capture.status,reservationCount:reservations.results.length});
+ const governed=await governSittingBooking(db,{quoteId:input.sittingQuoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:capture.status,reservationCount:reservations.results.length});
  const now=Date.now(),bookingId=`PS-UAT-SIT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,ids=input.pets.map(pet=>petId(input.customer.id,pet.sourceId)),canonicalStart=String(reservation.scheduled_start),canonicalEnd=String(reservation.scheduled_end);
  const pricingJson=JSON.stringify({sittingQuoteId:input.sittingQuoteId,catalogueVersion:governed.catalogueVersion,mode:governed.mode,billableUnits:governed.billableUnits,basePricePerPet:governed.basePricePerPet,extraPetPrice:governed.extraPetPrice,paymentReference:capture.reference,liveMoney:false});
  const statements=[
@@ -56,5 +60,5 @@ export async function POST(request:Request){try{
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];
  if(governed.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:governed.totalAmount,scheduledStart:governed.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:governed.totalAmount,paidNowAmount:governed.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
- await db.batch(statements);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
+ try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
 }catch(error){return failure(error);}}

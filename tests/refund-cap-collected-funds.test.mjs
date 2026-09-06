@@ -206,3 +206,65 @@ test("the booking total is not the refund ceiling in any service", async () => {
   }
   assert.deepEqual(offenders, [], "a refund ceiling must be collected funds, never the booking price");
 });
+
+// =====================================================================================================
+// PTJA-W2-FIN-03 (ledger W2-08-F01) — the cap is per-APPROVAL, not cumulative
+//
+// This file fixed WHICH ceiling an approval is measured against: collected money, not the booking total.
+// The ceiling was still applied one approval at a time, and nothing measured a booking's refunds in
+// aggregate, so N open cancellation requests approved N full refunds.
+//
+// MEASURED, Pet Sitting: two request_cancel calls, then two approve_cancel calls of Rs 8,000 each on a
+// booking that collected Rs 8,000. Both returned 200 with a distinct refundId; sitting_refund_ledger
+// held two rows totalling Rs 16,000, and sitting_finance_reconciliation recorded refund_total 16000 with
+// net_customer_amount 0 - the Rs 8,000 over-refund reads as zero because the net is clamped by
+// Math.max(0, captured - refundTotal). Boarding reproduces identically.
+//
+// The per-request atomic claim already in these modules is a different control and it worked correctly
+// here: it stops two approvers racing on ONE request, and these were two separate requests, each claimed
+// exactly once.
+//
+// The correction applies the ceiling this file already chose to the BOOKING rather than to a single
+// approval. Refund policy is unchanged; a partial refund followed by its remainder still works.
+// =====================================================================================================
+
+/** Raises extra cancellation requests, so later approvals have something to approve. */
+async function extraRequests(service, count) {
+  const mod = await import(service.module);
+  for (let index = 0; index < count; index += 1) {
+    await mod[service.entry](globalThis.__REFUND_DB__, {
+      bookingId: "BK-1", action: service.requestAction, actorId: REQUESTER,
+      idempotencyKey: `req-extra-${index}-${service.serviceCode}`, reason: `Cancellation request ${index + 2}`,
+    });
+  }
+}
+
+const total = (rows) => rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
+for (const service of SERVICES) {
+  test(`${service.name}: two cancellation requests cannot approve two full refunds`, async () => {
+    const { approve, refundRows } = await readyToApprove(service, { payment: { status: "captured", amount: TOTAL, dueNow: TOTAL } });
+    await extraRequests(service, 1);
+
+    await approve(TOTAL, "seed");
+    assert.equal(total(refundRows()), TOTAL, "the first full refund is legitimate");
+
+    // assertRefused uses the default key, which is deliberately NOT the key above: an idempotent replay
+    // would return the first approval's success and hide the defect rather than exercise the cap.
+    await assertRefused(approve, refundRows, TOTAL, "a second full refund on the same collected money");
+    assert.equal(total(refundRows()), TOTAL, "total approved refunds must never exceed the money collected");
+  });
+
+  test(`${service.name}: a partial refund and its remainder still work, but not a rupee past collected`, async () => {
+    // Non-vacuity. Refusing every second approval would satisfy the case above and break split refunds.
+    const { approve, refundRows } = await readyToApprove(service, { payment: { status: "captured", amount: TOTAL, dueNow: TOTAL } });
+    await extraRequests(service, 2);   // three open requests in total, raised before anything is approved
+
+    await approve(3000, "seed-a");
+    await approve(TOTAL - 3000, "seed-b");
+    assert.equal(total(refundRows()), TOTAL,
+      "a partial refund and its remainder together come to exactly what was collected");
+
+    await assertRefused(approve, refundRows, 1, "one rupee past the collected amount");
+  });
+}

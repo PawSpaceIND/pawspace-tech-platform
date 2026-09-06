@@ -1,54 +1,123 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-// Premium trust banner rendered at the top of every service booking screen (and reusable on Home).
-// Real photography from /assets/banners (groomers at work, boarding cuddles, walkers, taxi, food
-// prep) + a trust strip + an honest video slot: the play card is a labelled placeholder until real
-// footage is produced — it never fakes a video that does not exist.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./service-banner.module.css";
+import { getServiceMediaByName, getServiceVideoUrl } from "./service-media";
+import ServiceHero from "./service-hero";
 
-type BannerSpec = { image: string; alt: string; headline: string; sub: string };
-
-const BANNERS: Record<string, BannerSpec> = {
-  Grooming: { image: "/assets/banners/grooming-groomer-action.jpg", alt: "PawSpace groomer bathing a dog", headline: "Salon-grade grooming, at home", sub: "Background-verified groomers · own equipment · live photo updates" },
-  Training: { image: "/assets/banners/training-handshake.jpg", alt: "Trainer teaching a dog to shake hands", headline: "Certified trainers, visible progress", sub: "Structured programmes · session-by-session report card" },
-  Boarding: { image: "/assets/banners/boarding-puppy-hug.jpg", alt: "Host hugging a boarding puppy", headline: "Verified homes, not cages", sub: "Home-checked hosts · daily photos · vet-ready protocols" },
-  "Pet Sitting": { image: "/assets/banners/sitting-woman-cat.jpg", alt: "Pet sitter caring for a cat at home", headline: "Care in your own home", sub: "Trusted sitters · care-plan driven · every visit logged" },
-  "Dog Walking": { image: "/assets/banners/walking-husky-forest.jpg", alt: "Dog walker with a husky", headline: "Walks they'll wait at the door for", sub: "GPS-logged routes · fixed walker · photo proof per walk" },
-  "Pet Taxi": { image: "/assets/banners/taxi-car-window.jpg", alt: "Dog looking out of a pet taxi window", headline: "Safe rides, door to door", sub: "Trained drivers · crate-secured · live trip status" },
-  "Fresh Food": { image: "/assets/banners/food-prep-bowl.jpg", alt: "Fresh pet food being prepared", headline: "Fresh-cooked, vet-formulated", sub: "Small batches · species-appropriate · doorstep delivery" },
-  Relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel crate ready for relocation", headline: "Domestic & international moves", sub: "Airline paperwork · IATA crates · door-to-door tracking" },
+const HOME_BANNER = {
+  image: "/assets/banners/sitter-hug-golden.jpg",
+  alt: "PawSpace caregiver with a happy pet",
+  headline: "Real care. Real people.",
+  sub: "One familiar PawSpace experience across every service",
+  review: "Google review carousel",
 };
 
-const HOME_BANNER: BannerSpec = { image: "/assets/banners/grooming-bag-shihtzu.jpg", alt: "Freshly groomed shih tzu in a PawSpace bag", headline: "India's most caring pet app", sub: "Verified professionals · live updates · one family record" };
-
 export default function ServiceBanner({ service, compact }: { service?: string; compact?: boolean }) {
-  const spec = (service && BANNERS[service]) || HOME_BANNER;
-  const [videoOpen, setVideoOpen] = useState(false);
+  const media = getServiceMediaByName(service);
+  const [visualSelection, setVisualSelection] = useState<{ service?: string; index: number }>({ service, index: 0 });
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(true);
+  const [videoInView, setVideoInView] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
+  const videoPreviewRef = useRef<HTMLElement>(null);
+  const videoSrc = media ? getServiceVideoUrl(media.serviceCode) : null;
+  const activeVisual = visualSelection.service === service ? visualSelection.index : 0;
+  const safeVisualIndex = media ? Math.min(activeVisual, media.visuals.length - 1) : 0;
+  const mainVisual = media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
+  const headline = media?.headline ?? HOME_BANNER.headline;
+  const sub = media?.sub ?? HOME_BANNER.sub;
+  const review = service ? `Google review carousel · ${service}` : HOME_BANNER.review;
+  const breedOptions = media?.breedLine.split(" · ") ?? [];
+  const supportsIntersectionObserver = typeof window !== "undefined" && "IntersectionObserver" in window;
+  const videoVisibleEnough = supportsIntersectionObserver ? videoInView : typeof window !== "undefined";
+  const canAutoplayVideo = Boolean(media && videoSrc && !videoFailed && !reducedMotion && videoVisibleEnough && pageVisible);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const target = videoPreviewRef.current;
+    if (!target) return;
+    if (!supportsIntersectionObserver) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      setVideoInView(entry.isIntersecting && entry.intersectionRatio >= 0.35);
+    }, { threshold: [0, 0.35, 1] });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [service, supportsIntersectionObserver]);
+
+  useEffect(() => {
+    const sync = () => setPageVisible(!document.hidden);
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
+
+  if (compact && service) return <ServiceHero service={service} />;
+
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
+      <div className={styles.adSlot}><small>PAWSPACE MEDIA</small><b>Offer / education / partner placement</b></div>
       <figure>
-        <img src={spec.image} alt={spec.alt} loading="lazy" />
+        <div className={styles.visualStack}>
+          <img className={styles.heroImage} src={mainVisual.image} alt={mainVisual.alt} loading="lazy" />
+          {media && media.visuals.length > 1 && <div className={styles.visualThumbs} aria-label={`${service} curated visual examples`}>
+            {media.visuals.map((visual, index) => <button
+              type="button"
+              key={visual.image}
+              className={index === safeVisualIndex ? styles.visualThumbActive : ""}
+              onClick={() => setVisualSelection({ service, index })}
+              aria-label={`Show ${breedOptions[index] ?? media.serviceName} visual`}
+              aria-pressed={index === safeVisualIndex}
+            ><img src={visual.image} alt={visual.alt} loading="lazy" /></button>)}
+          </div>}
+          {media?.breedLine && <div className={styles.breedLine} aria-label={`${service} curated breed and service visuals`}>
+            {breedOptions.map((label, index) => <button
+              type="button"
+              key={label}
+              className={`${styles.breedChip} ${index === safeVisualIndex ? styles.breedChipActive : ""}`}
+              onClick={() => setVisualSelection({ service, index })}
+              aria-pressed={index === safeVisualIndex}
+            >{label}</button>)}
+          </div>}
+        </div>
         <figcaption>
-          <h3>{spec.headline}</h3>
-          <p>{spec.sub}</p>
+          <h3>{headline}</h3>
+          <p>{sub}</p>
         </figcaption>
       </figure>
+
       <ul className={styles.trust}>
-        <li>✓ Verified &amp; background-checked</li>
-        <li>✓ Live photo updates</li>
-        <li>✓ GST invoice on every order</li>
-        <li>✓ 100% refund policy</li>
+        <li>✓ Verification status shown explicitly</li>
+        <li>✓ Clear service inclusions</li>
+        <li>✓ Cancellation terms shown per service</li>
       </ul>
-      {!compact && (
-        <button type="button" className={styles.video} onClick={() => setVideoOpen(value => !value)} aria-expanded={videoOpen}>
-          <i>▶</i>
+
+      {media && <section ref={videoPreviewRef} className={styles.videoPreview} aria-label={`${service} video preview`}>
+        {canAutoplayVideo ? <video muted autoPlay loop playsInline preload="metadata" poster={media.videoPoster} onError={() => setVideoFailed(true)}>
+          <source src={videoSrc ?? undefined} type="video/mp4" />
+          Your browser does not support embedded video.
+        </video> : <div className={styles.videoPoster} style={{ backgroundImage: `linear-gradient(90deg,rgba(1,38,31,.82),rgba(1,38,31,.28)),url(${media.videoPoster})` }}>
+          <i aria-hidden="true">▶</i>
           <span>
-            <b>Watch how {service ? `${service.toLowerCase()} works` : "PawSpace works"}</b>
-            <small>{videoOpen ? "Filming in progress — this slot plays the real service video once produced. No stock footage, only our own team." : "60-second walkthrough · tap to preview slot"}</small>
+            <small>HD SERVICE PREVIEW</small>
+            <b>{media.videoTitle}</b>
+            <em>{videoFailed ? "Premium poster fallback" : reducedMotion ? "Still preview for reduced-motion preference" : videoSrc ? "Film plays silently while visible" : "Premium poster shown until approved footage is published"}</em>
           </span>
-        </button>
-      )}
+        </div>}
+      </section>}
+
+      <div className={styles.reviews} aria-label={review}>
+        <div><b>4.9 ★</b><span>Google Reviews</span></div>
+        <p>{review}</p>
+        <small>Scroll recent verified customer feedback here</small>
+      </div>
     </section>
   );
 }

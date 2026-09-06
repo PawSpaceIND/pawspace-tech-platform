@@ -1,42 +1,12 @@
-import {resolveZoneByPincode,listServiceZones,seedDefaultZones} from"../../../lib/service-zones";
+import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{validateIndianPincode}from"../../../lib/pincode-validation";
+import{cityFulfilmentVerdict}from"../../../lib/city-coverage-authority";
+import{resolveZoneByPincode,listServiceZones,seedDefaultZones}from"../../../lib/service-zones";
 
 type Db=D1Database;
+async function ensureDb():Promise<Db>{const{env}=await import("cloudflare:workers");return(env as{DB:Db}).DB;}
+function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 
-async function ensureDb():Promise<Db>{
-  const{env}=await import("cloudflare:workers");
-  return(env as{DB:Db}).DB;
-}
+export async function GET(request:Request):Promise<Response>{const url=new URL(request.url),pincode=url.searchParams.get("pincode"),action=url.searchParams.get("action")||"resolve";try{const db=await ensureDb();if(action==="resolve"){const validated=validateIndianPincode(pincode);if(!validated.ok)return Response.json({error:validated.reason==="missing"?"Pincode required":"Invalid pincode",code:validated.reason==="missing"?"pincode_required":"invalid_pincode"},{status:400});const result=await resolveZoneByPincode(db,validated.pincode);if(!result)return Response.json({error:"Zone not found for this pincode"},{status:404});const verdict=await cityFulfilmentVerdict(db,String(result.assignment.cityId||""),validated.pincode);if(!verdict.open)return Response.json({error:"PawSpace is not currently serving this area",code:verdict.reason,cityId:verdict.cityCode},{status:409});return Response.json({data:result,productionReady:false});}if(action==="list")return Response.json({data:await listServiceZones(db),productionReady:false});if(action==="seed")return Response.json({error:"Seeding requires an authenticated POST"},{status:405,headers:{allow:"POST"}});return Response.json({error:"Unknown action"},{status:400});}catch(e){return Response.json({error:e instanceof Error?e.message:String(e)},{status:500});}}
 
-export async function GET(request:Request):Promise<Response>{
-  const url=new URL(request.url);
-  const pincode=url.searchParams.get("pincode");
-  const action=url.searchParams.get("action")||"resolve";
-
-  try{
-    const db=await ensureDb();
-
-    if(action==="resolve"){
-      if(!pincode)return new Response(JSON.stringify({error:"Pincode required"}),{status:400,headers:{"content-type":"application/json"}});
-
-      const result=await resolveZoneByPincode(db,pincode);
-      if(!result)return new Response(JSON.stringify({error:"Zone not found for this pincode"}),{status:404,headers:{"content-type":"application/json"}});
-
-      return new Response(JSON.stringify({data:result,productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
-    }
-
-    if(action==="list"){
-      const zones=await listServiceZones(db);
-      return new Response(JSON.stringify({data:zones,productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
-    }
-
-    if(action==="seed"){
-      await seedDefaultZones(db);
-      return new Response(JSON.stringify({message:"Default zones seeded",productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
-    }
-
-    return new Response(JSON.stringify({error:"Unknown action"}),{status:400,headers:{"content-type":"application/json"}});
-  }catch(e){
-    const message=e instanceof Error?e.message:String(e);
-    return new Response(JSON.stringify({error:message}),{status:500,headers:{"content-type":"application/json"}});
-  }
-}
+export async function POST(request:Request):Promise<Response>{try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"settings.manage");const body=await request.json().catch(()=>({})) as Record<string,unknown>;if(String(body.action||"")!=="seed")return Response.json({error:"Unknown action"},{status:400});const db=await database();await seedDefaultZones(db);await securityAudit(db,actor,"service_zones.seed","service_zone",null,"completed",{});return Response.json({message:"Default zones seeded",productionReady:false});}catch(error){return authError(error,"Unable to seed service zones");}}

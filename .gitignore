@@ -47,3 +47,25 @@ next-env.d.ts
 .runtime-d1/
 scratchpad/
 *.tsbuildinfo
+
+# Dependency trees anywhere in the workspace. "/node_modules" only anchored the root, so
+# backend/node_modules was tracked — 3,616 files and 76 MB of installed packages that CI overwrites
+# with `npm ci` on every run.
+node_modules/
+
+# Compiled output anywhere, not just the root. "/dist/" was root-anchored, so backend/dist was tracked
+# even though `npm test` in backend rebuilds it via tsc before every run.
+dist/
+
+# Local wrangler/miniflare D1 persistence written by the D1 regression workers. Only .runtime-d1 was
+# listed, so the other three reappeared as untracked noise after every local run.
+.runtime-d1/
+.pricing-control-d1/
+.scheduler-d1/
+.production-readiness-d1/
+
+# D1 database dumps. These are FULL COPIES of customer data - names, phone numbers,
+# addresses, payment records. scripts/d1-backup.mjs writes here by default, and a dump
+# committed to a repository is a data breach that survives in history forever.
+backups/
+*.sql.manifest.json

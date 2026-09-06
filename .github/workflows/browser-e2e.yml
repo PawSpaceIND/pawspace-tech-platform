@@ -1,0 +1,86 @@
+name: Browser E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright-personas:
+    name: Playwright customer partner admin
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Run real browser personas against local Miniflare/Vite
+        run: npx playwright test e2e/customer-booking.spec.ts e2e/partner-journey.spec.ts e2e/admin-operations.spec.ts --project=chromium
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-evidence
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+
+  razorpay-sandbox:
+    name: Razorpay sandbox safety and provider check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAY_SANDBOX_PAYMENT_ID: ${{ secrets.RAZORPAY_SANDBOX_PAYMENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Prove live keys are rejected before any provider request
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output=$(RAZORPAY_KEY_ID_SANDBOX=rzp_live_forbidden RAZORPAY_KEY_SECRET_SANDBOX=not-a-secret node scripts/e2e/razorpay-sandbox.mjs 2>&1)
+          status=$?
+          set -e
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'requires an rzp_test_ key id'
+          if printf '%s\n' "$output" | grep -q 'not-a-secret'; then
+            echo 'Sandbox harness leaked the credential value.'
+            exit 1
+          fi
+          echo 'PASS live-key rejection and secret redaction guard'
+      - name: Run real Razorpay sandbox provider check when credentials are configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${RAZORPAY_KEY_ID_SANDBOX:-}" ] || [ -z "${RAZORPAY_KEY_SECRET_SANDBOX:-}" ]; then
+            echo 'SKIP real Razorpay provider check: sandbox credentials are not configured in GitHub Actions.'
+            exit 0
+          fi
+          npm run test:razorpay:sandbox

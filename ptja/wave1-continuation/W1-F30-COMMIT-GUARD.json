@@ -1,0 +1,59 @@
+{
+  "finding": "F30",
+  "domain": "04-scheduling",
+  "title": "Travel buffer and max-daily-jobs were enforced only in application code; the atomic reservation guard checked raw overlap alone",
+  "severity": "P1",
+  "class": "data-integrity",
+  "status": "fixed",
+  "evidence_class": "real_execution",
+  "file": "app/api/uat-scheduling/route.ts insertReservations",
+
+  "reproduction": "scratchpad repro driving the REAL route twice through a D1 shim that runs the second request at the moment the first request's reservation batch begins - the window two concurrent Workers requests actually share.",
+
+  "measured_before": {
+    "buffer_sequential_baseline": "A 04:00-06:00Z -> 200 groom_arun; B 06:15-08:15Z -> 409 NO_SCHEDULE_AVAILABLE ['Existing booking conflicts with travel/service buffer'].",
+    "buffer_concurrent": "B (interleaved) -> 200 AND A -> 200. Two durable rows 15 minutes apart for a groomer whose configured travel_buffer_minutes is 30.",
+    "daily_cap_concurrent": "groom_arun capped at 2 jobs/day. Three reserves, the third interleaved -> all three 200, three durable rows against a cap of 2."
+  },
+
+  "measured_after": {
+    "buffer_concurrent": "exactly one commits; the loser is answered 409 SLOT_TAKEN and exactly one row is durable.",
+    "daily_cap_concurrent": "two rows durable against the cap of 2; the third is answered 409 SLOT_TAKEN.",
+    "non_conflicting_control": "a 45-minute gap against a 30-minute buffer still commits, sequentially AND when interleaved. Both rows durable."
+  },
+
+  "consequence_closed": "Two customers booking at the same moment produced a groomer with jobs 15 minutes apart in different parts of Bangalore, where the platform's own configured travel buffer is 30 minutes - so the second customer would be late or cancelled, and neither customer nor Ops was told. Separately, a provider was committed to more jobs in a day than their own profile caps. Both states were durable, neither surfaced an error, and the only difference between the refused case and the accepted one was request timing.",
+
+  "rule_source": "backend/src/scheduling.ts defines the buffer and daily-limit rules as conditions of eligibility; app/api/uat-scheduling/route.ts defined the committing guard as raw overlap alone. The two disagreed. The overnight branch beside it already commits its own rule atomically with SUM(capacity_units)+units<=capacity inside the same INSERT ... SELECT - this is the same treatment for the appointment branch. No product decision is involved.",
+
+  "fix": {
+    "files_changed": [
+      "app/api/uat-scheduling/route.ts - the non-overnight INSERT ... SELECT guard now widens the overlap bounds by the provider's own travel_buffer_minutes and adds a same-local-day count against the provider's own max_daily_jobs",
+      "backend/src/scheduling.ts - cityOffsetMinutes is exported so the SQL guard keys its daily count on the same local day the engine does"
+    ],
+    "a_repo_control_caught_a_first_draft": "The first version restated the city offset inline as `cityIdFor(input)===\"blr\"?330:0`. tests/city-propagation-closure.test.mjs asserts the scheduling route contains no hardcoded city id and failed on it. The offset is now imported from the engine that owns it - one definition, and the control was right."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w1-f30-commit-guard.test.mjs",
+    "cases": 6,
+    "sabotage_verification": [
+      "Buffer widening removed, daily cap intact -> cases 2 and 4 fail, 4 pass.",
+      "Daily-cap condition removed, buffer intact -> case 3 fails alone, 5 pass.",
+      "Fix restored -> 6/6."
+    ],
+    "non_vacuity_controls": [
+      "case 1: the sequential baseline still refuses, so the eligibility rule itself is still present and the concurrent case cannot pass for the wrong reason.",
+      "case 5: a 45-minute gap against a 30-minute buffer still reserves - the guard must reject conflicts, not second bookings.",
+      "case 6: the same non-conflicting booking still commits when interleaved - the guard must reject conflicts, not concurrency.",
+      "case 4: the loser is answered 409 SLOT_TAKEN rather than 500 or silence, so the fix cannot be satisfied by dropping a reservation quietly."
+    ]
+  },
+
+  "gates": {
+    "full_repository_regression": "3161/3161",
+    "typecheck": "clean",
+    "lint": "0 errors",
+    "test_churn": "none"
+  }
+}

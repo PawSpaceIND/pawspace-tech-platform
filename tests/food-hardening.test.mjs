@@ -47,7 +47,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FOOD_DB__ = makeD1(sqlite); }
+function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FOOD_DB__ = makeD1(sqlite); sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)"); sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-dog-f1","cus_f1","dog"); sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-cat-f1","cus_f1","cat"); }
 
 const commercialRoute = await import("../app/api/food-commercial/route.ts");
 const ordersRoute = await import("../app/api/food-orders/route.ts");
@@ -106,7 +106,8 @@ const NOW = Date.now();
 const DAY = 86_400_000;
 
 async function quoteVia(sku, quantity, zoneId = "blr-east") {
-  const res = await call(commercialRoute.POST, "POST", { sku, quantity, zoneId });
+  const petId = sku === CAT_SKU ? "pet-cat-f1" : "pet-dog-f1";
+  const res = await call(commercialRoute.POST, "POST", { sku, quantity, zoneId, customerId: CUSTOMER.id, petIds: [petId] });
   return { status: res.status, quote: res.body.data, error: res.body.error };
 }
 async function orderVia(quote, key, customer = CUSTOMER, zoneId = "blr-east") {
@@ -152,7 +153,7 @@ test("real execution: quantity caps and zone scoping are enforced server-side on
   assert.match(String(over.error), /1-5/);
   assert.equal((await quoteVia(DOG_SKU, 0)).status, 409);
   // Zone without seeded inventory: no quote at all
-  const wrongZone = await quoteVia(DOG_SKU, 1, "blr-north");
+  const wrongZone = await quoteVia(DOG_SKU, 1, "unsupported-zone");
   assert.equal(wrongZone.status, 404, "a zone with no UAT inventory row must not quote");
   // Zone flip between quote and order is rejected
   const { quote } = await quoteVia(DOG_SKU, 1);
@@ -186,10 +187,24 @@ test("real execution: order derives everything from the server quote, reserves i
   assert.deepEqual(inventory(DOG_SKU), { available_units: 30, reserved_units: 2 });
 });
 
+test("real execution: a Food idempotency key is bound to its quote and delivery context", async () => {
+  freshDb();
+  const { quote: firstQuote } = await quoteVia(DOG_SKU, 1);
+  const created = await orderVia(firstQuote, "food-context-key");
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const { quote: otherQuote } = await quoteVia(CAT_SKU, 1);
+  const collision = await orderVia(otherQuote, "food-context-key");
+  assert.equal(collision.status, 409);
+  assert.equal(collision.body.error, "Unable to create canonical Food order");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM food_orders").get().count, 1);
+  assert.deepEqual(inventory(CAT_SKU), { available_units: 30, reserved_units: 0 });
+  assert.equal(sqlite.prepare("SELECT status FROM food_commercial_quotes WHERE id=?").get(otherQuote.quoteId).status, "open");
+});
+
 test("REGRESSION lib/food-governance.ts: a single-use quote can no longer produce two orders under a concurrent double-submit", async () => {
   freshDb();
   const db = globalThis.__FOOD_DB__;
-  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 2, zoneId: "blr-east", paymentMode: "sandbox_deferred" });
+  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 2, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: CUSTOMER.id, petIds: ["pet-dog-f1"] });
   // Two requests, DIFFERENT idempotency keys, same quote, in flight together (retry-after-timeout shape).
   // Pre-fix both passed the read-only status pre-check and both committed: 2 orders, 4 units reserved.
   const results = await Promise.allSettled([
@@ -258,8 +273,14 @@ test("real execution: delivery proof pipeline is scan-gated and state-gated; fin
   await fulfil(order.orderId, "pack_order");
   const early = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_package_proof", idempotencyKey: "p3", mediaRef, note: "sealed pack photo" });
   assert.equal(early.status, 409, "unscanned media must never count as proof");
-  const scan = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4", mediaRef, scanResult: "clean" });
-  assert.equal(scan.status, 200);
+  // Maker/checker: the actor who submitted the media cannot scan-approve it. Food proof was the only
+  // one of the five proof libraries missing this refusal (PTJA W2-B4-M02); the other four have always
+  // had it, and tests/walking-taxi-ops-hardening.test.mjs asserts exactly this pair for Dog Walking.
+  const selfScan = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4-self", mediaRef, scanResult: "clean" });
+  assert.equal(selfScan.status, 403, "the submitter must not scan-approve their own food proof");
+  sqlite.prepare("INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('usr-food-checker','food.checker@pawspace.test','Food checker','manager','active',?,?)").run(NOW, NOW);
+  const scan = await callAs(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4", mediaRef, scanResult: "clean" }, "food.checker@pawspace.test");
+  assert.equal(scan.status, 200, JSON.stringify(scan.body));
   const pkg = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_package_proof", idempotencyKey: "p5", mediaRef, note: "sealed pack photo" });
   assert.equal(pkg.status, 200, JSON.stringify(pkg.body));
   // Delivery proof requires delivered state
@@ -417,7 +438,7 @@ test("real execution: renewal generates a payment LINK (no auto-charge), payment
 
 test("full chain: quoteFoodCart/placeQuotedFoodOrders (the food-flow path) surface in food-ops and food-finance with exact amounts", async () => {
   freshDb(); installFetchStub();
-  const cart = await quoteFoodCart([{ sku: DOG_SKU, quantity: 1 }, { sku: CAT_SKU, quantity: 2 }]);
+  const cart = await quoteFoodCart([{ sku: DOG_SKU, quantity: 1, petIds: ["pet-dog-f1"] }, { sku: CAT_SKU, quantity: 2, petIds: ["pet-cat-f1"] }], "blr-east", CUSTOMER.id);
   assert.equal(cart.serverTotal, 1797, "799 + 2 x 499, all server-computed");
   const orders = await placeQuotedFoodOrders({ quotes: cart.quotes, customer: CUSTOMER });
   assert.equal(orders.length, 2);
@@ -511,7 +532,7 @@ test("real execution: delivered orders refuse cancellation; quality incidents fl
 test("contract: gateway permission map, DB access rule, and team surfaces for the food stack", () => {
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   assert.match(gateway, /food-orders"\)return "scheduling\.book"/);
-  assert.match(gateway, /food-ops"\)return method==="GET"\?"bookings\.view":"bookings\.manage"/);
+  assert.match(gateway, /food-ops"\)return "bookings\.manage"/);
   assert.match(gateway, /food-subscriptions"[\s\S]{0,250}\["process_due","record_payment"\]\.includes\(action\)\?"finance\.manage":"scheduling\.book"/);
   assert.match(gateway, /food-finance"[\s\S]{0,250}"request_cancel"\?"scheduling\.book":"finance\.manage"/);
   assert.match(gateway, /food-fulfilment"[\s\S]{0,200}scope"\)==="customer"\?"scheduling\.book":"bookings\.view"/);
@@ -523,6 +544,8 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   // The fixes stay in place
   const governance = fs.readFileSync(new URL("../lib/food-governance.ts", import.meta.url), "utf8");
   assert.match(governance, /WHERE id=\? AND status='open'"\)\.bind\(now,orderId,input\.quoteId\)\.run\(\)/, "quote claim must stay an atomic checked UPDATE");
+  assert.match(governance, /reserved_units\+\?<=available_units/, "inventory reservation must be capacity-guarded in the mutation");
+  assert.match(governance, /reservation\.meta\?\.changes/, "the capacity claim must be checked before order records are created");
   const subscription = fs.readFileSync(new URL("../lib/food-subscription-governance.ts", import.meta.url), "utf8");
   assert.match(subscription, /!Number\.isFinite\(interval\)\|\|interval<7\|\|interval>90/, "interval validation must reject non-finite values");
   // Team surfaces wire to the food APIs through the client libs

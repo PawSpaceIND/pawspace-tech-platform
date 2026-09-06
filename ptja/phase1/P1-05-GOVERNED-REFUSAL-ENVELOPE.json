@@ -1,0 +1,43 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-05",
+  "ref": "PTJA-P1-F33",
+  "status": "FIXED",
+  "title": "A governed refusal was double-encoded, so the customer was shown the envelope instead of the sentence",
+  "measured": [
+    "{\"error\":\"{\\\"error\\\":\\\"Authentication required\\\"}\"}",
+    "Seen against the real POST handler while probing the authorization boundary for P1-04."
+  ],
+  "root_cause": "app/api/canonical-bookings/route.ts caught a thrown Response and re-wrapped error.text() as {error:<text>}. Governance modules throw two shapes: a plain sentence (lib/training-commercial-governance.ts, lib/boarding-governance.ts) and a JSON envelope (lib/sitting-governance.ts and the auth layer, via governedJsonError). Reading both as plain text put the serialised envelope into the field the UI renders.",
+  "fix": "app/api/canonical-bookings/route.ts: a governedRefusalBody helper re-emits the governance module's OWN envelope when the thrown Response carried one, so the sentence reaches the customer AND the fields a module authored for a client (lib/grooming-policy-governance.ts sends code/cityId/zoneId) stay at the top level instead of being flattened into a string. A plain-sentence throw is passed through untouched.",
+  "regression": "tests/ptja-p1-governed-refusal-envelope.test.mjs - 3 cases against the real POST handler",
+  "red_first": {
+    "P1-E02": "RED - the customer was shown {\"error\":\"Authentication required\"} inside the error field"
+  },
+  "non_vacuity_controls_green_throughout": [
+    "P1-E01 - a Sitting commercial refusal still arrives as its own sentence",
+    "P1-E03 - a plain-text Training refusal is unchanged by the fix"
+  ],
+  "sabotage": [
+    {
+      "control": "revert to reading the whole body as text",
+      "result": "RED - P1-E02 only; both controls stayed GREEN"
+    },
+    {
+      "control": "convert every governed refusal to 500",
+      "result": "RED - the rewritten status case in tests/grooming-missing-policy-response.test.mjs"
+    }
+  ],
+  "severity": "Same class as P1-01: not security, not money - the difference between a customer who reads a sentence and one who reads a JSON blob.",
+  "not_claimed": [
+    "Only the canonical-bookings handler was corrected. Other routes that re-wrap a thrown Response have not been swept."
+  ],
+  "shadowed_test_found": {
+    "file": "tests/grooming-missing-policy-response.test.mjs",
+    "case": "canonical booking preserves thrown governed response status instead of converting it to 500",
+    "what": "It asserted the catch clause's exact SOURCE TEXT with a regex, so it broke the moment that clause was corrected - even though the behaviour it names was preserved and improved. A source-text pin cannot distinguish a change that breaks the behaviour from one that fixes it.",
+    "how_it_was_updated": "Rewritten to drive the real handler: a governance module that throws a 409 Response must come back as a 409 carrying its own sentence, never a 500 and never an envelope. Verified by sabotage: forcing status 500 turns it red.",
+    "honest_limit": "That case does NOT go red under the raw-text sabotage, because the Training refusal it drives is a plain sentence and so is unaffected by the envelope change. The envelope behaviour is covered by P1-E02 instead. Two cases, two properties - said plainly rather than claimed as one."
+  },
+  "not_covered": "lib/grooming-policy-governance.ts throws an envelope carrying code/cityId/zoneId. The fix re-emits those fields, but this harness stops earlier at a plain-text grooming refusal, so field preservation is implemented and NOT pinned by a case. Recorded rather than asserted loosely."
+}

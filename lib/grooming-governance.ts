@@ -1,4 +1,5 @@
 import { resolveLivePrice } from "./live-pricing-resolver";
+import { addCalendarMonthsClamped } from "./subscription-calendar";
 
 export type GroomingPetType="dog"|"cat"|"other";
 export type GroomingOfferType="regular"|"young"|"subscription";
@@ -28,8 +29,8 @@ export const groomingCatalogue:GroomingCatalogueItem[]=[
 const defaultSubscriptionPlans=[
   {id:"gsubplan_blr_sub_3_dog",planCode:"sub-3-dog",name:"3 sessions · Dog",price:3597,sessions:3,validityValue:4,validityUnit:"months",pets:["dog"],servicePackageCode:"dog-basic"},
   {id:"gsubplan_blr_sub_3_cat",planCode:"sub-3-cat",name:"3 sessions · Cat Routine",price:2999,sessions:3,validityValue:4,validityUnit:"months",pets:["cat"],servicePackageCode:"cat-routine"},
-  {id:"gsubplan_blr_sub_6",planCode:"sub-6",name:"6 sessions",price:6594,sessions:6,validityValue:8,validityUnit:"months",pets:["dog","cat"],servicePackageCode:"dog-basic"},
-  {id:"gsubplan_blr_sub_12",planCode:"sub-12",name:"12 sessions",price:11988,sessions:12,validityValue:15,validityUnit:"months",pets:["dog","cat"],servicePackageCode:"dog-basic"},
+  {id:"gsubplan_blr_sub_6",planCode:"sub-6",name:"6 sessions · Semiannual",price:6594,sessions:6,validityValue:6,validityUnit:"months",pets:["dog","cat"],servicePackageCode:"dog-basic"},
+  {id:"gsubplan_blr_sub_12",planCode:"sub-12",name:"12 sessions · Annual",price:11988,sessions:12,validityValue:12,validityUnit:"months",pets:["dog","cat"],servicePackageCode:"dog-basic"},
   {id:"gsubplan_blr_sub_trim",planCode:"sub-trim",name:"3 Just Trim sessions",price:4197,sessions:3,validityValue:4,validityUnit:"months",pets:["dog","cat"],servicePackageCode:"dog-trim"},
 ] as const;
 
@@ -86,4 +87,4 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
   };
 }
 
-export function subscriptionExpiry(startedAt:number,validityValue:number,validityUnit:"days"|"months"){const date=new Date(startedAt);if(validityUnit==="days")date.setUTCDate(date.getUTCDate()+validityValue);else date.setUTCMonth(date.getUTCMonth()+validityValue);return date.getTime();}
+export function subscriptionExpiry(startedAt:number,validityValue:number,validityUnit:"days"|"months"){if(validityUnit==="months")return addCalendarMonthsClamped(startedAt,validityValue);const date=new Date(startedAt);date.setUTCDate(date.getUTCDate()+validityValue);return date.getTime();}

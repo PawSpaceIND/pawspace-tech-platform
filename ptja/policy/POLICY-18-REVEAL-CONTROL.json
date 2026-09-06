@@ -1,0 +1,50 @@
+{
+  "item": "W3-RU (ledger item 13)",
+  "title": "The staff PII reveal control, short-lived and field-scoped",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (7 of 11 failing), then GREEN. Five sabotage reversions.",
+
+  "measured_before": {
+    "unusable_by_design": "app/api/customer-data-reveal existed and was audited, and every staff list served masked values - but nothing called it. Somebody looking at a masked number while a customer is on the phone had no sanctioned way to see it, and the predictable outcome of an unusable control is a spreadsheet kept outside the platform where nothing is audited at all.",
+    "no_expiry": "A reveal never ended. The audit recorded a moment while the value stayed on screen all afternoon, which makes the trail a polite fiction.",
+    "coarse_audit": "data_class recorded 'contact' or 'contact+address' - it could not answer the only question anybody asks that table later: what did this person actually see?",
+    "all_or_nothing": "There was no way to ask for just the doorstep. Confirming an address handed over the phone and the email as well."
+  },
+
+  "approved_rules_implemented": {
+    "role_authorized": "The masked read publishes revealAvailable, so the control only offers itself where a reveal would actually succeed. A button that is always shown and always fails teaches people to ignore refusals.",
+    "mandatory_reason": "Typed before the request is sent. The API refuses without one, so the disabled button is a courtesy rather than the control - sabotage D removes it and RU-08 goes red.",
+    "short_lived": "revealTtlSeconds is a governed setting, defaulting to 600s and bounded to 60-900. The validator refuses anything outside that: a reveal that never expires is not a reveal, it is an unmasking.",
+    "automatic_remasking": "Driven by the server's revealExpiresAt, never a duration the screen invents, and the timer is cleared on unmount - without that a component unmounting mid-reveal leaves a timer holding a closure over the revealed value.",
+    "field_level_audit": "data_class is now the list of fields actually revealed, derived from the DECISION rather than the request, so a field that was asked for and refused is not logged as revealed.",
+    "field_scoped_reveal": "fields:[\"address\"] returns the address and leaves the phone masked.",
+    "masked_by_default": "The worklist renders the control instead of the contact field. The screen never holds a raw value it was not explicitly given - a screen that already had it would make the whole exercise theatre."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w3-reveal-ui.test.mjs",
+    "cases": 11,
+    "red_before": "7 of 11 failing.",
+    "note_on_the_four_that_passed": "RU-03 passed on arrival for the WRONG reason - the coarse data_class happened not to contain the word 'phone'. Sabotage C proves it now measures the field scoping it names.",
+    "sabotage_verification": [
+      "A reveal never expires -> RU-01 red",
+      "B audit records a coarse data class again -> RU-02 red",
+      "C asking for one field hands over all of them -> RU-03, RU-04 red",
+      "D control submits without a reason -> RU-08 red",
+      "E control never remasks -> RU-09 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "other_screens": "The control is wired into the customer worklist. Customer 360, the CRM list and the conversation view still render masked values with no reveal control - correct and safe, but the same operational gap on those three screens. They take the same component and are follow-up work.",
+    "export": "The rule names masked export views. This repository has no customer export route - the customers.export permission exists but nothing consumes it - so there was nothing to mask. Recorded rather than counted as done.",
+    "reveal_expiry_is_advisory_server_side": "The API returns revealExpiresAt and the screen honours it. Nothing stops a caller holding the returned JSON past that moment; the value is already in their hands. What the expiry buys is that the SCREEN remasks and that the audit's window is truthful."
+  },
+
+  "a_mistake_in_my_own_process": "I committed 84212c9 having read only the tail of the lint output, which showed the problem COUNT but not that two of them were errors rather than warnings. The React rules caught two real defects in the control: reading Date.now() during render made the component impure, and an already-expired reveal called setState synchronously inside the effect, which cascades renders. Both are fixed in the follow-up commit and the countdown is now driven by state on a scheduled tick. The lesson is the check, not the code: a gate is only a gate if its result is actually read.",
+
+  "gates": {"focused": "11/11", "full_suite": "3430/3430", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

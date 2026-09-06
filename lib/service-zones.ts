@@ -2,7 +2,7 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export type ServiceZone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
-export type ZoneAssignment={pincode:string;zoneId:string;city:string;area:string};
+export type ZoneAssignment={pincode:string;zoneId:string;city:string;cityId?:string;area:string};
 
 // Bengaluru service zone mapping: pincode -> zone
 // Zones: blr-east, blr-west, blr-north, blr-south, blr-central
@@ -12,9 +12,8 @@ export type ZoneAssignment={pincode:string;zoneId:string;city:string;area:string
 // Indiranagar's real pincodes entirely. A customer in HSR Layout - one of the densest pet-owning
 // areas in the city - was told PawSpace does not serve them, and the funnel ended there.
 //
-// These are the real pincodes and their real zones. resolveZoneByPincode also falls back to the
-// city launch configuration, so the coverage the business ADVERTISES and the coverage the booking
-// flow ACCEPTS can never drift apart again.
+// These are the operations-reviewed pincodes and their real zones. The resolver deliberately fails
+// closed instead of treating a broad city radius/range as proof that a pincode can be fulfilled.
 const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   // blr-east
   "560016":{pincode:"560016",zoneId:"blr-east",city:"Bengaluru",area:"Ramamurthy Nagar"},
@@ -95,6 +94,9 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560098":{pincode:"560098",zoneId:"blr-west",city:"Bengaluru",area:"Rajarajeshwari Nagar"},
 };
 
+/** The exact, operations-reviewed Bengaluru coverage advertised by UAT. */
+export const BENGALURU_SUPPORTED_PINCODES=Object.freeze(Object.keys(PINCODE_ZONE_MAP).sort());
+
 export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-east":{zoneId:"blr-east",zoneName:"East Bengaluru",description:"Indiranagar, Whitefield, Marathahalli, Bellandur",color:"#00BCD4",serviceAvailable:true},
   "blr-north":{zoneId:"blr-north",zoneName:"North Bengaluru",description:"Hebbal, Yelahanka, Malleswaram, RT Nagar",color:"#FF9800",serviceAvailable:true},
@@ -108,6 +110,8 @@ export async function ensureServiceZonesTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)"),
   ]);
+  const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();
+  if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
 }
 
 export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:ServiceZone;assignment:ZoneAssignment}|null>{
@@ -118,50 +122,26 @@ export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:S
   const assignment=PINCODE_ZONE_MAP[normalized];
   if(assignment){
     const zone=SERVICE_ZONES[assignment.zoneId];
-    if(zone)return{zone,assignment};
+    if(zone)return{zone,assignment:{...assignment,cityId:"blr"}};
   }
 
   // Fallback to database query (for custom/extended zones)
-  const row=await db.prepare("SELECT zone_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
+  const row=await db.prepare("SELECT zone_id,city_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
   if(row){
-    const zone=SERVICE_ZONES[String(row.zone_id)];
-    if(zone){
-      const assignment:ZoneAssignment={pincode:normalized,zoneId:String(row.zone_id),city:String(row.city||"Bengaluru"),area:String(row.area||"")};
+    const zoneId=String(row.zone_id||"").trim(),cityId=String(row.city_id||"").trim().toLowerCase(),city=String(row.city||"").trim(),area=String(row.area||"").trim();
+    // A database row is an explicit, operations-reviewed mapping.  It must be usable for a launched
+    // second city without requiring a code deployment to extend Bengaluru's presentation constants.
+    // We still fail closed when any identity field is missing: a broad city launch range never reaches
+    // this branch, and an incomplete row cannot silently open a service area.
+    if(zoneId&&cityId&&city&&area){
+      const zone=SERVICE_ZONES[zoneId]??{zoneId,zoneName:`${city} service zone`,description:area,color:"#6B3FA0",serviceAvailable:true};
+      const assignment:ZoneAssignment={pincode:normalized,zoneId,cityId,city,area};
       return{zone,assignment};
     }
   }
 
-  // Last resort: the CITY LAUNCH CONFIG is what the business advertises ("Bengaluru, 560001-560110").
-  // If a pincode sits inside a live city's published range we must not tell that customer we do not
-  // serve them just because nobody added their pincode to the table above - that is a silent hole in
-  // the top of the funnel, and it is exactly how HSR Layout ended up unserviceable. The zone is
-  // marked approximate so Operations can place the job precisely; the customer is never turned away.
-  const covered=await cityRangeCovers(db,normalized);
-  if(covered){
-    const zone=SERVICE_ZONES[covered.zoneId];
-    if(zone)return{zone,assignment:{pincode:normalized,zoneId:covered.zoneId,city:covered.city,area:`${covered.city} (zone confirmed by Operations)`}};
-  }
-
-  return null;
-}
-
-/** True when the pincode falls inside a LIVE city launch configuration's published pincode range. */
-async function cityRangeCovers(db:Db,pincode:string):Promise<{city:string;zoneId:string}|null>{
-  const numeric=Number(pincode);
-  if(!Number.isFinite(numeric))return null;
-  const rows=await db.prepare("SELECT city,city_code,pincodes,status FROM city_launch_configs WHERE status='Live'").all<Row>().catch(()=>({results:[] as Row[]}));
-  for(const row of rows.results){
-    // Ranges are published as "560001-560110" (en dash or hyphen) and may list several, comma separated.
-    for(const part of String(row.pincodes||"").split(",")){
-      const bounds=part.replace(/[^0-9\u2013-]/g,"").split(/[\u2013-]/).filter(Boolean).map(Number);
-      const inRange=bounds.length>=2?numeric>=bounds[0]&&numeric<=bounds[1]:bounds.length===1&&numeric===bounds[0];
-      if(!inRange)continue;
-      const code=String(row.city_code||"blr");
-      // Default to the city's central zone; Operations reassigns precisely when the job is scheduled.
-      const zoneId=SERVICE_ZONES[`${code}-central`]?`${code}-central`:Object.keys(SERVICE_ZONES)[0];
-      return{city:String(row.city||"Bengaluru"),zoneId};
-    }
-  }
+  // Fail closed. A broad city range is not proof that Operations can fulfil a particular pincode.
+  // New coverage becomes bookable only after an explicit service-zone mapping is reviewed.
   return null;
 }
 
@@ -175,7 +155,7 @@ export async function seedDefaultZones(db:Db){
   const now=Date.now();
   const entries=Object.values(PINCODE_ZONE_MAP);
   const batch=entries.map(entry=>
-    db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city,area,created_at) VALUES (?,?,?,?,?) ON CONFLICT(pincode) DO NOTHING")
+    db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,'blr',?,?,?) ON CONFLICT(pincode) DO UPDATE SET city_id=COALESCE(service_zone_mappings.city_id,'blr')")
       .bind(entry.pincode,entry.zoneId,entry.city,entry.area,now)
   );
   if(batch.length>0)await db.batch(batch);

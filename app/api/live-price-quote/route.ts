@@ -1,3 +1,4 @@
+import{authError}from"../../../lib/server-auth";
 import { resolveLivePrice } from "../../../lib/live-pricing-resolver";
 
 async function database() {
@@ -33,6 +34,6 @@ export async function POST(request: Request) {
     });
     return Response.json({ data: result });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Live price check failed" }, { status: 500 });
+    return authError(error,"Live price check failed");
   }
 }

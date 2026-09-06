@@ -1,4 +1,6 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import { resolvePlatformSession } from "../../../lib/platform-session";
+import { withinPublicRateLimit } from "../../../lib/public-abuse-gate";
 import {
   createMeetGreetRequest,
   listMeetGreetEvents,
@@ -21,7 +23,17 @@ function sameOrigin(request: Request) {
 
 /** Customer-facing, public: no auth required to request a meet & greet
  *  (mirrors /api/relocation-enquiry POST). Every input is coerced and re-validated
- *  server-side; the price is computed on the server, never trusted from the browser. */
+ *  server-side; the price is computed on the server, never trusted from the browser.
+ *
+ *  WHOSE request it is, is never taken from the browser. `customerId` is an internal identifier, and
+ *  accepting a claimed one on an unauthenticated route let anybody file a request in a real customer's
+ *  name — and, because only one open request may exist per customer+host, lock that customer out of
+ *  ever requesting a meet & greet with that host until staff cancelled the impostor's. The route this
+ *  one mirrors, /api/relocation-enquiry, asks for contact details and no internal id, which is why it
+ *  never had the problem.
+ *
+ *  A signed-in customer requests as itself. An anonymous enquiry stays public and gets its own
+ *  unattributed enquiry id, so the public path is unchanged and no identity can be claimed. */
 export async function POST(request: Request) {
   try {
     sameOrigin(request);
@@ -32,11 +44,34 @@ export async function POST(request: Request) {
     if (rawFormat !== "phone" && rawFormat !== "house_visit") return json({ error: "format must be phone or house_visit" }, 400);
     const format = rawFormat as MeetGreetFormat;
 
+    const claimedCustomerId = String(body.customerId ?? "").trim();
+    const session = await resolvePlatformSession(db, request).catch(() => null);
+    let customerId: string;
+    if (session?.subjectType === "customer") {
+      // A mismatch is refused rather than quietly rewritten, so an attempt to file under someone else
+      // is visible in the response and the audit trail instead of being absorbed.
+      if (claimedCustomerId && claimedCustomerId !== String(session.subjectId)) {
+        return json({ error: "A meet & greet can only be requested for your own account" }, 403);
+      }
+      customerId = String(session.subjectId);
+    } else {
+      // An anonymous caller gets a brand-new synthetic identity per request, and the module's only
+      // volume control - one open request per (customer, host) - is keyed to that identity, so it could
+      // never fire: ten identical anonymous POSTs from one IP all returned 201 and a named host's queue
+      // held ten requests. A per-origin gate is what bounds an endpoint that mints its own callers.
+      // Reuses the gate app/api/public-contact/route.ts already carries, on its own table so the two
+      // endpoints do not consume each other's budget, and failing closed when the origin is unknown.
+      if (!(await withinPublicRateLimit(db, request, { table: "meet_greet_rate_limits", now: Date.now() }))) {
+        return json({ error: "Too many meet & greet requests. Please try again later." }, 429);
+      }
+      customerId = `MGENQ-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+    }
+
     try {
       const result = await createMeetGreetRequest(
         db,
         {
-          customerId: String(body.customerId ?? "").trim(),
+          customerId,
           hostProviderId: String(body.hostProviderId ?? "").trim(),
           format,
           preferredAt: Number(body.preferredAt),
@@ -45,7 +80,7 @@ export async function POST(request: Request) {
           intendedStayDays: body.intendedStayDays == null ? undefined : Number(body.intendedStayDays),
           notes: body.notes == null ? undefined : String(body.notes),
         },
-        `customer:${String(body.customerId ?? "").trim() || "anonymous"}`
+        `customer:${customerId}`
       );
       return json({ data: result, productionReady: false }, 201);
     } catch (error) {

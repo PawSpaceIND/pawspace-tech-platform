@@ -22,6 +22,7 @@ export async function ensureGroomingIncentiveTables(db:Db){
  db.prepare("CREATE TABLE IF NOT EXISTS groomer_gpay_ledger (id TEXT PRIMARY KEY,head_groomer_id TEXT NOT NULL,month_start TEXT NOT NULL,gpay_total REAL NOT NULL DEFAULT 0,gpay_pending REAL NOT NULL DEFAULT 0,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL,UNIQUE(head_groomer_id,month_start))"),
  db.prepare("CREATE TABLE IF NOT EXISTS groomer_special_incentives (id TEXT PRIMARY KEY,head_groomer_id TEXT NOT NULL,month_start TEXT NOT NULL,amount REAL NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS groomer_incentive_results (id TEXT PRIMARY KEY,head_groomer_id TEXT NOT NULL,month_start TEXT NOT NULL,bracket TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',result_json TEXT NOT NULL,finalized_by TEXT,finalized_at INTEGER,created_at INTEGER NOT NULL,UNIQUE(head_groomer_id,month_start))"),
+ db.prepare("CREATE TABLE IF NOT EXISTS groomer_achievement_links (id TEXT PRIMARY KEY,incentive_result_id TEXT NOT NULL UNIQUE,head_groomer_id TEXT NOT NULL,month_start TEXT NOT NULL,achievement_code TEXT NOT NULL,achievement_value REAL NOT NULL,created_at INTEGER NOT NULL)"),
 ]);}
 
 export async function saveGroomerBracket(db:Db,input:{headGroomerId:string;bracket:GroomerBracket;helperId?:string|null;effectiveFrom:string;reason:string;actorId:string}){
@@ -177,7 +178,17 @@ export async function computeGroomerMonthlyIncentive(db:Db,input:{headGroomerId:
  }
  orderValueTotal=money(orderValueTotal);
 
- const upgradeRow=await db.prepare("SELECT COUNT(*) n,COALESCE(SUM(upgrade_value),0) total FROM booking_upgrades WHERE provider_id=? AND booking_id IN (SELECT id FROM canonical_bookings WHERE date(scheduled_start)>=? AND date(scheduled_start)<=?)")
+ // An upgrade only counts if it sits on a COMPLETED GROOMING booking. This subquery filtered on date
+ // alone, while dailyOrdersForGroomer() a few lines above already carries both predicates. Measured for
+ // one month: a Rs 2,000 upgrade on a CANCELLED grooming booking plus twenty Rs 100 upgrades on
+ // cancelled DOG TRAINING bookings produced upgradeCount 21 and upgradeValue 4000, lifting monthTotal
+ // from the Rs 99,000 actually earned to Rs 103,000 - over the Rs 100,000 eligibility floor - and
+ // returning eligible true with Rs 1,500 head plus Rs 750 helper payable on a month that earned nothing.
+ //
+ // The larger consequence is downstream: monthTotal gates achievementTierBonus, and eligibleForRanking
+ // admits the groomer into rankGroomersForMonth, whose winner table pays up to Rs 5,000 head plus
+ // Rs 3,000 helper - so a phantom entrant both collects and demotes every genuine groomer by one rank.
+ const upgradeRow=await db.prepare("SELECT COUNT(*) n,COALESCE(SUM(upgrade_value),0) total FROM booking_upgrades WHERE provider_id=? AND booking_id IN (SELECT id FROM canonical_bookings WHERE service_code='grooming' AND status='completed' AND date(scheduled_start)>=? AND date(scheduled_start)<=?)")
    .bind(input.headGroomerId,input.monthStart,monthEndDate).first<Row>();
  const upgradeCount=Number(upgradeRow?.n||0),upgradeValue=money(upgradeRow?.total);
 
@@ -238,4 +249,25 @@ export async function rankGroomersForMonth(db:Db,input:{monthStart:string;headGr
    const rank=index+1,bonus=winnerBonus(c.bracket,rank);
    return{headGroomerId:c.headGroomerId,bracket:c.bracket,monthTotal:c.monthTotal,targetAmount:c.targetAmount,achievementPercent:c.achievementPercent,rank,winnerHeadBonus:bonus.headAmount,winnerHelperBonus:bonus.helperAmount};
  });
+}
+
+/** Persist a reviewable snapshot without turning a computation into payable earnings. */
+export async function saveGroomerIncentiveDraft(db:Db,input:{headGroomerId:string;monthStart:string;actorId:string}){
+ const result=await computeGroomerMonthlyIncentive(db,input),existing=await db.prepare("SELECT id,status FROM groomer_incentive_results WHERE head_groomer_id=? AND month_start=?").bind(input.headGroomerId,input.monthStart).first<Row>();
+ if(String(existing?.status||"")==="finalized")throw new Error("Finalized incentive results are immutable");
+ const id=existing?String(existing.id):uid("GIR"),now=Date.now();
+ await db.prepare("INSERT INTO groomer_incentive_results (id,head_groomer_id,month_start,bracket,status,result_json,created_at) VALUES (?,?,?,?, 'draft',?,?) ON CONFLICT(head_groomer_id,month_start) DO UPDATE SET bracket=excluded.bracket,result_json=excluded.result_json,status='draft'").bind(id,input.headGroomerId,input.monthStart,result.bracket,JSON.stringify(result),now).run();
+ return{id,status:"draft",result};
+}
+
+/** Finalization is explicit, immutable and creates the employee-achievement linkage exactly once. */
+export async function finalizeGroomerIncentive(db:Db,input:{headGroomerId:string;monthStart:string;actorId:string}){
+ await ensureGroomingIncentiveTables(db);const row=await db.prepare("SELECT * FROM groomer_incentive_results WHERE head_groomer_id=? AND month_start=?").bind(input.headGroomerId,input.monthStart).first<Row>();
+ if(!row)throw new Error("Save an incentive draft before finalizing");if(String(row.status)==="finalized")return{id:String(row.id),status:"finalized",duplicatePrevented:true};
+ const result=JSON.parse(String(row.result_json||"{}")) as Record<string,unknown>,now=Date.now(),achievementValue=money(result.monthTotal);
+ await db.batch([
+  db.prepare("UPDATE groomer_incentive_results SET status='finalized',finalized_by=?,finalized_at=? WHERE id=? AND status='draft'").bind(input.actorId,now,row.id),
+  db.prepare("INSERT OR IGNORE INTO groomer_achievement_links (id,incentive_result_id,head_groomer_id,month_start,achievement_code,achievement_value,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("GAL"),row.id,input.headGroomerId,input.monthStart,"grooming_month_value",achievementValue,now),
+ ]);
+ return{id:String(row.id),status:"finalized",achievement:{code:"grooming_month_value",value:achievementValue},finalizedAt:now};
 }

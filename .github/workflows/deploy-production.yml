@@ -1,0 +1,207 @@
+name: Deploy production
+
+# Manual-only production deployment for the Bengaluru pilot. The exact SHA must already carry a green
+# Release CI run. Payments remain sandbox-only until a separately authorized live pilot activation.
+# Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live voice is deliberately
+# not offered by this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy-production-bengaluru" to confirm this is a real production deploy'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact 40-character commit sha to deploy'
+        required: true
+        default: ''
+      payment_env:
+        description: 'Sandbox only. Live payment activation remains a separate explicitly authorized gate.'
+        required: true
+        type: choice
+        default: sandbox
+        options: [sandbox]
+      communication_env:
+        description: 'live or sandbox — decides whether real people receive real messages'
+        required: true
+        type: choice
+        options: [sandbox, live]
+      maps_env:
+        description: 'live or sandbox — decides whether location and ETA are real'
+        required: true
+        type: choice
+        options: [sandbox, live]
+      voice_env:
+        description: 'Voice runtime: disabled (default) or controlled UAT. Live is intentionally unavailable.'
+        required: true
+        type: choice
+        default: disabled
+        options: [disabled, uat]
+      voice_uat_approved:
+        description: 'Explicitly approve controlled voice UAT. Keep false unless the UAT allow-list/callback gate is ready.'
+        required: true
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
+
+jobs:
+  deploy:
+    if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
+    runs-on: ubuntu-latest
+    concurrency: pawspace-production-deploy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+
+      - name: Verify the checkout is exactly the requested sha and is clean
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_SHA" in
+            *[!0-9a-f]* | "" ) echo "expected_sha must be an exact 40-character commit sha." >&2; exit 1 ;;
+          esac
+          if [ "${#EXPECTED_SHA}" -ne 40 ]; then
+            echo "expected_sha must be an exact 40-character commit sha." >&2
+            exit 1
+          fi
+          ACTUAL="$(git rev-parse HEAD)"
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "checkout is at $ACTUAL, not the requested $EXPECTED_SHA - refusing to deploy." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is dirty - refusing to deploy a modified artifact." >&2
+            exit 1
+          fi
+
+      - name: Require a green Release CI run on this exact sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          CONCLUSION="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}" \
+            --jq '[.workflow_runs[] | select(.name=="Release CI")] | sort_by(.run_started_at) | last | .conclusion' 2>/dev/null || echo "")"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "Release CI on $EXPECTED_SHA is '${CONCLUSION:-missing}', not success - refusing to deploy." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm run install:ci
+
+      - name: Build (vinext)
+        run: npm run build
+
+      - name: Configure production (name + D1 + explicit runtime modes)
+        env:
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
+          PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
+          PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
+          PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
+          PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
+        run: node scripts/prod-config.mjs
+
+      - name: Record the currently deployed production version (rollback reference)
+        id: rollback
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
+            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
+          else
+            REFERENCE=""
+          fi
+          if [ -z "$REFERENCE" ]; then REFERENCE="first-production-deploy"; fi
+          echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to production
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
+          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET }}
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const requiredNames = [
+              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
+              "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
+              "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET"
+            ];
+            const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
+            if (Object.values(values).some(value => !value)) throw new Error("a required production communication or identity secret is missing");
+            if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
+            const pilotAllowlist = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
+            if (pilotAllowlist) values.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS = pilotAllowlist;
+            writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
+          '
+          npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
+
+      - name: Certify the deployed configuration
+        env:
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
+          EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const cfg = require("./dist/server/wrangler.json");
+          const fail = (m) => { console.error("CERTIFICATION FAILED: " + m); process.exit(1); };
+          if (cfg.name !== "pawspace-prod-bengaluru") fail(`worker is ${cfg.name}, not pawspace-prod-bengaluru`);
+          const bound = (cfg.d1_databases || [])[0];
+          if (!bound || bound.database_id !== process.env.PRODUCTION_D1_ID) fail("DB binding is not the production database");
+          for (const forbidden of ["PAWSPACE_LOCAL_PREVIEW", "PAWSPACE_UAT_LOGIN", "PAWSPACE_SCHEDULING_ENV", "META_WHATSAPP_UAT_DELIVERY_ENABLED", "PAWSPACE_MEDIA_ENV"]) {
+            if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
+          }
+          if ((cfg.vars || {}).PAWSPACE_DEPLOYMENT_ENV !== "production") fail("PAWSPACE_DEPLOYMENT_ENV is not production");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_ENV !== "sandbox") fail("payments are not locked to sandbox");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_LIVE_APPROVED !== "false") fail("live payment approval is not locked false");
+          if ("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS" in (cfg.vars || {})) fail("payment pilot booking IDs must be a Worker secret, never a plaintext wrangler var");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
+          console.log("Deployed configuration certified: production worker, production database, payments sandbox-only, live payment approval false, governed voice mode.");
+          NODE
+
+      - name: Where this went, and how to undo it
+        run: |
+          echo "Deployed sha:        ${{ github.event.inputs.expected_sha }}"
+          echo "Worker:              pawspace-prod-bengaluru"
+          echo "Payment mode:        ${{ github.event.inputs.payment_env }}"
+          echo "Communication mode:  ${{ github.event.inputs.communication_env }}"
+          echo "Maps mode:           ${{ github.event.inputs.maps_env }}"
+          echo "Voice mode:          ${{ github.event.inputs.voice_env }}"
+          echo "Voice UAT approved:  ${{ github.event.inputs.voice_uat_approved }}"
+          echo "Rollback reference:  ${{ steps.rollback.outputs.reference }}"
+          echo "To roll back: npx wrangler rollback --name pawspace-prod-bengaluru <reference>"

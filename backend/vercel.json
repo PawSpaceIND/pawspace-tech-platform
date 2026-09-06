@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "builds": [
+    { "src": "vercel-entry.ts", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/whatsapp/meta-webhook", "dest": "vercel-entry.ts" },
+    { "src": "/api/elite-runtime(?:/.*)?", "dest": "vercel-entry.ts" },
+    { "src": "/api/elite-surge-preview(?:/.*)?", "dest": "vercel-entry.ts" },
+    { "src": "/(.*)", "dest": "vercel-entry.ts" }
+  ]
+}

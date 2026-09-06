@@ -89,8 +89,24 @@ async function isBlitzDay(db:Db,date:string){
  return Boolean(row);
 }
 
+/*
+ * Attributed value excludes CANCELLED and draft bookings.
+ *
+ * Both of these sums carried no status predicate at all, while both sibling engines do -
+ * lib/trainer-incentive-engine.ts and lib/grooming-incentive-engine.ts each filter on status. Measured:
+ * a Rs 20,000 grooming booking attributed to a sales employee and then cancelled by the customer still
+ * returned {achievedValue:20000, tierTarget:20000, incentive:1000}. A cancelled booking is exactly the
+ * grooming_outbound daily tier-1 target, so it paid Rs 1,000 earned on nothing, and the monthly view was
+ * byte-identical before and after the cancellation. Attribution is one-way by design - there is no
+ * de-attribution path - so a booking cancelled after attribution credited the employee permanently, and
+ * because monthly tiers are step functions that value could be what carried someone over a tier line.
+ *
+ * Deliberately NOT narrowed to status='completed' the way the sibling engines are: WHEN a sale is
+ * earned - at confirmation or at delivery - is a commercial decision, and requiring completion could
+ * withhold incentive legitimately due today. A cancelled booking is not a sale under any reading.
+ */
 async function attributedValueForDay(db:Db,employeeId:string,date:string){
- const row=await db.prepare("SELECT COALESCE(SUM(b.total_amount),0) total FROM sales_attributed_bookings s JOIN canonical_bookings b ON b.id=s.booking_id WHERE s.employee_id=? AND date(b.scheduled_start)=?")
+ const row=await db.prepare("SELECT COALESCE(SUM(b.total_amount),0) total FROM sales_attributed_bookings s JOIN canonical_bookings b ON b.id=s.booking_id WHERE s.employee_id=? AND b.status NOT IN ('cancelled','draft') AND date(b.scheduled_start)=?")
    .bind(employeeId,date).first<Row>();
  return money(row?.total);
 }
@@ -113,8 +129,14 @@ export async function computeMonthlySalesIncentive(db:Db,input:{employeeId:strin
  const base=await currentSalesBase(db,input.employeeId,input.monthStart);
  if(!base)throw new Error("This employee has no sales base vertical configured for this month");
  const[year,month]=input.monthStart.split("-").map(Number);
- const monthEndDate=new Date(year,month,0).toISOString().slice(0,10);
- const row=await db.prepare("SELECT COALESCE(SUM(b.total_amount),0) total FROM sales_attributed_bookings s JOIN canonical_bookings b ON b.id=s.booking_id WHERE s.employee_id=? AND date(b.scheduled_start)>=? AND date(b.scheduled_start)<=?")
+ // Built in UTC. `new Date(year,month,0)` is midnight LOCAL, so in any timezone ahead of UTC (IST
+ // included) toISOString() rolls back a day and the last day of the month silently dropped out of the
+ // window: identical data returned achievedValue 500000 / incentive 8500 under TZ=UTC and 250000 / 4500
+ // under TZ=Asia/Kolkata - a 47% underpayment, because the monthly ladder is tiered so the loss is a
+ // step, not a shave. lib/grooming-incentive-engine.ts already carried this fix; its three siblings did
+ // not.
+ const monthEndDate=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
+ const row=await db.prepare("SELECT COALESCE(SUM(b.total_amount),0) total FROM sales_attributed_bookings s JOIN canonical_bookings b ON b.id=s.booking_id WHERE s.employee_id=? AND b.status NOT IN ('cancelled','draft') AND date(b.scheduled_start)>=? AND date(b.scheduled_start)<=?")
    .bind(input.employeeId,input.monthStart,monthEndDate).first<Row>();
  const achievedValue=money(row?.total);
  const tier=bestTierReached(monthlyTiers[base.baseVertical],achievedValue);

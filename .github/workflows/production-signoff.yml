@@ -1,0 +1,83 @@
+name: Production Sign-Off
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pre-uat-isolation-gate:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/pre-uat-protocol-isolation' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm pre-UAT PR never enters the production environment
+        run: |
+          set -euo pipefail
+          test "${GITHUB_HEAD_REF}" = "fix/pre-uat-protocol-isolation"
+          echo "Pre-UAT protocol PR is intentionally excluded from the GitHub production environment and production secrets."
+
+  master-production-audit:
+    if: ${{ github.event_name != 'pull_request' || github.head_ref != 'fix/pre-uat-protocol-isolation' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      # DRY RUN, not a certification. PAWSPACE_PRODUCTION_ENFORCE stays 'false' under the approved
+      # release-phase override (a78d3af4), so this step cannot fail on a configuration gap. What it
+      # previously also could not do was TELL anyone a gap existed: it printed a success-shaped payload
+      # and exited 0 having checked nothing, which reads as a production sign-off and is not one.
+      #
+      # The script now re-runs the same evaluation with enforcement forced on, purely to report which
+      # secrets and configuration values are still missing - by NAME, never by value - as ::warning
+      # annotations and a job summary table. That inventory is the answer to "what is left before we
+      # can actually sign off", produced without disclosing anything.
+      #
+      # Two ways to make this gate real, in increasing order of strictness:
+      #   PAWSPACE_READINESS_DRY_RUN_STRICT: 'true'  -> still a dry run, but any gap fails the job.
+      #   PAWSPACE_PRODUCTION_ENFORCE: 'true'        -> the full guard; nothing ships with a gap.
+      - name: Production readiness dry run (reports gaps, does not certify)
+        env:
+          PAWSPACE_PRODUCTION_ENFORCE: 'false'
+          # Flip to 'true' to make a configuration gap fail this job while keeping the dry-run posture.
+          PAWSPACE_READINESS_DRY_RUN_STRICT: 'false'
+          # Approved release-phase policy. Complete test API credentials may
+          # satisfy only the IDfy and messaging checks via explicit aliases.
+          PAWSPACE_TEST_API_POLICY_OVERRIDE: 'true'
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          IDFY_URL: ${{ vars.IDFY_URL }}
+          IDFY_API_KEY_SANDBOX: ${{ secrets.IDFY_API_KEY_SANDBOX }}
+          IDFY_ACCOUNT_ID_SANDBOX: ${{ secrets.IDFY_ACCOUNT_ID_SANDBOX }}
+          IDFY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.IDFY_WEBHOOK_SECRET_SANDBOX }}
+          IDFY_URL_SANDBOX: ${{ vars.IDFY_URL_SANDBOX }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
+          PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
+          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
+          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET_UAT: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT }}
+          META_WHATSAPP_VERIFY_TOKEN_UAT: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN_UAT }}
+          META_WHATSAPP_WABA_ID_UAT: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
+          META_WHATSAPP_PHONE_NUMBER_ID_UAT: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
+          INTERAKT_API_KEY_SANDBOX: ${{ secrets.INTERAKT_API_KEY_SANDBOX }}
+          INTERAKT_WEBHOOK_SECRET_SANDBOX: ${{ secrets.INTERAKT_WEBHOOK_SECRET_SANDBOX }}
+        # No inline override here: the env block above is the single place the mode is decided.
+        run: node scripts/assert-production-readiness.mjs

@@ -23,7 +23,36 @@ export async function ensureReminderGovernanceTables(db: Db) {
     db.prepare(
       "CREATE TABLE IF NOT EXISTS reminder_governance_events (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,reminder_type TEXT NOT NULL,cycle_key TEXT NOT NULL,message_id TEXT,duplicate_prevented INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"
     ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS reminder_sandbox_deliveries (message_id TEXT PRIMARY KEY,delivery_status TEXT NOT NULL,adapter TEXT NOT NULL,external_delivery INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',processed_at INTEGER NOT NULL)"
+    ),
   ]);
+}
+
+/**
+ * Executes the UAT delivery boundary without contacting a provider. This makes queued lifecycle
+ * reminders observable end-to-end while keeping WhatsApp/SMS/email fail-closed. A future provider
+ * adapter must be a separate, explicitly enabled boundary; this consumer can never send externally.
+ */
+export async function consumeCustomerReminderSandboxOutbox(db:Db,input:{asOf?:number;limit?:number}={}){
+  await ensureReminderGovernanceTables(db);await ensureCommunicationTables(db);
+  const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(500,Math.floor(input.limit??100)));
+  const rows=await db.prepare("SELECT o.message_id,o.status,m.channel,m.template_key FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id WHERE m.purpose='lifecycle' AND o.status IN ('queued','scheduled','retry_pending') AND o.next_attempt_at<=? ORDER BY o.next_attempt_at ASC LIMIT ?").bind(asOf,limit).all<Row>();
+  let sandboxDelivered=0,duplicatePrevented=0;
+  for(const row of rows.results){
+    const messageId=String(row.message_id);
+    const prior=await db.prepare("SELECT message_id FROM reminder_sandbox_deliveries WHERE message_id=?").bind(messageId).first<Row>();
+    if(prior){duplicatePrevented++;continue;}
+    const detail={channel:String(row.channel),templateKey:String(row.template_key),providerConnector:"disabled",externalDelivery:false};
+    await db.batch([
+      db.prepare("INSERT INTO reminder_sandbox_deliveries (message_id,delivery_status,adapter,external_delivery,detail_json,processed_at) VALUES (?,'sandbox_delivered','governed_uat_sink',0,?,?)").bind(messageId,JSON.stringify(detail),asOf),
+      db.prepare("UPDATE communication_outbox SET status='sandbox_delivered',last_error=NULL,locked_at=NULL,updated_at=? WHERE message_id=?").bind(asOf,messageId),
+      db.prepare("UPDATE communication_messages SET status='sandbox_delivered',provider='governed_uat_sink',provider_reference=NULL,updated_at=? WHERE id=?").bind(asOf,messageId),
+      db.prepare("INSERT INTO communication_message_delivery_events (id,message_id,provider,event_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),messageId,"governed_uat_sink",`sandbox:${messageId}`,"delivered",JSON.stringify(detail),asOf),
+    ]);
+    sandboxDelivered++;
+  }
+  return{scanned:rows.results.length,sandboxDelivered,duplicatePrevented,deliveryStatus:"sandbox_delivered",adapter:"governed_uat_sink",externalDelivery:false,connectorsEnabled:false};
 }
 
 export async function saveReminderCadencePolicy(db: Db, input: { groomingRebookingDays: number; subscriptionInactivityDays: number; subscriptionRenewalDays: number; reason: string; actorId: string }) {
@@ -56,10 +85,13 @@ async function preferredChannel(db: Db, customerId: string): Promise<Communicati
   return "whatsapp";
 }
 
-async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown) {
+async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown, asOf: number) {
+  if (result.duplicatePrevented) return;
   const messageId = "messageId" in result ? result.messageId : (result.message ? String((result.message as Row).id) : null);
+  // Stamped with the sweep clock, so a replayed or backfilled sweep produces the same audit row it
+  // would have produced when the cycle was actually due.
   await db.prepare("INSERT INTO reminder_governance_events (id,customer_id,reminder_type,cycle_key,message_id,duplicate_prevented,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), Date.now()).run();
+    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), asOf).run();
 }
 
 /**
@@ -94,9 +126,9 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
     const result = await enqueueCommunication(db, {
       customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
       templateKey: "grooming_rebooking_reminder", payload: { daysSinceLastService: daysSince, cadenceDays: policy.groomingRebookingDays },
-      createdBy: input.actorId,
+      createdBy: input.actorId, scheduledAt: asOf, asOf,
     });
-    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle });
+    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle }, asOf);
     if (result.duplicatePrevented) continue;
     if (result.status === "suppressed") suppressed++; else queued++;
   }
@@ -136,9 +168,9 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
         const result = await enqueueCommunication(db, {
           customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
           templateKey: "subscription_unused_sessions_reminder", payload: { subscriptionId, sessionsConsumed: consumed, totalSessions: total, sessionsRemaining: total - consumed, daysInactive },
-          createdBy: input.actorId,
+          createdBy: input.actorId, scheduledAt: asOf, asOf,
         });
-        await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive });
+        await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive }, asOf);
         if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else sessionReminders++; }
       }
     }
@@ -149,19 +181,62 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
       const result = await enqueueCommunication(db, {
         customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
         templateKey: "subscription_renewal_reminder", payload: { subscriptionId, daysToExpiry, sessionsRemaining: total - consumed },
-        createdBy: input.actorId,
+        createdBy: input.actorId, scheduledAt: asOf, asOf,
       });
-      await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry });
+      await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry }, asOf);
       if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else renewalReminders++; }
     }
   }
   return { sessionReminders, renewalReminders, suppressed, subscriptionsScanned: subs.results.length };
 }
 
+/**
+ * Deactivating a lifecycle reminder rule now actually stops it.
+ *
+ * The engine used to call this sweep and then read the rule table, without ever passing a rule, a
+ * filter or an active flag in, and neither generator reads lifecycle_reminder_rules at all. Measured:
+ * save_rule with active:false returned 200, the directory read back active=0, and the very next run
+ * queued and delivered that exact reminder. Marketing had no way to pause an outreach cadence.
+ *
+ * The gate sits HERE rather than in the engine because three entry points reach this function -
+ * /api/lifecycle-reminders run_now, /api/customer-reminders run_sweep_now, and the background
+ * scheduler - and only the first goes through the engine.
+ *
+ * The mapping is the platform's own: rule-grooming-rebook names the grooming rebooking generator, and
+ * rule-subscription-unused / rule-subscription-renewal name the subscription one.
+ *
+ * LIMIT, deliberately not papered over: the subscription generator serves TWO rules, so it is skipped
+ * only when BOTH are inactive. Deactivating one of that pair alone still runs the generator. Giving it
+ * per-rule granularity means teaching the generator which rule each reminder belongs to, which is a
+ * larger change than this correction; it is recorded in the audit ledger.
+ */
+async function ruleActive(db: Db, ids: string[]) {
+  // Queried one id at a time rather than through an IN list. The repository's own guard
+  // (tests/helpers/in-list-guard.mjs) rejects a placeholder list built from a variable-length array,
+  // and it is right to: that shape breaks past D1's 100-bound-parameter cap as soon as the list grows
+  // with the data. This one never exceeds two ids, so a short loop costs nothing and needs no
+  // exemption. (The guard reads source text, so this comment deliberately describes the forbidden
+  // shape rather than reproducing it.)
+  let known = 0;
+  for (const id of ids) {
+    const row = await db.prepare("SELECT active FROM lifecycle_reminder_rules WHERE id=?").bind(id).first<Row>().catch(() => null);
+    if (!row) continue;
+    known += 1;
+    if (Number(row.active) === 1) return true;
+  }
+  // No rule row at all means the cadence has never been governed, which is not the same as being paused.
+  return known === 0;
+}
+
 export async function runCustomerReminderSweep(db: Db, input: { actorId: string; asOf?: number }) {
-  const [grooming, subscription] = await Promise.all([
-    generateGroomingRebookingReminders(db, input),
-    generateSubscriptionReminders(db, input),
+  const [groomingActive, subscriptionActive] = await Promise.all([
+    ruleActive(db, ["rule-grooming-rebook"]),
+    ruleActive(db, ["rule-subscription-unused", "rule-subscription-renewal"]),
   ]);
-  return { grooming, subscription };
+  const [grooming, subscription] = await Promise.all([
+    groomingActive ? generateGroomingRebookingReminders(db, input) : Promise.resolve({ queued: 0, suppressed: 0, skipped: true, skippedInactiveRule: true }),
+    subscriptionActive ? generateSubscriptionReminders(db, input) : Promise.resolve({ queued: 0, suppressed: 0, skipped: true, skippedInactiveRule: true }),
+  ]);
+  const delivery=await consumeCustomerReminderSandboxOutbox(db,{asOf:input.asOf});
+  return { grooming, subscription, delivery };
 }

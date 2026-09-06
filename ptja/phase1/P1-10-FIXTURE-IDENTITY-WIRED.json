@@ -1,0 +1,36 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-10",
+  "ref": "PTJA-P1-F37",
+  "status": "FIXED",
+  "title": "The seven verticals that hardcoded customer TST-101 now book for the signed-in customer",
+  "closes": "P1-06, reported but not fixed in the previous change",
+  "sites_fixed": [
+    "app/boarding/page.tsx", "app/sitting/page.tsx", "app/walking/page.tsx",
+    "app/taxi/canonical-taxi-page.tsx", "app/food/canonical-food-page.tsx",
+    "app/funeral-memorial/page.tsx", "app/relocation/page.tsx"
+  ],
+  "the_precedent_followed": "app/training/page.tsx. loadCustomerAccount() is called with NO id: the server derives the subject from the platform session, which is the same identity the booking is scoped to, so the two cannot disagree the way a fixture did. Every page now derives its customer and its pets from that record, guards the booking path on having one, and disables its control until it does.",
+  "measured_before": "GET /api/customer-account?customerId=TST-101 issued with a real customer session present. On a public host: anonymous 401; signed in as anyone else, refused by requireCustomerOwnership. Non-functional for every real customer on all seven.",
+  "regression": "tests/ptja-p1-fixture-identity.test.mjs - 3 cases over all EIGHT customer-facing pages (the seven plus training, so the precedent cannot regress either)",
+  "why_a_source_text_test_here": "MEASURED, not assumed: rendering these pages does NOT put the fixture id in the markup - the id is spent in an EFFECT, and react-dom/server runs no effects, so a render-level assertion passes today and would be vacuous. There is no jsdom to flush them. A source-text assertion is the wrong tool when a literal stands in for a behaviour; it is the right tool when the literal IS the defect, which is the case here. The behaviour is covered by browser verification below.",
+  "sabotage": [
+    {"control": "put the fixture constant back in one page", "result": "RED - P1-I01"},
+    {"control": "pass a literal id to loadCustomerAccount in one page", "result": "RED - P1-I01 and P1-I02"}
+  ],
+  "verified_in_the_browser": {
+    "signed_in": "All seven resolve CUS-OTP-3D2760790B52EEB7B10DBB0D with that customer's own pet, and issue ZERO requests containing TST-101.",
+    "signed_out": "All seven issue zero TST-101 requests, resolve no identity, and surface the refusal ('Unable to load customer account'). Sitting surfaces it at its booking stage rather than its quote stage, which is where the identity is actually spent - confirmed by walking the flow."
+  },
+  "defects_found_while_fixing_and_corrected": [
+    "app/funeral-memorial/page.tsx: converting customerId from a module constant to state left an effect with an empty dependency array, so it would have fetched once with an empty id and never retried when the customer resolved. Caught by eslint react-hooks/exhaustive-deps, not by me. The effect now waits for the id and re-runs on it.",
+    "The refusal message was first inserted into the wrong render branch on funeral-memorial and relocation - both pages have two returns and the visible one is the second. Caught in the browser, not in review.",
+    "Typecheck caught a variable used out of scope in the food page and four missing null-guards in taxi and food. The build alone did not: it does not typecheck."
+  ],
+  "my_own_process_error": "I ran the sabotage pass BEFORE committing, and `git checkout app/boarding/page.tsx` to undo a sabotage reverted the uncommitted fix with it. Detected because the restore verification showed 2 failures rather than 0. Boarding was rebuilt and re-verified in the browser. Recorded because a silent version of this - noticing nothing and reporting green - is exactly what this audit exists to catch.",
+  "not_claimed": [
+    "Only the identity is fixed. Whether each vertical's booking then SUCCEEDS end to end is a separate question: Training is the one journey driven to a confirmed booking. Boarding, Sitting, Walking, Taxi and Food have still not been walked through to completion.",
+    "The signed-out copy is the server's sentence ('Unable to load customer account'), not a 'please sign in' instruction. Improving it means giving the shared account client a typed status, which is wider than this correction.",
+    "Every measurement is local. Staging behaviour is not claimed."
+  ]
+}

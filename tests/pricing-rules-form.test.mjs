@@ -155,7 +155,7 @@ test("the create route forwards every rule-shape field to the governance lib", a
     method: "POST",
     body: JSON.stringify({ action: "create_rule", name: "Bad", serviceCode: "grooming", cityId: "blr", ruleType: "time_band", effectiveFrom: "2026-08-01", adjustmentType: "percent", adjustmentValue: 5 }),
   }));
-  assert.equal(bad.status, 500);
+  assert.equal(bad.status, 400);
   assert.match(JSON.stringify(await bad.json()), /needs a start and end time/);
 });
 

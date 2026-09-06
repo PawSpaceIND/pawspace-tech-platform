@@ -150,11 +150,11 @@ test("AI rollout staff_only: staff get the model, customers still get a human", 
 
   seedCustomer(sqlite, "CUS-B", "Bhavna", "9876500002");
   const staffMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-B", customerId: "CUS-B", text: "What is the grooming price?", idempotencyKey: "ai-staff-1" });
-  const staffStub = connectedProvider("Grooming starts at Rs.1349 for a dog bath.");
+  const staffStub = connectedProvider("Grooming appointments are available for dog baths.");
   const staffTurn = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-B", customerId: "CUS-B", inputMessageId: staffMessage, idempotencyKey: "ai-staff-1", channel: "chat", provider: staffStub.provider });
   assert.equal(staffTurn.turn.outcome, "draft_review_required", "staff preview gets a real model draft");
   assert.equal(staffStub.calls.length, 1);
-  assert.equal(staffTurn.turn.output, "Grooming starts at Rs.1349 for a dog bath.");
+  assert.equal(staffTurn.turn.output, "Grooming appointments are available for dog baths.");
 
   seedCustomer(sqlite, "CUS-C", "Chetan", "9876500003");
   const custMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-C", customerId: "CUS-C", text: "What is the grooming price?", idempotencyKey: "ai-cust-1" });
@@ -325,7 +325,7 @@ test("voice call: consent required, segment replay is safe, transfer keeps one c
   assert.equal(sqlite.prepare("SELECT status,live_agent_transfer FROM ai_voice_calls WHERE id=?").get(call.callId).live_agent_transfer, 1);
 
   // A transferred call must NOT be reportable as an AI-completed call.
-  const complete = await voice.completeAiVoiceCall(db, { callId: call.callId, outcome: "resolved", disposition: "ai_completed" });
+  const complete = await voice.completeAiVoiceCall(db, { actor: staffActor, callId: call.callId, outcome: "resolved", disposition: "ai_completed" });
   assert.equal(complete.completed, false, "completing a transferred call is refused, not silently reported as done");
   assert.equal(complete.status, "transferred");
   assert.equal(sqlite.prepare("SELECT outcome FROM ai_voice_calls WHERE id=?").get(call.callId).outcome, "human_handoff");
@@ -337,11 +337,11 @@ test("voice transport failure without reconnect requires a staff fallback", asyn
   seedCustomer(sqlite, "CUS-VF", "Voice Fail", "9876500021");
   const call = await voice.startAiVoiceUatCall(db, { actor: staffActor, customerId: "CUS-VF", direction: "outbound", transportProvider: "sandbox_simulator", consent: true });
 
-  const reconnected = await voice.recordAiVoiceTransportFailure(db, { callId: call.callId, reason: "media_stream_dropped", reconnected: true });
+  const reconnected = await voice.recordAiVoiceTransportFailure(db, { actor: staffActor, callId: call.callId, reason: "media_stream_dropped", reconnected: true });
   assert.equal(reconnected.staffFallbackRequired, false);
   assert.equal(sqlite.prepare("SELECT reconnect_count,status FROM ai_voice_calls WHERE id=?").get(call.callId).reconnect_count, 1);
 
-  const dead = await voice.recordAiVoiceTransportFailure(db, { callId: call.callId, reason: "carrier_unavailable", reconnected: false });
+  const dead = await voice.recordAiVoiceTransportFailure(db, { actor: staffActor, callId: call.callId, reason: "carrier_unavailable", reconnected: false });
   assert.equal(dead.staffFallbackRequired, true);
   const row = sqlite.prepare("SELECT status,outcome FROM ai_voice_calls WHERE id=?").get(call.callId);
   assert.equal(row.status, "failed");

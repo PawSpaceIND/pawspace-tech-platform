@@ -1,4 +1,4 @@
-import{database}from"../../../lib/server-auth";
+import{authError,database}from"../../../lib/server-auth";
 import{getSharedPetPassport}from"../../../lib/pet-passport-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -13,5 +13,5 @@ export async function GET(request:Request){
     const data=await getSharedPetPassport(db,token);
     if(!data)return json({error:"This pet passport link is invalid or has been revoked"},404);
     return json({data});
-  }catch{return json({error:"Unable to load pet passport"},500);}
+  }catch(error){return authError(error,"Unable to load pet passport");}
 }

@@ -1,0 +1,62 @@
+{
+  "item": "W2-B2-R01 / C01 / C07",
+  "title": "Purpose-based access to customer personal data",
+  "status": "implemented_library_wiring_pending",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (16 of 16 failing), then GREEN; a 17th added while tightening.",
+
+  "measured_before": "Phone and name were masked from lower-privileged staff; email, home address and staff internal notes were not, because the platform defined only maskPhone and maskName. Six cross-tenant reads were found returning bereavement pickup addresses, relocation travel dates and competitors' complaint notes - each on a branch written for 'staff' but gated on a permission service_provider also holds. The open question was who should see what, because an associate arranging a home visit genuinely needs the address.",
+
+  "approved_matrix_implemented": {
+    "sales_associate": "contact masked until the lead is theirs, then a reasoned reveal; area and pincode only before a booking; sales notes only",
+    "operations_associate": "reveal for an assigned active booking; full address for an assigned, confirmed booking near execution; operational notes only",
+    "assigned_provider": "never the raw number - contact through the relay; full address only inside the operational window; only notes explicitly marked shareable",
+    "manager": "reveal when required, audited; access by note category rather than by seniority",
+    "finance": "billing contact and billing address only, never a doorstep",
+    "superuser_compliance": "full, and every access logged"
+  },
+
+  "four_rules_that_bite": {
+    "address_timing": "The full address opens only when BOTH halves hold - assigned or confirmed, AND within the configured window before service. A booking three weeks out does not justify holding somebody's doorstep on a screen today, and neither does an unconfirmed one an hour away. Both halves are separate regression cases.",
+    "provider_expiry": "Provider access shuts at completion plus the dispute window. A finished job is not a standing address book.",
+    "every_reveal_logged": "actor, role, subject, data class, purpose, the assignment that justified it, the reason and the time. A reveal without a reason is refused.",
+    "note_categories": "complaint, safety, medical, financial and HR each need their own grant. Seniority does not carry them - the finding was complaint notes travelling on a permission that meant something else. A customer is never shown an internal note, including one marked shareable with a provider, and the policy validator refuses removing self_service from that denial list."
+  },
+
+  "design_notes": [
+    "Masked rather than omitted: a record with the contact field missing is a record staff cannot recognise, and the workaround for that is a spreadsheet. Masked values keep the work possible while keeping the data closed.",
+    "A provider is identified by their provider id, not their login. A first draft fell back to 'any assignment counts', which would have handed every provider every customer's service instructions; a regression case now pins that a provider assigned to a DIFFERENT job sees nothing.",
+    "A first draft of the restricted-category check ended in `|| true`, making the grant meaningless. Removed and replaced with the grant alone."
+  ],
+
+  "configurable": "The `data_access_policy` domain in Control Center, scoped by service and city: the address window, which booking statuses open an address, the provider dispute window, note categories per purpose, the permission required for each restricted category, and which purposes never see internal notes. The validator refuses dropping any of the five restricted categories, refuses removing self_service from the internal-note denial, and refuses switching off the reason requirement.",
+
+  "what_is_not_done_yet": {
+    "what": "This is the authority module and its regressions. The existing read surfaces - CRM, conversations, subscription-customers and the other routes that already call maskPhone/maskName - have NOT yet been migrated onto it.",
+    "why_stated": "Migrating each surface is a separate, larger change with its own regression per route, and claiming the item closed while those routes still make their own masking decisions would misrepresent it. The audit's earlier fixes already mask phone and name on those routes; what this adds is the governed matrix they should read from.",
+    "next": "Route-by-route migration, each with its own before/after evidence."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w2-b2-purpose-based-access.test.mjs",
+    "cases": 17,
+    "red_before": "16 of 16 failing.",
+    "sabotage_verification": [
+      "Assignment ignored, role alone reveals -> the wrong-assignee case fails.",
+      "Full address opens regardless of timing -> the far-future case fails.",
+      "Provider dispute window never closes -> the expiry case fails.",
+      "Restricted categories carried by seniority -> the category case fails.",
+      "Provider gets the raw number -> the relay case fails.",
+      "Reveals stop being logged -> both audit cases fail.",
+      "Fix restored -> 17/17."
+    ],
+    "non_vacuity_controls": [
+      "compliance sees everything, so the platform can still answer a regulator or investigate a complaint",
+      "an operations associate DOES get the doorstep for a confirmed booking about to happen",
+      "an assigned sales rep DOES get the number for their own lead"
+    ]
+  },
+
+  "gates": {"focused":"17/17","full_repository_regression":"3279/3279","typecheck":"clean","lint":"0 errors","merge_or_deploy":"none"}
+}

@@ -48,7 +48,7 @@ export default function SystemIntegrationPage() {
       <header className={styles.top}><div><span>PAWSPACE RELEASE CONTROL</span><h1>System Integration Control</h1><p>One evidence screen for every launch-essential workflow and external connection.</p></div><button disabled={busy} onClick={() => void confirm()}>{busy ? "Running…" : "Run full confirmation"}</button></header>
       <section className={styles.hero}>
         <div><small>INTERNAL UAT</small><strong>{data.summary.internalPassed}/{data.summary.internalTotal}</strong><span className={internalDone ? styles.good : styles.warn}>{pretty(data.summary.uatStatus)}</span><p>Canonical records, controls and management outputs</p></div>
-        <div><small>EXTERNAL CONNECTIONS</small><strong>{data.summary.externalReady}/{data.summary.externalTotal}</strong><span className={data.summary.externalReady === data.summary.externalTotal ? styles.good : styles.blocked}>{pretty(data.summary.liveStatus)}</span><p>WATI, SMS, Exotel and production scheduler</p></div>
+        <div><small>EXTERNAL CONNECTIONS</small><strong>{data.summary.externalReady}/{data.summary.externalTotal}</strong><span className={data.summary.externalReady === data.summary.externalTotal ? styles.good : styles.blocked}>{pretty(data.summary.liveStatus)}</span><p>Meta WhatsApp UAT, SMS, Exotel and production scheduler</p></div>
         <div><small>DATA MODEL</small><strong>{data.schema.ready}/{data.schema.total}</strong><span className={data.schema.ready === data.schema.total ? styles.good : styles.warn}>Persistent tables ready</span><p>Checked {when(data.checkedAt)}</p></div>
       </section>
       {error && <div className={styles.error}>{error}</div>}

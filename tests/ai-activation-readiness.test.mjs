@@ -14,16 +14,24 @@ const webChat = await read("../lib/ai-web-chat-adapter.ts");
 // can never be silently weakened. (The deep flip-on behaviour is exercised by the
 // scratchpad execution preflight; this is the CI-run contract check.)
 
+// This test used to pin the adapter's literal source: `if (!apiKey) { return { connected: false`,
+// a fixed model string, and a sentence from a comment. Hardening the adapter broke all three while
+// the fail-closed behaviour they were meant to protect was strictly better than before - which is the
+// whole problem with proving behaviour by grepping formatting. What survives here is the one genuine
+// source contract (a single named secret is the switch, and nothing local generates text in its
+// place); the behaviour itself is executed in tests/ai-provider-adapter-execution.test.mjs.
 test("AI activation is a single, reversible, fail-safe key switch", () => {
-  // one secret is the switch
   assert.match(adapter, /PAWSPACE_AI_PROVIDER_API_KEY/);
-  // fails closed when the key is absent — never fabricates AI text
-  assert.match(adapter, /if \(!apiKey\) \{\s*return \{ connected: false/);
-  assert.match(adapter, /never fabricates AI output locally/);
-  // targets the Anthropic Messages API with the pinned model
+  // The switch stays exactly one credential. Counting occurrences would break on formatting, so this
+  // pins the SET of environment names the adapter reads: a second credential name is a second switch,
+  // and a second switch is how "AI is off" stops being a single reversible fact.
+  const envNames = [...new Set([...adapter.matchAll(/"(PAWSPACE_[A-Z_0-9]+|[A-Z_0-9]*API_KEY|[A-Z_0-9]*TOKEN|[A-Z_0-9]*SECRET)"/g)].map(m => m[1]))].sort();
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS"],
+    `the adapter reads ${envNames.join(", ")}; only the first is a credential and there must be no other`);
   assert.match(adapter, /https:\/\/api\.anthropic\.com\/v1\/messages/);
-  assert.match(adapter, /model: "claude-sonnet-4-6"/);
   assert.match(adapter, /"x-api-key": apiKey/);
+  // No local generation: an offline fallback string would make a silent provider look like an answer.
+  assert.doesNotMatch(adapter, /connected: true,\s*text: "/, "the adapter must never return text it made up itself");
 });
 
 test("AI guardrails: forbidden autonomous actions + human-in-the-loop cannot be weakened", () => {

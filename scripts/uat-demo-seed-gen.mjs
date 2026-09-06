@@ -46,6 +46,8 @@ const SOURCES = [
   "lib/provider-capacity-governance.ts",
   "lib/provider-commercial-terms.ts",
   "lib/provider-workspace.ts",
+  "lib/training-programme.ts",
+  "lib/training-session-lifecycle.ts",
   "lib/boarding-governance.ts",
   "lib/walking-ops-governance.ts",
   "lib/taxi-ops-governance.ts",
@@ -186,6 +188,7 @@ const BOOKINGS = [
   { id: "UATD-BK-GROOM-2", cus: "UATD-CUS-2", svc: "grooming", provider: "groom_kiran", pkg: "Bath & Brush", amount: 799, status: "confirmed", start: 2, pay: "created" },
   { id: "UATD-BK-TRAIN-1", cus: "UATD-CUS-3", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 4999, status: "completed", start: -10, pay: "captured" },
   { id: "UATD-BK-TRAIN-2", cus: "UATD-CUS-4", svc: "dog_training", provider: "train_meera", pkg: "Puppy Programme", amount: 3999, status: "cancelled", start: -3, pay: "created" },
+  { id: "UATD-BK-TRAIN-3", cus: "UATD-CUS-5", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 4999, status: "in_progress", start: 0, pay: "captured" },
   { id: "UATD-BK-BOARD-1", cus: "UATD-CUS-1", svc: "boarding", provider: "host_maya_rohan", pkg: "Home Boarding · 3 nights", amount: 3600, status: "in_progress", start: -1, pay: "captured" },
   { id: "UATD-BK-BOARD-2", cus: "UATD-CUS-5", svc: "boarding", provider: "host_sana", pkg: "Home Boarding · 2 nights", amount: 2400, status: "confirmed", start: 4, pay: "created" },
   { id: "UATD-BK-SIT-1", cus: "UATD-CUS-2", svc: "pet_sitting", provider: "sit_neha", pkg: "Daily Visit ×3", amount: 1800, status: "completed", start: -8, pay: "captured" },
@@ -197,12 +200,30 @@ const BOOKINGS = [
 ];
 for (const b of BOOKINGS) {
   const start = isoAt(b.start, 10), end = isoAt(b.start, 12);
-  insert("canonical_bookings", { id: b.id, idempotency_key: `uatd-${b.id}`, customer_id: b.cus, pet_ids_json: JSON.stringify([`${b.cus}-PET`]), source_pet_ids_json: "[]", city_id: "blr", zone_id: "blr-east", service_code: b.svc, package_code: b.svc, package_name: b.pkg, schedule_group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, scheduled_start: start, scheduled_end: end, status: b.status, channel: "customer_app", total_amount: b.amount, currency: "INR", pricing_json: JSON.stringify({ demoSeed: true }), created_by: "uat_demo_seed", created_at: at(b.start - 2), updated_at: at(b.start) });
+  const pricing = b.svc === "dog_walking" ? { demoSeed: true, perWalkAmount: b.amount } : { demoSeed: true };
+  insert("canonical_bookings", { id: b.id, idempotency_key: `uatd-${b.id}`, customer_id: b.cus, pet_ids_json: JSON.stringify([`${b.cus}-PET`]), source_pet_ids_json: "[]", city_id: "blr", zone_id: "blr-east", service_code: b.svc, package_code: b.svc, package_name: b.pkg, schedule_group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, scheduled_start: start, scheduled_end: end, status: b.status, channel: "customer_app", total_amount: b.amount, currency: "INR", pricing_json: JSON.stringify(pricing), created_by: "uat_demo_seed", created_at: at(b.start - 2), updated_at: at(b.start) });
   insert("booking_payments", { id: `${b.id}-PAY`, booking_id: b.id, customer_id: b.cus, amount: b.amount, amount_due_now: b.pay === "captured" ? b.amount : 0, currency: "INR", method: "upi", mode: "prepaid", status: b.pay, gateway: "uat_sandbox", idempotency_key: `uatd-pay-${b.id}`, detail_json: JSON.stringify({ demoSeed: true }), created_at: at(b.start - 2), updated_at: at(b.start) });
   insert("provider_work_orders", { id: `${b.id}-WO`, booking_id: b.id, schedule_group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, provider_name: b.provider.replace(/_/g, " "), provider_model: b.provider.startsWith("groom_kiran") ? "commission" : "full_time", service_code: b.svc, scheduled_start: start, scheduled_end: end, occurrence_count: 1, status: b.status === "completed" ? "completed" : b.status === "cancelled" ? "cancelled" : "assigned", assignment_json: JSON.stringify({ demoSeed: true }), created_at: at(b.start - 2), updated_at: at(b.start) });
   insert("scheduling_reservations", { id: `${b.id}-RES`, group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, service_code: b.svc, city_id: "blr", zone_id: "blr-east", customer_id: b.cus, pet_ids_json: JSON.stringify([`${b.cus}-PET`]), scheduled_start: start, scheduled_end: end, capacity_units: 1, occurrence_number: 1, care_mode: null, status: b.status === "cancelled" ? "cancelled" : b.status === "completed" ? "completed" : "assigned", explanation_json: "{}", created_at: at(b.start - 2) });
   insert("scheduling_assignment_decisions", { group_id: `UATD-GRP-${b.id}`, strategy: "governed", shortlist_json: "[]", selected_provider_id: b.provider, status: "assigned", actor_id: "uat_demo_seed", reason: "demo seed assignment", updated_at: at(b.start - 2) });
 }
+
+// --- training programmes + sessions (Training Ops and trainer workspaces) -----------------------
+// Canonical bookings alone are not a Training lifecycle. The module reads the materialized
+// programme/session ledger, so the demo layer includes both a clean completed programme and a
+// cancelled programme whose exception history remains visible.
+insert("training_programmes", { id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", customer_id: "UATD-CUS-3", provider_id: "train_kiran", city_id: "blr", zone_id: "blr-east", plan_code: "dog_training", plan_name: "Basic Obedience", pet_ids_json: JSON.stringify(["UATD-CUS-3-PET"]), requirements_json: JSON.stringify(["demo_seed"]), meet_booking_id: null, status: "completed", total_sessions: 1, completed_sessions: 1, no_show_sessions: 0, cancelled_sessions: 0, pricing_snapshot_json: JSON.stringify({ demoSeed: true }), created_at: at(-12), updated_at: at(-10) });
+insert("training_sessions", { id: "UATD-TS-1", programme_id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", schedule_reservation_id: "UATD-BK-TRAIN-1-RES", sequence_no: 1, provider_id: "train_kiran", scheduled_start: isoAt(-10, 10), scheduled_end: isoAt(-10, 12), status: "completed", attendance_json: JSON.stringify({ mode: "parent", safeAreaConfirmed: true, parentOrCaretakerConfirmed: true }), homework_json: JSON.stringify({ text: "Practise the demonstrated cue in short supervised sessions." }), progress_json: JSON.stringify({ obedience: 7 }), evidence_json: "[]", started_at: at(-10, 10), completed_at: at(-10, 12), created_at: at(-12), updated_at: at(-10) });
+insert("training_programme_events", { id: "UATD-TPE-1", programme_id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", event_type: "demo_programme_completed", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, sessionCount: 1 }), created_at: at(-10, 12) });
+insert("training_session_consumptions", { session_id: "UATD-TS-1", programme_id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", actor_id: "train_kiran", consumed_at: at(-10, 12) });
+
+insert("training_programmes", { id: "UATD-TP-2", booking_id: "UATD-BK-TRAIN-2", customer_id: "UATD-CUS-4", provider_id: "train_meera", city_id: "blr", zone_id: "blr-east", plan_code: "dog_training", plan_name: "Puppy Programme", pet_ids_json: JSON.stringify(["UATD-CUS-4-PET"]), requirements_json: JSON.stringify(["demo_seed"]), meet_booking_id: null, status: "completed_with_exceptions", total_sessions: 1, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 1, pricing_snapshot_json: JSON.stringify({ demoSeed: true }), created_at: at(-5), updated_at: at(-3) });
+insert("training_sessions", { id: "UATD-TS-2", programme_id: "UATD-TP-2", booking_id: "UATD-BK-TRAIN-2", schedule_reservation_id: "UATD-BK-TRAIN-2-RES", sequence_no: 1, provider_id: "train_meera", scheduled_start: isoAt(-3, 10), scheduled_end: isoAt(-3, 12), status: "cancelled", attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null, created_at: at(-5), updated_at: at(-3) });
+insert("training_programme_events", { id: "UATD-TPE-2", programme_id: "UATD-TP-2", booking_id: "UATD-BK-TRAIN-2", event_type: "demo_programme_cancelled", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, sessionCount: 1 }), created_at: at(-3) });
+
+insert("training_programmes", { id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", customer_id: "UATD-CUS-5", provider_id: "train_kiran", city_id: "blr", zone_id: "blr-east", plan_code: "dog_training", plan_name: "Basic Obedience", pet_ids_json: JSON.stringify(["UATD-CUS-5-PET"]), requirements_json: JSON.stringify(["demo_seed", "recovery_uat"]), meet_booking_id: null, status: "active", total_sessions: 1, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 0, pricing_snapshot_json: JSON.stringify({ demoSeed: true }), created_at: at(-2), updated_at: at(0) });
+insert("training_sessions", { id: "UATD-TS-3", programme_id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", schedule_reservation_id: "UATD-BK-TRAIN-3-RES", sequence_no: 1, provider_id: "train_kiran", scheduled_start: isoAt(0, 10), scheduled_end: isoAt(0, 12), status: "arrived", attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null, created_at: at(-2), updated_at: at(0) });
+insert("training_programme_events", { id: "UATD-TPE-3", programme_id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", event_type: "demo_session_arrived_for_recovery", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, recoveryActionable: true }), created_at: at(0) });
 
 // --- ratings (ops-intelligence provider ranking) -----------------------------
 for (const [i, b] of BOOKINGS.filter((x) => x.status === "completed").entries()) {

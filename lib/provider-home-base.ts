@@ -1,10 +1,25 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-export async function ensureProviderHomeBaseTables(db:Db){await db.batch([
- db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
- db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)"),
-]);}
+// Home-base reads are fanned out for the provider shortlist. Steady-state matching must not issue
+// idempotent schema writes: under concurrent D1 traffic those writes serialize otherwise independent
+// assignments. The probe is schema-only; provider location data is still read fresh for every match.
+const homeBaseTablesReady=new WeakSet<Db>();
+const homeBaseTablesRunning=new WeakMap<Db,Promise<void>>();
+async function homeBaseSchemaReady(db:Db){
+ try{const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('provider_home_base','idx_provider_home_base_provider')").all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===2;}catch{return false;}
+}
+export async function ensureProviderHomeBaseTables(db:Db){
+ if(homeBaseTablesReady.has(db))return;
+ const running=homeBaseTablesRunning.get(db);if(running)return running;
+ const pending=(async()=>{
+  if(await homeBaseSchemaReady(db))return;
+  await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
+ })().then(()=>{homeBaseTablesReady.add(db);});
+ homeBaseTablesRunning.set(db,pending);
+ try{await pending;}finally{if(homeBaseTablesRunning.get(db)===pending)homeBaseTablesRunning.delete(db);}
+}
 
 function text(v:unknown){return String(v??"").trim();}
 

@@ -47,6 +47,8 @@ export default function CouponField(props: {
   const [offers, setOffers] = useState<AvailableOffer[]>([]);
   const [showOffers, setShowOffers] = useState(false);
   const autoApplied = useRef(false);
+  const appliedCommercialKey = useRef("");
+  const commercialKey = `${service}|${orderValue}|${paymentMode}|${isSubscription}|${cityId}|${packageCode}`;
 
   const apply = async (rawCode?: string) => {
     const normalized = (rawCode ?? code).trim().toUpperCase();
@@ -72,6 +74,7 @@ export default function CouponField(props: {
         return;
       }
       setApplied(result.code);
+      appliedCommercialKey.current = commercialKey;
       setMessage(`UAT coupon applied · you save ₹${result.discount}`);
       onDiscountChange(result.discount, result.code, result.quoteId);
     } catch (error) {
@@ -105,6 +108,13 @@ export default function CouponField(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, eligible]);
 
+  useEffect(() => {
+    if (!applied || !appliedCommercialKey.current || appliedCommercialKey.current === commercialKey) return;
+    setApplied("");
+    setMessage("Booking details changed — apply the coupon again for a fresh governed quote");
+    onDiscountChange(0, "");
+  }, [applied, commercialKey, onDiscountChange]);
+
   return (
     <section className={`${styles.coupon} ${!eligible ? styles.disabled : ""}`}>
       <header>
@@ -118,7 +128,12 @@ export default function CouponField(props: {
         <input
           value={code}
           disabled={!eligible || loading}
-          onChange={(event) => setCode(event.target.value)}
+          onChange={(event) => {
+            setCode(event.target.value);
+            setApplied("");
+            setMessage("");
+            onDiscountChange(0, "");
+          }}
           placeholder={eligible ? "UATCARE100" : "Choose 100% payment to apply"}
           aria-label="Coupon code"
         />

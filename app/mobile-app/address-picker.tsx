@@ -1,8 +1,9 @@
 "use client";
 import{useState,useEffect}from"react";
+import{resolveServiceCoverage}from"../../lib/service-zone-client";
 
-type Zone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
-type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;city:string;area:string}};
+export type Zone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
+export type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;cityId:string;city:string;area:string};address:string};
 
 const container={maxWidth:600,margin:"0 auto",padding:20,fontFamily:"system-ui",display:"grid",gap:16} as const;
 const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:16,display:"grid",gap:12} as const;
@@ -14,7 +15,8 @@ const zoneCard={padding:14,borderRadius:"var(--ds-radius-sm)",border:"2px solid 
 const zoneCardActive=(color:string)=>({...zoneCard,borderColor:color,background:`${color}11`}) as const;
 const badge={display:"inline-block",padding:"4px 8px",borderRadius:"var(--ds-radius-sm)",fontSize:12,fontWeight:600,textTransform:"uppercase"} as const;
 
-export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:ZoneResult)=>void}){
+export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:ZoneResult|null)=>void}){
+  const[address,setAddress]=useState("");
   const[pincode,setPincode]=useState("");
   const[resolvedZone,setResolvedZone]=useState<ZoneResult|null>(null);
   const[zones,setZones]=useState<Zone[]>([]);
@@ -37,12 +39,18 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
   async function resolveZone(){
     setError("");setLoading(true);
     try{
-      if(!pincode||pincode.length<6){setError("Please enter a valid 6-digit pincode");return;}
-      const r=await fetch(`/api/service-zone?pincode=${encodeURIComponent(pincode)}`);
-      const body=await r.json() as{data?:ZoneResult;error?:string};
-      if(!r.ok||!body.data){setError(body.error||"Pincode not found in our service area");return;}
-      setResolvedZone(body.data);
-      if(onZoneResolved)onZoneResolved(body.data);
+      if(address.trim().length<8){setError("Enter the complete doorstep address");return;}
+      if(!/^\d{6}$/.test(pincode)){setError("Please enter a valid 6-digit pincode");return;}
+      const coverage=await resolveServiceCoverage(pincode);
+      // Resolve from the canonical coverage response, which already carries the full
+      // zone. Do NOT join against the asynchronously-loaded zone list: on a cold Worker
+      // that list can still be empty when the customer taps Check, and the join would
+      // silently fail so onZoneResolved never fires and every downstream host/quote
+      // stalls. The informational list below stays list-driven for display only.
+      const zone:Zone={zoneId:coverage.zone.zoneId,zoneName:coverage.zone.zoneName,description:coverage.zone.description,color:coverage.zone.color,serviceAvailable:coverage.zone.serviceAvailable};
+      const result:ZoneResult={zone,assignment:{pincode:coverage.pincode,zoneId:coverage.zoneId,cityId:coverage.cityId,city:coverage.city,area:coverage.area},address:address.trim()};
+      setResolvedZone(result);
+      onZoneResolved?.(result);
     }catch(e){
       setError(e instanceof Error?e.message:"Failed to resolve zone");
     }finally{
@@ -60,16 +68,25 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
         <input
           style={input}
           type="text"
+          placeholder="House / flat, street and landmark"
+          value={address}
+          onChange={e=>{setAddress(e.target.value);setResolvedZone(null);onZoneResolved?.(null);}}
+          disabled={loading}
+          aria-label="Complete doorstep address"
+        />
+        <input
+          style={input}
+          type="text"
           inputMode="numeric"
           placeholder="e.g., 560034"
           value={pincode}
-          onChange={e=>setPincode(e.target.value.replace(/\D/g,"").slice(0,6))}
+          onChange={e=>{setPincode(e.target.value.replace(/\D/g,"").slice(0,6));setResolvedZone(null);onZoneResolved?.(null);}}
           disabled={loading}
         />
         <button
           style={primaryButton}
           onClick={()=>void resolveZone()}
-          disabled={loading||!pincode}
+          disabled={loading||address.trim().length<8||pincode.length!==6}
         >
           {loading?"…":"Check"}
         </button>
@@ -94,12 +111,12 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
     </section>}
 
     {zones.length>0&&!resolvedZone&&<section style={box}>
-      <p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Available zones in Bengaluru</p>
+      <p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Configured UAT service zones</p>
       <div style={{display:"grid",gap:8}}>
         {zones.map(zone=><div
           key={zone.zoneId}
           style={zoneCard}
-          onClick={()=>{/* Zone selection logic can be added here */}}
+          aria-disabled="true"
         >
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
             <div>

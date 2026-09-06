@@ -2,7 +2,7 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
-const registry=read("lib/integration-readiness.ts"),api=read("app/api/integration-readiness/route.ts"),gateway=read("lib/api-gateway.ts"),launch=read("app/api/launch-readiness/route.ts"),page=read("app/control/integrations/page.tsx");
+const registry=read("lib/integration-readiness.ts"),sandbox=read("lib/uat-sandbox-readiness.ts"),api=read("app/api/integration-readiness/route.ts"),gateway=read("lib/api-gateway.ts"),launch=read("app/api/launch-readiness/route.ts"),page=read("app/control/integrations/page.tsx");
 
 test("integration readiness owns one canonical registry and immutable audit trail",()=>{
  assert.match(registry,/integration_registry/);assert.match(registry,/integration_readiness_events/);assert.match(registry,/integration_code TEXT PRIMARY KEY/);assert.match(registry,/controlled_live_verified_by/);
@@ -14,7 +14,14 @@ test("readiness stages keep code sandbox production and controlled-live proof se
 });
 
 test("credential discovery records presence only and never exposes secret values",()=>{
- for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","WATI_API_TOKEN","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(registry,new RegExp(name));
+ // Detector names may be listed inline OR derived from the module that owns them. The telephony list
+ // is now shared with lib/voice-call-gate.ts, which is what keeps the readiness surface and the dial
+ // gate from disagreeing about whether a line is configured; asserting the literal in this file would
+ // have forced a duplicate copy back into the registry. What matters is unchanged: every detector name
+ // is discoverable, and no VALUE is.
+ const detectorSources=registry+read("lib/voice-call-gate.ts");
+ for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","META_WHATSAPP_UAT_ACCESS_TOKEN","META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID","META_WHATSAPP_APP_SECRET","META_WHATSAPP_VERIFY_TOKEN","META_WHATSAPP_UAT_ALLOWLIST","META_WHATSAPP_TEMPLATE_ALLOWLIST","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(detectorSources,new RegExp(name));
+ assert.match(registry,/credentialDetector:"meta_whatsapp_uat"/);assert.doesNotMatch(registry,/credentialDetector:"wati"|WATI_API_TOKEN|WATI_TENANT_URL/);
  assert.match(registry,/secret_reference/);assert.match(registry,/Secret reference must be a reference only/);assert.match(registry,/env\|vault\|secret-manager\|platform/);
 });
 
@@ -25,7 +32,9 @@ test("controlled-live verification requires production evidence approval and ope
 });
 
 test("integration readiness API is launch-governed and audited",()=>{
- assert.match(api,/requirePermission\(actor,"launch\.view"\)/);assert.match(api,/requirePermission\(actor,"launch\.manage"\)/);assert.match(api,/integration\.readiness\.update/);
+ assert.match(api,/requirePermission\(actor,"launch\.view"\)/);assert.match(api,/requirePermission\(actor,"launch\.manage"\)/);assert.match(registry,/integration\.readiness\.update/);
+ assert.match(api,/sameOrigin\(request\)/);assert.match(api,/Cross-origin integration readiness write blocked/);assert.doesNotMatch(api,/error\.text\(\)/);
+ assert.match(registry,/db\.batch\(\[/);assert.match(registry,/INSERT INTO security_audit_events/);
  assert.match(gateway,/\/api\/integration-readiness/);assert.match(gateway,/"launch\.view":"launch\.manage"/);
 });
 
@@ -39,5 +48,12 @@ test("registry covers required launch dependency classes",()=>{
 });
 
 test("control integrations page uses the canonical register without exposing secrets",()=>{
- assert.match(page,/Integration Readiness Register/);assert.match(page,/\/api\/integration-readiness/);assert.match(page,/No secret values displayed/);assert.match(page,/Credential presence alone never satisfies this gate/);assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|WATI_API_TOKEN|EXOTEL_API_TOKEN/);
+ assert.match(page,/Integration Readiness Register/);assert.match(page,/\/api\/integration-readiness/);assert.match(page,/No secret values displayed/);assert.match(page,/Credential presence alone never satisfies this gate/);assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|META_WHATSAPP_UAT_ACCESS_TOKEN|EXOTEL_API_TOKEN/);
+});
+
+test("strict UAT sandbox readiness separates key presence from matched provider evidence",()=>{
+ assert.match(api,/readUatSandboxReadiness/);assert.match(api,/uatSandbox/);assert.match(page,/STRICT UAT SANDBOX/);assert.match(page,/Five-provider test readiness/);
+ for(const code of ["razorpay","sms_otp","meta_whatsapp","maps_gps","ai"])assert.match(sandbox,new RegExp(`code:\"${code}\"`));
+ assert.match(sandbox,/integration_live_evidence/);assert.match(sandbox,/e\.matched=1/);assert.match(sandbox,/live-evidence:/);assert.match(sandbox,/AI rollout must be staff_only/);
+ assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|PAWSPACE_AI_PROVIDER_API_KEY|META_WHATSAPP_UAT_ACCESS_TOKEN/);
 });

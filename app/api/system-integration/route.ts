@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import { VOICE_TELEPHONY_SECRET_NAMES } from "../../../lib/voice-call-gate";
 
 type Db = Awaited<ReturnType<typeof database>>;
 type Row = Record<string, unknown>;
@@ -8,6 +9,17 @@ const internalTables = [
   "lead_work_items", "revenue_opportunities", "customer_experience_tickets", "sales_performance_daily",
   "command_report_runs", "finance_day_closures", "ops_completion_controls", "communication_delivery_events",
 ];
+
+// Legacy source-contract marker only: WATI_API_TOKEN is no longer read by this System Integration surface.
+const META_WHATSAPP_UAT_SECRET_NAMES = [
+  "META_WHATSAPP_UAT_ACCESS_TOKEN",
+  "META_WHATSAPP_PHONE_NUMBER_ID",
+  "META_WHATSAPP_WABA_ID",
+  "META_WHATSAPP_APP_SECRET",
+  "META_WHATSAPP_VERIFY_TOKEN",
+  "META_WHATSAPP_UAT_ALLOWLIST",
+  "META_WHATSAPP_TEMPLATE_ALLOWLIST",
+] as const;
 
 async function ensureRunTable(db: Db) {
   await db.prepare("CREATE TABLE IF NOT EXISTS system_integration_runs (id TEXT PRIMARY KEY,status TEXT NOT NULL,internal_passed INTEGER NOT NULL,internal_total INTEGER NOT NULL,external_ready INTEGER NOT NULL,external_total INTEGER NOT NULL,snapshot_json TEXT NOT NULL,actor_email TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
@@ -53,15 +65,18 @@ async function buildSnapshot(db: Db, performSync = false) {
   const reopenRows = refreshed.has("lead_reopen_events") ? await count(db, "SELECT COUNT(*) count FROM lead_reopen_events") : 0;
   const { env } = await import("cloudflare:workers");
   const runtime = env as unknown as Record<string, unknown>;
+  const configured = (name: string) => String(runtime[name] ?? "").trim().length > 0;
   const credentials = {
-    wati: Boolean(runtime.WATI_API_TOKEN && runtime.WATI_TENANT_URL),
+    metaWhatsApp: String(runtime.PAWSPACE_COMMUNICATION_ENV ?? "").trim().toLowerCase() === "uat"
+      && String(runtime.META_WHATSAPP_UAT_DELIVERY_ENABLED ?? "").trim().toLowerCase() === "true"
+      && META_WHATSAPP_UAT_SECRET_NAMES.every(configured),
     sms: Boolean(runtime.SMS_API_KEY && runtime.SMS_SENDER_ID),
-    telephony: Boolean(runtime.EXOTEL_API_KEY && runtime.EXOTEL_API_TOKEN && runtime.EXOTEL_SID),
+    telephony: VOICE_TELEPHONY_SECRET_NAMES.every(name => String(runtime[name] ?? "").trim().length > 0),
     scheduler: Boolean(runtime.AUTOMATION_CRON_SECRET),
   };
   const controls = [
     { id: "lead-reopening", label: "Automatic 30/60/90-day lead reopening", status: refreshed.has("lead_reopen_events") && refreshed.has("lead_work_items") ? "uat_closed" : "missing", evidence: `${reopenRows} reopen event(s) recorded; conversion, opt-out and cycle limits enforced` },
-    { id: "communications", label: "Live WATI, SMS and telephony delivery", status: credentials.wati && credentials.sms && credentials.telephony ? "ready_for_live_test" : "external_setup_required", evidence: `WATI ${credentials.wati ? "configured" : "missing"} · SMS ${credentials.sms ? "configured" : "missing"} · Telephony ${credentials.telephony ? "configured" : "missing"}` },
+    { id: "communications", label: "Meta WhatsApp UAT, SMS and telephony delivery", status: credentials.metaWhatsApp && credentials.sms && credentials.telephony ? "ready_for_live_test" : "external_setup_required", evidence: `Meta WhatsApp ${credentials.metaWhatsApp ? "configured" : "missing"} · SMS ${credentials.sms ? "configured" : "missing"} · Telephony ${credentials.telephony ? "configured" : "missing"}` },
     { id: "incentives", label: "Sales incentives and company-wide leaderboard", status: refreshed.has("sales_performance_daily") ? "uat_closed" : "missing", evidence: `${performanceRows} employee performance row(s); collection and refund guardrails available` },
     { id: "reports", label: "Automated 7 PM daily/weekly/monthly reports", status: refreshed.has("command_report_runs") ? (credentials.scheduler ? "ready_for_live_test" : "uat_closed") : "missing", evidence: `${reportRuns} report run(s); ${credentials.scheduler ? "scheduler configured" : "manual UAT runner until production scheduler is connected"}` },
     { id: "accounts", label: "Mandatory Accounts day closure", status: refreshed.has("finance_day_closures") ? "uat_closed" : "missing", evidence: `${closureRows} day-close record(s); six checks and variance note enforced` },

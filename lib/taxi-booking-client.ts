@@ -9,8 +9,8 @@ export async function createCanonicalTaxiBooking(input:TaxiBookingInput){const r
 // provider profile, which is where the driver's rating comes from.
 export type AssignedDriver={id:string;name:string;model:"full_time"|"commission";rating:number|null};
 export type TaxiScheduleReservation={groupId:string;driver:AssignedDriver;occurrences:Array<{start:string;end:string;occurrenceNumber:number}>;explanation:string[]};
-export async function reserveTaxiSchedule(input:{clientRequestId:string;customerId:string;petIds:string[];zoneId:string;scheduledStart:string;scheduledEnd:string}):Promise<TaxiScheduleReservation>{
-  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({clientRequestId:input.clientRequestId,customerId:input.customerId,petIds:input.petIds,serviceCode:"pet_taxi",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1})});
+export async function reserveTaxiSchedule(input:{clientRequestId:string;customerId:string;petIds:string[];cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string}):Promise<TaxiScheduleReservation>{
+  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({clientRequestId:input.clientRequestId,customerId:input.customerId,petIds:input.petIds,serviceCode:"pet_taxi",cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1})});
   const body=await response.json() as {data?:{groupId:string;provider?:{id:string;name:string;model:"full_time"|"commission";rating?:number}|null;occurrences?:Array<{start:string;end:string;occurrenceNumber:number}>;explanation?:string[]};error?:string};
   if(!response.ok||!body.data?.provider)throw new Error(body.error??"No driver is available for this pickup window");
   const provider=body.data.provider,rating=Number(provider.rating);

@@ -1,0 +1,56 @@
+{
+  "item": "W3-CO (ledger item 12)",
+  "title": "Lead ownership references a real staff identity, or nobody",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (10 of 10 failing), then GREEN. Five sabotage reversions.",
+
+  "measured_before": {
+    "paths": "SIX paths assigned ownership from a hardcoded four-name roster: app/api/crm, app/api/revenue-crm (three separate uses - seed, recycle, advance_day), app/api/public-contact, lib/app-to-revenue-funnel (two uses, one picking an owner by hashing the customer id) and lib/background-scheduler's cold-lead reopen.",
+    "consequence": "None of those strings is a login. Nothing could tell which human the label meant, so the lead had no owner anybody could page, no owner whose permissions could be checked, and no owner an assignment could be handed over FROM. The governed path in lib/lead-assignment-governance.ts already wrote a real employee email or 'Unassigned'; these six never went through it."
+  },
+
+  "approved_rules_implemented": {
+    "real_identity": "assignLeadOwner picks the least-loaded active member of lead_assignment_memberships INNER JOINed to app_users, so a membership row for somebody whose login has since been disabled cannot receive work - the membership table alone would happily keep naming them.",
+    "no_guessing": "resolveLeadOwner matches an exact email or user id ONLY. Name matching is deliberately absent: resolving 'Neha' against a staff member whose display name begins with it would look correct today and become wrong the first time a second Neha joins, with nothing to announce that it had.",
+    "unassigned_not_invented": "With no resolvable member the lead is left Unassigned. An owner nobody can page is worse than an empty queue somebody has to look at.",
+    "reported": "lead_owner_mapping_exceptions is the queue Operations works from. leadOwnerMappingExceptions() also lists the legacy owner labels still sitting on live leads.",
+    "no_backfill": "Legacy rows are listed, never rewritten. Deciding that the 'Neha' on a two-year-old lead is a particular login is the guess the rule forbids. The report says backfilled:false out loud so a reader does not assume the platform will fix itself."
+  },
+
+  "a_defect_this_work_surfaced_in_my_own_earlier_change": {
+    "what": "CO-09 reads the CRM list as a FOUNDER and found the raw phone and email. lib/purpose-based-access.ts's compliance/superuser branch returned unmasked contact and the full address whatever `revealed` said - so the purpose-based migration I landed earlier still handed a founder or superuser a hundred unmasked contacts in one list read, with no reason recorded.",
+    "why_it_survived_the_earlier_suite": "That suite exercised associate and admin roles. Neither holds the wildcard permission that takes the compliance branch.",
+    "fix": "Seniority now buys what it should - mayReveal() says yes - and nothing more. Asking is still asking. Sabotage E restores the old behaviour and CO-09 goes red."
+  },
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/lead-assignment-governance-uat.test.mjs asserted the legacy rotation still EXISTED, as a deliberate marker that a later migration had to remove it. That migration is this one, so the case is inverted to pin that it stays gone, and still asserts the engine's own hardCodedOwnerRotationAuthoritative:false.",
+    "tests/crm-stack-hardening.test.mjs probed the route for the owner load-balancing SQL. That query moved into the authority, so the probe reads it there - and is now stronger, because it also asserts the query only considers members with a real login.",
+    "tests/people-partner-hardening.test.mjs leaderboard case: the fixture was relying on the hardcoded roster to populate a leaderboard. With no staff seeded every lead is correctly Unassigned - the rule working, not a break - so the fixture now seeds the people the leaderboard is a leaderboard OF."
+  ],
+
+  "a_note_on_a_flaky_run": "tests/scheduling-rules-authorization-real-d1.test.mjs failed once in a full-suite run and passed alone and on the next full run. It spins up a real worker and D1; the failure is not related to this change. Recorded rather than quietly re-run.",
+
+  "regression": {
+    "file": "tests/ptja-w3-lead-owner-identity.test.mjs",
+    "cases": 10,
+    "red_before": "10 of 10 failing.",
+    "sabotage_verification": [
+      "A first-name resolution allowed -> CO-04, CO-07 red",
+      "B a disabled login can receive leads -> CO-06 red",
+      "C mapping exception not recorded -> CO-03 red",
+      "D legacy roster owners silently rewritten -> CO-07 red",
+      "E superuser list reads unmasked again -> CO-09 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "the_mapping_itself": "Operations must map each legacy owner label to a real login. Until they do, those leads keep their label and appear in the exception report. This is the blocker the business named and it is theirs to close.",
+    "membership_seeding": "No lead_assignment_memberships rows are seeded by this change. On a database with none, every new lead is Unassigned - correct under the rule, and visible in the exception count rather than silent."
+  },
+
+  "gates": {"focused": "10/10", "full_suite": "3419/3419", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

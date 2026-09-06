@@ -1,4 +1,5 @@
 import { hasPermission, maskName, maskPhone, parsePermissions } from "../../../lib/platform-security";
+import { customerDataAccessResolver, mayReveal } from "../../../lib/purpose-based-access";
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 function parseCsv(text:string){
@@ -15,7 +16,7 @@ function daysSince(dateText:string){if(!dateText)return 0;const time=Date.parse(
 function dormancy(days:number){if(days<=30)return "0-30 days Active";if(days<=90)return "31-90 days Warm";if(days<=180)return "91-180 days Cool";if(days<=365)return "181-365 days Dormant";if(days<=730)return "1-2 years Lost";return "2+ years Deep Dormant";}
 function yes(value:string){return ["yes","true","1"].includes((value||"").trim().toLowerCase());}
 async function current(request:Request){
-  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase(); if(!email)return {email,permissions:[] as string[]};
+  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase(); if(!email)return {email,roleCode:"",permissions:[] as string[]};
   const db=await database(); const user=await db.prepare("SELECT role_code FROM app_users WHERE email=? AND status='active'").bind(email).first<{role_code:string}>();
   if(!user)return {email,permissions:[] as string[]}; const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(user.role_code).first<{permissions_json:string}>();
   return {email,permissions:parsePermissions(role?.permissions_json)};
@@ -39,8 +40,33 @@ export async function GET(request:Request){
     FROM subscription_customers s LEFT JOIN customer_demo_enrichment e ON e.customer_key=s.customer_key`).first();
   const select=`SELECT s.*,e.data_as_of,e.contactable,e.current_orders,e.current_customer_type,e.current_last_service_date,e.july_grooming_orders,e.latest_grooming_order_date,e.latest_grooming_package,e.latest_pet_breed,e.latest_grooming_payment_status,e.latest_groomer_team,e.latest_package_cost,e.has_address,e.service_address,e.pincode,e.city,e.sub_area,e.google_map_link,e.latitude,e.longitude,e.historical_subscription_customer,e.legacy_subscription_state,e.subscription_followup_state FROM subscription_customers s LEFT JOIN customer_demo_enrichment e ON e.customer_key=s.customer_key`;
   const result=q?await db.prepare(`${select} WHERE s.customer_key LIKE ? OR s.customer_name LIKE ? OR s.primary_phone LIKE ? ORDER BY s.subscription_target_score DESC LIMIT ?`).bind(`%${q}%`,`%${q}%`,`%${q.replace(/\D/g,"")}%`,limit).all():await db.prepare(`${select} ORDER BY s.subscription_target_score DESC LIMIT ?`).bind(limit).all();
-  const reveal=hasPermission(actor.permissions,"customers.view_full_phone");
-  return Response.json({summary,customers:result.results.map(row=>{const r=row as Record<string,unknown>;const last=String(r.current_last_service_date||r.last_service_date||"");const days=daysSince(last);return {...r,current_last_service_date:last,current_days_since_last_service:days,current_dormancy_bucket:dormancy(days),customer_name:reveal?r.customer_name:maskName(String(r.customer_name)),primary_phone:reveal?r.primary_phone:maskPhone(String(r.primary_phone||"")),secondary_phone:reveal?r.secondary_phone:maskPhone(String(r.secondary_phone||""))};}),masked:!reveal});
+  /*
+   * Purpose-based access. [PTJA-W2-B2-C07]
+   *
+   * What this replaced: one `customers.view_full_phone` boolean gating maskName/maskPhone. This list is
+   * the one that carries the WIDEST personal data on the platform - the enrichment join brings
+   * service_address, pincode, a Google Maps link and latitude/longitude - and none of that was ever
+   * touched by the boolean. It was published in full to every actor who could open the screen.
+   *
+   * The policy is resolved ONCE for the page. The area and city survive so the segmentation work stays
+   * possible; the doorstep and the coordinates do not.
+   */
+  const access=await customerDataAccessResolver(db);
+  const listActor={email:actor.email,roleCode:String(actor.roleCode||""),permissions:actor.permissions};
+  return Response.json({summary,customers:result.results.map(row=>{const r=row as Record<string,unknown>;const last=String(r.current_last_service_date||r.last_service_date||"");const days=daysSince(last);
+    const view=access.view({actor:listActor,purpose:"sales",
+      subject:{customerId:String(r.customer_key),name:String(r.customer_name||""),phone:r.primary_phone?String(r.primary_phone):null,email:null,
+        address:{line1:r.service_address?String(r.service_address):null,area:r.sub_area?String(r.sub_area):null,city:r.city?String(r.city):null,pincode:r.pincode?String(r.pincode):null}}});
+    const full=view.address.precision==="full";
+    return {...r,current_last_service_date:last,current_days_since_last_service:days,current_dormancy_bucket:dormancy(days),
+      customer_name:maskName(String(r.customer_name)),primary_phone:view.contact.phone,secondary_phone:r.secondary_phone?maskPhone(String(r.secondary_phone)):null,
+      service_address:full?r.service_address:"",pincode:full?r.pincode:"",
+      google_map_link:full?r.google_map_link:"",latitude:full?r.latitude:"",longitude:full?r.longitude:"",
+      addressPrecision:view.address.precision};}),masked:true,
+    // So the screen can offer a reveal control only where one would actually succeed. A button that is
+    // always shown and always fails teaches people to ignore refusals. [PTJA-W3-RU]
+    revealAvailable:mayReveal(listActor,"sales",null),
+    policyVersion:access.policyVersion});
 }
 
 export async function POST(request:Request){

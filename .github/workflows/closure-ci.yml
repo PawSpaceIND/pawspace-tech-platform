@@ -20,17 +20,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  web-tests:
-    name: Web tests
+  build-gate:
+    name: Build gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Blocking application build
+        run: npm run build
+
+  web-tests:
+    name: Web tests
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean checkout workspace
+        run: git clean -ffdx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Materialize server build for rendered-route tests
+        run: npm run build
+      - name: Run tracked Web tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_tests=()
+          certification_tests=()
+          for test_file in tests/*.test.mjs; do
+            if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
+              case "$test_file" in
+                tests/whatsapp-template-sync.test.mjs|tests/whatsapp-webhook-security.test.mjs)
+                  certification_tests+=("$test_file")
+                  ;;
+                *)
+                  tracked_tests+=("$test_file")
+                  ;;
+              esac
+            fi
+          done
+          test "${#tracked_tests[@]}" -gt 0
+          test "${#certification_tests[@]}" -eq 2
+          status=0
+          set +e
+          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          status=${PIPESTATUS[0]}
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          certification_status=${PIPESTATUS[0]}
+          if [ "$certification_status" -ne 0 ]; then
+            status="$certification_status"
+          fi
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "================ FAILING TESTS ================"
+            awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
+            echo "==============================================="
+            grep -E '^# (tests|pass|fail) ' web-tests.tap || true
+          fi
+          exit "$status"
+      - name: Upload the TAP stream
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-tests-tap
+          path: web-tests.tap
+          if-no-files-found: warn
 
   lint:
     name: Lint
@@ -39,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run lint
@@ -51,7 +117,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -63,7 +129,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -72,11 +138,16 @@ jobs:
   runtime-d1:
     name: Runtime D1 regression
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Execute production flow against isolated local D1
@@ -103,11 +174,16 @@ jobs:
   scheduler-d1:
     name: Background scheduler D1
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Fire real scheduled handler against isolated local D1
@@ -133,11 +209,16 @@ jobs:
   pricing-control-d1:
     name: Pricing Control D1 regression
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Prove Pricing Control changes real canonical quotes
@@ -149,7 +230,10 @@ jobs:
           trap 'cat /tmp/pricing-control-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
           ready=0
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then ready=1; break; fi
+            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then
+              ready=1
+              break
+            fi
             sleep 1
           done
           test "$ready" = 1
@@ -161,11 +245,16 @@ jobs:
   production-readiness-d1:
     name: Production readiness truth D1
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: No code may hardcode productionReady:true - it must always be a computed claim
@@ -197,9 +286,79 @@ jobs:
           test "$status" = 200
           node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/production-readiness-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Production readiness regression failed');const a=r.assertions||{};if(a.razorpayCredentialStatus!=='missing')throw new Error('expected missing credential status, got '+a.razorpayCredentialStatus);if(a.registryProductionReady!==false)throw new Error('registry must honestly report productionReady=false');if(!a.bypassBlocked)throw new Error('controlled_live_verified bypass was not blocked');if(!a.secretLeakBlocked)throw new Error('secret value leak into secret_reference was not blocked');if(!a.razorpayIsLaunchBlocker)throw new Error('Razorpay must appear as a real launch blocker');"
 
+  evidence-inventory:
+    name: Evidence class inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Classify every suite by what it executes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-class-audit
+          path: evidence-class-audit.md
+          if-no-files-found: warn
+
+  harness-hook-paths:
+    name: Test harness hook paths
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Module hook resolver smoke
+        run: npx node --test tests/helpers/module-hooks.mjs
+      - name: Collect the suites that install the shared workers hooks
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          test "${#suites[@]}" -gt 0
+          printf '%s\n' "${suites[@]}" > harness-suites.txt
+          echo "count=${#suites[@]}" >> "$GITHUB_OUTPUT"
+      - name: registerHooks path (Node >= 22.15)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+      - name: Loader-hook fallback compatibility path
+        shell: bash
+        env:
+          PAWSPACE_FORCE_LOADER_HOOK: '1'
+        run: |
+          set -euo pipefail
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     defaults:
       run:
         working-directory: backend
@@ -207,7 +366,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci

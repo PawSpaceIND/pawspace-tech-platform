@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib/walking-governance.ts and lib/taxi-governance.ts now share lib/booking-window-instant.ts, and a
+// lib module importing another extensionlessly needs the suite resolver. No worker env is read here.
+installWorkersHooks("__WALKING_FLOW_DB__");
 
 const flowSource = fs.readFileSync("app/mobile-app/walking-flow.tsx", "utf8");
 const cssSource = fs.readFileSync("app/mobile-app/walking-flow.module.css", "utf8");
@@ -33,8 +38,12 @@ test("booking creation goes through lib/walking-booking-client.ts — the compon
 test("the dogs-only guard is present and cats can never be selected", () => {
   assert.match(flowSource, /species !== "dog"/);
   assert.match(flowSource, /dogs-only service/);
-  assert.match(flowSource, /species: "cat"/); // the roster shows the cat so the friendly note can trigger
   assert.match(flowSource, /DOGS ONLY/);
+  // The roster is the customer's real pets: a non-dog is shown but rendered non-selectable
+  // (aria-disabled) so the friendly note can trigger, and only a real dog's id reaches the reserve.
+  assert.match(flowSource, /loadCustomerPets/, "the flow loads the customer's real pets");
+  assert.match(flowSource, /aria-disabled=\{item\.species !== "dog"\}/, "non-dogs are shown but disabled");
+  assert.match(flowSource, /petIds: \[pet\.id\]/, "only a real dog's owned canonical id reaches the reserve");
 });
 
 test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {

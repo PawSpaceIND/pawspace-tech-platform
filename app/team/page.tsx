@@ -26,6 +26,11 @@ const workspaces = [
   // module was reachable only by typing the URL. The metric leads with the rollout stage because
   // that is what decides whether the assistant is talking to anyone at all.
   { group: "AI", title: "Assistant & handoff", detail: "Conversation analytics, the human handoff queue, assistant grounding and the staff-first rollout switch. The assistant never acts autonomously on money, refunds or assignments.", href: "/team/ai", permission: "reports.view" as Permission, metric: "Rollout off", tone: "blue", live: (data: Overview) => data.workspaces.aiRolloutStage == null ? null : data.workspaces.aiRolloutStage === "off" ? "Rollout off · humans answer" : `${data.workspaces.aiRolloutStage.replace(/_/g, " ")}${data.workspaces.aiHandoffsWaiting ? ` · ${data.workspaces.aiHandoffsWaiting} awaiting staff` : ""}` },
+  // Automated outbound voice shipped its governance layer, state machine, policy gate, provider
+  // adapter and callback receiver with no operator surface at all, so the only way to run a call was
+  // to hand-craft HTTP requests. The metric leads with the environment gate because that, not this
+  // page, is what decides whether a customer's phone can ring.
+  { group: "Operations", title: "Voice operations", detail: "Automated outbound calling: the environment gate, the consent and opt-out record, quiet hours, the recipient allow-list, the call ledger and the per-call audit trail. Nothing on the page can switch calling on.", href: "/team/voice", permission: "communications.call" as Permission, metric: "Environment gated", tone: "orange", live: () => null },
   { group: "Marketing", title: "Segments & campaigns", detail: "Consent-safe audiences, WATI and SMS queues, promotions and campaign performance.", href: "/team/marketing", permission: "marketing.view" as Permission, metric: "Live delivery locked", tone: "gold", live: () => null },
 ] as const;
 

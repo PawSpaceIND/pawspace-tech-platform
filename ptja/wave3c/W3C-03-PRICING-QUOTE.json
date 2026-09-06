@@ -1,0 +1,15 @@
+{
+  "wave": "3C", "id": "W3C-03", "status": "REFUTED, with guards and two corrections to the recorded note",
+  "gap_verbatim": "app/api/pricing-quote/route.ts was read (it repeats the same `service_packages ... AND active=1` lookup with no effective-window check, and it accepts a fully client-supplied `coupon` object) but I did not execute it; it is only called from app/control/pricing-control-panel.tsx as a staff preview, so I could not demonstrate a customer-money consequence.",
+  "corrections_to_the_note": [
+    "The effective-window check is NOT missing. The route's lookup carries `AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)`, and QT-02 proves a package outside its window is refused 404.",
+    "The route is not merely 'a staff preview' in terms of reachability: it sits in lib/api-gateway.ts's public allowlist and calls no authorize(). It IS anonymously reachable. QT-01 states that plainly."
+  ],
+  "why_it_is_still_not_a_defect": "The client-supplied coupon is real and it does move the number returned. It has no money consequence because the REAL pricing path - lib/live-pricing-resolver.ts resolveLivePrice, the single bridge into every commercial quote - calls calculatePrice with NO coupon argument at all, and this route writes nothing. An anonymous caller can make the endpoint compute any discount and hand it back to themselves; the number binds nothing.",
+  "what_was_added": "QT-04 pins that the real pricing path passes no caller coupon; QT-05 sweeps every app/api route for a second one that does. Both properties were accidental - nobody had written them down - and they are what make QT-01 harmless. Wiring this quote into a booking now cannot happen silently.",
+  "regression": "tests/ptja-w3c-pricing-quote-containment.test.mjs, 5 cases",
+  "sabotage": [
+    {"control":"the real pricing path starts accepting a coupon","result":"RED - QT-04"},
+    {"control":"the effective-window check removed","result":"RED - QT-02"}
+  ]
+}

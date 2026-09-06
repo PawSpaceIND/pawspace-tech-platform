@@ -1,0 +1,52 @@
+{
+  "wave": "3A - adversarial verification of Wave 2 refutations",
+  "why": "ptja/PTJA-FINDINGS.json records Wave 3 as NOT PERFORMED: 125 of 129 verifier agents died on session limits, so every Wave 2 conclusion is hunter-reproduced and never independently confirmed. Nine of those conclusions are REFUTATIONS - findings closed with 'this is actually safe' - and all nine named ZERO executable tests. A refutation with no test is an opinion. This is the audit's own defect class, unknown-or-absent treated as satisfied, pointed at the audit's own conclusions.",
+  "findings_verified": [
+    {
+      "id": "W2-07-PAY-R01",
+      "claim": "signature is verified before any state change, and an absent or whitespace-only signing secret fails closed",
+      "verdict": "CONFIRMED by executable adversarial probe",
+      "executable": "tests/ptja-w3a-payment-webhook-verification.test.mjs",
+      "cases": [
+        "A1-01 unsigned capture refused 400, no durable state",
+        "A1-02 wrongly signed capture refused 401, no durable state",
+        "A1-03 sign-then-swap: a signature over a different body does not validate the swapped body",
+        "A1-04 no secret configured -> 503, nothing processed",
+        "A1-05 whitespace-only secret reads as absent -> 503 (the specifically named claim)",
+        "A1-06 live mode without the approval flag refuses whatever secrets exist",
+        "A1-07 approved live with no live secret refuses rather than falling back",
+        "A1-08 approved live does NOT accept a sandbox-signed payload (credential separation)",
+        "A1-10 a truncated signature is not prefix-matched",
+        "A1-11 an absent event id is refused before any state change",
+        "A1-09 NON-VACUITY: a correctly signed capture IS processed and does write state"
+      ],
+      "assertion_strength": "every refusal case asserts BOTH the status AND that payment_gateway_events, payment_reconciliation_records and payment_exceptions are all empty. The status alone was not accepted as proof that no state changed."
+    },
+    {
+      "id": "W2-07-PAY-R02",
+      "claim": "an equal event id replayed as a DIFFERENT event type does not re-run the money path",
+      "verdict": "CONFIRMED by executable adversarial probe",
+      "executable": "tests/ptja-w3a-payment-webhook-verification.test.mjs",
+      "cases": [
+        "A2-01 capture id replayed as refund.processed -> duplicate, no money figure moves, no second event row",
+        "A2-02 same id same type -> idempotent no-op, capture not recounted",
+        "A2-03 NON-VACUITY: a refund under a FRESH id does run the refund path and does record refunded_amount"
+      ]
+    }
+  ],
+  "sabotage": [
+    {"control": "the safeEqual signature comparison in app/api/razorpay-webhook/route.ts", "result": "RED - A1-02, A1-03, A1-08, A1-10"},
+    {"control": "the .trim() in payment-webhook-gate val(), so a whitespace secret reads as configured", "result": "RED - A1-05"},
+    {"control": "the PAWSPACE_PAYMENT_LIVE_APPROVED gate", "result": "RED - A1-06"},
+    {"control": "the duplicate event-id guard in processGatewayEvent", "result": "RED - A2-01, A2-02"}
+  ],
+  "shadowing_caught_and_fixed": [
+    "A2-01 first passed while proving nothing: with no internal booking_refund_cases row the refund died as orphan_gateway_refund anyway, so the replay guard was never exercised. Fixed by seeding a real refund case AND linking the gateway order, so the refund would genuinely land if the guard let it through.",
+    "A2-03, the non-vacuity control, FAILED on first run - which is what exposed the above. A refund event carries its booking only on the refund entity and extract() reads notes from the payment/order/payment_link entities, so refunds resolve through payment_gateway_links. The fixture had never created one."
+  ],
+  "observation_not_a_finding": "A refund webhook arriving before any payment_gateway_links row exists resolves to unmatched_gateway_event and is raised to the ops exception queue rather than being applied. That is the fail-closed direction and is correct; it is recorded here only because it is the reason the first non-vacuity run read refunded_amount 0.",
+  "not_claimed": [
+    "No live or sandbox Razorpay traffic was involved. No credential exists in any environment. This verifies the RECEIVER's behaviour against crafted payloads, not the gateway integration.",
+    "The other seven Wave 2 refutations remain unverified at the time of this entry."
+  ]
+}

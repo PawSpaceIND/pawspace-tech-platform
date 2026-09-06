@@ -1,0 +1,51 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-09",
+  "ref": "PTJA-P1-F36",
+  "status": "FIXED",
+  "title": "The same 'absent drawn as present' screen, in three more verticals",
+  "how_it_was_found": "After fixing /food/manage (P1-07 / PTJA-P1-F35), swept for the shape that made it possible - a record rendered through String(value||'not set') with no not-found branch. Eighteen files carry that helper; the three customer-facing 'manage' twins were checked by RENDERING them, not by reading them.",
+  "measured_by_rendering_each_with_an_id_that_matches_nothing": [
+    "taxi: 'Manage trip PS-UAT-TAXI-NOPE · not set · trip not set'",
+    "walking: 'Manage canonical walk schedule PS-UAT-WALK-NOPE · not set / Reserved walks / Request cancellation ...' - a cancellation control for a booking that is not there",
+    "sitting: 'PS-UAT-SIT-NOPE · loading / Care plan / Feeding / Medication / Emergency contact / Vet / Home access / Save' - an EDITABLE form with a Save button for a booking that does not exist. Sitting alone said 'loading' in its header and then rendered the whole form underneath it anyway."
+  ],
+  "common_cause": "All three had an `if(!bookingId)` guard and NO loaded state at all (grep -c loaded returned 0 for each). Without it, 'we have not asked yet' and 'we asked and there is nothing' are the same value.",
+  "fix": "Each now uses lib/resource-screen-state.ts, the five-state decision introduced by PTJA-P1-F35, and renders the record only in the ready state. app/taxi/manage/page.tsx and app/sitting/manage/page.tsx also nest their incidents section inside the record screen, so a record-scoped section cannot outlive the record it belongs to - the same residual the browser caught on the food screen.",
+  "regression": "tests/ptja-p1-manage-screen-not-found.test.mjs - 4 cases",
+  "red_first": {
+    "P1-M01": "RED - taxi drew 'not set' fields for a record it had never loaded",
+    "P1-M02": "RED - sitting offered 3 enabled controls, including Save on a care-plan form",
+    "P1-M03": "RED - taxi said nothing about what state it was in"
+  },
+  "non_vacuity_controls_green_throughout": [
+    "P1-M04 - each screen's own empty-id placeholder still renders, so flattening every screen to nothing cannot pass"
+  ],
+  "sabotage": [
+    {
+      "control": "sitting alone stops gating its screen",
+      "result": "RED - P1-M02 only; the other three cases stayed GREEN"
+    },
+    {
+      "control": "not-found collapses into ready in the shared decision",
+      "result": "DID NOT BITE this file - see the coverage limit below. It turned P1-N01 red in the food suite, which is where that branch is pinned."
+    }
+  ],
+  "coverage_limit_stated_rather_than_glossed": "react-dom/server runs no effects, so what these four cases render is the LOADING state, not not-found. The second sabotage proves it. They therefore pin 'nothing is drawn and nothing is clickable before the record has been loaded' - the half that was actually broken and the half a customer following a stale link hits first - and they do NOT pin the not-found rendering of these three screens. That half is covered by the shared decision's own cases (P1-N01..N03) plus the browser verification below. A case that cannot fail is worse than no case at all, so this is written into the test file as well as here.",
+  "verified_in_the_browser": [
+    "/taxi/manage?bookingId=<unknown> -> 'We could not find that Pet Taxi trip ...', 0 enabled controls",
+    "/walking/manage?bookingId=<unknown> -> 'We could not find that Dog Walking walk schedule ...', 0 enabled controls",
+    "/sitting/manage?bookingId=<unknown> -> 'We could not find that Sitting booking ...', 0 enabled controls",
+    "/taxi/manage and /sitting/manage with no id -> each keeps its own 'Open this page with a canonical booking ID.' placeholder"
+  ],
+  "not_claimed": [
+    "Eighteen files use the not-set helper. Only the three customer-facing manage twins were fixed; the Operations and partner screens that share the helper have NOT been checked.",
+    "These screens' authenticated behaviour is a separate matter - P1-06 covers the fixture-identity defect that affects taxi, walking and sitting independently of this."
+  ],
+  "ci_lint_failure_and_what_it_exposed": {
+    "measured": "Lint failed on 261c762 and f91652c: app/food/subscription-payment/page.tsx - 'Calling setState synchronously within an effect can trigger cascading renders'. Mine, from setLoaded(false) at the top of the effect.",
+    "the_real_defect_underneath": "A boolean `loaded` says THAT something was loaded, not WHAT. When the id changes it stays true, so the screen reports the previous record's outcome for the new id until the next fetch resolves - the same 'flag treated as an answer' shape this phase has been unpicking, in the fix for it. All five screens now hold the loaded ID and compare it to the current one, which removes the synchronous setState as a side effect rather than as the point.",
+    "own_warnings_cleaned": "The patch that introduced the flag also left 15 comma-expressions ((setBooking(...),setLoadedId(...))), each an eslint no-unused-expressions warning, plus one unused parameter in the new test. All were mine and all are cleared: lint is 0 errors and 60 warnings, down from 76, and every remaining warning predates this branch.",
+    "not_pinned": "That a changed id returns the screen to loading needs a re-render with effects, which this harness cannot do. Browser-verified across all six screens instead."
+  }
+}

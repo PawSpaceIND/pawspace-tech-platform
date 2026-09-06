@@ -47,7 +47,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FSC_DB__ = makeD1(sqlite); }
+function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FSC_DB__ = makeD1(sqlite); sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)"); sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-dog-supply","customer-supply","dog"); }
 
 const route = await import("../app/api/food-supply-chain/route.ts");
 const { saveFoodSupplier, saveFoodKitchen, createFoodPurchaseOrder, receiveFoodPurchaseOrder, recordFoodWastage, sweepExpiredFoodBatches, setFoodReorderPolicy, foodSupplyChainSnapshot } = await import("../lib/food-supply-chain.ts");
@@ -96,7 +96,7 @@ test("real execution: receiving a purchase order creates a dated batch and raise
   assert.equal(batch.kitchen_id, kitchen.kitchenId, "batch is traceable to its kitchen");
   assert.equal(batch.status, "available");
   // FULL CHAIN: the increased stock is immediately quotable through the REAL customer path
-  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 5, zoneId: "blr-east", paymentMode: "sandbox_deferred" });
+  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 5, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: "customer-supply", petIds: ["pet-dog-supply"] });
   assert.equal(quote.totalAmount, 5 * 799, "the customer quote engine sees the received stock");
 });
 
@@ -221,7 +221,7 @@ test("real execution: the route drives the full supplier -> PO -> receive -> was
 
 test("contract: gateway permission line, DB access rule, and the team surface exist", () => {
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-  assert.match(gateway, /food-supply-chain"\)return method==="GET"\?"bookings\.view":"bookings\.manage"/);
+  assert.match(gateway, /food-supply-chain"\)return "bookings\.manage"/);
   const source = fs.readFileSync(new URL("../app/api/food-supply-chain/route.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /globalThis/, "the route must get the DB via cloudflare:workers env, never globalThis");
   const page = fs.readFileSync(new URL("../app/team/operations/food/supply-chain/page.tsx", import.meta.url), "utf8");

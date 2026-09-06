@@ -1,0 +1,47 @@
+{
+  "item": "W3-DI (ledger item 4)",
+  "title": "One installation, one active authenticated customer",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (10 of 11 failing), then GREEN; a route case added as the wiring landed. Six sabotage reversions.",
+
+  "measured_before": {
+    "already_closed": "The takeover was closed earlier in this audit: ON CONFLICT DO NOTHING means an install is claimed once, so a stranger who guessed an install id could no longer re-attribute a victim's acquisition source.",
+    "still_wrong_1": "identifyInstall ended `customerId: String(link?.customer_id ?? customerId)`. When a SECOND customer verified their own phone on that device, the call returned the FIRST customer's id to them. A caller that trusts that value has been handed somebody else's identity by an install string - precisely what 'the installation identifier must never be treated as proof of customer identity' forbids.",
+    "still_wrong_2": "There was no release. A genuinely reset or resold device could never be re-bound, so its new owner stayed permanently unlinked - and DO NOTHING gave them no signal that anything had failed.",
+    "still_wrong_3": "Neither the claim nor the refusal was recorded anywhere, so a contested device left no trail at all."
+  },
+
+  "approved_rules_implemented": {
+    "one_active_context": "install_identity_links carries the single active binding, with additive status/released_at/released_reason columns. Nullable and defaulted, so every row written before this reads back as the active binding it was.",
+    "no_silent_transfer": "A claim on a held install is refused, audited as claim_refused, and the caller is handed THEIR OWN id - never the holder's.",
+    "handover_is_two_steps": "releaseInstall then identifyInstall, which is the logout-then-login the rule describes. Deliberately not a single call: a transfer nobody signed out of IS the silent transfer.",
+    "release_authority": "Only the current holder may release their own binding, and only with a stated reason. A staff release passes actorId so it is recorded as one rather than disguised as the customer's own action.",
+    "audit": "install_identity_events records every claim, refusal and release, each carrying the account it replaced - a single mutable row cannot record an old-and-new linkage, it only ever knows the present.",
+    "session_is_authoritative": "identifyInstall refuses without an authenticated customerId, so an install id alone can never produce a binding.",
+    "route": "A refused claim is a 409 rather than a 201 carrying a quiet bound:false nobody reads, and the holder's identity is never in the response body."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w3-device-identity.test.mjs",
+    "cases": 12,
+    "red_before": "10 of 11 failing.",
+    "sabotage_verification": [
+      "A the holder's id returned to the second customer (the original line) -> DI-03, DI-12 red",
+      "B silent transfer restored -> DI-02, DI-04, DI-05, DI-12 red",
+      "C release skips the holder check -> DI-06 red",
+      "D release of an unbound install accepted -> DI-10 red",
+      "E handover linkage not recorded -> DI-08 red",
+      "F route answers 201 on a refused claim -> DI-12 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "notification_rotation": "The rule asks for removal or rotation of the previous notification/session association. install_identity_links IS the only install-keyed association in this repository - there is no push-token or device-session table - so releasing it is the whole of that step today. When push tokens land they must be rotated on release, and that is recorded here rather than pretended.",
+    "customer_facing_release": "releaseInstall is reachable from lib and from the staff funnel route. There is no customer-facing sign-out action wired to it; the customer app calling it on logout is app work."
+  },
+
+  "gates": {"focused": "12/12", "full_suite": "3409/3409", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

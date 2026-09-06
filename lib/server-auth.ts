@@ -1,10 +1,13 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
-import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
+import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type IdentitySubjectType,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
+import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
+import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 
 type Db = Awaited<ReturnType<typeof database>>;
-export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
+export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string; subjectType?:IdentitySubjectType };
+export type SecurityAuditOutcome="allowed"|"denied"|"completed"|"rejected"|"blocked";
 
 export async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 
@@ -16,15 +19,7 @@ function forwardedIdentity(request:Request){
   return {email,name};
 }
 
-function isDevelopmentPreview(request:Request){
-  const host=new URL(request.url).hostname;
-  return process.env.NODE_ENV!=="production"&&["terminal.local","localhost","127.0.0.1"].includes(host);
-}
-
-// Per-isolate memoization: security DDL, identity-binding DDL and the fixed role catalogue are
-// idempotent. resolveActor() runs this on every authenticated request; before this it also issued 9
-// sequential role upserts each time. Batching + the WeakSet keep it to a single round-trip once, then
-// a no-op for the rest of the isolate's life.
+const isDevelopmentPreview=(request:Request)=>isDevelopmentPreviewRequest(request);
 const securityTablesEnsured=new WeakSet<Db>();
 
 export async function ensureSecurityTables(db:Db){
@@ -34,6 +29,8 @@ export async function ensureSecurityTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, permissions_json TEXT NOT NULL, system_role INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS security_audit_outbox (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, detail_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created_at INTEGER NOT NULL, completed_at INTEGER)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS security_audit_outbox_status_idx ON security_audit_outbox(status,created_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS customer_identity_links (email TEXT PRIMARY KEY, customer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
   ]);
@@ -43,31 +40,23 @@ export async function ensureSecurityTables(db:Db){
   securityTablesEnsured.add(db);
 }
 
-/**
- * Every gated page reads these failures with response.json(). A plain-text body therefore never reached
- * the tester as a message - it surfaced as `Unexpected token 'A', "Authentica"... is not valid JSON`,
- * which reads like a broken page rather than an ended session (reproduced against the built worker).
- */
-export function authFailure(message:string,status:number){return Response.json({error:message},{status,headers:{"cache-control":"no-store"}});}
+export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
-  // Staging-only UAT sign-in (flag-gated; a no-op in production where PAWSPACE_UAT_LOGIN is unset).
   const {env:uatEnv}=await import("cloudflare:workers");
   const uatActor=await resolveUatStaffActor(db,request,uatEnv as Record<string,unknown>);
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
-  if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
+  if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
   const identity=forwardedIdentity(request);
-  if(!identity.email)throw signInRequiredResponse(uatEnv as unknown as Record<string,unknown>);
-  let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
-  if(!user){
-    const {env}=await import("cloudflare:workers"); const founderEmail=String(env.FOUNDER_EMAIL||"").trim().toLowerCase();
-    if(!founderEmail||identity.email!==founderEmail)throw authFailure("Access has not been provisioned for this identity",403);
-    const now=Date.now(); await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.email,identity.name,"founder","active",now,now).run();
-    user={email:identity.email,name:identity.name,role_code:"founder",status:"active"};
-  }
+  if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
+  const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
+  // FOUNDER_EMAIL is intentionally not consulted here. A configured email or forwarded identity header
+  // is identity evidence only; it is never authorization to auto-create an app_users row. The first
+  // founder/admin must be provisioned through the governed D1 bootstrap process.
+  if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
   if(!role)throw authFailure("Assigned role is unavailable",403);
@@ -90,8 +79,12 @@ export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,cu
   return actor;
 }
 
+export function actorManagesProviders(actor:AuthenticatedActor){
+  return Boolean(actor.developmentPreview)||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage");
+}
+
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
-  if(actor.developmentPreview||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
+  if(actorManagesProviders(actor))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
   if(binding){if(String(binding.subject_id)!==providerId)throw authFailure("Provider ownership denied",403);return actor;}
   const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
@@ -99,12 +92,50 @@ export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,pr
   return actor;
 }
 
-export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:"allowed"|"denied"|"completed"|"rejected"|"blocked",detail:unknown={}){
-  await db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-    .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
+function securityAuditDetailJson(detail:unknown){return JSON.stringify(detail)??"null";}
+
+export function securityAuditStatement(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  return db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,securityAuditDetailJson(detail),Date.now());
+}
+
+export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  await securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,detail).run();
+}
+
+/**
+ * Reserve a durable audit operation BEFORE calling a helper that encapsulates its own D1 writes.
+ * If the Worker dies after the state change but before completion, the reserved outbox row remains as
+ * evidence of an in-flight privileged operation instead of leaving an unaudited transition.
+ */
+export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,detail:unknown={}){
+  const id=crypto.randomUUID(),now=Date.now();
+  await db.batch([
+    db.prepare("INSERT INTO security_audit_outbox (id,actor_email,actor_role,action,resource_type,resource_id,detail_json,status,created_at,completed_at) VALUES (?,?,?,?,?,?,?,'reserved',?,NULL)")
+      .bind(id,actor.email,actor.roleCode,action,resourceType,resourceId,securityAuditDetailJson(detail),now),
+    securityAuditStatement(db,actor,`${action}.reserved`,resourceType,resourceId,"allowed",{operationId:id,...(detail&&typeof detail==="object"?detail as Record<string,unknown>:{detail})}),
+  ]);
+  return id;
+}
+
+/** Complete the reserved operation atomically with its final central audit event. */
+export async function completeReservedSecurityAudit(db:Db,actor:AuthenticatedActor,operationId:string,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  const now=Date.now();
+  await db.batch([
+    securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,{operationId,...(detail&&typeof detail==="object"?detail as Record<string,unknown>:{detail})}),
+    db.prepare("UPDATE security_audit_outbox SET status=?,detail_json=?,completed_at=? WHERE id=? AND status='reserved'")
+      .bind(outcome,securityAuditDetailJson(detail),now,operationId),
+  ]);
 }
 
 export function authError(error:unknown,fallback="Request failed"){
-  if(error instanceof Response)return error;
-  return Response.json({error:error instanceof Error?error.message:fallback},{status:500});
+  if(error instanceof Response){
+    if(isGovernedHttpError(error))return error;
+    if(error.status>=400&&error.status<500){
+      console.error("[api] ungoverned client error redacted",error);
+      return Response.json({error:fallback},{status:error.status,headers:{"cache-control":"no-store"}});
+    }
+  }
+  console.error("[api] unexpected error",error);
+  return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
 }

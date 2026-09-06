@@ -57,7 +57,7 @@ function makeD1(sqlite) {
 }
 
 const zones = await import("../lib/service-zones.ts");
-const { resolveZoneByPincode, SERVICE_ZONES } = zones;
+const { resolveZoneByPincode, SERVICE_ZONES, BENGALURU_SUPPORTED_PINCODES } = zones;
 
 // The city table's DDL is taken from the module that OWNS it, never re-typed here. Writing it by
 // hand is how the first version of this suite passed while the resolver queried "city_launch_config"
@@ -71,7 +71,7 @@ const CITY_DDL = (() => {
 })();
 const CITY_TABLE = /CREATE TABLE IF NOT EXISTS ([a-z_]+)/.exec(CITY_DDL)[1];
 
-function fresh({ live = true, pincodes = "560001–560110" } = {}) {
+function fresh({ live = true, pincodes = BENGALURU_SUPPORTED_PINCODES.join(",") } = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
@@ -81,14 +81,12 @@ function fresh({ live = true, pincodes = "560001–560110" } = {}) {
   return { sqlite, db };
 }
 
-test("the resolver queries the city table that actually exists", () => {
-  // Guard the exact mistake above: the resolver's table name must match the owning module's DDL.
+test("the resolver fails closed instead of treating a broad city range as a service zone", () => {
   const resolver = read("lib/service-zones.ts");
   const referenced = [...resolver.matchAll(/FROM (city_launch_config[a-z_]*)/g)].map(match => match[1]);
-  assert.ok(referenced.length > 0, "the resolver must consult the city launch configuration");
-  for (const name of referenced) {
-    assert.equal(name, CITY_TABLE, `the resolver queries "${name}" but lib/city-governance.ts creates "${CITY_TABLE}"`);
-  }
+  assert.deepEqual(referenced, [], "city launch ranges must not fabricate operational zone coverage");
+  assert.match(resolver, /PINCODE_ZONE_MAP\[normalized\]/);
+  assert.match(resolver, /Fail closed/);
 });
 
 // The areas PawSpace actually operates in. Each must resolve, and to the right zone.
@@ -122,16 +120,12 @@ test("every core Bengaluru area resolves, to the correct zone", async () => {
 });
 
 test("advertised coverage equals accepted coverage", async () => {
-  // The city config publishes 560001-560110 as Live. Every pincode in that range must resolve,
-  // whether or not anyone remembered to add it to the table.
-  const { db } = fresh();
+  const { db, sqlite } = fresh();
+  const advertised = String(sqlite.prepare(`SELECT pincodes FROM ${CITY_TABLE} WHERE city_code='blr'`).get().pincodes).split(",");
+  assert.deepEqual(advertised.sort(), [...BENGALURU_SUPPORTED_PINCODES].sort());
   const unresolved = [];
-  for (let pincode = 560001; pincode <= 560110; pincode += 1) {
-    const result = await resolveZoneByPincode(db, String(pincode));
-    if (!result) unresolved.push(String(pincode));
-  }
-  assert.deepEqual(unresolved, [],
-    "these pincodes are advertised as serviceable by the city launch config but the booking flow rejects them");
+  for (const pincode of advertised) if (!await resolveZoneByPincode(db, pincode)) unresolved.push(pincode);
+  assert.deepEqual(unresolved, [], "every advertised pincode must have an operations-reviewed service zone");
 });
 
 test("a pincode outside the published range is still refused", async () => {
@@ -140,6 +134,27 @@ test("a pincode outside the published range is still refused", async () => {
   for (const pincode of ["600001", "400001", "110001", "560999"]) {
     assert.equal(await resolveZoneByPincode(db, pincode), null, `${pincode} is outside the published range and must not resolve`);
   }
+});
+
+test("an explicit reviewed database mapping enables a second-city zone without opening a broad range", async () => {
+  const { db, sqlite } = fresh();
+  await zones.ensureServiceZonesTables(db);
+  sqlite.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,?,?,?,?)")
+    .run("600001", "opaque-zone-name", "maa", "Chennai", "Parrys", 0);
+  const resolved = await resolveZoneByPincode(db, "600001");
+  assert.equal(resolved?.assignment.zoneId, "opaque-zone-name");
+  assert.equal(resolved?.assignment.cityId, "maa");
+  assert.equal(resolved?.assignment.city, "Chennai");
+  assert.equal(resolved?.zone.serviceAvailable, true);
+  assert.equal(await resolveZoneByPincode(db, "600002"), null, "an adjacent unreviewed pincode must remain closed");
+});
+
+test("a custom mapping without canonical city identity fails closed", async () => {
+  const { db, sqlite } = fresh();
+  await zones.ensureServiceZonesTables(db);
+  sqlite.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,?,?,?,?)")
+    .run("600003", "opaque-zone-name", null, "Chennai", "Sowcarpet", 0);
+  assert.equal(await resolveZoneByPincode(db, "600003"), null);
 });
 
 test("a city that is not Live does not make its range serviceable", async () => {

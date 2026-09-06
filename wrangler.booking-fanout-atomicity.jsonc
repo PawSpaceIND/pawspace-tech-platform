@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-booking-fanout-atomicity-proof",
+  "main": "tests/booking-fanout-atomicity-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "NODE_ENV": "test",
+    "PAWSPACE_LOCAL_PREVIEW": "on",
+    "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "booking-fanout-atomicity-proof-secret-32chars"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pawspace-booking-fanout-atomicity-proof",
+      "database_id": "00000000-0000-0000-0000-000000000006",
+      "preview_database_id": "pawspace-booking-fanout-atomicity-local"
+    }
+  ]
+}

@@ -65,13 +65,44 @@ function makeD1(sqlite) {
 
 function groomingDb() {
   const sqlite = new DatabaseSync(":memory:");
-  for (const source of [lifecycleRoute, partnerJobsRoute, changeRoute, read("app/api/uat-scheduling/route.ts"), walletLib, read("lib/customer-account.ts"), read("lib/grooming-policy-governance.ts")]) {
+  for (const source of [lifecycleRoute, partnerJobsRoute, changeRoute, read("app/api/uat-scheduling/route.ts"), read("lib/provider-capacity-governance.ts"), walletLib, read("lib/customer-account.ts"), read("lib/grooming-policy-governance.ts")]) {
     for (const sql of statementsOf(source)) if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) sqlite.exec(sql);
   }
   return { sqlite, db: makeD1(sqlite) };
 }
 
 const NOW = Date.now();
+const OFFSET_MINUTES = 330;
+const TRAVEL_BUFFER_MINUTES = 30;
+const MAX_DAILY_JOBS = 6;
+function shiftIso(value, ms) { return new Date(new Date(value).getTime() + ms).toISOString(); }
+function localOf(value, offsetMinutes = OFFSET_MINUTES) {
+  const local = new Date(new Date(value).getTime() + offsetMinutes * 60_000);
+  return { date: local.toISOString().slice(0, 10), minutes: local.getUTCHours() * 60 + local.getUTCMinutes() };
+}
+function seedProviderAuthority(sqlite, { providerId = "groom_arun", cityId = "blr", zoneId = "blr-east", date = "2026-08-20" } = {}) {
+  sqlite.prepare("INSERT OR REPLACE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(providerId, cityId, "Arun R.", "full_time", '["grooming"]', JSON.stringify([zoneId]), 1, 5, 5, 1, TRAVEL_BUFFER_MINUTES, MAX_DAILY_JOBS, 3, "active", 1, "2026-01-01", null, "test", NOW);
+  sqlite.prepare("INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run(`AVAIL-${providerId}-${date}`, providerId, cityId, zoneId, date, '["09:00-19:00"]', "roster", NOW);
+}
+function rescheduleMoveBinds(startIso, endIso, groupId = "GRP-R1", { cityId = "blr", zoneId = "blr-east" } = {}) {
+  const localStart = localOf(startIso);
+  const localEnd = localOf(endIso);
+  const bufferedStart = shiftIso(startIso, -TRAVEL_BUFFER_MINUTES * 60_000);
+  const bufferedEnd = shiftIso(endIso, TRAVEL_BUFFER_MINUTES * 60_000);
+  const offsetModifier = `${OFFSET_MINUTES >= 0 ? "+" : ""}${OFFSET_MINUTES} minutes`;
+  const localDayStartUtc = shiftIso(`${localStart.date}T00:00:00.000Z`, -OFFSET_MINUTES * 60_000);
+  const localDayEndUtc = shiftIso(localDayStartUtc, 86_400_000);
+  return [
+    startIso, endIso, groupId,
+    groupId, bufferedEnd, bufferedStart,
+    groupId, offsetModifier, localStart.date, MAX_DAILY_JOBS,
+    localStart.date, localStart.date,
+    cityId, zoneId, localStart.date, localStart.minutes, localEnd.minutes,
+    localDayEndUtc, localDayStartUtc,
+  ];
+}
 function seedBookingChain(sqlite, { bookingId = "BK-G-1", customerId = "CUS-G-1", providerId = "groom_arun", groupId = "GRP-1", start = "2026-08-20T04:30:00.000Z", end = "2026-08-20T06:30:00.000Z", status = "confirmed", amount = 1899 } = {}) {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
     .run(customerId, "blr", "Ananya Rao Sharma", "9999900601", null, null, "customer_app", "{}", NOW, NOW);
@@ -134,20 +165,14 @@ test("real execution: subscription credits reserve, consume once, pause and resu
   assert.ok(row.sessions_reserved >= 0 && row.sessions_consumed + row.sessions_reserved <= row.total_sessions, "wallet arithmetic never goes negative or over total");
 });
 
-test("regression: the reserve guard takes credits atomically before any usage row exists", () => {
-  const { sqlite } = groomingDb();
-  seedSubscription(sqlite, { id: "SUB-R", total: 1 });
-  // The lib's own guarded decrement, executed twice against capacity 1: second write must not match.
-  const guarded = findStatement(walletLib, "sessions_reserved=sessions_reserved+?");
-  const first = sqlite.prepare(guarded).run(1, NOW, "SUB-R", 1);
-  const second = sqlite.prepare(guarded).run(1, NOW, "SUB-R", 1);
-  assert.equal(Number(first.changes), 1);
-  assert.equal(Number(second.changes), 0, "the SQL guard refuses over-reservation at write time");
-  // And the lib only writes the usage row after checking the guard's changes.
+test("regression: reserve claims idempotency, credits and usage in one guarded batch", () => {
   const reserveBlock = walletLib.slice(walletLib.indexOf('input.action==="reserve"'), walletLib.indexOf('input.action==="consume"'));
-  const guardIndex = reserveBlock.indexOf("meta?.changes");
-  const insertIndex = reserveBlock.indexOf("INSERT INTO booking_subscription_usage");
-  assert.ok(guardIndex > -1 && insertIndex > guardIndex, "usage INSERT happens only after the guarded decrement is confirmed");
+  const eventIndex = reserveBlock.indexOf("INSERT INTO subscription_wallet_events");
+  const guardIndex = reserveBlock.indexOf("UPDATE customer_grooming_subscriptions SET sessions_reserved=sessions_reserved+?");
+  const usageIndex = reserveBlock.indexOf("INSERT INTO booking_subscription_usage");
+  assert.match(reserveBlock, /const results=await db\.batch/);
+  assert.ok(eventIndex > -1 && guardIndex > eventIndex && usageIndex > guardIndex, "the idempotency claim, credit move and usage write share one ordered transaction");
+  assert.match(reserveBlock, /results\[0\].*results\[1\].*results\[2\]/s, "every statement must report exactly one persisted mutation");
 });
 
 // ---------------------------------------------------------------------------
@@ -209,6 +234,7 @@ test("real execution: booking -> accept -> travel -> proof -> complete mirrors i
 test("regression: the reschedule reservation move is atomic — an overlapping reservation blocks it at write time", async () => {
   const { sqlite, db } = groomingDb();
   seedBookingChain(sqlite, { bookingId: "BK-R-1", groupId: "GRP-R1", start: "2026-08-20T04:30:00.000Z", end: "2026-08-20T06:30:00.000Z" });
+  seedProviderAuthority(sqlite);
   // Another customer's reservation with the same provider, 08:00-09:30 (this is the reservation
   // that "lands between the pre-check and the write" in the TOCTOU scenario).
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -216,12 +242,12 @@ test("regression: the reschedule reservation move is atomic — an overlapping r
 
   const guarded = findStatement(changeRoute, "NOT EXISTS (SELECT 1 FROM scheduling_reservations other");
   // Attempt to move into the overlap: the guarded write itself must refuse.
-  const conflicted = await db.prepare(guarded).bind("2026-08-20T08:30:00.000Z", "2026-08-20T10:30:00.000Z", "GRP-R1", "GRP-R1", "2026-08-20T10:30:00.000Z", "2026-08-20T08:30:00.000Z").run();
+  const conflicted = await db.prepare(guarded).bind(...rescheduleMoveBinds("2026-08-20T08:30:00.000Z", "2026-08-20T10:30:00.000Z")).run();
   assert.equal(conflicted.meta.changes, 0, "overlapping move is refused atomically at write time");
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-R1'").get().scheduled_start, "2026-08-20T04:30:00.000Z", "the reservation did not move");
 
   // A free slot moves cleanly.
-  const moved = await db.prepare(guarded).bind("2026-08-20T11:00:00.000Z", "2026-08-20T13:00:00.000Z", "GRP-R1", "GRP-R1", "2026-08-20T13:00:00.000Z", "2026-08-20T11:00:00.000Z").run();
+  const moved = await db.prepare(guarded).bind(...rescheduleMoveBinds("2026-08-20T11:00:00.000Z", "2026-08-20T13:00:00.000Z")).run();
   assert.equal(moved.meta.changes, 1);
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-R1'").get().scheduled_start, "2026-08-20T11:00:00.000Z");
 
@@ -233,7 +259,13 @@ test("regression: the reschedule reservation move is atomic — an overlapping r
 test("reschedule and cancel are server-priced: no client price fields, fee/refund from the frozen policy", async () => {
   assert.doesNotMatch(changeRoute, /type Input=\{[^}]*(amount|price|total)/i, "the change API accepts no client-submitted money");
   assert.match(changeRoute, /parsePolicySnapshot\(pricing\.commercialPolicy\)\?\?await resolveGroomingPolicy/, "policy comes from the frozen snapshot, else the server policy");
-  assert.match(changeRoute, /policyEvaluation\.refundPercent/);
+  // The refund amount moved from `policyEvaluation.refundPercent` to the approved cancellation policy's
+  // `refundEvaluation.customerRefundAmount` (PTJA W1-F24), which is governed configuration resolved per
+  // service and city rather than a single grooming percentage. What this line asserts - that the refund
+  // is computed SERVER-side from a policy and never from the request body - is unchanged and stronger:
+  // the route now binds an amount the server derived, not a percentage applied to a client-visible one.
+  assert.match(changeRoute, /refundEvaluation\.customerRefundAmount/);
+  assert.match(changeRoute, /resolveRefundPolicy\(db,\{serviceCode/, "the refund policy is resolved for this service and city");
   assert.match(changeRoute, /policyEvaluation\.feeAmount/);
   // Real execution of the policy: completed bookings are change-locked.
   const { sqlite, db } = groomingDb();

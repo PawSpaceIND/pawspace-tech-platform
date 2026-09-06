@@ -1,0 +1,53 @@
+{
+  "item": "W2-08-F03",
+  "title": "Recognised revenue and collected revenue, both authoritative, published side by side and reconciled",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (10 of 10 failing), then GREEN.",
+
+  "measured_before": {
+    "close": "monthlyCloseView('2026-07') -> revenue {bookings:15000, bookingCount:2}, checklist item revenue_reconciled ok:TRUE at value 15000",
+    "pnl": "generatePnlReport('2026-07') -> totalTurnoverAmount 5000, dataSource 'platform_live'",
+    "cause": "The close returns a frozen snapshot; the P&L recomputes live from canonical_bookings. A late refund cancelled a Rs 10,000 booking inside the locked period, so the two published figures for one locked month drifted permanently apart - and neither surface reported the refund at all. The close asserted revenue was reconciled while being 10,000 from the other figure."
+  },
+
+  "measured_after": {
+    "same_shape": "One booking paid but not delivered (10,000) and one delivered and paid (5,000) now produce recognisedRevenue 5000, grossCollections 15000, recognisedMinusCollected -10000, and a bridge whose named components add up to exactly that gap.",
+    "clean_month": "Everything delivered and paid in the same month reconciles to zero with no components - so the bridge is signal, not noise."
+  },
+
+  "approved_rules_implemented": {
+    "both_authoritative": "recognisedRevenue is authoritative for the P&L and every revenue figure; collections are authoritative for cash flow. Each figure carries a plain-language statement of what it is FOR, because the finding was a reader unable to tell which number to trust.",
+    "recognition_trigger": "Service COMPLETED and financially approved - a conjunction. Recognising on delivery alone books revenue for money the business may never see; recognising on payment alone books revenue for work not yet done. Both sabotages are regression cases.",
+    "advances": "Paid but not delivered stays a customer advance in deferredRevenue, and is reported as collected but not recognised.",
+    "refunds": "Their own line, reducing net collections rather than making a booking disappear.",
+    "seven_lines": ["recognisedRevenue","grossCollections","refunds","netCollections","deferredRevenue","outstandingReceivables","recognisedMinusCollected"],
+    "never_forced": "forcedToMatch is a literal false, and the policy validator refuses a configuration that would force the two together - that would re-create the defect with a switch."
+  },
+
+  "the_bridge": "recognised minus collected is never published as a bare number. Deferred revenue pushes collections above recognition; receivables push recognition above collections; anything left is published as an 'Unexplained residual' line rather than absorbed silently. A residual nobody can name is exactly the kind of difference this report exists to end.",
+
+  "a_defect_found_in_my_own_first_draft": "The booking-derived queries carried `.catch(()=>null)`, so a SQL error returned 0 and the report published zero revenue while looking healthy - the very shape of the defect being fixed. Removing the catch surfaced a real syntax error (an unparenthesised IN list) that had been silently swallowed. The catch is gone; a missing table is handled by an explicit existence check instead.",
+
+  "configurable": "The `revenue_recognition_policy` domain in Control Center, scoped by service and city: which booking statuses count as delivered, which payment statuses count as financially approved, and which statuses are excluded. The validator refuses a status that is both delivered and excluded, and refuses forcing the two figures to match.",
+
+  "regression": {
+    "file": "tests/ptja-w2-08-revenue-reconciliation.test.mjs",
+    "cases": 10,
+    "red_before": "10 of 10 failing.",
+    "sabotage_verification": [
+      "Recognise on delivery alone -> the unapproved-payment case fails.",
+      "Recognise on payment alone -> the deferred case and the side-by-side case fail.",
+      "Close the gap by forcing recognised to equal collected -> the side-by-side case fails.",
+      "Fold refunds into gross collections -> the refund-line case fails.",
+      "Fix restored -> 10/10."
+    ],
+    "non_vacuity_controls": [
+      "a month where everything was delivered and paid reconciles to zero with no components",
+      "an unverified manual collection is disclosed as pending rather than counted or dropped"
+    ]
+  },
+
+  "gates": {"focused":"10/10","full_repository_regression":"3247/3247","typecheck":"clean","lint":"0 errors","merge_or_deploy":"none"}
+}

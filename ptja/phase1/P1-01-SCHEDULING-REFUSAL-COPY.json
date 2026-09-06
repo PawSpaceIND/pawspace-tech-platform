@@ -1,0 +1,21 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-01",
+  "status": "FIXED",
+  "method": "First audit method in this whole engagement that uses a browser. The app was run locally (vite dev, port 5173), a customer was created through the REAL OTP sign-in path (/api/customer-otp request -> verify, sandbox code returned in-band, liveSmsDelivered:false), a pet and a Bengaluru address were added through the real /api/customer-account surface, and the journey was driven in Chromium via Playwright.",
+  "measured": "Signed in as that customer, /training resolved its training zone from the address PIN ('East Bengaluru · confirmed from your address PIN code'), listed an eligible trainer, priced the plan ('Rs 3,000 sandbox amount due now · live money disabled') and ENABLED the booking button. Pressing it showed the customer, verbatim: NO_SCHEDULE_AVAILABLE",
+  "what_was_actually_wrong": [
+    "The refusal itself was CORRECT - no trainer had published availability for the chosen date. That is not the defect.",
+    "A machine code was rendered as customer copy.",
+    "The server had ALREADY computed the human explanation and returned it: {\"error\":\"NO_SCHEDULE_AVAILABLE\",\"evaluations\":[{\"providerName\":\"Kiran S.\",\"eligible\":false,\"reasons\":[\"No published availability on 2026-08-30\"]}]}. lib/uat-scheduling-client.ts kept `body.error` and discarded every bit of it."
+  ],
+  "fix": "lib/uat-scheduling-client.ts now maps refusal codes to sentences, appends the server's own reason when every ineligible provider gave the same one, and falls back to a generic sentence for an UNMAPPED code so a future refusal token can never reach a customer either.",
+  "verified_in_the_browser": "the same click now shows 'No provider is available for the date and time you chose. Please pick another slot.'",
+  "regression": "tests/ptja-p1-scheduling-refusal-message.test.mjs - 4 cases, RED-first (3 of 4 failed before the fix)",
+  "sabotage": {"control": "revert to throwing body.error", "result": "RED - UI-01, UI-02, UI-03"},
+  "severity": "Not security, not money. It is the difference between a customer who knows to pick another date and one who sees a stack-trace fragment and leaves.",
+  "not_claimed": [
+    "This is one screen and one refusal path. Other client modules may discard server explanations the same way; that has NOT been swept.",
+    "The local run enables UAT login through a gitignored .dev.vars. No secret was printed or committed, and nothing in the repository's deployed configuration was changed."
+  ]
+}

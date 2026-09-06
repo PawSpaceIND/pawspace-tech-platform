@@ -9,8 +9,8 @@ export async function createCanonicalWalkingBooking(input:WalkingBookingInput){c
 // canonical provider profile, which is where the walker's rating comes from.
 export type AssignedWalker={id:string;name:string;model:"full_time"|"commission";rating:number|null};
 export type WalkingScheduleReservation={groupId:string;walker:AssignedWalker;occurrences:Array<{start:string;end:string;occurrenceNumber:number}>;explanation:string[]};
-export async function reserveWalkingSchedule(input:{clientRequestId:string;customerId:string;petIds:string[];zoneId:string;scheduledStart:string;scheduledEnd:string;walkCount:number;weekdays?:number[]}):Promise<WalkingScheduleReservation>{
-  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({clientRequestId:input.clientRequestId,customerId:input.customerId,petIds:input.petIds,serviceCode:"dog_walking",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.walkCount,weekdays:input.weekdays})});
+export async function reserveWalkingSchedule(input:{clientRequestId:string;customerId:string;petIds:string[];cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string;walkCount:number;weekdays?:number[]}):Promise<WalkingScheduleReservation>{
+  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({clientRequestId:input.clientRequestId,customerId:input.customerId,petIds:input.petIds,serviceCode:"dog_walking",cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.walkCount,weekdays:input.weekdays})});
   const body=await response.json() as {data?:{groupId:string;provider?:{id:string;name:string;model:"full_time"|"commission";rating?:number}|null;occurrences?:Array<{start:string;end:string;occurrenceNumber:number}>;explanation?:string[]};error?:string};
   if(!response.ok||!body.data?.provider)throw new Error(body.error??"No walker is available for this walk calendar");
   const provider=body.data.provider,rating=Number(provider.rating);

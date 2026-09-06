@@ -18,6 +18,7 @@ import MarketingControlPanel from "./marketing-control-panel";
 import FinanceControlPanel from "./finance-control-panel";
 import LaunchReadinessPanel from "./launch-readiness-panel";
 import BookingLifecyclePanel from "./booking-lifecycle-panel";
+import BusinessPolicyPanel from "./business-policy-panel";
 type View =
   | "command"
   | "launch"
@@ -33,6 +34,7 @@ type View =
   | "approvals"
   | "master"
   | "cities"
+  | "policy"
   | "coupons"
   | "referrals"
   | "subscriptions"
@@ -58,6 +60,7 @@ const nav: { id: View; permission: Permission; label: string; icon: string }[] =
   { id: "approvals", permission: "audit.view" as Permission, label: "Approvals", icon: "✓" },
   { id: "master", permission: "settings.manage" as Permission, label: "Master settings", icon: "⚙" },
   { id: "cities", permission: "settings.manage" as Permission, label: "Cities & geofences", icon: "◎" },
+  { id: "policy", permission: "launch.view" as Permission, label: "Business policy", icon: "§" },
   {
     id: "subscriptions", permission: "pricing.manage" as Permission,
     label: "Grooming subscriptions",
@@ -657,6 +660,7 @@ export default function Control() {
         )}
         {view === "audit" && <PlatformAuditPanel />}
         {view === "cities" && <CityControlPanel notify={notify} />}
+        {view === "policy" && <BusinessPolicyPanel notify={notify} />}
         {view === "business" && <BusinessIntelligencePanel notify={notify} />}
         {view === "scheduling" && <SchedulingControlPanel notify={notify} />}
         {view === "pricing" && <PricingControlPanel notify={notify} />}
@@ -844,7 +848,7 @@ export default function Control() {
                   <i>▦</i>
                   <strong>{x[0]}</strong>
                   <p>{x[1]}</p>
-                  <button>Open →</button>
+                  <button disabled title="This sample module is not connected to a canonical workflow">Unavailable</button>
                 </article>
               ))}
             </section>

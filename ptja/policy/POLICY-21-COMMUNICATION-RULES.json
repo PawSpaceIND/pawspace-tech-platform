@@ -1,0 +1,64 @@
+{
+  "item": "W3-CR (ledger item 9)",
+  "title": "The nine communication rules, decided and enforced server-side",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (14 of 14 failing), then GREEN. Seven sabotage reversions.",
+
+  "measured_before": {
+    "undecided": "lib/lifecycle-reminder-engine.ts already carried all nine as directory rows seeded active:false, configuration_required:1 - the 'nine rules awaiting approval' the audit reported. Nobody had decided them.",
+    "no_per_rule_frequency": "lib/communication-engine.ts enforces marketing consent, opt-out, quiet hours and a GLOBAL weekly marketing cap. There was no per-rule limit, so 'max once per 60 days' had nowhere to live.",
+    "a_drop_looked_like_an_absence": "A dropped rule and an undecided one were indistinguishable - both inactive - and either could be switched on by anybody with the save route."
+  },
+
+  "decisions_applied": {
+    "rule-new-customer": "approve - once, lifetime cap 1. Transactional and service-focused, so no marketing consent is demanded; an opt-out still stops it.",
+    "rule-existing-customer": "approve_with_controls - marketing consent, 60 days inactive, max once per 30 days.",
+    "rule-training-rebook": "approve - 80% consumed OR 7 days before validity ends.",
+    "rule-boarding-rebook": "approve_with_controls - completed stay required, marketing consent, max once per 60 days.",
+    "rule-sitting-rebook": "approve_with_controls - completed service required, marketing consent, max once per 60 days.",
+    "rule-dog_walking-rebook": "approve - 80% consumed OR 7 days before expiry.",
+    "rule-pet_taxi-rebook": "DROP - event-driven; transactional trip messages only.",
+    "rule-food-rebook": "approve - consumption/depletion only. With NO consumption signal it does not fire at all, which is what 'not a generic calendar campaign' means in code.",
+    "rule-relocation-rebook": "DROP - case-based and normally one-time."
+  },
+
+  "why_a_drop_is_enforced_twice": "Once on the write path, so the directory cannot be edited to turn it back on, and once at send time, because the directory is data and a row can be changed by other means. A decision should be harder to reverse than a default - reversing one means editing lib/communication-rule-decisions.ts, in review.",
+
+  "controls_enforced_server_side": {
+    "opt_out": "Stops everything, promotional or not.",
+    "consent": "The narrower question - demanded only by the rules the business marked promotional.",
+    "frequency": "Per rule and per customer, from communication_rule_sends.",
+    "lifetime": "The welcome rule sends once, ever.",
+    "trigger": "Consumption or expiry, never a date, for the four rules that declare one.",
+    "deduplication": "A unique index on (rule, customer, dedupe key). A replayed send returns duplicate:true rather than sending twice.",
+    "every_refusal_names_itself": "A message that silently does not arrive is indistinguishable from one the platform never tried to send, and the marketing team then concludes the feature is broken and asks for the controls to be relaxed."
+  },
+
+  "a_defect_my_own_test_caught": "The completed-service check was written as Number.isFinite(Number(value)), which reads as a null check and is not one: Number(null) is 0, and 0 is finite - so 'this customer has never completed a service' passed as 'they completed one at the epoch'. That is this audit's own recurring defect, absence treated as satisfied, in code I had just written. CR-09 caught it before it was committed; the check now requires a positive timestamp.",
+
+  "regression": {
+    "file": "tests/ptja-w3-communication-rules.test.mjs",
+    "cases": 14,
+    "red_before": "14 of 14 failing.",
+    "sabotage_verification": [
+      "A dropped rules activated -> CR-02, CR-12 red",
+      "B save route allows reactivating a dropped rule -> CR-03 red",
+      "C marketing consent no longer required -> CR-05 red",
+      "D per-rule frequency cap removed -> CR-08, CR-09 red",
+      "E a rule with no consumption signal fires anyway -> CR-10, CR-11 red",
+      "F an undecided rule waved through -> CR-14 red",
+      "G dedupe index removed -> CR-13 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "no_sender_calls_it_yet": "assertCommunicationRuleAllowed and recordCommunicationRuleSend are the gate; the lifecycle sweep does not consult them yet. The decisions ARE applied to the directory, so no dropped rule is active and nothing is awaiting approval - but the per-rule frequency and trigger checks bind only callers that use the gate. Wiring the sweep is follow-up work and is the same 'authority nobody calls' trap this audit has found repeatedly, recorded here rather than left implied.",
+    "consumption_signals": "fractionConsumed and daysUntilPlanExpiry are inputs. Which module computes them per vertical - sessions used, walks used, food depletion - is not built here.",
+    "quiet_hours": "Already enforced by lib/communication-engine.ts for marketing and lifecycle purposes; not duplicated here."
+  },
+
+  "gates": {"focused": "14/14", "full_suite": "3473/3473", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

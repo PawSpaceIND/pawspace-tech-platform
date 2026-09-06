@@ -1,4 +1,4 @@
-import{database,type AuthenticatedActor}from"../../../lib/server-auth";
+import{authError,database,type AuthenticatedActor}from"../../../lib/server-auth";
 import{orchestrateAiTurn}from"../../../lib/ai-conversation-orchestrator";
 import{recordWhatsAppUatDelivery,recordWhatsAppUatInbound,whatsappUatProviders,type WhatsAppUatProvider}from"../../../lib/whatsapp-uat-adapter";
 
@@ -34,5 +34,5 @@ export async function POST(request:Request){
    const result=await recordWhatsAppUatDelivery(db,{provider,eventId,messageId,eventType:status as"accepted"|"sent"|"delivered"|"read"|"failed",payloadHash,detail:{providerReference:payload.providerReference??null,reason:payload.reason??null}});return json({ok:true,environment:"uat",externalDelivery:false,data:result});
   }
   return json({error:"Unsupported WhatsApp UAT event type"},400);
- }catch(error){if(error instanceof Response)return error;return json({error:error instanceof Error?error.message:"Unable to process WhatsApp UAT webhook"},500);}
+ }catch(error){return authError(error,"Unable to process WhatsApp UAT webhook");}
 }

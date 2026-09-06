@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib/walking-governance.ts and lib/taxi-governance.ts now share lib/booking-window-instant.ts, and a
+// lib module importing another extensionlessly needs the suite resolver. No worker env is read here.
+installWorkersHooks("__TAXI_FLOW_DB__");
 
 const flowSource = fs.readFileSync("app/mobile-app/taxi-flow.tsx", "utf8");
 const cssSource = fs.readFileSync("app/mobile-app/taxi-flow.module.css", "utf8");
@@ -33,13 +38,15 @@ test("booking creation goes through lib/taxi-booking-client.ts — the component
 });
 
 test("pet selection welcomes dogs AND cats, one pet per trip", () => {
-  assert.match(flowSource, /species: "cat"/);
-  assert.match(flowSource, /species: "dog"/);
+  // The customer's OWN pets are loaded and selectable — any species, no dogs-only guard.
+  assert.match(flowSource, /loadCustomerPets/, "the flow loads the customer's real pets");
   assert.match(flowSource, /Dogs and cats welcome/);
   assert.match(flowSource, /one pet per trip/);
-  // no dogs-only guard — the cat is selectable like any other pet
+  // no dogs-only guard — a cat is selectable like any other pet
   assert.doesNotMatch(flowSource, /DOGS ONLY|dogs-only/);
-  assert.match(flowSource, /species: pet\.species/, "the selected pet's real species is sent to the booking");
+  // the selected pet's real canonical id and real species are sent to the reserve/booking
+  assert.match(flowSource, /petIds: \[pet\.id\]/, "the reserve gets the pet's owned canonical id");
+  assert.match(flowSource, /species: pet\.species === "cat"/, "the selected pet's real species is sent to the booking");
 });
 
 test("pickup/drop use the real commercial contract fields and mirror the server validation", () => {
@@ -47,7 +54,10 @@ test("pickup/drop use the real commercial contract fields and mirror the server 
   assert.match(flowSource, /destinationLabel/);
   // server rule mirrored client-side: ≥3 chars each, distinct case-insensitively
   assert.match(flowSource, /origin\.length >= 3 && destination\.length >= 3 && origin\.toLowerCase\(\) !== destination\.toLowerCase\(\)/);
-  assert.doesNotMatch(flowSource, /pincode|zoneResolver|latitude|longitude/, "no invented location fields beyond the contract's labels");
+  assert.match(flowSource, /resolveServiceCoverage\(pincode\)/, "the service PIN must resolve before scheduling");
+  assert.match(flowSource, /zoneId: coverage\.zoneId/);
+  assert.match(flowSource, /cityId: coverage\.cityId/);
+  assert.doesNotMatch(flowSource, /zoneId:\s*"blr-east"|cityId:\s*"blr"|latitude|longitude/, "no hardcoded zone/city or invented coordinates");
 });
 
 test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {

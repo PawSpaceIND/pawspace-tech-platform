@@ -109,13 +109,29 @@ test("the committed uat-demo-seed.sql is exactly what the generator produces", (
   assert.ok(ids.length > 100, "seed should carry a meaningful number of rows");
 });
 
+test("seed materializes Training programmes and sessions, not booking shells", () => {
+  const sqlite = seededDb();
+  const programmes = sqlite.prepare("SELECT booking_id,status,total_sessions,completed_sessions,cancelled_sessions FROM training_programmes ORDER BY booking_id").all().map((row) => ({ ...row }));
+  const sessions = sqlite.prepare("SELECT booking_id,status,schedule_reservation_id FROM training_sessions ORDER BY booking_id").all().map((row) => ({ ...row }));
+  assert.deepEqual(programmes, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", total_sessions: 1, completed_sessions: 1, cancelled_sessions: 0 },
+    { booking_id: "UATD-BK-TRAIN-2", status: "completed_with_exceptions", total_sessions: 1, completed_sessions: 0, cancelled_sessions: 1 },
+    { booking_id: "UATD-BK-TRAIN-3", status: "active", total_sessions: 1, completed_sessions: 0, cancelled_sessions: 0 },
+  ]);
+  assert.deepEqual(sessions, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", schedule_reservation_id: "UATD-BK-TRAIN-1-RES" },
+    { booking_id: "UATD-BK-TRAIN-2", status: "cancelled", schedule_reservation_id: "UATD-BK-TRAIN-2-RES" },
+    { booking_id: "UATD-BK-TRAIN-3", status: "arrived", schedule_reservation_id: "UATD-BK-TRAIN-3-RES" },
+  ]);
+});
+
 test("seeded DB: company analytics reports real revenue, services and CX", async () => {
   seededDb();
   const { data } = await body(await GET(companyAnalyticsRoute, "/api/company-analytics"));
   assert.ok(data.bookings.total >= 12, `expected the demo bookings, got ${data.bookings.total}`);
   assert.ok(data.money.gmv > 0, "GMV must be non-zero");
   assert.equal(data.services.dog_training.cancelled, 1, "the deliberately cancelled training booking is visible");
-  assert.equal(data.services.dog_training.gmv, 4999, "cancelled value excluded, completed 4999 counted");
+  assert.equal(data.services.dog_training.gmv, 9998, "cancelled value excluded; completed and active Training value counted");
   assert.ok(data.cx.tickets >= 2, "CX tickets are seeded");
   assert.ok(data.customers.unique >= 6);
 });
@@ -146,7 +162,7 @@ test("seeded DB: people surfaces (manager dashboard, reports, payroll, attendanc
   assert.ok(dashboard.data.employeeCount >= 4, "demo employees are visible");
   assert.ok(dashboard.data.verticals.sales.length >= 2, "the governed sales registry classifies the demo sellers");
 
-  const reports = await body(await GET(peopleReportsRoute, "/api/people-reports"));
+  const reports = await body(await GET(peopleReportsRoute, "/api/people-reports?start=1785542400000&end=1788220799999"));
   assert.ok(reports.data.headcount.active >= 4);
   assert.ok(reports.data.payroll.register.length >= 4, "payroll register is populated");
   assert.ok(reports.data.teamRollups.length >= 2, "team rollups are populated");
@@ -303,7 +319,7 @@ test("seeded DB: growth and ops intelligence produce real advisory output", asyn
 });
 
 test("seeded DB: partner workspace resolves a linked provider with real earnings", async () => {
-  seededDb();
+  const sqlite = seededDb();
   const response = await providerWorkspaceRoute.GET(new Request("http://localhost/api/provider-workspace"));
   const { data } = await body(response);
   // The preview/founder identity is not provider-linked, so this proves the graceful path;
@@ -312,7 +328,12 @@ test("seeded DB: partner workspace resolves a linked provider with real earnings
   const { providerWorkspace } = await import("../lib/provider-workspace.ts");
   const workspace = await providerWorkspace(globalThis.__PAWSPACE_TEST_ENV.DB, { providerId: "groom_arun" });
   assert.ok(workspace.bookings.past.length + workspace.bookings.upcoming.length >= 2, "the groomer has real jobs");
-  assert.ok(workspace.liveAssignments.length >= 1, "a live assignment is waiting to be accepted");
+  // The immutable demo offer has a real expiry. Once wall-clock time passes it, preserving the seed
+  // must not turn that stale row into a live assignment merely to keep the demo tile populated.
+  const staleOffer = sqlite.prepare("SELECT status,expires_at FROM provider_job_offers WHERE id='UATD-OFFER-1'").get();
+  assert.equal(staleOffer.status, "offered", "the existing demo seed row is preserved");
+  assert.ok(Number(staleOffer.expires_at) <= Date.now(), "the preserved offer is now past its stored expiry");
+  assert.equal(workspace.liveAssignments.length, 0, "an expired demo offer is not represented as live");
   assert.ok(workspace.earnings.netPayout > 0, "computed payouts back the earnings tile");
 });
 
@@ -332,4 +353,15 @@ test("seeded DB: employee self-service is populated for a demo employee identity
   // and the route itself never accepts a caller-supplied identity
   const meResponse = await meRoute.GET(new Request("http://localhost/api/me"));
   assert.equal(meResponse.status, 200);
+});
+
+
+test("UAT demo seed preserves Walking pricing and exposes Training recovery evidence", () => {
+  const sql = fs.readFileSync(new URL("../scripts/uat-demo-seed.sql", import.meta.url), "utf8");
+  assert.doesNotMatch(sql, /UPDATE canonical_bookings SET pricing_json = json_set/);
+  assert.match(sql, /INSERT OR IGNORE INTO training_session_consumptions .*UATD-TS-1/);
+  assert.match(sql, /UATD-BK-TRAIN-3/);
+  assert.match(sql, /UATD-TP-3/);
+  assert.match(sql, /UATD-TS-3/);
+  assert.match(sql, /'arrived'/);
 });

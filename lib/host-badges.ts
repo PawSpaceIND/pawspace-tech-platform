@@ -26,6 +26,30 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
   }
 }
 
+
+/**
+ * What the platform can actually evidence about a host provider, as opposed to what its profile row
+ * claims. Keyed through the provider's onboarding application, because provider_verifications is
+ * recorded per application. A provider with no application has no evidence - which is the honest answer
+ * for the seeded demo hosts - and any failure to read is treated the same way: no evidence, no badge.
+ */
+async function hostVerificationEvidence(db:Db,hostProviderId:string){
+  const none={mandateSatisfied:false,homeVerified:false};
+  const application=await safeFirst(db,"SELECT id FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1",[hostProviderId]);
+  const applicationId=String(application?.id||"");
+  if(!applicationId)return none;
+  try{
+    const {verificationMandateStatus}=await import("./provider-verification-mandate");
+    const status=await verificationMandateStatus(db,{applicationId,category:"host"});
+    return{
+      mandateSatisfied:Boolean(status.allVerified),
+      homeVerified:status.checks.some(check=>check.verificationType==="house_verification"&&check.status==="verified"),
+    };
+  }catch{
+    return none;
+  }
+}
+
 export async function computeHostStats(db:Db,hostProviderId:string):Promise<HostStats>{
   // Completed stays: count from canonical_bookings where provider_id and status='completed'
   const staysResult=await safeFirst(db,"SELECT COUNT(*) as count FROM canonical_bookings WHERE provider_id=? AND status='completed' AND service_code IN ('boarding','pet_sitting')",[hostProviderId]);
@@ -53,8 +77,20 @@ export async function computeHostStats(db:Db,hostProviderId:string):Promise<Host
   // capacity profile (sitting-only providers have no boarding_host_profiles row -> all false).
   const hostProfile=await safeFirst(db,"SELECT medication_support,home_verified,kyc_status FROM boarding_host_profiles WHERE provider_id=?",[hostProviderId]);
   const medicationSupport=Boolean(Number(hostProfile?.medication_support||0));
-  const homeVerified=Boolean(Number(hostProfile?.home_verified||0));
-  const kycVerified=String(hostProfile?.kyc_status||"")==="verified";
+
+  // A badge that tells a customer "Identity and background verified" needs a verification record behind
+  // it. boarding_host_profiles.kyc_status and home_verified are written by exactly one statement in this
+  // codebase - the hardcoded host seed in lib/boarding-governance.ts, which sets them as literals - so
+  // reporting those columns verbatim showed "KYC Verified" and "Verified Home" for providers with zero
+  // verification records of any kind, to anyone, unauthenticated. The claim now needs BOTH: the
+  // operator's own host record AND the platform's own evidence - the host category mandate satisfied for
+  // that provider's onboarding application, and specifically the mandated house_verification for the
+  // home badge. Nothing here decides what KYC means; those are the mandated checks the platform already
+  // defines. This governs the BADGE only - host eligibility for booking is judged elsewhere, on the
+  // columns, and changing that is an operations decision about the seeded UAT hosts. [PTJA-P0-06]
+  const evidence=await hostVerificationEvidence(db,hostProviderId);
+  const homeVerified=Boolean(Number(hostProfile?.home_verified||0))&&evidence.homeVerified;
+  const kycVerified=String(hostProfile?.kyc_status||"")==="verified"&&evidence.mandateSatisfied;
 
   // Host cancelled count
   const cancelResult=await safeFirst(db,"SELECT COUNT(*) as host_cancelled FROM canonical_bookings WHERE provider_id=? AND cancellation_reason='host_cancelled'",[hostProviderId]);

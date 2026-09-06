@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "./food-flow.module.css";
 import type { LoggedInCustomer } from "./customer-login";
+import PetManager from "./pet-manager";
+import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import {
   loadFoodCatalogue,
   quoteFoodCart,
@@ -12,13 +14,13 @@ import {
   type FoodQuote,
 } from "../../lib/food-client";
 import { createFoodSubscription } from "../../lib/food-subscription-client";
+import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 
-// Same household pets the other flows present (species drives per-pet food suggestions).
-const pets = [
-  { name: "Bruno", detail: "Golden Retriever · 4 years", icon: "🐕", species: "dog" as const },
-  { name: "Coco", detail: "Persian cat · 3 years", icon: "🐈", species: "cat" as const },
-  { name: "Milo", detail: "Beagle · 2 years", icon: "🐶", species: "dog" as const },
-];
+// Species drives per-pet food suggestions; the pets are the customer's own, loaded at runtime.
+const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
+const petDetail = (pet: CustomerPet) =>
+  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  "Profiles, health notes and service history included";
 
 // Customer-selected renewal cadence. The Food subscription API accepts any explicit
 // 7-90 day interval (see /api/food-subscriptions), so every option below is server-valid.
@@ -41,13 +43,24 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [step, setStep] = useState(1);
   const [catalogue, setCatalogue] = useState<FoodCatalogueItem[]>([]);
   const [catalogueError, setCatalogueError] = useState("");
-  const [catalogueLoading, setCatalogueLoading] = useState(true);
-  const [selectedPets, setSelectedPets] = useState<string[]>([pets[0].name]);
+  const [catalogueLoading, setCatalogueLoading] = useState(false);
+  const [selRaw, setSelectedPets] = useState<string[]>([]);
+  // pets is null until the first load resolves; that distinguishes "not hydrated yet" from
+  // "hydrated to an empty list" (e.g. the user deleted their last pet), so a late initial load
+  // can never re-insert a pet the user just removed.
+  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
+  const pets = useMemo(() => petsState ?? [], [petsState]);
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = useMemo(() => selRaw.filter((id) => pets.some((p) => p.id === id)), [selRaw, pets]);
+  const [petsLoading, setPetsLoading] = useState(true);
+  const [petsError, setPetsError] = useState("");
+  const [showPetManager, setShowPetManager] = useState(false);
   const [cart, setCart] = useState<FoodCartLine[]>([]);
   const [plan, setPlan] = useState<"one_time" | "repeat">("one_time");
   const [intervalDays, setIntervalDays] = useState(repeatPlans[2].intervalDays);
   const [address, setAddress] = useState("");
   const [pincode, setPincode] = useState("");
+  const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [window_, setWindow] = useState(deliveryWindows[0]);
   const [quotes, setQuotes] = useState<FoodQuote[]>([]);
   const [serverTotal, setServerTotal] = useState(0);
@@ -58,26 +71,42 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [subscriptions, setSubscriptions] = useState<SubscriptionCreated[]>([]);
   const [done, setDone] = useState(false);
 
+  const checkCoverage = async () => {
+    setCatalogueLoading(true); setCatalogueError(""); setCoverage(null); setCatalogue([]); setCart([]);
+    try {
+      const resolved = await resolveServiceCoverage(pincode);
+      const data = await loadFoodCatalogue(resolved.zoneId);
+      setCoverage(resolved); setCatalogue(data.items);
+    } catch (error) {
+      setCatalogueError(error instanceof Error ? error.message : "Unable to confirm Food delivery coverage");
+    } finally { setCatalogueLoading(false); }
+  };
+
   useEffect(() => {
     let active = true;
-    loadFoodCatalogue("blr-east")
-      .then((data) => {
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
+    loadCustomerPets(customer.customerId)
+      .then((loaded) => {
         if (!active) return;
-        setCatalogue(data.items);
-        setCatalogueError("");
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
+        setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
+        setPetsError("");
       })
-      .catch((error) => {
-        if (active) setCatalogueError(error instanceof Error ? error.message : "Unable to load the Food catalogue");
-      })
-      .finally(() => {
-        if (active) setCatalogueLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const selectedSpecies = useMemo(() => new Set(pets.filter((pet) => selectedPets.includes(pet.name)).map((pet) => pet.species)), [selectedPets]);
+      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .finally(() => { if (active) setPetsLoading(false); });
+    return () => { active = false; };
+  }, [customer.customerId]);
+  const onPetsChanged = (updated: CustomerPet[]) => {
+    setPets(updated);
+    setSelectedPets((prev) => {
+      const kept = prev.filter((id) => updated.some((p) => p.id === id));
+      return kept.length ? kept : updated[0] ? [updated[0].id] : [];
+    });
+  };
+  const selectedSpecies = useMemo(() => new Set(pets.filter((pet) => selectedPets.includes(pet.id)).map((pet) => pet.species)), [pets, selectedPets]);
   const grouped = useMemo(() => {
     const bySpecies: Record<string, FoodCatalogueItem[]> = {};
     for (const item of catalogue) (bySpecies[item.pet_type] ||= []).push(item);
@@ -91,9 +120,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const itemBySku = useMemo(() => new Map(catalogue.map((item) => [item.sku, item])), [catalogue]);
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const indicativeTotal = cart.reduce((sum, line) => sum + (itemBySku.get(line.sku)?.unit_price ?? 0) * line.quantity, 0);
-  const suggestedFor = (item: FoodCatalogueItem) => pets.filter((pet) => selectedPets.includes(pet.name) && pet.species === item.pet_type).map((pet) => pet.name);
+  const suggestedFor = (item: FoodCatalogueItem) => pets.filter((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type).map((pet) => pet.name);
 
-  const togglePet = (name: string) => setSelectedPets((current) => (current.includes(name) ? current.filter((pet) => pet !== name) : [...current, name]));
+  const togglePet = (id: string) => setSelectedPets((current) => (current.includes(id) ? current.filter((pet) => pet !== id) : [...current, id]));
   const qtyOf = (sku: string) => cart.find((line) => line.sku === sku)?.quantity ?? 0;
   const setQty = (item: FoodCatalogueItem, quantity: number) => {
     const capped = Math.max(0, Math.min(quantity, item.max_qty_per_order, item.uat_available_units));
@@ -107,7 +136,17 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     setQuoting(true);
     setFlowError("");
     try {
-      const result = await quoteFoodCart(cart, "blr-east");
+      const resolved = await resolveServiceCoverage(pincode);
+      if (!coverage || coverage.zoneId !== resolved.zoneId) throw new Error("Service coverage changed. Check the delivery PIN code again.");
+      if (!selectedPets.length) throw new Error("Select at least one pet before ordering Fresh Food.");
+      const petBoundCart = cart.map((line) => {
+        const item = itemBySku.get(line.sku);
+        if (!item) throw new Error("Food catalogue changed. Reload the catalogue before ordering.");
+        const petIds = pets.filter((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type).map((pet) => pet.id);
+        if (!petIds.length) throw new Error(`Select at least one ${item.pet_type} for ${lineName(item)}.`);
+        return { ...line, petIds };
+      });
+      const result = await quoteFoodCart(petBoundCart, resolved.zoneId, customer.customerId);
       setQuotes(result.quotes);
       setServerTotal(result.serverTotal);
       setStep(5);
@@ -122,11 +161,13 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     setConfirming(true);
     setFlowError("");
     try {
+      const resolved = await resolveServiceCoverage(pincode);
+      if (!coverage || coverage.zoneId !== resolved.zoneId) throw new Error("Service coverage changed. Check the delivery PIN code again.");
       const created = await placeQuotedFoodOrders({
         quotes,
         customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone },
-        cityId: "blr",
-        zoneId: "blr-east",
+        cityId: resolved.cityId,
+        zoneId: resolved.zoneId,
       });
       const subs: SubscriptionCreated[] = [];
       if (plan === "repeat") {
@@ -154,7 +195,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           <small>FOOD ORDER CONFIRMED</small>
           <h3>{orders.length === 1 ? "Your order is reserved." : `${orders.length} orders are reserved.`}</h3>
           <p>
-            {cartCount} item{cartCount > 1 ? "s" : ""} · {money(serverTotal)} · pay on delivery (UAT sandbox)
+            {cartCount} item{cartCount > 1 ? "s" : ""} · {money(serverTotal)} · payment pending until verified after delivery
           </p>
         </article>
         {orders.map((order, index) => {
@@ -189,6 +230,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
 
   return (
     <section className={styles.flow}>
+      <header className={styles.foodIntro}><span>PAWSPACE FRESH FOOD</span><div><h2>Better bowls, made simple.</h2><small>Check your area, choose a meal and set delivery preferences.</small></div><b>{step}<i>/5</i></b></header>
       <div className={styles.steps}>
         {[1, 2, 3, 4, 5].map((n) => (
           <span key={n} className={step >= n ? styles.active : ""}>
@@ -203,16 +245,30 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
             <h3>Fresh food for your pets</h3>
             <small>CATALOGUE · 1 OF 5</small>
           </div>
+          <label className={styles.field}>
+            Service PIN code
+            <input value={pincode} inputMode="numeric" maxLength={6} onChange={(event) => { setPincode(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); setCatalogue([]); setCart([]); }} placeholder="Enter six-digit PIN code" />
+          </label>
+          <button className={styles.primary} disabled={catalogueLoading || pincode.length !== 6} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Check service area & load catalogue"}</button>
+          {coverage && <p className={styles.hint}>Delivery coverage confirmed for {coverage.area || coverage.zoneName}, {coverage.city}.</p>}
           <div className={styles.petRow}>
+            {petsLoading && <p className={styles.hint}>Loading your pets…</p>}
+            {petsError && <p className={styles.hint} role="alert">{petsError}</p>}
+            {!petsLoading && !petsError && pets.length === 0 && <p className={styles.hint}>No pets on your profile yet — add one below for tailored food picks.</p>}
             {pets.map((pet) => (
-              <button key={pet.name} className={selectedPets.includes(pet.name) ? styles.selected : ""} onClick={() => togglePet(pet.name)}>
-                <i>{pet.icon}</i>
+              <button key={pet.id} className={selectedPets.includes(pet.id) ? styles.selected : ""} onClick={() => togglePet(pet.id)}>
+                <i>{petIcon(pet.species)}</i>
                 <b>{pet.name}</b>
-                <small>{pet.detail}</small>
+                <small>{petDetail(pet)}</small>
               </button>
             ))}
+            <button onClick={() => setShowPetManager((v) => !v)}>
+              <i>{showPetManager ? "−" : "＋"}</i>
+              <b>{showPetManager ? "Hide" : "Add pet"}</b>
+            </button>
           </div>
-          {catalogueLoading && <p className={styles.hint}>Loading the live catalogue…</p>}
+          {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
+          {catalogueLoading && <p className={styles.hint}>Loading the governed UAT catalogue…</p>}
           {catalogueError && <p role="alert" className={styles.error}>{catalogueError}</p>}
           {grouped.map(([species, items]) => (
             <div key={species}>
@@ -229,7 +285,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
                     <div>
                       <b>{lineName(item)}</b>
                       <small>
-                        {item.pack_size} · {item.uat_available_units} in stock
+                        {item.pack_size} · {item.uat_available_units} allocated for UAT ordering
                       </small>
                       {names.length > 0 && <span className={styles.forPets}>Suggested for {names.join(" & ")}</span>}
                     </div>
@@ -252,7 +308,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
               })}
             </div>
           ))}
-          <button className={styles.primary} disabled={cart.length === 0} onClick={() => setStep(2)}>
+          <button className={styles.primary} disabled={cart.length === 0 || !coverage} onClick={() => setStep(2)}>
             {cart.length === 0 ? "Add food to continue" : `Review cart · ${cartCount} item${cartCount > 1 ? "s" : ""}`}
           </button>
         </>
@@ -332,7 +388,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
                   </button>
                 ))}
               </div>
-              <p className={styles.hint}>No auto-charge: before each renewal you get a WhatsApp reminder and pay only after approving it.</p>
+              <p className={styles.hint}>No auto-charge: each renewal requires approval. An in-app reminder is queued; external WhatsApp delivery is not active in UAT.</p>
             </>
           )}
           <button className={styles.back} onClick={() => setStep(2)}>
@@ -356,11 +412,12 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           </label>
           <label className={styles.field}>
             Pincode
-            <input value={pincode} inputMode="numeric" maxLength={6} onChange={(event) => setPincode(event.target.value.replace(/\D/g, ""))} placeholder="560038" />
+            <input value={pincode} inputMode="numeric" maxLength={6} onChange={(event) => { setPincode(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); }} placeholder="Enter six-digit PIN code" />
           </label>
+          {!coverage && <button className={styles.back} disabled={catalogueLoading || pincode.length !== 6} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Recheck service area"}</button>}
           <div className={styles.section}>
             <b>Preferred delivery window</b>
-            <span>BENGALURU EAST ZONE</span>
+            <span>{coverage ? coverage.zoneName.toUpperCase() : "SERVICE AREA NOT CONFIRMED"}</span>
           </div>
           <div className={styles.planRow}>
             {deliveryWindows.map((option) => (
@@ -370,11 +427,11 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
               </button>
             ))}
           </div>
-          <p className={styles.hint}>UAT sandbox: the fulfilment team confirms dispatch against the Bengaluru-East inventory zone; your address and window guide the delivery run.</p>
+          <p className={styles.hint}>UAT sandbox: stock is a test allocation, not live warehouse inventory. Fulfilment confirms dispatch for the resolved service zone.</p>
           <button className={styles.back} onClick={() => setStep(3)}>
             ← Plan
           </button>
-          <button className={styles.primary} disabled={quoting || !address.trim() || pincode.length !== 6} onClick={() => void reviewOrder()}>
+          <button className={styles.primary} disabled={quoting || !address.trim() || pincode.length !== 6 || !coverage} onClick={() => void reviewOrder()}>
             {quoting ? "Getting server quote…" : "Review with server quote"}
           </button>
           {flowError && <p role="alert" className={styles.error}>{flowError}</p>}
