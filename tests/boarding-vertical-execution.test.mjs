@@ -585,6 +585,247 @@ test("BRD-11 completion finance: no approved commercial term means no completion
   stage("Completion finance", "PASS", `refused without a commercial term, no payout accrued; with one, ${entries.length} balanced ledger entries at Rs ${debits.toFixed(2)}`);
 });
 
+// --- 6. CANCELLATION + REFUND -----------------------------------------------
+test("BRD-12 cancellation: a delivered or in-progress stay cannot be cancelled, and no one approves their own refund", async () => {
+  const { db, sqlite, stayId } = await activeWorld();
+  const life = await import("../lib/boarding-stay-lifecycle.ts");
+  const fin = await import("../lib/boarding-finance-governance.ts");
+  const call = (over) => attempt(() => fin.mutateBoardingFinance(db, {
+    bookingId: BOOKING, actorId: "ops@pawspace.test", idempotencyKey: `brd-f-${Math.random()}`,
+    reason: "customer travel plans changed", ...over,
+  }));
+
+  await life.mutateBoardingStay(db, { stayId, action: "accept", actorId: HOST, idempotencyKey: "brd-can-accept" });
+
+  const requested = await call({ action: "request_cancel" });
+  assert.equal(requested.ok, true, `a cancellation request must open: ${String(requested.body ?? "").slice(0, 160)}`);
+  assert.equal(requested.value.status, "policy_review_required");
+  assert.equal(requested.value.bookingPreserved, true, "requesting must not itself cancel anything");
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status, "assigned",
+    "a request is a request; the booking must not move until someone decides");
+
+  // Segregation of duties: the person who asked cannot be the person who approves.
+  const selfApprove = await call({ action: "approve_cancel", actorId: "ops@pawspace.test", approvedRefundAmount: 100 });
+  assert.equal(selfApprove.ok, false, "the requester must not approve their own refund");
+  assert.match(String(selfApprove.body ?? ""), /segregation of duties/i);
+
+  // An in-progress stay is an Operations incident, not an automatic cancellation.
+  await life.mutateBoardingStay(db, {
+    stayId, action: "submit_care_plan", actorId: CUSTOMER, idempotencyKey: "brd-can-plan",
+    carePlan: { emergencyContact: "9800000111", vet: "Cessna Lifeline" },
+  });
+  await life.mutateBoardingStay(db, { stayId, action: "check_in", actorId: HOST, idempotencyKey: "brd-can-in" });
+  const inProgress = await call({ action: "approve_cancel", actorId: "finance@pawspace.test", approvedRefundAmount: 100 });
+  assert.equal(inProgress.ok, false, "a stay with the pet already in the host's home must not auto-cancel");
+  assert.match(String(inProgress.body ?? ""), /Operations incident workflow/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_refund_ledger WHERE booking_id=?").get(BOOKING).n, 0,
+    "a refused approval must not write a refund");
+  stage("Cancellation governance", "PASS", "request preserves the booking; requester cannot approve; an in-progress stay is refused to Operations");
+});
+
+test("BRD-13 refund: capped by money actually collected, counting refunds already approved, and decided once", async () => {
+  /* The comment in lib/boarding-finance-governance.ts records the defect this guards: the ceiling
+   * was applied per approval, so N open requests approved N full refunds and moved 200% of the money
+   * collected out of the company. The ceiling is the BOOKING's remaining headroom. */
+  const { db, sqlite, stayId } = await activeWorld();
+  const life = await import("../lib/boarding-stay-lifecycle.ts");
+  const fin = await import("../lib/boarding-finance-governance.ts");
+  await life.mutateBoardingStay(db, { stayId, action: "accept", actorId: HOST, idempotencyKey: "brd-rf-accept" });
+  const call = (over) => attempt(() => fin.mutateBoardingFinance(db, {
+    bookingId: BOOKING, idempotencyKey: `brd-r-${Math.random()}`, reason: "customer cancelled the stay", ...over,
+  }));
+
+  const req1 = await call({ action: "request_cancel", actorId: CUSTOMER });
+  assert.equal(req1.ok, true);
+
+  // Rs 1398 was captured. More than that must be refused outright.
+  const overCap = await call({ action: "approve_cancel", actorId: "finance@pawspace.test", approvedRefundAmount: 5000 });
+  assert.equal(overCap.ok, false, "a refund may never exceed the money actually collected");
+  assert.match(String(overCap.body ?? ""), /cannot exceed the amount actually collected/i);
+  assert.match(String(overCap.body ?? ""), /1398/, "the refusal must name the real ceiling");
+
+  const partial = await call({ action: "approve_cancel", actorId: "finance@pawspace.test", approvedRefundAmount: 1000 });
+  assert.equal(partial.ok, true, `a refund within the cap must be approved: ${String(partial.body ?? "").slice(0, 160)}`);
+  const ledger = sqlite.prepare("SELECT amount,status,policy_source FROM boarding_refund_ledger WHERE booking_id=?").all(BOOKING);
+  assert.equal(ledger.length, 1);
+  assert.equal(Number(ledger[0].amount), 1000);
+  assert.equal(ledger[0].status, "sandbox_pending", "no live money may move from a test approval");
+  assert.equal(sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(stayId).status, "cancelled");
+  const locks = sqlite.prepare("SELECT status FROM boarding_capacity_locks WHERE stay_id=?").all(stayId);
+  assert.ok(locks.every((l) => l.status === "released"), "cancelling must free the host's capacity");
+
+  /* A SECOND request on the same booking must only be able to reach the REMAINING headroom.
+   * Rs 1398 collected minus Rs 1000 already approved leaves Rs 398. */
+  sqlite.prepare("UPDATE canonical_bookings SET status='assigned' WHERE id=?").run(BOOKING);
+  sqlite.prepare("UPDATE boarding_stays SET status='confirmed' WHERE id=?").run(stayId);
+  await call({ action: "request_cancel", actorId: CUSTOMER });
+  const secondFull = await call({ action: "approve_cancel", actorId: "finance@pawspace.test", approvedRefundAmount: 1398 });
+  assert.equal(secondFull.ok, false, "a second approval must not be able to refund the full amount again");
+  assert.match(String(secondFull.body ?? ""), /398/, "the ceiling must now be the REMAINING headroom, not the original capture");
+  const total = sqlite.prepare("SELECT COALESCE(SUM(amount),0) t FROM boarding_refund_ledger WHERE booking_id=?").get(BOOKING).t;
+  assert.ok(Number(total) <= 1398, `total refunds ${total} must never exceed the Rs 1398 collected`);
+  stage("Refund ceiling", "PASS", `capped at collected Rs 1398; after approving Rs 1000 the ceiling drops to Rs 398; total never exceeds capture`);
+});
+
+// --- 7. HOST SETTLEMENT ------------------------------------------------------
+test("BRD-14 settlement: prepared only after checkout, and it asserts no payout it has no rule for", async () => {
+  const { db, sqlite, stayId, stayDay } = await checkedInWorld();
+  const life = await import("../lib/boarding-stay-lifecycle.ts");
+  const proof = await import("../lib/boarding-proof-governance.ts");
+  const fin = await import("../lib/boarding-finance-governance.ts");
+  await seedCommercialTerm(db);
+  const settle = (key) => attempt(() => fin.mutateBoardingFinance(db, {
+    bookingId: BOOKING, action: "prepare_settlement", actorId: "finance@pawspace.test",
+    idempotencyKey: key, reason: "host settlement preparation",
+  }));
+
+  const early = await settle("brd-st-1");
+  assert.equal(early.ok, false, "a host cannot be settled for a stay that has not finished");
+  assert.match(String(early.body ?? ""), /only after canonical checkout/i);
+
+  for (const [type, key] of [["meal", "brd-st-meal"], ["play", "brd-st-play"]]) {
+    await life.mutateBoardingStay(db, {
+      stayId, action: "care_event", actorId: HOST, idempotencyKey: key,
+      careEventType: type, detail: { stayDate: stayDay },
+    });
+  }
+  const media = await cleanMedia(db, stayId, proof);
+  await proof.mutateBoardingProof(db, {
+    stayId, action: "record_daily_update", actorId: HOST, idempotencyKey: "brd-st-update",
+    mediaRef: media.mediaRef, note: "good stay",
+  });
+  await life.mutateBoardingStay(db, { stayId, action: "check_out", actorId: HOST, idempotencyKey: "brd-st-out" });
+
+  const prepared = await settle("brd-st-2");
+  assert.equal(prepared.ok, true, `settlement must prepare after checkout: ${String(prepared.body ?? "").slice(0, 160)}`);
+  const row = sqlite.prepare("SELECT provider_id,gross_booking_value,payout_amount,payout_rule_status,tax_status,approval_status,payout_status FROM boarding_host_settlement_ledger WHERE booking_id=?").get(BOOKING);
+  assert.ok(row, "a settlement row must exist for the completed stay");
+  assert.equal(row.provider_id, HOST, "the settlement must name the host who actually did the stay");
+
+  /* The point of this stage: preparing a settlement is NOT deciding one. Until a payout rule and a
+   * tax treatment are configured, the ledger must hold no amount and instruct no payment. */
+  assert.equal(row.payout_amount, null, "no payout amount may be asserted before a payout rule exists");
+  assert.equal(row.payout_rule_status, "rule_pending");
+  assert.equal(row.tax_status, "configuration_required");
+  assert.equal(row.approval_status, "not_ready");
+  assert.equal(row.payout_status, "not_instructed", "nothing may be instructed for payment from a prepare step");
+
+  const again = await settle("brd-st-3");
+  assert.equal(again.ok, true, "preparing twice is idempotent on the booking, not a second obligation");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_host_settlement_ledger WHERE booking_id=?").get(BOOKING).n, 1,
+    "one booking must never carry two settlement obligations");
+  stage("Host settlement", "PASS", "refused before checkout; after it, one row per booking asserting no amount and instructing no payment");
+});
+
+// --- 8. REVIEW + TRUST -------------------------------------------------------
+test("BRD-15 review: only the customer whose completed stay it was, and the host score follows the reviews", async () => {
+  const { db, sqlite } = await activeWorld();
+  const reviews = await import("../lib/host-reviews.ts");
+  await reviews.ensureHostReviewsTables(db);
+  const review = (over = {}) => attempt(() => reviews.submitHostReview(db, {
+    hostProviderId: HOST, customerId: CUSTOMER, bookingId: BOOKING, rating: 5,
+    title: "Wonderful host", body: "Bruno came home happy and well looked after all week.", ...over,
+  }));
+
+  const early = await review();
+  assert.equal(early.ok, false, "a stay that is not finished cannot be reviewed");
+  assert.match(String(early.body ?? ""), /only completed bookings can be reviewed/i);
+
+  sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(BOOKING);
+
+  const notMine = await review({ customerId: "BRD-CUS-OTHER" });
+  assert.equal(notMine.ok, false, "a customer must not review someone else's stay");
+  const wrongHost = await review({ hostProviderId: OTHER_HOST });
+  assert.equal(wrongHost.ok, false, "a review must attach to the host who actually did the stay");
+  for (const rating of [0, 6, 3.5]) {
+    const bad = await review({ rating });
+    assert.equal(bad.ok, false, `${rating} stars must be refused`);
+  }
+  const thin = await review({ body: "good" });
+  assert.equal(thin.ok, false, "a review body must carry enough substance to be useful");
+
+  const good = await review();
+  assert.equal(good.ok, true, `the customer whose stay it was must be able to review: ${String(good.body ?? "").slice(0, 160)}`);
+  const twice = await review({ rating: 1, title: "Changed my mind", body: "Actually it was not good at all, sorry." });
+  assert.equal(twice.ok, false, "one completed stay is one review");
+
+  const listed = await attempt(() => reviews.listHostReviews(db, HOST, {}));
+  assert.equal(listed.ok, true);
+  assert.equal(listed.value.reviews.length, 1);
+  assert.equal(listed.value.stats.avgRating, 5, "the published host score must be the real average of real reviews");
+  assert.equal(listed.value.stats.totalReviews, 1, "the published count must be the real number of reviews");
+  assert.equal(listed.value.stats.ratingHistogram[5], 1, "the histogram must reflect the review that was actually left");
+  stage("Review + trust", "PASS", "pre-completion, wrong customer, wrong host, bad rating, thin body and re-review all refused; score is the real average");
+});
+
+// --- 9. GST + FILING ---------------------------------------------------------
+test("BRD-16 GST: a boarding invoice fails closed with no tax policy, and issues once with one", async () => {
+  const { db, sqlite } = await activeWorld();
+  const inv = await import("../lib/boarding-invoice.ts");
+  await inv.ensureBoardingInvoiceTables(db);
+  sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(BOOKING);
+  const issue = (key = "service completed") => attempt(() => inv.issueBoardingInvoice(db, {
+    bookingId: BOOKING, reason: key, actorId: "finance@pawspace.test",
+  }));
+
+  const unconfigured = await issue("boarding vertical execution test");
+  assert.equal(unconfigured.ok, false, "issuing a tax invoice with no policy would fabricate a GST rate");
+  assert.equal(unconfigured.status, 409, "the refusal must be the governed 409, not an incidental crash");
+  assert.match(String(unconfigured.body ?? ""), /blocked until a published tax policy is configured/i,
+    "the refusal must name the missing tax policy - any other failure means the guard is not what stopped it");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_invoices WHERE booking_id=?").get(BOOKING).n, 0,
+    "no invoice row may exist after a refused issue");
+
+  const saved = await attempt(() => inv.saveBoardingTaxPolicy(db, {
+    cityId: CITY, taxMode: "exclusive", taxRate: 18, effectiveFrom: "2026-04-01",
+    actorId: "finance@pawspace.test", reason: "boarding vertical execution test",
+  }));
+  assert.equal(saved.ok, true, `a tax policy must be publishable: ${String(saved.body ?? "").slice(0, 160)}`);
+
+  const issued = await issue();
+  assert.equal(issued.ok, true, `an invoice must issue once the policy exists: ${String(issued.body ?? "").slice(0, 200)}`);
+  assert.match(String(issued.value.invoiceNumber), /^BRD-|BLR/, `invoice number must be city and FY scoped: ${issued.value.invoiceNumber}`);
+
+  const duplicate = await issue();
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.value.duplicatePrevented, true, "one booking is one invoice; a second issue must not mint a new number");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_invoices WHERE booking_id=?").get(BOOKING).n, 1);
+  stage("GST invoice", "PASS", `fails closed with no policy; issues ${issued.value.invoiceNumber} once, duplicate prevented`);
+});
+
+test("BRD-17 filing: host settlements carry 194H TDS at the governed FY threshold and rate", async () => {
+  /* Boarding host settlements reach TDS through boarding_host_settlement_ledger, a different source
+   * table from the commission payouts a groomer is paid through, so it is proved separately here. */
+  const { db, sqlite } = await activeWorld();
+  const tds = await import("../lib/tds-governance.ts");
+  await tds.ensureTdsTables(db);
+  const fin = await import("../lib/boarding-finance-governance.ts");
+  await fin.ensureBoardingFinanceTables(db);
+  const period = new Date().toISOString().slice(0, 7);
+  const settlement = (bookingId, amount) => sqlite.prepare("INSERT OR REPLACE INTO boarding_host_settlement_ledger (booking_id,stay_id,provider_id,gross_booking_value,currency,payout_amount,payout_rule_status,tax_status,approval_status,payout_status,eligible_at,created_at,updated_at) VALUES (?,?,?,?,'INR',?,'rule_applied','resolved','approved','not_instructed',?,?,?)")
+    .run(bookingId, `S-${bookingId}`, HOST, amount, amount, Date.now(), Date.now(), Date.now());
+
+  // Below the Rs 20,000 FY commission threshold: nothing may be deducted.
+  settlement("BRD-BK-S1", 15000);
+  const below = await attempt(() => tds.computeMonthlyTds(db, { period, actorId: "finance@pawspace.test" }));
+  assert.equal(below.ok, true, `TDS computation must run: ${String(below.body ?? "").slice(0, 200)}`);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM tds_deductions WHERE period=?").get(period).n, 0,
+    "no TDS may be deducted before the FY commission threshold is crossed");
+
+  // Crossing it taxes the whole untaxed FY cumulative at 2%.
+  settlement("BRD-BK-S2", 10000);
+  const over = await attempt(() => tds.computeMonthlyTds(db, { period, actorId: "finance@pawspace.test" }));
+  assert.equal(over.ok, true, `TDS recomputation must run: ${String(over.body ?? "").slice(0, 200)}`);
+  const rows = sqlite.prepare("SELECT section,deductee_id,base_amount,rate_pct,tds_amount FROM tds_deductions WHERE period=?").all(period);
+  assert.equal(rows.length, 1, "one 194H deduction row for the boarding host");
+  assert.equal(rows[0].section, "194H", "a boarding host settlement is commission, deducted under 194H");
+  assert.equal(rows[0].deductee_id, HOST);
+  assert.equal(Number(rows[0].base_amount), 25000, "the base is the full untaxed FY cumulative at first crossing");
+  assert.equal(Number(rows[0].rate_pct), 2);
+  assert.equal(Number(rows[0].tds_amount), 500, "2% of 25,000 is 500");
+  stage("Filing (194H)", "PASS", `nil below Rs 20,000 FY, then Rs 500 on Rs 25,000 at 2% against ${HOST}`);
+});
+
 // --- SCOPE REPORT -----------------------------------------------------------
 test("BRD-99 boarding vertical scope report", () => {
   const by = (s) => STAGES.filter((x) => x.status === s).length;
