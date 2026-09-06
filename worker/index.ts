@@ -93,8 +93,24 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
-      if(templateSync.failed&&templateSync.processed)throw new Error(`blocked before dispatch: whatsapp template sync: ${templateSync.failed} verification exception(s)`);
+      /* SCOPED, not global. This guard used to `throw` sequentially BEFORE the Promise.allSettled below,
+       * so a WhatsApp template verification exception stopped every one of the sweeps that follow from
+       * starting at all - including razorpayOrderOutbox, settlementRecon and subscriptionMaintenance. A
+       * messaging hiccup silently halted payment reconciliation, and per the audit there is no alerting
+       * to notice it.
+       *
+       * The guard's intent is kept exactly where it belongs: an unverified template must not be sent on,
+       * so BOTH WhatsApp dispatch sweeps are blocked below when this is set. Sweeps that send no WhatsApp
+       * message are unaffected. The failure still surfaces - it joins the same errors[] aggregation as
+       * every other sweep and still fails the invocation at the end. [AUDIT-H9] */
+      let templateSyncError:string|null=null;
+      try{
+        const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
+        if(templateSync.failed&&templateSync.processed)templateSyncError=`whatsapp template sync: ${templateSync.failed} verification exception(s)`;
+      }catch(error){templateSyncError=`whatsapp template sync: ${error instanceof Error?error.message:String(error)}`;}
+      /* Blocked before dispatch: whatsapp template sync failed. Scoped to the WhatsApp senders only. */
+      const whatsappDispatchBlocked=templateSyncError?`blocked before dispatch: ${templateSyncError}`:null;
+      const skippedWhatsAppSweep=(reason:string)=>Promise.resolve({processed:0,dispatched:0,skipped:0,failed:0,results:[] as unknown[],externalDelivery:false,blocked:reason});
       const marketingHour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",hour12:false}).format(new Date(controller.scheduledTime)));
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
@@ -104,8 +120,8 @@ const worker = {
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runServiceRecoveryAudioBotSweep(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,env:env as unknown as Record<string,unknown>}),
-        processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),
-        runWhatsAppOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50}),
+        whatsappDispatchBlocked?skippedWhatsAppSweep(whatsappDispatchBlocked):processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),
+        whatsappDispatchBlocked?skippedWhatsAppSweep(whatsappDispatchBlocked):runWhatsAppOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50}),
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
@@ -128,6 +144,7 @@ const worker = {
       if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(diamondCrm.status==="rejected")errors.push(`diamond crm: ${diamondCrm.reason instanceof Error?diamondCrm.reason.message:String(diamondCrm.reason)}`);
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
+      if(templateSyncError)errors.push(templateSyncError);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
