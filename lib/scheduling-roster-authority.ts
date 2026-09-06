@@ -19,21 +19,16 @@
  *
  * Two rules follow, and they are independent on purpose:
  *
- *   1. Seeding is a CAPABILITY, so it needs an explicit declaration. Same reasoning as
- *      lib/payment-environment.ts: an absent variable is not a declaration and must unlock nothing.
- *      There was no scheduling environment flag anywhere in the domain, so a production runtime
- *      fabricated roster exactly as a UAT one did.
+ *   1. Synthetic seeding is a CAPABILITY. A deployed staging Worker must not perform the 100-day fan-out
+ *      from an unprivileged customer reserve. Staging availability is prepared once in the pilot/deploy
+ *      preflight. A local executable UAT fixture may retain the deterministic seeder, because it has no
+ *      PAWSPACE_DEPLOYMENT_ENV=staging declaration. An explicit emergency compatibility flag can opt a
+ *      staging runtime back in, but absence unlocks nothing.
  *
  *   2. Where a provider or Ops HAS authored availability for a date, that is the answer for that date.
  *      This does not depend on rule 1 and is the load-bearing half: a synthetic row seeded before Ops
  *      narrowed the day would otherwise keep widening it forever, and turning seeding off cannot
  *      retract rows already in the table.
- *
- * Pilot remediation adds a third, performance-only rule: on the deployed staging Worker the customer
- * reserve path must not fan out hundreds of INSERT OR IGNORE writes. Staging roster preparation happens
- * once in a controlled preflight. The legacy local-UAT behavior is preserved for executable fixtures,
- * while a real staging deployment requires the explicit PAWSPACE_UAT_RUNTIME_ROSTER_SEED escape hatch
- * to re-enable request-time seeding. Absence therefore means no runtime roster writes.
  */
 
 /** The sources backend/src/domain.ts declares for ProviderAvailability. Nothing else is evidence. */
@@ -48,29 +43,26 @@ type RosterDb={prepare(sql:string):{bind(...values:unknown[]):{all<T>():Promise<
 
 /** The declared scheduling environment, lowercased and trimmed. Empty when nothing was declared. */
 export function declaredSchedulingEnvironment(env:SchedulingEnv){return String(env?.PAWSPACE_SCHEDULING_ENV??"").trim().toLowerCase();}
-
-/**
- * Whether synthetic UAT availability is allowed at all. This retains the original security contract:
- * only an explicit UAT declaration may unlock synthetic roster data.
- */
-export function uatRosterSeedingEnabled(env:SchedulingEnv){return declaredSchedulingEnvironment(env)==="uat";}
-
 function enabled(value:unknown){return["1","true","yes","on","enabled"].includes(String(value??"").trim().toLowerCase());}
 
 /**
- * Whether a CUSTOMER REQUEST may perform the synthetic roster fan-out.
+ * Whether the legacy request-path UAT roster seeder may write synthetic availability.
  *
- * Local/unit UAT fixtures have no deployment declaration and keep the old deterministic behavior.
- * The deployed staging Worker declares PAWSPACE_DEPLOYMENT_ENV=staging; there the fan-out is disabled
- * unless an operator deliberately opts into the emergency compatibility flag. The normal pilot path
- * pre-seeds availability once before traffic instead.
+ * Security: only an explicit `uat` scheduling declaration can ever enable it.
+ * Performance: a deployed staging Worker is preflight-seeded instead; 50 concurrent customer requests
+ * must not each manufacture up to 300 availability rows. Local test/UAT fixtures have no deployment
+ * declaration and preserve their deterministic behavior. The emergency override is deliberately named
+ * and explicit so staging cannot drift back to request-time writes accidentally.
  */
-export function requestTimeUatRosterSeedingEnabled(env:SchedulingEnv){
-  if(!uatRosterSeedingEnabled(env))return false;
+export function uatRosterSeedingEnabled(env:SchedulingEnv){
+  if(declaredSchedulingEnvironment(env)!=="uat")return false;
   const deployment=String(env?.PAWSPACE_DEPLOYMENT_ENV??"").trim().toLowerCase();
   if(deployment!=="staging")return true;
   return enabled(env?.PAWSPACE_UAT_RUNTIME_ROSTER_SEED);
 }
+
+/** Alias used by new callers to make the performance-sensitive meaning explicit. */
+export const requestTimeUatRosterSeedingEnabled=uatRosterSeedingEnabled;
 
 /**
  * Every availability row the eligibility engine is entitled to believe for one provider on one date.
