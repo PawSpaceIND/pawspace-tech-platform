@@ -30,10 +30,22 @@ async function failure(error:unknown,message:string){
   return authError(error,message);
 }
 
+/* A cancellation case carries the customer's stated reason and the provider's evidence, and its
+ * Operations decisions adjudicate a dispute that is often ABOUT the provider. `bookings.view` is held
+ * by service_provider by default, and the route checked nothing else - so any provider could read any
+ * customer's case and record `ops_decision:"proceed"` on a complaint against themselves. (`stop` and
+ * `return` were already gated by opsStopPermissions; `proceed` was explicitly exempted at
+ * lib/cancellation-case-governance.ts:222.) Staff-only, matching this route's own stated intent and
+ * the staffRoles precedent in app/api/assisted-orders/route.ts:19. [AUDIT-H4] */
+const STAFF_ROLES=new Set(["founder","superuser","admin","manager","associate","finance","auditor"]);
+function requireStaff(actor:{roleCode:string}){
+  if(!STAFF_ROLES.has(actor.roleCode))throw new Response(JSON.stringify({error:"Cancellation cases are staff-only",code:"cancellation_case_staff_only"}),{status:403,headers:{"content-type":"application/json"}});
+}
+
 export async function GET(request:Request){
   try{
     // Reading a case exposes the customer's stated reason and the provider's evidence, so it is staff-only.
-    await authorize(request,"bookings.view");
+    requireStaff(await authorize(request,"bookings.view"));
     const db=await database();
     const caseId=String(new URL(request.url).searchParams.get("caseId")||"").trim();
     if(!caseId)return json({error:"A case id is required"},400);
@@ -57,7 +69,7 @@ export async function POST(request:Request){
      * against this actor's real permission set. tests/route-authorization-class.test.mjs enforces this
      * ordering for every guarded route.
      */
-    const actor=await authorize(request,"bookings.view");
+    const actor=await authorize(request,"bookings.view");requireStaff(actor);
     const db=await database();
     const body=await request.json() as {caseId?:string;action?:"ops_decision"|"finance_decision";decision?:string;reason?:string;refundAmount?:number;evidence?:unknown;communication?:unknown};
     const caseId=String(body.caseId||"").trim();
