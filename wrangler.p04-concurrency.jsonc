@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-p04-concurrency-proof",
+  "main": "tests/adversarial-p04-concurrency-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "NODE_ENV": "test",
+    "APP_ENV": "staging",
+    "PAWSPACE_LOCAL_PREVIEW": "on",
+    "PAWSPACE_UAT_LOGIN": "on",
+    "PAWSPACE_UAT_ACCESS_CODE": "p04-local-proof-access-code",
+    "PAWSPACE_UAT_SIGNING_KEY": "p04-local-proof-signing-key-not-a-real-secret-20260906",
+    "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "p04-local-proof-identity-secret-not-real-20260906"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pawspace-p04-concurrency-proof",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "preview_database_id": "pawspace-p04-concurrency-local"
+    }
+  ]
+}
