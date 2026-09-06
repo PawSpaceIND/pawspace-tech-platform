@@ -3,20 +3,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const voice = readFileSync(new URL("../lib/voice-ai-self-test.ts", import.meta.url), "utf8");
+const browserHarness = readFileSync(new URL("../lib/voice-ai-browser-harness.ts", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/voice-outbound/route.ts", import.meta.url), "utf8");
+const page = readFileSync(new URL("../app/team/voice/ai-test/page.tsx", import.meta.url), "utf8");
 const worker = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
 
-// These assertions match the SOURCE, which is prettier-formatted. The previous versions of several of
-// them were written against unformatted source (`body.set("record","false")`, `event:"clear"`) and
-// stopped matching the moment the file was formatted - so this suite was red on its own branch while
-// appearing to guard the contract. Every pattern below tolerates the formatter's whitespace.
 const squash = (value) => value.replace(/\s+/g, "");
-/** Source with comments removed: an "absence" assertion must judge code, not prose about the code. */
 const codeOnly = (value) =>
   value.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
 const flatVoice = squash(voice);
 const flatVoiceCode = squash(codeOnly(voice));
+const flatBrowser = squash(browserHarness);
+const flatBrowserCode = squash(codeOnly(browserHarness));
 const flatRoute = squash(route);
+const flatPage = squash(page);
 const flatWorker = squash(worker);
 const has = (haystack, needle, message) => assert.ok(haystack.includes(needle), message);
 
@@ -40,9 +40,6 @@ test("browser cannot choose the destination and staff action requires privileged
   assert.doesNotMatch(route, /requestAiVoiceSelfTest\([^\n]+body\.phone/);
 });
 
-// The defect this lane actually shipped with: Exotel accepted the dial and rang the phone, but no
-// Voicebot applet ever ran, so the AgentStream socket was never opened and the caller heard silence.
-// Bidirectional streaming is not a Connect-API parameter - it lives in an Exotel App referenced by Url.
 test("the dial uses Exotel's documented Connect API and points at a Voicebot App", () => {
   assert.ok(
     flatVoice.includes("/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json"),
@@ -57,8 +54,6 @@ test("the dial uses Exotel's documented Connect API and points at a Voicebot App
     "the call must be pointed at the Exotel App whose Voicebot applet opens the stream",
   );
   assert.match(voice, /EXOTEL_VOICE_APP_ID/, "the App id must be read from configuration");
-  // streamurl / streamtype are not Connect API parameters. Sending them rang the phone and streamed
-  // nothing, so their absence from the CODE (comments excluded) is the regression guard.
   assert.ok(!flatVoiceCode.includes('"streamtype"'), "streamtype is not a Connect API parameter");
   assert.ok(!flatVoiceCode.includes('"streamurl"'), "streamurl is not a Connect API parameter");
   assert.ok(
@@ -81,7 +76,6 @@ test("the Voicebot applet can negotiate a per-call signed wss URL", () => {
     flatVoice.includes("fields.customfield"),
     "the applet callback identifies the call through CustomField",
   );
-  // The wss URL is rebuilt from the Worker's own origin and re-signed; a caller cannot redirect media.
   assert.ok(flatVoice.includes("signedStreamUrl(env,callId,url.origin)"));
   has(flatWorker, 'url.pathname==="/voice/ai-self-test/negotiate"');
   assert.match(worker, /handleAiVoiceSelfTestNegotiate/);
@@ -96,12 +90,9 @@ test("AgentStream websocket is signed, upgrades before AI init, and Q&A is mutat
   assert.ok(flatVoice.includes('event:"clear"'), "barge-in clears the carrier's playback buffer");
   has(flatWorker, 'url.pathname==="/voice/ai-self-test"');
   assert.match(worker, /handleAiVoiceSelfTestStream/);
-  // Exotel must get its 101 before Workers AI is touched; Flux is initialised after the upgrade.
   assert.ok(flatVoice.includes("voidinitializeFlux()"));
 });
 
-// Exotel's PSTN leg is raw/slin 16-bit mono little-endian at 8 kHz. Advertising 16 kHz made the Worker
-// synthesise at twice the negotiated rate, which is inaudible even when every frame is delivered.
 test("audio is framed for the negotiated Exotel format, not a hardcoded rate", () => {
   has(flatVoice, "EXOTEL_PSTN_SAMPLE_RATE=8000");
   assert.ok(
@@ -111,16 +102,13 @@ test("audio is framed for the negotiated Exotel format, not a hardcoded rate", (
   assert.ok(flatVoice.includes("constframeMs=100"), "Exotel expects ~100 ms media blocks");
   assert.ok(
     flatVoice.includes("constframeBytes=Math.max(2,Math.round(sampleRate*2*(frameMs/1000)))"),
-    "frame size is derived from the negotiated rate: 8 kHz mono 16-bit -> 1600 bytes per 100 ms",
+    "frame size is derived from the negotiated rate",
   );
-  // Padding to a 320-byte boundary appended up to 318 bytes of silence to every short final frame.
   assert.ok(!flatVoiceCode.includes("%320"), "frames pad to a whole 16-bit sample, not 320 bytes");
   has(flatVoice, "supportedSampleRate(mediaFormat.sample_rate)", "the start event is authoritative");
 });
 
 test("outbound media matches Exotel's AgentStream schema", () => {
-  // { event: "media", stream_sid, media: { payload } } - confirmed against Exotel's reference
-  // serializer. streamSid (camelCase) is Twilio's spelling and is not accepted here.
   assert.ok(flatVoice.includes('event:"media",stream_sid:streamSid,media:{payload:toBase64(chunk)}'));
   assert.ok(flatVoice.includes('event:"mark",stream_sid:streamSid'));
   assert.ok(flatVoice.includes('event:"clear",stream_sid:streamSid'));
@@ -131,4 +119,56 @@ test("outbound media matches Exotel's AgentStream schema", () => {
 test("only provider-accepted dials count toward the daily UAT cap", () => {
   assert.match(voice, /provider_call_id IS NOT NULL/);
   has(flatVoice, "MAX_CALL_SECONDS", "the 5-minute limit is sent to the carrier");
+});
+
+test("browser harness is carrier-free, UAT-only and uses an authenticated short-lived ticket", () => {
+  has(flatBrowser, 'DIRECT_PATH="/voice/ai-self-test"');
+  has(flatBrowser, "DIRECT_SAMPLE_RATE=16000");
+  has(flatBrowser, 'mode!=="uat"');
+  assert.match(browserHarness, /PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED/);
+  assert.match(browserHarness, /PAWSPACE_UAT_SIGNING_KEY/);
+  assert.match(browserHarness, /DIRECT_TICKET_TTL_MS = 2 \* 60_000/);
+  has(flatBrowser, '`ai-browser:${ticketId}:${expiresAt}:${DIRECT_SAMPLE_RATE}`');
+  has(flatBrowser, 'wsUrl.searchParams.set("mode","direct")');
+  assert.doesNotMatch(browserHarness, /EXOTEL_API_KEY|EXOTEL_API_TOKEN|EXOTEL_CALLER_ID/);
+});
+
+test("authenticated operator API mints the direct browser ticket", () => {
+  has(flatRoute, 'scope==="ai_browser_test"');
+  has(flatRoute, 'action==="uat_ai_browser_ticket"');
+  has(flatRoute, 'issueDirectBrowserVoiceTicket(env,newURL(request.url).origin)');
+  has(flatRoute, 'requirePermission(actor,"settings.manage")');
+  assert.match(route, /voice\.ai_browser_test\.ticket/);
+});
+
+test("worker routes direct mode before the Exotel socket handler", () => {
+  has(flatWorker, 'url.pathname==="/voice/ai-self-test"&&url.searchParams.get("mode")==="direct"');
+  assert.match(worker, /handleDirectBrowserVoiceHarnessStream/);
+  const directIndex = flatWorker.indexOf('url.searchParams.get("mode")==="direct"');
+  const carrierIndex = flatWorker.indexOf('returnhandleAiVoiceSelfTestStream');
+  assert.ok(directIndex >= 0 && carrierIndex > directIndex, "direct browser route must be selected before carrier route");
+});
+
+test("browser direct pipeline exercises Flux, LLM and Aura at 16 kHz Linear16", () => {
+  assert.match(browserHarness, /@cf\/deepgram\/flux/);
+  assert.match(browserHarness, /@cf\/openai\/gpt-oss-20b/);
+  assert.match(browserHarness, /@cf\/deepgram\/aura-1/);
+  has(flatBrowser, 'encoding:"linear16"');
+  has(flatBrowser, 'sample_rate:DIRECT_SAMPLE_RATE');
+  has(flatBrowser, '"Hello,thisisthePawSpacevoiceUATtest."');
+  assert.ok(flatBrowserCode.includes("flux.send(audio)"), "browser PCM must reach Flux");
+  assert.ok(flatBrowserCode.includes("server.send(payload)"), "Aura PCM must return as binary WebSocket audio");
+});
+
+test("browser page captures mic PCM, resamples to 16-bit and plays raw PCM replies", () => {
+  assert.match(page, /Test via Browser Mic/);
+  assert.match(page, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(page, /createScriptProcessor/);
+  assert.match(page, /resampleToLinear16/);
+  assert.match(page, /new Int16Array/);
+  assert.match(page, /socket\.send\(pcm\)/);
+  assert.match(page, /context\.createBuffer/);
+  assert.match(page, /new Int16Array\(buffer\)/);
+  assert.match(page, /Audio clarity/);
+  assert.match(page, /totalLatencyMs/);
 });
