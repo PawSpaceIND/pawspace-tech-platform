@@ -1,0 +1,9 @@
+import { ensureLeadScoringMergeTables } from "./crm-lead-scoring-merge";
+type Db=D1Database;
+export async function ensureOutboundOrchestratorTables(db:Db){await ensureLeadScoringMergeTables(db);await db.batch([
+ db.prepare("CREATE TABLE IF NOT EXISTS outbound_routing_queue (id TEXT PRIMARY KEY,source_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,lead_id TEXT,source_type TEXT NOT NULL,lane TEXT NOT NULL,priority_score INTEGER NOT NULL,high_intent INTEGER NOT NULL DEFAULT 0,lifecycle_code TEXT NOT NULL,target_offer TEXT,next_best_service TEXT,expected_revenue REAL,ltv REAL NOT NULL DEFAULT 0,callback_at INTEGER,cooldown_until INTEGER,assigned_to TEXT,status TEXT NOT NULL DEFAULT 'queued',attempt_count INTEGER NOT NULL DEFAULT 0,voice_call_id TEXT,ai_session_id TEXT,human_call_id TEXT,context_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+ db.prepare("CREATE INDEX IF NOT EXISTS idx_outbound_queue ON outbound_routing_queue(lane,status,priority_score DESC,callback_at,created_at)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS outbound_orchestrator_state (state_key TEXT PRIMARY KEY,value_text TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS outbound_contact_controls (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,control_type TEXT NOT NULL,scope TEXT NOT NULL DEFAULT 'all',reason TEXT NOT NULL,expires_at INTEGER,source TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS outbound_dialler_events (id TEXT PRIMARY KEY,queue_id TEXT NOT NULL,actor_id TEXT NOT NULL,event_type TEXT NOT NULL,disposition TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS voice_call_opt_outs (phone_key TEXT PRIMARY KEY,source TEXT NOT NULL,reason TEXT,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL)")]);}

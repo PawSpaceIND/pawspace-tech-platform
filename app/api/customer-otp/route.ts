@@ -5,6 +5,7 @@ import { issuePlatformSession, platformSessionCookie } from "../../../lib/platfo
 import { verifyIdentityAssertion } from "../../../lib/verified-identity-assertion";
 import { uatLoginEnabled } from "../../../lib/uat-staging-auth";
 import { developmentOtpSandboxEnabled } from "../../../lib/otp-sandbox-runtime";
+import { productionOtpEnabled } from "../../../lib/otp-production-runtime";
 import { normalizeIndianMobile, parseSmsTestAllowlist, sendFast2SmsMessage } from "../../../lib/sms-test-provider";
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers });
@@ -36,24 +37,27 @@ export async function POST(request: Request) {
       if (!body.phone) return json({ error: "Phone number is required" }, 400);
       const { env } = await import("cloudflare:workers");
       const runtime=env as unknown as Record<string, unknown>;
-      const liveMode=liveStagingOtpEnabled(runtime);
+      const productionMode=productionOtpEnabled(runtime),stagingLiveMode=liveStagingOtpEnabled(runtime),liveMode=productionMode||stagingLiveMode;
       if (!liveMode && !uatLoginEnabled(runtime) && !developmentOtpSandboxEnabled(request,runtime)) return unavailable();
       const db = await database();
       const result = await requestCustomerOtp(db, { phone: body.phone });
       if (!liveMode) return json({ data: result }, 200, { "cache-control": "no-store" });
 
       const normalized=normalizeIndianMobile(result.phone);
-      const approved=approvedLiveOtpPhone(runtime);
-      if(!normalized||!approved||normalized!==approved){
-        await discardCustomerOtpChallenge(db,result.challengeId);
-        return json({ error:"This staging OTP run is restricted to the approved test number" },403,{"cache-control":"no-store"});
+      if(!normalized){await discardCustomerOtpChallenge(db,result.challengeId);return json({error:"A valid Indian mobile number is required"},400,{"cache-control":"no-store"});}
+      if(stagingLiveMode){
+        const approved=approvedLiveOtpPhone(runtime);
+        if(!approved||normalized!==approved){
+          await discardCustomerOtpChallenge(db,result.challengeId);
+          return json({ error:"This staging OTP run is restricted to the approved test number" },403,{"cache-control":"no-store"});
+        }
       }
       try{
         await sendFast2SmsMessage({
           apiKey:String(runtime.FAST2SMS_API_KEY??""),
           phone:normalized,
           message:`Your PawSpace verification code is ${result.sandboxCode}. It expires in 5 minutes.`,
-          udf1:"pawspace-staging-customer-otp",
+          udf1:productionMode?"pawspace-production-customer-otp":"pawspace-staging-customer-otp",
         });
       }catch{
         await discardCustomerOtpChallenge(db,result.challengeId);
@@ -65,7 +69,7 @@ export async function POST(request: Request) {
       if (!body.challengeId || !body.code) return json({ error: "Challenge and code are required" }, 400);
       const { env } = await import("cloudflare:workers");
       const runtime=env as unknown as Record<string, unknown>;
-      const liveMode=liveStagingOtpEnabled(runtime);
+      const productionMode=productionOtpEnabled(runtime),stagingLiveMode=liveStagingOtpEnabled(runtime),liveMode=productionMode||stagingLiveMode;
       if (!liveMode && !uatLoginEnabled(runtime) && !developmentOtpSandboxEnabled(request,runtime)) return unavailable();
       const db = await database();
       const { assertion, customerId, customerName, phone } = await verifyCustomerOtp(db, { challengeId: body.challengeId, code: body.code, name: body.name, cityId: body.cityId, installId: body.installId });
@@ -73,8 +77,8 @@ export async function POST(request: Request) {
       const binding = await upsertIdentityBinding(db, {
         identitySource: verified.identitySource, principalType: verified.principalType, principalKey: verified.principalKey,
         subjectType: verified.subjectType, subjectId: verified.subjectId, cityId: verified.cityId ?? null,
-        verificationState: "verified", expiresAt: null, metadata: { verifiedBy: liveMode ? "customer_otp_fast2sms_staging" : "customer_otp_sandbox", assertionIssuedAt: verified.issuedAt },
-        actorId: `customer_otp:${verified.identitySource}`, reason: liveMode ? "Verified isolated-staging Fast2SMS OTP identity assertion exchange" : "Verified sandbox OTP identity assertion exchange",
+        verificationState: "verified", expiresAt: null, metadata: { verifiedBy: productionMode ? "customer_otp_fast2sms_production" : stagingLiveMode ? "customer_otp_fast2sms_staging" : "customer_otp_sandbox", assertionIssuedAt: verified.issuedAt },
+        actorId: `customer_otp:${verified.identitySource}`, reason: productionMode ? "Verified production Fast2SMS OTP identity assertion exchange" : stagingLiveMode ? "Verified isolated-staging Fast2SMS OTP identity assertion exchange" : "Verified sandbox OTP identity assertion exchange",
       });
       const issued = await issuePlatformSession(db, {
         bindingId: String(binding?.id || ""), identitySource: verified.identitySource, principalType: verified.principalType,

@@ -45,7 +45,8 @@ test("Walking completion commits payment, audit, notification, idempotency and g
    * walk could never be completed through the API again. The key, the payment row, the audit event and
    * both notifications must therefore land together, and none of them may be a separate awaited call.
    */
-  assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
+  assert.match(block, /UPDATE canonical_bookings SET status='completed',updated_at=\? WHERE id=\? AND status=\?/);
+  assert.match(block, /assertLifecycleClaim\(batchResults\[2\]\)/);
   assert.doesNotMatch(block, /await event\(/);
   assert.doesNotMatch(block, /await notify\(/);
   assert.doesNotMatch(block, /return remember\(/);

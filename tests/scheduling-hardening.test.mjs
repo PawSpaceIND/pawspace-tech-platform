@@ -359,6 +359,9 @@ test("contract: the double-booking guard and restore-on-failure are present in s
   assert.match(routeSource, /class SlotConflictError extends Error/);
   assert.match(routeSource, /WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\? AND status!='cancelled' AND scheduled_start<\? AND scheduled_end>\?\)/);
   assert.match(routeSource, /COALESCE\(SUM\(capacity_units\),0\)/, "overnight services guard on capacity, not blanket overlap");
-  assert.match(routeSource, /restore=async\(\)=>/);
+  assert.match(routeSource, /restore=async\(\)=>\{/);
+  assert.match(routeSource, /AND NOT EXISTS \(SELECT 1 FROM scheduling_reservations other/);
+  assert.match(routeSource, /other\.\$\{SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE\}/);
+  assert.match(routeSource, /SLOT_LOST_DURING_REASSIGN/);
   assert.match(routeSource, /securityAudit\(db,actor,`scheduling\.\$\{input\.action\}`/);
 });

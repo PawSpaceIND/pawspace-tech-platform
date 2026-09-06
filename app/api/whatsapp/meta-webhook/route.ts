@@ -1,6 +1,7 @@
-import{processMetaWhatsAppEvents,parseMetaWhatsAppWebhook,verifyMetaWebhookChallenge,verifyMetaWhatsAppSignature}from"../../../../lib/meta-whatsapp-webhook";
+import{processMetaWhatsAppEvents,parseMetaWhatsAppWebhook,verifyMetaWebhookChallenge,verifyMetaWhatsAppSignature,type MetaWhatsAppEvent}from"../../../../lib/meta-whatsapp-webhook";
 import{processMetaStatusEventAtomic}from"../../../../lib/whatsapp-production-runtime";
 import{processEliteInboundMessage}from"../../../../lib/services/elite-production-runtime";
+import{inspectTrustSafetyText}from"../../../../lib/trust-safety-governance";
 
 async function bindings(){const{env}=await import("cloudflare:workers");return env as unknown as{DB:D1Database;META_WHATSAPP_APP_SECRET?:string;META_WHATSAPP_VERIFY_TOKEN?:string;META_WHATSAPP_ACCESS_TOKEN?:string;META_WHATSAPP_UAT_ACCESS_TOKEN?:string;META_WHATSAPP_GRAPH_VERSION?:string;PAWSPACE_MEDIA_BUCKET?:unknown};}
 const noStore={"cache-control":"no-store"};
@@ -11,14 +12,25 @@ export async function GET(request:Request){
  return new Response(challenge,{status:200,headers:{...noStore,"content-type":"text/plain; charset=utf-8"}});
 }
 
+async function trustSafeMetaMessages(db:D1Database,events:MetaWhatsAppEvent[]){
+ const out:MetaWhatsAppEvent[]=[];
+ for(const event of events){
+  if(event.kind!=="message"||!event.body){out.push(event);continue;}
+  const inspected=await inspectTrustSafetyText(db,{text:event.body,channel:"whatsapp",sourceReference:`meta-whatsapp:${event.eventId}`,actorType:"customer",actorId:`meta:${event.providerIdentity.slice(-4)}`,asOf:event.timestamp,detail:{provider:"meta_whatsapp",messageType:event.messageType}});
+  out.push({...event,body:inspected.redacted});
+ }
+ return out;
+}
+
 export async function POST(request:Request){
  const env=await bindings(),rawBody=await request.text(),signature=request.headers.get("x-hub-signature-256"),secret=String(env.META_WHATSAPP_APP_SECRET||"");
  if(!secret)return Response.json({ok:false,error:"Meta WhatsApp webhook is not configured",externalDelivery:false},{status:503,headers:noStore});
  if(!await verifyMetaWhatsAppSignature(rawBody,signature,secret))return Response.json({ok:false,error:"Invalid Meta webhook signature",externalDelivery:false},{status:401,headers:noStore});
  let payload:unknown;try{payload=JSON.parse(rawBody);}catch{return Response.json({ok:false,error:"Invalid webhook JSON",externalDelivery:false},{status:400,headers:noStore});}
- const events=parseMetaWhatsAppWebhook(payload);
- if(events.length===0)return Response.json({ok:true,accepted:0,results:[],externalDelivery:false},{status:200,headers:noStore});
+ const parsed=parseMetaWhatsAppWebhook(payload);
+ if(parsed.length===0)return Response.json({ok:true,accepted:0,results:[],externalDelivery:false},{status:200,headers:noStore});
  try{
+  const events=await trustSafeMetaMessages(env.DB,parsed);
   const messages=events.filter(event=>event.kind==="message");
   const results:Array<Record<string,unknown>>=[];
   if(messages.length){

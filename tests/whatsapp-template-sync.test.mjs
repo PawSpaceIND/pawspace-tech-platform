@@ -41,14 +41,62 @@ test("scheduled worker completes Meta template sync before scheduler and WhatsAp
   assert.match(fanoutSource, /runWhatsAppOutboxDispatcher\(/, "WhatsApp dispatch must remain in the post-sync fan-out");
 });
 
-test("template-sync failure blocks scheduler and dispatch initialization", () => {
+/*
+ * CONTRACT CHANGED, deliberately. The previous version of this test asserted the literal source text
+ * `if(templateSync.failed&&templateSync.processed)throw new Error` and required that guard to sit before
+ * the fan-out - i.e. it pinned a BLANKET block: a WhatsApp template verification exception aborted the
+ * whole scheduled invocation, so razorpayOrderOutbox, settlementRecon and subscriptionMaintenance never
+ * ran either. A messaging hiccup silently halted payment reconciliation. [AUDIT-H9]
+ *
+ * The intent behind the old test is real and is preserved verbatim below: an unverified template must
+ * not be dispatched. What changed is its blast radius. The two assertions now pin BOTH directions -
+ * every WhatsApp sender is blocked when the sync fails, AND the sweeps that send no WhatsApp message
+ * are not. The second half is the non-vacuity guard: restoring the blanket `throw` would satisfy the
+ * first assertion and fail the second.
+ */
+test("template-sync failure blocks every WhatsApp dispatch sweep", () => {
   const scheduledStart = workerSource.indexOf("async scheduled(");
   const scheduledSource = workerSource.slice(scheduledStart);
   const syncIndex = scheduledSource.indexOf("templateSync=await syncSubmittedMetaTemplateStatuses(");
-  const failureGuardIndex = scheduledSource.indexOf("if(templateSync.failed&&templateSync.processed)throw new Error");
+  const guardIndex = scheduledSource.indexOf("const whatsappDispatchBlocked=");
   const fanoutIndex = scheduledSource.indexOf("=await Promise.allSettled([");
 
-  assert.ok(syncIndex >= 0 && failureGuardIndex > syncIndex, "template verification failures must be checked after sync completes");
-  assert.ok(fanoutIndex > failureGuardIndex, "no downstream scheduler/dispatch work may initialize before the template-sync failure guard");
-  assert.match(scheduledSource.slice(syncIndex, fanoutIndex), /blocked before dispatch: whatsapp template sync/);
+  assert.ok(syncIndex >= 0 && guardIndex > syncIndex, "template verification failures must be checked after sync completes");
+  assert.ok(fanoutIndex > guardIndex, "the dispatch block must be decided before the fan-out is initialized");
+  assert.match(scheduledSource.slice(syncIndex, fanoutIndex), /blocked before dispatch: \$\{templateSyncError\}/, "the block must carry the template-sync failure reason");
+
+  const fanoutSource = scheduledSource.slice(fanoutIndex, scheduledSource.indexOf("])", fanoutIndex) + 2);
+  for (const sender of ["runWhatsAppOutboxDispatcher(", "processDueWhatsAppNoResponseSequences("]) {
+    const callIndex = fanoutSource.indexOf(sender);
+    assert.ok(callIndex >= 0, `${sender} must remain in the post-sync fan-out`);
+    const entryStart = fanoutSource.lastIndexOf("\n", callIndex);
+    assert.match(
+      fanoutSource.slice(entryStart, callIndex),
+      /whatsappDispatchBlocked\?/,
+      `${sender} must be skipped when template sync failed - an unverified template must never be sent`,
+    );
+  }
+});
+
+test("template-sync failure does not block sweeps that send no WhatsApp message", () => {
+  const scheduledStart = workerSource.indexOf("async scheduled(");
+  const scheduledSource = workerSource.slice(scheduledStart);
+  const fanoutIndex = scheduledSource.indexOf("=await Promise.allSettled([");
+  const fanoutSource = scheduledSource.slice(fanoutIndex, scheduledSource.indexOf("])", fanoutIndex) + 2);
+
+  /* Non-vacuity for the test above. These three are the payment and billing sweeps that the blanket
+   * guard used to take down with WhatsApp. None of them sends a WhatsApp template. */
+  for (const sweep of ["runRazorpayOrderOutboxSweep(", "runRazorpaySettlementReconciliationSweep(", "runSubscriptionScheduledMaintenance("]) {
+    const callIndex = fanoutSource.indexOf(sweep);
+    assert.ok(callIndex >= 0, `${sweep} must remain in the post-sync fan-out`);
+    const entryStart = fanoutSource.lastIndexOf("\n", callIndex);
+    assert.doesNotMatch(
+      fanoutSource.slice(entryStart, callIndex),
+      /whatsappDispatchBlocked/,
+      `${sweep} must run even when WhatsApp template sync fails - a messaging fault must not halt payment reconciliation`,
+    );
+  }
+
+  // And the failure must still fail the invocation rather than being swallowed.
+  assert.match(scheduledSource, /if\(templateSyncError\)errors\.push\(templateSyncError\);/, "the template-sync failure must still surface in the aggregated errors");
 });

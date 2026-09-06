@@ -13,7 +13,8 @@ test("OTP identity exchange issues a bounded HttpOnly canonical session",async()
   assert.match(session,/binding_verification/);
   assert.match(session,/status='superseded'/);
   assert.match(assertion,/PAWSPACE_IDENTITY_ENV/);
-  assert.match(assertion,/PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT/);
+  assert.match(assertion,/resolveOtpAssertionSecret/);
+  assert.match(assertion,/productionOtpEnabled/);
   assert.match(assertion,/HMAC/);
   assert.match(assertion,/verified_identity_assertion_nonces/);
   assert.match(assertion,/Identity assertion has already been used/);
@@ -42,15 +43,15 @@ test("customer and provider sessions are scoped before reaching self-service API
   assert.match(worker,/url\.pathname==="\/api\/identity-session"/);
 });
 
-test("the central API gateway honours customer/provider platform sessions, not just staff identities",async()=>{
-  // Regression: OTP-verified customers hold a platform session cookie but no staff header identity;
-  // without this the gateway 401s them on gated self-service reads (e.g. GET
-  // /api/boarding-stays?scope=customer) before the route's own resolveActor ever runs.
+test("the central API gateway honours authenticated sessions and only accepts forwarded staff identity for provisioned users",async()=>{
   const gateway=await source("lib/api-gateway.ts");
   assert.match(gateway,/import \{ resolvePlatformSession \} from "\.\/platform-session"/);
   const authorize=gateway.slice(gateway.indexOf("export async function authorizeApiRequest"));
+  assert.match(authorize,/resolveUatStaffActor\(env\.DB,request,env as unknown as Record<string,unknown>\)/);
   assert.match(authorize,/resolvePlatformSession\(env\.DB,request\)/);
-  const uatIndex=authorize.indexOf("resolveUatStaffActor"),sessionIndex=authorize.indexOf("resolvePlatformSession"),headerIndex=authorize.indexOf("oai-authenticated-user-email");
-  assert.ok(uatIndex>=0&&sessionIndex>uatIndex&&headerIndex>sessionIndex,"session check must sit between the UAT cookie and the staff header identity");
+  assert.match(authorize,/oai-authenticated-user-email/);
+  assert.match(authorize,/SELECT name,role_code,status FROM app_users WHERE email=\?/);
+  assert.doesNotMatch(authorize,/if\s*\(\s*!user[\s\S]{0,500}INSERT INTO app_users/);
+  assert.doesNotMatch(authorize,/FOUNDER_EMAIL/);
   assert.match(authorize,/session\.permissions,permission/);
 });

@@ -30,6 +30,12 @@ const HOST = "https://ops.pawspace.example";
 const serverAuth = await import("../lib/server-auth.ts");
 const gateway = await import("../lib/api-gateway.ts");
 const gov = await import("../lib/voice-outbound-governance.ts");
+const uatAuth = await import("../lib/uat-staging-auth.ts");
+
+const UAT_AUTH_ENV = {
+  PAWSPACE_UAT_LOGIN: "on",
+  PAWSPACE_UAT_SIGNING_KEY: "voice-route-test-signing-key-0123456789abcdef",
+};
 
 const ROLES = {
   founder: ["*"],
@@ -41,11 +47,17 @@ const ROLES = {
   customer: ["pricing.view", "scheduling.book"],
 };
 
+async function createTestSession(role, env = globalThis.__VRA_ENV__, extraHeaders = {}) {
+  const token = await uatAuth.issueUatToken(env, `${role}@pawspace.in`, 3600);
+  const cookie = uatAuth.uatCookie(token, 3600).split(";")[0];
+  return { ...extraHeaders, cookie };
+}
+
 async function fresh(envOverrides = {}) {
   const sqlite = freshSqlite();
   const db = makeD1(sqlite);
   globalThis.__VRA_DB__ = db;
-  globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), ...envOverrides };
+  globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), ...envOverrides, ...UAT_AUTH_ENV };
   await serverAuth.ensureSecurityTables(db);
   const now = Date.now();
   for (const [role, permissions] of Object.entries(ROLES)) {
@@ -60,7 +72,9 @@ async function fresh(envOverrides = {}) {
 
 async function call(path, method, body, role) {
   const route = await import(`../app/api/${path}/route.ts`);
-  const headers = { "content-type": "application/json", ...(role ? { "oai-authenticated-user-email": `${role}@pawspace.in` } : {}) };
+  const headers = role
+    ? await createTestSession(role, globalThis.__VRA_ENV__, { "content-type": "application/json" })
+    : { "content-type": "application/json" };
   const init = method === "GET" ? { headers } : { method, headers, body: JSON.stringify(body ?? {}) };
   const response = await route[method](new Request(`${HOST}/api/${path}`, init));
   let parsed = null;
@@ -71,12 +85,13 @@ async function call(path, method, body, role) {
 test("the gateway maps every voice path explicitly, not through the dashboard.view fallback", async () => {
   const probe = async (path, method = "POST") => {
     const sqlite = freshSqlite();
-    const env = { DB: makeD1(sqlite) };
+    const env = { DB: makeD1(sqlite), ...UAT_AUTH_ENV };
     await serverAuth.ensureSecurityTables(env.DB);
     const now = Date.now();
     sqlite.prepare("INSERT OR REPLACE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES ('auditor','a','a',?,1,?)").run(JSON.stringify(ROLES.auditor), now);
     sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U','auditor@pawspace.in','a','auditor','active',?,?)").run(now, now);
-    const init = method === "GET" ? { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } } : { method, headers: { "content-type": "application/json", "oai-authenticated-user-email": "auditor@pawspace.in" }, body: "{}" };
+    const headers = await createTestSession("auditor", env, method === "GET" ? {} : { "content-type": "application/json" });
+    const init = method === "GET" ? { headers } : { method, headers, body: "{}" };
     return gateway.authorizeApiRequest(new Request(`${HOST}${path}`, init), env);
   };
   // An auditor holds dashboard.view. Under the old fallback each of these was ADMITTED by the gateway.
@@ -85,21 +100,23 @@ test("the gateway maps every voice path explicitly, not through the dashboard.vi
     assert.ok(access instanceof Response, `${path} must not admit an auditor`);
     assert.equal(access.status, 403, path);
   }
-  // The provider callback is allowlisted (a carrier has no session) and is verified by signature instead.
+  // The provider callback is allowlisted because a carrier has no session. Its handler treats CallSid as
+  // trigger-only, proves D1 ownership, then fetches authoritative status from Exotel before mutation.
   const webhook = await probe("/api/voice-provider-webhook");
   assert.ok(!(webhook instanceof Response));
-  assert.equal(webhook.permission, null, "the callback path is public at the gateway and signature-gated in the handler");
+  assert.equal(webhook.permission, null, "the callback path is public at the gateway and reconciliation-gated in the handler");
 });
 
 test("the gateway admits only an identity that holds the mapped permission", async () => {
   const probe = async (path, role) => {
     const sqlite = freshSqlite();
-    const env = { DB: makeD1(sqlite) };
+    const env = { DB: makeD1(sqlite), ...UAT_AUTH_ENV };
     await serverAuth.ensureSecurityTables(env.DB);
     const now = Date.now();
     sqlite.prepare("INSERT OR REPLACE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,1,?)").run(role, role, role, JSON.stringify(ROLES[role]), now);
     sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)").run(`U-${role}`, `${role}@pawspace.in`, role, role, now, now);
-    const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": `${role}@pawspace.in` }, body: "{}" }), env);
+    const headers = await createTestSession(role, env, { "content-type": "application/json" });
+    const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers, body: "{}" }), env);
     return access instanceof Response ? access.status : 200;
   };
   assert.equal(await probe("/api/voice-outbound", "admin"), 200);
@@ -206,9 +223,10 @@ test("a cross-origin voice write is refused before anything is read", async () =
   await fresh();
   for (const path of ["voice-outbound", "ai-voice-uat"]) {
     const route = await import(`../app/api/${path}/route.ts`);
+    const headers = await createTestSession("founder", globalThis.__VRA_ENV__, { "content-type": "application/json", origin: "https://evil.example" });
     const response = await route.POST(new Request(`${HOST}/api/${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://evil.example", "oai-authenticated-user-email": "founder@pawspace.in" },
+      headers,
       body: JSON.stringify({ action: "request_call" }),
     }));
     assert.equal(response.status, 403, path);
@@ -226,11 +244,11 @@ test("the readiness surface is legible to an authorised operator and names no se
   for (const secret of ["test-key", "test-token", "test-sid", "test-webhook-secret"]) assert.ok(!serialised.includes(secret), secret);
 });
 
-test("the provider callback route refuses an unsigned or oversized payload", async () => {
+test("the provider callback route treats an unknown CallSid as inert and refuses an oversized payload", async () => {
   await fresh();
   const route = await import("../app/api/voice-provider-webhook/route.ts");
-  const unsigned = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "CallSid=EX-1&CustomField=VCALL-1&CallStatus=completed" }));
-  assert.equal(unsigned.status, 401);
+  const unknown = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "CallSid=EX-1&CustomField=VCALL-1&CallStatus=completed" }));
+  assert.equal(unknown.status, 202, "an unowned CallSid is acknowledged inertly and must not trigger provider lookup or mutation");
   const oversized = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "x".repeat(70_000) }));
   assert.equal(oversized.status, 413, "an oversized provider body is refused before it is parsed");
 });
@@ -241,9 +259,9 @@ test("a call audit is only readable by an identity authorised for voice", async 
   const placed = await gov.requestOutboundVoiceCall(db, env, { idempotencyKey: "audit-1", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1", leadId: "LEAD-V1", bookingId: "BKG-V1", actorId: "admin@pawspace.in", actorPermissions: ROLES.admin, asOf: DAYTIME });
   assert.equal(placed.dialled, true);
   const route = await import("../app/api/voice-outbound/route.ts");
-  const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } }));
+  const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await createTestSession("auditor") }));
   assert.equal(denied.status, 403);
-  const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "admin@pawspace.in" } }));
+  const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await createTestSession("admin") }));
   assert.equal(allowed.status, 200);
   const audit = (await allowed.json()).data;
   assert.equal(audit.call.callId, placed.callId);
@@ -314,15 +332,17 @@ test("an oversized request body is refused before it is buffered", async () => {
   assert.equal(wide.status, 413);
 
   // The staff route carries the same bound.
+  const staffHeaders = await createTestSession("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" });
   const staff = await outbound.POST(new Request(`${HOST}/api/voice-outbound`, {
-    method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },
+    method: "POST", headers: staffHeaders,
     body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),
   }));
   assert.equal(staff.status, 413, "a staff credential is not a licence to send any size");
 
   // And a normal-sized body still works.
+  const okHeaders = await createTestSession("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" });
   const ok = await outbound.POST(new Request(`${HOST}/api/voice-outbound`, {
-    method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },
+    method: "POST", headers: okHeaders,
     body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),
   }));
   assert.equal(ok.status, 200);
@@ -362,8 +382,9 @@ test("a null or scalar JSON body is a 400, not a 500", async () => {
   // JSON.parse("null") returns null, so reading body.action off it threw a TypeError and the route
   // answered 500 to what is really a malformed request.
   for (const body of ["null", "1", "true", '"request_call"', "[]", "[1,2]", "not json at all", ""]) {
+    const headers = await createTestSession("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" });
     const response = await route.POST(new Request(`${HOST}/api/voice-outbound`, {
-      method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" }, body,
+      method: "POST", headers, body,
     }));
     assert.ok(response.status < 500, `body ${JSON.stringify(body)} answered ${response.status}`);
     assert.equal(response.status, 400, JSON.stringify(body));

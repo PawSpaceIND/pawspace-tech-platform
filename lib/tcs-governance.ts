@@ -34,8 +34,26 @@ export async function resolveBookingPlaceOfSupply(db:Db,bookingId:string){const 
 
 export type TcsComputation={period:string;supplierCount:number;totalNetValue:number;totalTcs:number;cgstTcs:number;sgstTcs:number;igstTcs:number;issues:string[];depositDueDate:string};
 export async function computeMonthlyTcs(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<TcsComputation>{
- await ensureTcsTables(db);const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];await db.prepare("DELETE FROM tcs_collections WHERE period=?").bind(input.period).run();
- const payouts=await safeAll(db,"SELECT c.booking_id,c.provider_id,c.service_code,c.order_value,c.provider_gst_deducted,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[startMs,endMs]);
+ await ensureTcsTables(db);const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];
+ /* The source read runs BEFORE the DELETE, and a failure REFUSES rather than returning [].
+  *
+  * This used to DELETE the period's tcs_collections and then read through safeAll, which is
+  * `catch{return[]}`. When the read failed, the prior computation was already destroyed and the month
+  * recomputed to zero: measured at Rs 1,695 of s52 TCS on Rs 1,69,500 of marketplace supplies filed to
+  * GSTR-8 as Rs 0, with the ten supplier rows gone, `issues` EMPTY so nothing on screen separated it
+  * from a genuinely zero month, and recordTcsDeposit then REFUSING the true deposit because it must
+  * equal the computed liability of 0.
+  *
+  * Refusing is the only safe answer: a statutory computation that cannot read its source must not
+  * publish a number, and must not destroy the number it already had. [AUDIT-C3] */
+ let payouts:Row[];
+ /* A source table that has never existed is a legitimately empty month - a fresh database with no
+  * payouts yet. A table that EXISTS but whose read fails is the schema-drift / D1-refusal case this
+  * guard is for, and must refuse rather than publish a zero. */
+ if(!(await tableExists(db,"provider_payout_computations"))){payouts=[];}
+ else try{payouts=((await db.prepare("SELECT c.booking_id,c.provider_id,c.service_code,c.order_value,c.provider_gst_deducted,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?").bind(startMs,endMs).all<Row>()).results)||[];}
+ catch(error){throw new Error(`TCS source read failed for ${input.period}; refusing to recompute. Existing tcs_collections rows are preserved. (${error instanceof Error?error.message:String(error)})`);}
+ await db.prepare("DELETE FROM tcs_collections WHERE period=?").bind(input.period).run();
  const rows:Array<{supplierId:string;serviceCode:string;bookingId:string;supplyType:"intra"|"inter";orderValue:number;netValue:number;cgst:number;sgst:number;igst:number;total:number}>=[];
  for(const p of payouts){const model=text(p.engagement_model).toLowerCase();if(!MARKETPLACE_MODELS.has(model))continue;const orderValue=round2(num(p.order_value)),netValue=round2(orderValue-num(p.provider_gst_deducted));if(netValue<=0)continue;const pos=await resolveBookingPlaceOfSupply(db,text(p.booking_id)),supplyType:"intra"|"inter"=pos.stateCode===OPERATOR_STATE_CODE?"intra":"inter";const cgst=supplyType==="intra"?round2(netValue*TCS_RATE_S52.cgst):0,sgst=supplyType==="intra"?round2(netValue*TCS_RATE_S52.sgst):0,igst=supplyType==="inter"?round2(netValue*TCS_RATE_S52.igst):0,total=round2(cgst+sgst+igst);rows.push({supplierId:text(p.provider_id),serviceCode:text(p.service_code),bookingId:text(p.booking_id),supplyType,orderValue,netValue,cgst,sgst,igst,total});}
  const statements=rows.map(r=>db.prepare("INSERT OR REPLACE INTO tcs_collections (id,period,supplier_id,service_code,booking_id,supply_type,order_value,net_taxable_value,cgst_tcs,sgst_tcs,igst_tcs,tcs_total,rate_pct,source_ref,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`TCS-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,r.supplierId,r.serviceCode,r.bookingId,r.supplyType,r.orderValue,r.netValue,r.cgst,r.sgst,r.igst,r.total,TCS_RATE_S52.total*100,r.bookingId,now));if(statements.length)await db.batch(statements);

@@ -80,14 +80,31 @@ export type TdsComputation={period:string;sections:Record<string,{base:number;td
 
 /** Compute (and idempotently persist) the month's TDS from real payroll + payout data.
  *  Recomputation replaces the period's engine-computed rows, so it is safe to re-run. */
+async function sourceTableExists(db:Db,name:string){try{return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}catch{return false;}}
 export async function computeMonthlyTds(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<TdsComputation>{
  await ensureTdsTables(db);
  const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];
- await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  const rows:Array<{section:string;deducteeType:string;deducteeId:string;deducteeName:string;base:number;rate:number;tds:number;sourceType:string;sourceRef:string}>=[];
 
  // s192 salaries: payroll results whose run period overlaps this month.
- const payroll=await safeAll(db,"SELECT r.id result_id,r.employee_id,r.gross_earnings,p.id run_id FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id WHERE p.period_start<? AND p.period_end>?",[endMs,startMs]);
+ /* Source read BEFORE the DELETE, and a failure REFUSES rather than returning [].
+  *
+  * This used to DELETE the period's tds_deductions and then read payroll through safeAll
+  * (`catch{return[]}`). A failed read destroyed the prior computation and recomputed the month to
+  * zero: measured at Rs 44,070 of s192 TDS over six employees becoming Rs 0 with the six deduction
+  * rows gone and `issues` EMPTY. The monthly close then passed its tds_deposited check TRIVIALLY,
+  * because that condition is `totalTds===0||Boolean(deposit)` - green tick, no challan, and six
+  * employees issued Form 16 showing zero TDS credit.
+  *
+  * A statutory computation that cannot read its source must not publish a number, and must not
+  * destroy the number it already had. [AUDIT-C3] */
+ let payroll:Row[];
+ /* Never-existed source table = a legitimately empty month (no payroll run yet). A table that EXISTS
+  * but fails to read is the drift case this guard is for. */
+ if(!(await sourceTableExists(db,"employee_payroll_results"))){payroll=[];}
+ else try{payroll=((await db.prepare("SELECT r.id result_id,r.employee_id,r.gross_earnings,p.id run_id FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id WHERE p.period_start<? AND p.period_end>?").bind(endMs,startMs).all<Row>()).results)||[];}
+ catch(error){throw new Error(`TDS payroll read failed for ${input.period}; refusing to recompute. Existing tds_deductions rows are preserved. (${error instanceof Error?error.message:String(error)})`);}
+ await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  for(const row of payroll){
   const gross=Number(row.gross_earnings||0);if(gross<=0)continue;
   const tds=monthlySalaryTds(gross);

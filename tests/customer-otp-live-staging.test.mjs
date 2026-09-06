@@ -14,13 +14,13 @@ function request(body){return new Request("https://pawspace-staging.example/api/
 
 test("approved live staging OTP is sent out-of-band, response strips the code, and the sent code creates a customer session",async()=>{
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);globalThis.__PAWSPACE_TEST_DB__=db;globalThis.__PAWSPACE_TEST_ENV=envFor(db);
- const originalFetch=globalThis.fetch;let providerUrl="";
- globalThis.fetch=async(input)=>{providerUrl=String(input);return new Response(JSON.stringify({return:true,request_id:"REQ-LIVE-OTP"}),{status:200,headers:{"content-type":"application/json"}});};
+ const originalFetch=globalThis.fetch;let providerRequest=null;
+ globalThis.fetch=async(input,init)=>{providerRequest={url:String(input),init};return new Response(JSON.stringify({return:true,request_id:"REQ-LIVE-OTP"}),{status:200,headers:{"content-type":"application/json"}});};
  try{
   const route=await import("../app/api/customer-otp/route.ts");
   const sent=await route.POST(request({action:"request",phone:APPROVED}));const sentBody=await sent.text();assert.equal(sent.status,200,sentBody);const payload=JSON.parse(sentBody);
   assert.equal(payload.data?.sandboxDelivery,false);assert.equal(payload.data?.liveSmsDelivered,true);assert.equal("sandboxCode" in (payload.data||{}),false);assert.equal(JSON.stringify(payload).includes("api-key-must-never-be-returned"),false);
-  const provider=new URL(providerUrl);assert.equal(provider.searchParams.get("numbers"),APPROVED);const message=String(provider.searchParams.get("message")||"");const code=/\b(\d{6})\b/.exec(message)?.[1];assert.match(String(code),/^\d{6}$/);
+  assert.equal(providerRequest?.url,"https://www.fast2sms.com/dev/bulkV2");assert.equal(providerRequest?.init?.method,"POST");const providerBody=new URLSearchParams(String(providerRequest?.init?.body||""));assert.equal(providerBody.get("numbers"),APPROVED);const message=String(providerBody.get("message")||"");const code=/\b(\d{6})\b/.exec(message)?.[1];assert.match(String(code),/^\d{6}$/);
   const verified=await route.POST(request({action:"verify",challengeId:payload.data.challengeId,code,cityId:"blr"}));assert.equal(verified.status,200,await verified.text());assert.match(String(verified.headers.get("set-cookie")),/pawspace_identity_session=/);
  }finally{globalThis.fetch=originalFetch;}
 });

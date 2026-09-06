@@ -308,7 +308,10 @@ test("Operations cannot close recovery before replacement acceptance", async () 
 
   const twice = await refusal(opsAct(db, booking, "close_recovery", { reason: "Closing it a second time" }));
   assert.equal(twice?.status, 409);
-  assert.match(twice.message, /No accepted Dog Walking recovery case exists/);
+  // Once resolved, the case is no longer in 'replacement_accepted', so the consolidated close-recovery
+  // guard refuses with the standard "must accept" message (the old "No accepted…" branch was removed when
+  // close_recovery was reworked to also close in in_progress/completed states).
+  assert.match(twice.message, /Replacement walker must accept before Operations can close recovery/);
 });
 
 // ---------------------------------------------------------------------------------------------
