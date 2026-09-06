@@ -1,4 +1,4 @@
-name: Apply audit remediation
+name: Apply P0 identity and OTP remediation
 
 on:
   push:
@@ -21,73 +21,116 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
 
-      - name: Reassemble and apply audited remediation
+      - name: Apply P0 security patches
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          path=Path('lib/partner-otp.ts')
+
+          # P0-3: CSPRNG OTP generation and zero OTP disclosure in HTTP responses.
+          path=Path('lib/customer-otp.ts')
           source=path.read_text()
-          replacement='export async function requestPartnerOtp(db:D1Database,{phone}:{phone:string}){await ensurePartnerOtpTables(db);const normalized=normalizePhone(phone);const now=Date.now(),code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1_000_000).padStart(6,"0"),id=crypto.randomUUID();await db.prepare("INSERT INTO partner_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)").bind(id,normalized,code,now,now+5*60_000).run();return{challengeId:id,phone:normalized,expiresInSeconds:300,sandboxCode:code,sandboxDelivery:true,liveSmsDelivered:false};}'
-          updated,count=re.subn(r'export async function requestPartnerOtp\([^\n]+',replacement,source,count=1)
-          if count!=1: raise SystemExit('partner OTP request function shape not found')
-          path.write_text(updated)
-          PY
-          cat .github/auditparts/part* | base64 -d | gzip -d > "$RUNNER_TEMP/apply-audit-remediation.py"
-          python3 "$RUNNER_TEMP/apply-audit-remediation.py"
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          marker='const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\n'
+          helper='''const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\nfunction secureOtpCode(){\n const range=900000,limit=Math.floor(4294967296/range)*range,values=new Uint32Array(1);\n let value=0;\n do{crypto.getRandomValues(values);value=values[0];}while(value>=limit);\n return String(100000+(value%range));\n}\n'''
+          if marker not in source: raise SystemExit('customer OTP uid marker not found')
+          source=source.replace(marker,helper,1)
+          old='const now=Date.now(),code=String(Math.floor(100000+Math.random()*900000)),id=uid("OTP");'
+          if old not in source: raise SystemExit('insecure customer OTP generator not found')
+          source=source.replace(old,'const now=Date.now(),code=secureOtpCode(),id=uid("OTP");',1)
+          path.write_text(source)
 
-          haptik=Path('lib/haptik-outbound-client.ts')
-          source=haptik.read_text()
-          if 'from"./voice-safe-fetch";' not in source:
-            raise SystemExit('Haptik safe-fetch import not found')
-          haptik.write_text(source.replace('from"./voice-safe-fetch";','from"./voice-safe-fetch.ts";',1))
+          path=Path('app/api/customer-otp/route.ts')
+          source=path.read_text()
+          old='if (!liveMode) return json({ data: result }, 200, { "cache-control": "no-store" });'
+          new='if (!liveMode) return json({ data: { challengeId: result.challengeId, phone: result.phone, expiresInSeconds: result.expiresInSeconds, sandboxDelivery: true, liveSmsDelivered: false } }, 200, { "cache-control": "no-store" });'
+          if old not in source: raise SystemExit('customer OTP sandbox response marker not found')
+          source=source.replace(old,new,1)
+          path.write_text(source)
 
-          partner=Path('lib/partner-otp.ts')
-          source=partner.read_text()
-          replacement='export async function requestPartnerOtp(db:Db,input:{phone:string}){await ensurePartnerOtpTables(db);const phone=normalizePhone(input.phone);if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");const now=Date.now(),code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1_000_000).padStart(6,"0"),id=uid("POTP");await db.prepare("INSERT INTO partner_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)").bind(id,phone,code,now,now+5*60_000).run();return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};}'
-          updated,count=re.subn(r'export async function requestPartnerOtp\([^\n]+',replacement,source,count=1)
-          if count!=1: raise SystemExit('patched partner OTP request function not found')
-          partner.write_text(updated)
+          # P0-1: remove all authorization based on caller-controlled OAI identity headers.
+          path=Path('lib/server-auth.ts')
+          source=path.read_text()
+          start=source.find('function forwardedIdentity(request:Request){')
+          end=source.find('\n\nconst isDevelopmentPreview=',start)
+          if start < 0 or end < 0: raise SystemExit('server-auth forwarded identity helper not found')
+          source=source[:start]+source[end+2:]
+          start=source.find('  const identity=forwardedIdentity(request);')
+          end_marker='  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};\n'
+          end=source.find(end_marker,start)
+          if start < 0 or end < 0: raise SystemExit('server-auth forwarded identity authorization block not found')
+          replacement='  throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));\n'
+          source=source[:start]+replacement+source[end+len(end_marker):]
+          path.write_text(source)
+
+          path=Path('lib/api-gateway.ts')
+          source=path.read_text()
+          start=source.find('  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();')
+          end_marker='  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}\n'
+          end=source.find(end_marker,start)
+          if start < 0 or end < 0: raise SystemExit('api-gateway trusted-header authorization block not found')
+          replacement='  return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});}\n'
+          source=source[:start]+replacement+source[end+len(end_marker):]
+          path.write_text(source)
+
+          # Remove local client assumptions that the raw OTP is returned over HTTP.
+          path=Path('app/mobile-app/customer-login.tsx')
+          source=path.read_text()
+          source=source.replace('  sandboxCode: string;\n','')
+          source=source.replace('  const [sandboxCode, setSandboxCode] = useState("");\n','')
+          source=source.replace('        setSandboxCode(saved.sandboxCode || "");\n','')
+          source=source.replace('      const b = (await r.json()) as { data?: { challengeId: string; sandboxCode: string }; error?: string };','      const b = (await r.json()) as { data?: { challengeId: string }; error?: string };')
+          source=source.replace('      setSandboxCode(b.data.sandboxCode);\n','')
+          source=source.replace('          sandboxCode: b.data.sandboxCode,\n','')
+          source=source.replace('                  UAT sandbox: no real SMS is sent yet - the code is shown on the next screen for testing.','                  Enter the verification code delivered through the configured OTP channel.')
+          block='''                {sandboxCode && (\n                  <p style={{ fontSize: 11, background: "var(--ps-surface-2)", padding: 8, borderRadius: 8, marginTop: 8 }}>\n                    Sandbox code (no real SMS yet): <b>{sandboxCode}</b>\n                  </p>\n                )}\n'''
+          source=source.replace(block,'')
+          source=source.replace('                  setSandboxCode("");\n','')
+          path.write_text(source)
+
+          # Keep verification execution coverage without relying on an HTTP OTP leak.
+          path=Path('tests/backend-otp-hardening.test.mjs')
+          source=path.read_text()
+          source=source.replace('assert.equal(body.data?.liveSmsDelivered,false);assert.match(String(body.data?.sandboxCode),/^\\d{6}$/);','assert.equal(body.data?.liveSmsDelivered,false);assert.equal(Object.prototype.hasOwnProperty.call(body.data||{},"sandboxCode"),false);')
+          old='const requested=await request.json();const verify=await customer.POST(new Request("http://localhost/api/customer-otp",{method:"POST",headers:{"content-type":"application/json","origin":"http://localhost"},body:JSON.stringify({action:"verify",challengeId:requested.data.challengeId,code:requested.data.sandboxCode,cityId:"blr"})}));'
+          new='const requested=await request.json();assert.equal(Object.prototype.hasOwnProperty.call(requested.data||{},"sandboxCode"),false);const stored=sqlite.prepare("SELECT code FROM customer_otp_challenges WHERE id=?").get(requested.data.challengeId);const verify=await customer.POST(new Request("http://localhost/api/customer-otp",{method:"POST",headers:{"content-type":"application/json","origin":"http://localhost"},body:JSON.stringify({action:"verify",challengeId:requested.data.challengeId,code:stored.code,cityId:"blr"})}));'
+          if old not in source: raise SystemExit('customer OTP verification regression fixture not found')
+          source=source.replace(old,new,1)
+          path.write_text(source)
           PY
+
+      - name: Assert P0 removals
+        run: |
+          set -euo pipefail
+          ! grep -q 'Math.random' lib/customer-otp.ts
+          ! grep -q 'oai-authenticated-user-email' lib/server-auth.ts
+          ! grep -q 'oai-authenticated-user-email' lib/api-gateway.ts
+          ! grep -q 'email===String(env.FOUNDER_EMAIL' lib/api-gateway.ts
+          ! grep -q 'identity.email!==founderEmail' lib/server-auth.ts
+          node - <<'NODE'
+          const fs=require('fs');
+          const route=fs.readFileSync('app/api/customer-otp/route.ts','utf8');
+          if(/json\(\{\s*data:\s*result\s*\}/.test(route)) throw new Error('raw OTP result is still serialized');
+          NODE
 
       - name: Install dependencies
         run: npm run install:ci
 
-      - name: Run sabotage-focused remediation tests
-        run: node --test tests/audit-p0-security-schema-remediation.test.mjs tests/backend-otp-hardening.test.mjs tests/haptik-outbound.test.mjs
-
-      - name: Restore bundler-safe Haptik import
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path=Path('lib/haptik-outbound-client.ts')
-          source=path.read_text()
-          if 'from"./voice-safe-fetch.ts";' not in source:
-            raise SystemExit('temporary Haptik test import not found')
-          path.write_text(source.replace('from"./voice-safe-fetch.ts";','from"./voice-safe-fetch";',1))
-          PY
-
-      - name: Run full test suite
-        run: npm test
-
-      - name: Run typecheck
+      - name: Typecheck
         run: npm run typecheck
 
-      - name: Commit validated remediation and remove transient bootstrap
+      - name: Full test suite
+        run: npm test
+
+      - name: Commit validated security remediation
         env:
           BRANCH: fix/audit-p1-remediation
         run: |
           set -euo pipefail
-          rm -rf .github/auditparts .github/audit-remediation-apply.py.gz.b64 .github/workflows/apply-audit-remediation.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add lib/customer-otp.ts app/api/customer-otp/route.ts lib/api-gateway.ts lib/server-auth.ts app/mobile-app/customer-login.tsx tests/backend-otp-hardening.test.mjs
           git diff --cached --check
-          git commit -m "fix(security): close audit P0 launch blockers"
+          git commit -m "fix(security): resolve P0-1 header trust and P0-3 OTP generation vulnerabilities"
           git push origin "HEAD:$BRANCH"
