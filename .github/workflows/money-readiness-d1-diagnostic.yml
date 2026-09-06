@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           - environment: staging
-            database: pawspace-staging
+            database_candidates: '["pawspace-staging"]'
           - environment: production
-            database: pawspace-prod-bengaluru
+            database_candidates: '["pawspace-prod-bengaluru","pawspace-production","pawspace-prod","pawspace"]'
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -38,15 +38,24 @@ jobs:
           set +x
           RAW="$RUNNER_TEMP/money-readiness-${{ matrix.environment }}"
           mkdir -p "$RAW"
-          DATABASE="${{ matrix.database }}"
-          if ! npx --yes wrangler@4 d1 execute "$DATABASE" --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" --json > "$RAW/tables.json" 2> "$RAW/tables.err"; then
+          CONFIG="$RUNNER_TEMP/money-readiness-${{ matrix.environment }}-wrangler.json"
+          if ! npx --yes wrangler@4 d1 list --json > "$RAW/databases.json" 2> "$RAW/databases.err"; then
+            echo "D1 target discovery failed; raw provider output is intentionally suppressed." >&2
+            exit 1
+          fi
+          DATABASE_CANDIDATES='${{ matrix.database_candidates }}' CONFIG="$CONFIG" DATABASES="$RAW/databases.json" node -e '
+            const fs=require("node:fs"),all=JSON.parse(fs.readFileSync(process.env.DATABASES,"utf8")),allowed=new Set(JSON.parse(process.env.DATABASE_CANDIDATES));
+            const matches=all.filter((item)=>allowed.has(String(item.name||"")));
+            if(matches.length!==1){console.error(`Expected exactly one protected D1 target; found ${matches.length}.`);process.exit(1);}
+            fs.writeFileSync(process.env.CONFIG,JSON.stringify({name:"money-readiness-read-only-diagnostic",compatibility_date:"2026-09-06",d1_databases:[{binding:"DB",database_name:"money-readiness-protected-target",database_id:matches[0].uuid}]}));'
+          if ! npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" --json > "$RAW/tables.json" 2> "$RAW/tables.err"; then
             echo "Read-only table-map query failed; raw provider output is intentionally suppressed." >&2
             exit 1
           fi
           set +e
-          npx --yes wrangler@4 d1 execute "$DATABASE" --remote --command "SELECT COUNT(*) AS row_count FROM journal_entries;" --json > "$RAW/journal.json" 2> "$RAW/journal.err"
+          npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT COUNT(*) AS row_count FROM journal_entries;" --json > "$RAW/journal.json" 2> "$RAW/journal.err"
           JOURNAL_STATUS=$?
-          npx --yes wrangler@4 d1 execute "$DATABASE" --remote --command "SELECT COUNT(*) AS row_count FROM finance_journal_entries;" --json > "$RAW/finance.json" 2> "$RAW/finance.err"
+          npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT COUNT(*) AS row_count FROM finance_journal_entries;" --json > "$RAW/finance.json" 2> "$RAW/finance.err"
           FINANCE_STATUS=$?
           set -e
           node scripts/money-readiness-d1-diagnostic.mjs \
