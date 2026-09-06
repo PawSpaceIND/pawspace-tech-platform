@@ -15,7 +15,7 @@ export const FORBIDDEN_IN_PRODUCTION = [
   "PAWSPACE_MEDIA_ENV",
 ];
 export const REQUIRED_EXPLICIT = [
-  ["PAWSPACE_PAYMENT_ENV", ["live", "sandbox"], "Decides whether a customer's card is actually charged."],
+  ["PAWSPACE_PAYMENT_ENV", ["sandbox"], "Live payments remain disabled until a separately authorized pilot activation."],
   ["PAWSPACE_COMMUNICATION_ENV", ["live", "sandbox"], "Decides whether a real SMS or WhatsApp message reaches a real person."],
   ["PAWSPACE_MAPS_ENV", ["live", "sandbox"], "Decides whether provider location and ETA are real."],
 ];
@@ -34,6 +34,21 @@ for (const [name, allowed, why] of REQUIRED_EXPLICIT) {
   if (!value) problems.push(`${name} is not set. ${why} State it explicitly; it is not inferred from the environment.`);
   else if (!allowed.includes(value)) problems.push(`${name} is "${value}", which is not one of: ${allowed.join(", ")}. ${why}`);
   else explicit[name] = value;
+}
+
+const paymentLiveApproved = String(process.env.PAWSPACE_PAYMENT_LIVE_APPROVED || "false").trim().toLowerCase();
+if (paymentLiveApproved !== "false") problems.push("PAWSPACE_PAYMENT_LIVE_APPROVED must remain false until a separately authorized live-payment pilot activation.");
+
+const pilotBookingIdsRaw = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
+let pilotBookingIdCount = 0;
+if (pilotBookingIdsRaw) {
+  const ids = pilotBookingIdsRaw.split(",").map((value) => value.trim()).filter(Boolean);
+  pilotBookingIdCount = ids.length;
+  if (ids.length < 5 || ids.length > 20) problems.push("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS must contain between 5 and 20 booking IDs when configured.");
+  if (new Set(ids).size !== ids.length) problems.push("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS must not contain duplicate booking IDs.");
+  if (ids.some((id) => id.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id))) problems.push("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS contains an invalid booking ID.");
+  const knownSyntheticFixtures = new Set(["PILOT-1", "PILOT-2", "PILOT-3", "PILOT-4", "PILOT-5"]);
+  if (ids.some((id) => knownSyntheticFixtures.has(id))) problems.push("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS contains a known synthetic PILOT-* fixture ID; production requires an explicitly approved real booking cohort.");
 }
 
 // Voice defaults are intentionally different from the real-world modes above: an omitted voice input
@@ -58,6 +73,7 @@ cfg.d1_databases = [{ binding: "DB", database_name: PRODUCTION_WORKER_NAME, data
 cfg.vars = {
   PAWSPACE_DEPLOYMENT_ENV: "production",
   PAWSPACE_PAYMENT_ENV: explicit.PAWSPACE_PAYMENT_ENV,
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
   PAWSPACE_COMMUNICATION_ENV: explicit.PAWSPACE_COMMUNICATION_ENV,
   PAWSPACE_MAPS_ENV: explicit.PAWSPACE_MAPS_ENV,
   PAWSPACE_VOICE_ENV: voiceEnv,
@@ -72,6 +88,7 @@ if (forbidden.length) {
 }
 writeFileSync(path, JSON.stringify(cfg));
 console.log(`Production config written → name=${PRODUCTION_WORKER_NAME}`);
-console.log(`  payment=${explicit.PAWSPACE_PAYMENT_ENV} communication=${explicit.PAWSPACE_COMMUNICATION_ENV} maps=${explicit.PAWSPACE_MAPS_ENV}`);
+console.log(`  payment=${explicit.PAWSPACE_PAYMENT_ENV} liveApproved=false communication=${explicit.PAWSPACE_COMMUNICATION_ENV} maps=${explicit.PAWSPACE_MAPS_ENV}`);
 console.log(`  voice=${voiceEnv} voiceUatApproved=${voiceUatApproved}`);
+console.log(`  paymentPilotAllowlist=${pilotBookingIdsRaw ? `provided(${pilotBookingIdCount})` : "not-provided"} (value is handled as a Worker secret and is not written to wrangler vars)`);
 console.log("Database id and credentials are NOT logged. Credentials are uploaded as Worker secrets.");

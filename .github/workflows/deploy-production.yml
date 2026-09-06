@@ -1,8 +1,9 @@
 name: Deploy production
 
 # Manual-only production deployment for the Bengaluru pilot. The exact SHA must already carry a green
-# Release CI run. Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live
-# voice is deliberately not offered by this workflow.
+# Release CI run. Payments remain sandbox-only until a separately authorized live pilot activation.
+# Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live voice is deliberately
+# not offered by this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -15,10 +16,11 @@ on:
         required: true
         default: ''
       payment_env:
-        description: 'live or sandbox — decides whether cards are actually charged'
+        description: 'Sandbox only. Live payment activation remains a separate explicitly authorized gate.'
         required: true
         type: choice
-        options: [sandbox, live]
+        default: sandbox
+        options: [sandbox]
       communication_env:
         description: 'live or sandbox — decides whether real people receive real messages'
         required: true
@@ -104,6 +106,8 @@ jobs:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
           PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
           PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
           PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
@@ -141,6 +145,7 @@ jobs:
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
           FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET }}
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
@@ -157,6 +162,8 @@ jobs:
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
             if (Object.values(values).some(value => !value)) throw new Error("a required production communication or identity secret is missing");
             if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
+            const pilotAllowlist = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
+            if (pilotAllowlist) values.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS = pilotAllowlist;
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
@@ -178,10 +185,13 @@ jobs:
             if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
           }
           if ((cfg.vars || {}).PAWSPACE_DEPLOYMENT_ENV !== "production") fail("PAWSPACE_DEPLOYMENT_ENV is not production");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_ENV !== "sandbox") fail("payments are not locked to sandbox");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_LIVE_APPROVED !== "false") fail("live payment approval is not locked false");
+          if ("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS" in (cfg.vars || {})) fail("payment pilot booking IDs must be a Worker secret, never a plaintext wrangler var");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
-          console.log("Deployed configuration certified: production worker, production database, governed voice mode.");
+          console.log("Deployed configuration certified: production worker, production database, payments sandbox-only, live payment approval false, governed voice mode.");
           NODE
 
       - name: Where this went, and how to undo it
