@@ -14,7 +14,12 @@ export const POWER_DIALLER_DISPOSITIONS = [
 ] as const;
 
 export type PowerDiallerDispositionCode = typeof POWER_DIALLER_DISPOSITIONS[number];
+export type PowerDiallerTimer = (callback: () => void, delayMs: number) => unknown;
 
 export function shouldAutoAdvance(disposition: string) {
   return (POWER_DIALLER_DISPOSITIONS as readonly string[]).includes(disposition);
+}
+
+export function schedulePowerDiallerAdvance(callback: () => void, timer: PowerDiallerTimer = setTimeout) {
+  return timer(callback, POWER_DIALLER_AUTO_ADVANCE_MS);
 }
