@@ -44,8 +44,10 @@ function exotelApiHost(env:Env){
 async function fetchAuthoritativeCall(env:Env,callSid:string){
  const key=val(env,"EXOTEL_API_KEY"),token=val(env,"EXOTEL_API_TOKEN"),accountSid=val(env,"EXOTEL_SID");
  if(!key||!token||!accountSid)throw new TelephonyProviderUnavailable("Exotel Call Details credentials are not configured");
- const url=new URL(`https://${exotelApiHost(env)}/v1/Accounts/${encodeURIComponent(accountSid)}/Calls.json`);
- url.searchParams.set("Sid",callSid);url.searchParams.set("details","true");
+ // Use the single-call resource rather than the bulk /Calls search. Exotel's bulk Call Details API
+ // explicitly omits ongoing calls, which would make an in-progress/connected callback impossible to
+ // reconcile authoritatively. Appending .json keeps the provider response deterministic for parsing.
+ const url=new URL(`https://${exotelApiHost(env)}/v1/Accounts/${encodeURIComponent(accountSid)}/Calls/${encodeURIComponent(callSid)}.json`);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),EXOTEL_DETAILS_TIMEOUT_MS);
  try{
   let response:Response,body:string;
@@ -57,11 +59,13 @@ async function fetchAuthoritativeCall(env:Env,callSid:string){
    throw new TelephonyProviderUnavailable(controller.signal.aborted?`Exotel Call Details did not respond within ${EXOTEL_DETAILS_TIMEOUT_MS}ms`:`Exotel Call Details request failed: ${text((error as Error)?.message||error).slice(0,120)}`);
   }
   if(!response.ok)throw new TelephonyProviderUnavailable(`Exotel Call Details rejected reconciliation (${response.status})`);
-  let parsed:{Calls?:ExotelCall[]}={};
-  try{parsed=JSON.parse(body)as{Calls?:ExotelCall[]}}catch{throw new TelephonyProviderUnavailable("Exotel Call Details returned malformed JSON");}
-  const calls=Array.isArray(parsed.Calls)?parsed.Calls:[];
-  const call=calls.find(entry=>text(entry?.Sid||entry?.sid)===callSid);
-  if(!call)throw new TelephonyProviderUnavailable("Exotel Call Details did not return the requested CallSid");
+  let parsed:Record<string,unknown>={};
+  try{parsed=JSON.parse(body)as Record<string,unknown>}catch{throw new TelephonyProviderUnavailable("Exotel Call Details returned malformed JSON");}
+  const candidate=parsed.Call??parsed.call??parsed;
+  if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))throw new TelephonyProviderUnavailable("Exotel Call Details returned no call resource");
+  const call=candidate as ExotelCall;
+  const returnedSid=text(call.Sid||call.sid||call.CallSid||call.callSid||call.call_sid);
+  if(returnedSid!==callSid)throw new TelephonyProviderUnavailable("Exotel Call Details did not return the requested CallSid");
   if(!text(call.Status||call.status))throw new TelephonyProviderUnavailable("Exotel Call Details returned no authoritative status");
   return{call,body};
  }finally{clearTimeout(timer);}
