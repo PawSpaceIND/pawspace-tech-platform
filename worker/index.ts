@@ -22,6 +22,7 @@ import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
 import {runTrustSafetySweep} from "../lib/trust-safety-governance";
 import {handleAiVoiceSelfTestNegotiate,handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-harness";
+import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
 
 interface Env {
   ASSETS: Fetcher;
@@ -55,6 +56,8 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
+    // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.
     if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
     if(url.pathname==="/voice/ai-self-test"&&url.searchParams.get("mode")==="direct")return handleDirectBrowserVoiceHarnessStream(request,env as unknown as Record<string,unknown>);
     // Provider-authenticated websocket lane. Exotel cannot carry a PawSpace staff cookie, so this path
@@ -82,6 +85,9 @@ const worker = {
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
+
+      // Only an accepted application request establishes the finance runtime schema invariant.
+      await ensureFinancialRuntimeSchema(env.DB);
       const response = await handler.fetch(request, env, ctx);
       if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
@@ -103,6 +109,9 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
+      // Scheduled money work can be the first invocation after deploy, so establish the finance schema
+      // before any concurrent money/reconciliation sweep begins.
+      await ensureFinancialRuntimeSchema(env.DB);
       /* SCOPED, not global. This guard used to `throw` sequentially BEFORE the Promise.allSettled below,
        * so a WhatsApp template verification exception stopped every one of the sweeps that follow from
        * starting at all - including razorpayOrderOutbox, settlementRecon and subscriptionMaintenance. A

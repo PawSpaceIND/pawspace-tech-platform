@@ -52,13 +52,11 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
   const identity=forwardedIdentity(request);
   if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
-  let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
-  if(!user){
-    const {env}=await import("cloudflare:workers"); const founderEmail=String(env.FOUNDER_EMAIL||"").trim().toLowerCase();
-    if(!founderEmail||identity.email!==founderEmail)throw authFailure("Access has not been provisioned for this identity",403);
-    const now=Date.now(); await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.email,identity.name,"founder","active",now,now).run();
-    user={email:identity.email,name:identity.name,role_code:"founder",status:"active"};
-  }
+  const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
+  // FOUNDER_EMAIL is intentionally not consulted here. A configured email or forwarded identity header
+  // is identity evidence only; it is never authorization to auto-create an app_users row. The first
+  // founder/admin must be provisioned through the governed D1 bootstrap process.
+  if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
   if(!role)throw authFailure("Assigned role is unavailable",403);
