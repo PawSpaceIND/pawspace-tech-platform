@@ -122,20 +122,180 @@ test("AUDIT-C6b: a genuinely undelivered sitting booking can still be cancelled"
 // service_provider by default and the route checked nothing else, so any
 // provider could read any customer's case and record ops_decision "proceed"
 // on a complaint against themselves.
-test("AUDIT-H4: the cancellation-case route is staff-only, and says so in a governed code", async () => {
-  const route = await import("../app/api/booking-cancellation-case/route.ts");
-  const source = await (await import("node:fs/promises")).readFile(
-    new URL("../app/api/booking-cancellation-case/route.ts", import.meta.url), "utf8");
+/* --- AUDIT-H4 -------------------------------------------------------------
+ *
+ * CONTRACT STRENGTHENED. The first version of this test asserted only the SOURCE TEXT: that a
+ * STAFF_ROLES set existed, excluded service_provider, and that the string
+ * "cancellation_case_staff_only" appeared somewhere in the file. That pins the DECLARATION of the
+ * gate, never that it is CALLED - deleting both `requireStaff(...)` call sites left the test green,
+ * which I verified by doing exactly that. A gate that is declared and never invoked is the bug.
+ *
+ * It now drives the real GET and POST handlers with a real service_provider actor.
+ *
+ * The role matters: `service_provider` holds "bookings.view" (lib/platform-security.ts), which is the
+ * permission this route authorizes on - so the permission check ALONE lets a contractor read the
+ * customer's stated cancellation reason and adjudicate the refund. requireStaff is the only thing
+ * standing between them and a dispute they are a party to.
+ *
+ * ORIGIN is deliberately a real https host, not localhost: lib/development-preview.ts grants
+ * superuser ["*"] on localhost/127.0.0.1/terminal.local, and the suite runs with
+ * PAWSPACE_LOCAL_PREVIEW=on, so a localhost origin here would make this test pass for the wrong
+ * reason.
+ */
+const CASE_ORIGIN = "https://app.pawspace.in";
+const CASE_STAFF = "manager.cancellation-case@pawspace.in";
+const CASE_PROVIDER = "provider.cancellation-case@pawspace.in";
 
-  // The gate must exist and must exclude service_provider and customer. Asserted on the
-  // resolved Set rather than on the text, so a renamed constant still passes and a
-  // widened membership still fails.
-  const match = source.match(/const STAFF_ROLES=new Set\(\[([^\]]*)\]\)/);
-  assert.ok(match, "a staff-role gate must exist in the cancellation-case route");
-  const roles = new Set(match[1].split(",").map((item) => item.trim().replace(/^"|"$/g, "")));
-  assert.equal(roles.has("service_provider"), false, "a provider must never adjudicate a cancellation case");
-  assert.equal(roles.has("customer"), false, "a customer must never adjudicate a cancellation case");
-  assert.ok(roles.has("admin") && roles.has("manager"), "staff must retain access");
-  assert.ok(typeof route.GET === "function" && typeof route.POST === "function");
-  assert.match(source, /cancellation_case_staff_only/, "the refusal must carry a governed code, not a bare 403");
+async function cancellationCaseWorld() {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__AUDIT_DB__ = db;
+  globalThis.__AUDIT_ENV__ = {};
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now();
+  for (const [id, email, role] of [
+    ["USR-CASE-MANAGER", CASE_STAFF, "manager"],
+    ["USR-CASE-PROVIDER", CASE_PROVIDER, "service_provider"],
+  ]) {
+    sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)")
+      .run(id, email, role, role, now, now);
+  }
+  return await import("../app/api/booking-cancellation-case/route.ts");
+}
+
+const asActor = (email, init = {}) =>
+  new Request(`${CASE_ORIGIN}/api/booking-cancellation-case?caseId=CASE-1`, {
+    headers: { "oai-authenticated-user-email": email, "content-type": "application/json" },
+    ...init,
+  });
+
+test("AUDIT-H4: a service_provider cannot read a cancellation case, despite holding bookings.view", async () => {
+  const route = await cancellationCaseWorld();
+  const response = await route.GET(asActor(CASE_PROVIDER));
+  assert.equal(response.status, 403, "a provider must never read a dispute they are a party to");
+  assert.match(await response.text(), /cancellation_case_staff_only/,
+    "the refusal must carry a governed code, not a bare 403");
+});
+
+test("AUDIT-H4b: a service_provider cannot adjudicate a cancellation case", async () => {
+  const route = await cancellationCaseWorld();
+  const response = await route.POST(asActor(CASE_PROVIDER, {
+    method: "POST",
+    body: JSON.stringify({ caseId: "CASE-1", action: "finance_decision", decision: "full_refund", reason: "self-serve" }),
+  }));
+  assert.equal(response.status, 403, "a provider must never decide the refund on their own job");
+  assert.match(await response.text(), /cancellation_case_staff_only/);
+});
+
+test("AUDIT-H4c: staff are NOT refused by the same gate", async () => {
+  /* Non-vacuity. `return 403 always` would satisfy both assertions above. Staff must get past the
+   * gate; the route then fails on its own missing fixture data, which is a DIFFERENT refusal - the
+   * only thing asserted here is that it is not the staff-only 403. */
+  const route = await cancellationCaseWorld();
+  const response = await route.GET(asActor(CASE_STAFF));
+  const body = await response.text();
+  assert.doesNotMatch(body, /cancellation_case_staff_only/,
+    "a manager must pass the staff gate");
+});
+
+// --- AUDIT-H6 -------------------------------------------------------------
+// The refund overage was measured against what the booking was BILLED, not against what was actually
+// COLLECTED. On a booking where the gateway captured less than the invoice (a partial capture, or a
+// capture that never settled), refunding the full invoice moved more money out than ever came in and
+// the ledger computed the overage as 0 and certified the row "matched" - the one case it must scream
+// about was the case it called clean.
+test("AUDIT-H6: a refund larger than the money actually captured is flagged as an overage", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__AUDIT_DB__ = db;
+  globalThis.__AUDIT_ENV__ = {};
+  const mod = await import("../lib/grooming-payment-reconciliation.ts");
+  await mod.ensurePaymentReconciliationTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,amount REAL,status TEXT,gateway_reference TEXT,created_at INTEGER,updated_at INTEGER)");
+
+  // Billed 4000. The gateway only ever captured 1000.
+  sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-H6','BK-H6','CUS-H6',4000,4000,'INR','card','prepaid','captured','razorpay','idem-h6','{}',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,updated_at) VALUES ('PAY-H6','BK-H6','razorpay','sandbox',4000,1000,0,'INR','captured','matched',0,?)").run(now);
+  sqlite.prepare("INSERT INTO booking_refund_cases VALUES ('RFD-H6','BK-H6','PAY-H6',4000,'approved',NULL,?,?)").run(now, now);
+
+  await mod.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-h6-refund",
+    eventType: "refund.processed", bookingId: "BK-H6", amountSubunits: 400000,
+    gatewayRefundId: "rfnd_h6", payloadHash: "sha256:h6", signatureVerified: true,
+  });
+
+  const row = sqlite.prepare("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id='PAY-H6'").get();
+  assert.equal(row.reconciliation_status, "refund_overage",
+    "refunding 4000 against 1000 captured must not be certified as matched");
+  assert.equal(Math.round(Number(row.variance_amount)), 3000,
+    "the overage must be measured against money COLLECTED, not money billed");
+
+  const exceptions = sqlite.prepare("SELECT exception_type FROM payment_reconciliation_exceptions WHERE payment_id='PAY-H6'").all();
+  assert.ok(exceptions.some((item) => String(item.exception_type) === "refund_overage"),
+    "an overage must raise a payment exception a human will see");
+});
+
+test("AUDIT-H6b: an ordinary full refund against a full capture stays matched", async () => {
+  /* Non-vacuity. Flagging EVERY refund as an overage would satisfy the test above. When captured
+   * equals expected - the ordinary path - the ceiling changes nothing and the row must stay clean. */
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__AUDIT_DB__ = db;
+  globalThis.__AUDIT_ENV__ = {};
+  const mod = await import("../lib/grooming-payment-reconciliation.ts");
+  await mod.ensurePaymentReconciliationTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,amount REAL,status TEXT,gateway_reference TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-H6B','BK-H6B','CUS-H6B',4000,4000,'INR','card','prepaid','captured','razorpay','idem-h6b','{}',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,updated_at) VALUES ('PAY-H6B','BK-H6B','razorpay','sandbox',4000,4000,0,'INR','captured','matched',0,?)").run(now);
+  sqlite.prepare("INSERT INTO booking_refund_cases VALUES ('RFD-H6B','BK-H6B','PAY-H6B',4000,'approved',NULL,?,?)").run(now, now);
+
+  await mod.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-h6b-refund",
+    eventType: "refund.processed", bookingId: "BK-H6B", amountSubunits: 400000,
+    gatewayRefundId: "rfnd_h6b", payloadHash: "sha256:h6b", signatureVerified: true,
+  });
+
+  const row = sqlite.prepare("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id='PAY-H6B'").get();
+  assert.notEqual(row.reconciliation_status, "refund_overage",
+    "a full refund of fully captured money is not an overage");
+  assert.equal(Math.round(Number(row.variance_amount)), 0);
+});
+
+// --- AUDIT-H2 -------------------------------------------------------------
+// POST returned operateAssignment's promise WITHOUT awaiting it. `return somePromise` inside a
+// try/catch leaves the try block immediately, so a rejection raised inside operateAssignment was
+// never seen by the catch below it — skipping governedRefusal entirely and rejecting the handler
+// instead of producing the governed status. Reverting `return await` to `return` reddened ZERO of
+// 4293 tests before this one existed; I measured that rather than assuming it.
+test("AUDIT-H2: an async refusal inside operateAssignment is converted, not left to reject", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const base = makeD1(sqlite);
+  // Throws only for the one read that happens AFTER operateAssignment's first await, so the failure
+  // is genuinely asynchronous — which is the whole point. Everything else behaves normally.
+  const db = {
+    ...base,
+    prepare: (sql) => /FROM scheduling_assignment_decisions/.test(sql)
+      ? { bind: () => ({ first: async () => { throw new Response("Assignment lookup refused", { status: 409 }); } }) }
+      : base.prepare(sql),
+  };
+  globalThis.__AUDIT_DB__ = db;
+  globalThis.__AUDIT_ENV__ = {};
+  const route = await import("../app/api/uat-scheduling/route.ts");
+
+  // localhost deliberately: lib/development-preview.ts grants the scheduling.manage permission this
+  // path needs, and authorization is not what is under test here — error conversion is.
+  const request = new Request("http://localhost/api/uat-scheduling", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "reassign", groupId: "SG-H2", providerId: "PRV-H2" }),
+  });
+
+  const response = await route.POST(request);
+  assert.ok(response instanceof Response, "POST must resolve to a Response, not reject");
+  assert.equal(response.status, 409, "the governed 409 must survive, not become an unhandled rejection");
 });
