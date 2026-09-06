@@ -3,7 +3,9 @@ import{hasPermission}from"../../../lib/platform-security";
 import{getStayPaymentSchedule,payStayBalance,sweepOverdueStayBalances}from"../../../lib/stay-split-payments";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
+async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>&{DB:D1Database};}
+async function database(){return(await runtime()).DB;}
+function productionBalanceSettlementBlocked(env:Record<string,unknown>){return String(env.PAWSPACE_PAYMENT_ENV||"").trim().toLowerCase()==="production"||String(env.PAWSPACE_DEPLOYMENT_ENV||"").trim().toLowerCase()==="production";}
 
 // 50/50 split payment balance surface. Gateway maps this route to "scheduling.book" (customer
 // role has it); staff with bookings.manage may read/settle any booking. Per-record ownership for
@@ -22,10 +24,9 @@ export async function GET(request:Request){try{
 
 export async function POST(request:Request){try{
   const body=await request.json() as{action?:string;bookingId?:string;idempotencyKey?:string};
-  const db=await database(),actor=await resolveActor(request);
+  const env=await runtime(),db=env.DB,actor=await resolveActor(request);
   const action=String(body.action||"pay_balance");
   if(action==="sweep_overdue"){
-    // Ops/cron surface: mark past-due balances overdue so alerts can act on them.
     requirePermission(actor,"bookings.manage");
     const result=await sweepOverdueStayBalances(db);
     await securityAudit(db,actor,"stay_balance.sweep_overdue","stay_payment_schedule","*","completed",{marked:result.marked,overdueCount:result.overdue.length});
@@ -33,6 +34,7 @@ export async function POST(request:Request){try{
   }
   if(action!=="pay_balance")return json({error:"Unsupported stay balance action"},400);
   requirePermission(actor,"scheduling.book");
+  if(productionBalanceSettlementBlocked(env))return json({error:"Stay balance self-settlement is disabled in production until gateway-backed capture is implemented",code:"PRODUCTION_BALANCE_SETTLEMENT_DISABLED"},503);
   const bookingId=String(body.bookingId||"").trim(),idempotencyKey=String(body.idempotencyKey||"").trim();
   if(!bookingId||!idempotencyKey)return json({error:"bookingId and idempotencyKey are required"},400);
   const schedule=await getStayPaymentSchedule(db,bookingId);

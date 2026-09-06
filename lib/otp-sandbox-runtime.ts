@@ -21,10 +21,13 @@ export function developmentOtpSandboxEnabled(request:Request,runtime:Record<stri
   return localHost(request)&&localPreviewEnabled(runtime);
 }
 
-/** A checked-in development secret is intentionally NOT a deployment credential. It is accepted only
- * in an explicit local development/preview runtime so request+verify works with no live provider creds.
- * Production and live identity mode still return an empty value and therefore fail closed. */
+/** Production and UAT never share assertion signing material. Production must receive its own Worker
+ * secret; local development retains the checked-in non-deployment fallback. */
 export function resolveOtpAssertionSecret(runtime:Record<string,unknown>={}){
+  if(runtimeEnv(runtime,"PAWSPACE_DEPLOYMENT_ENV")==="production"){
+    const production=String(runtime.PAWSPACE_IDENTITY_ASSERTION_SECRET??"").trim();
+    return production.length>=32?production:"";
+  }
   const configured=String(runtime.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT??"").trim();
   if(configured.length>=32)return configured;
   if(runtimeEnv(runtime,"PAWSPACE_IDENTITY_ENV")==="live")return"";

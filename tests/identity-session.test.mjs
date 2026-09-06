@@ -5,7 +5,7 @@ import{readFile}from"node:fs/promises";
 const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("OTP identity exchange issues a bounded HttpOnly canonical session",async()=>{
-  const[session,assertion,route]=await Promise.all([source("lib/platform-session.ts"),source("lib/verified-identity-assertion.ts"),source("app/api/identity-session/route.ts")]);
+  const[session,assertion,route,sandboxRuntime,productionRuntime]=await Promise.all([source("lib/platform-session.ts"),source("lib/verified-identity-assertion.ts"),source("app/api/identity-session/route.ts"),source("lib/otp-sandbox-runtime.ts"),source("lib/otp-production-runtime.ts")]);
   assert.match(session,/platform_identity_sessions/);
   assert.match(session,/token_hash TEXT NOT NULL UNIQUE/);
   assert.match(session,/HttpOnly; Secure; SameSite=Lax/);
@@ -13,7 +13,11 @@ test("OTP identity exchange issues a bounded HttpOnly canonical session",async()
   assert.match(session,/binding_verification/);
   assert.match(session,/status='superseded'/);
   assert.match(assertion,/PAWSPACE_IDENTITY_ENV/);
-  assert.match(assertion,/PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT/);
+  assert.match(assertion,/resolveOtpAssertionSecret/);
+  assert.match(assertion,/productionOtpEnabled/);
+  assert.match(sandboxRuntime,/PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT/);
+  assert.match(sandboxRuntime,/PAWSPACE_IDENTITY_ASSERTION_SECRET/);
+  assert.match(productionRuntime,/FAST2SMS_API_KEY/);
   assert.match(assertion,/HMAC/);
   assert.match(assertion,/verified_identity_assertion_nonces/);
   assert.match(assertion,/Identity assertion has already been used/);
@@ -43,9 +47,6 @@ test("customer and provider sessions are scoped before reaching self-service API
 });
 
 test("the central API gateway honours customer/provider platform sessions, not just staff identities",async()=>{
-  // Regression: OTP-verified customers hold a platform session cookie but no staff header identity;
-  // without this the gateway 401s them on gated self-service reads (e.g. GET
-  // /api/boarding-stays?scope=customer) before the route's own resolveActor ever runs.
   const gateway=await source("lib/api-gateway.ts");
   assert.match(gateway,/import \{ resolvePlatformSession \} from "\.\/platform-session"/);
   const authorize=gateway.slice(gateway.indexOf("export async function authorizeApiRequest"));
