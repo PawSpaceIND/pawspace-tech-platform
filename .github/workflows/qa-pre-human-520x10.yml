@@ -1,0 +1,42 @@
+name: Pre-human 520x10 certification
+
+on:
+  push:
+    branches:
+      - agent/platform-stack-recertification
+    paths:
+      - qa/pre-human-520x10.mjs
+      - .github/workflows/qa-pre-human-520x10.yml
+
+permissions:
+  contents: read
+
+env:
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
+
+jobs:
+  population-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Build backend modules used by the population lane
+        run: |
+          cd backend
+          npm ci
+          npm run build
+      - name: Execute 520-customer / 10-provider certification
+        run: node qa/pre-human-520x10.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pre-human-520x10-summary
+          path: qa/pre-human-520x10-summary.json
+          if-no-files-found: warn
