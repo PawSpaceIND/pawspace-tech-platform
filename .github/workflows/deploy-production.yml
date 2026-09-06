@@ -45,7 +45,75 @@ on:
         options: ['false', 'true']
 
 jobs:
+  # ------------------------------------------------------------------------------------
+  # Nothing reaches production without passing this first.
+  #
+  # scripts/assert-production-readiness.mjs is fail-closed and has always existed - but it
+  # lived ONLY in production-signoff.yml, a SEPARATE workflow that this deploy did not
+  # depend on. The entire gate on a real production deploy was therefore one free-text
+  # confirmation string, typed by one person, unreviewed. The 18 outstanding credential
+  # gaps tracked in #542 could not have stopped a deploy, because nothing on this path
+  # ever asked.
+  #
+  # STRICT is 'true' here, unlike the reporting-only dry run in production-signoff.yml:
+  # on this path a configuration gap MUST fail the job. The approved release-phase test-API
+  # policy override is carried over unchanged, so this is not stricter than the standing
+  # policy - it simply enforces that policy where it was previously unenforced. Changing
+  # the posture now requires editing this file under review, not typing into a dispatch box.
+  # ------------------------------------------------------------------------------------
+  readiness-gate:
+    if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Production readiness must certify before anything deploys
+        env:
+          PAWSPACE_PRODUCTION_ENFORCE: 'false'
+          # A gap fails this job. This is the difference between reporting and gating.
+          PAWSPACE_READINESS_DRY_RUN_STRICT: 'true'
+          # Approved release-phase policy, identical to production-signoff.yml.
+          PAWSPACE_TEST_API_POLICY_OVERRIDE: 'true'
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          IDFY_URL: ${{ vars.IDFY_URL }}
+          IDFY_API_KEY_SANDBOX: ${{ secrets.IDFY_API_KEY_SANDBOX }}
+          IDFY_ACCOUNT_ID_SANDBOX: ${{ secrets.IDFY_ACCOUNT_ID_SANDBOX }}
+          IDFY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.IDFY_WEBHOOK_SECRET_SANDBOX }}
+          IDFY_URL_SANDBOX: ${{ vars.IDFY_URL_SANDBOX }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
+          PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
+          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
+          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET_UAT: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT }}
+          META_WHATSAPP_VERIFY_TOKEN_UAT: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN_UAT }}
+          META_WHATSAPP_WABA_ID_UAT: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
+          META_WHATSAPP_PHONE_NUMBER_ID_UAT: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
+          INTERAKT_API_KEY_SANDBOX: ${{ secrets.INTERAKT_API_KEY_SANDBOX }}
+          INTERAKT_WEBHOOK_SECRET_SANDBOX: ${{ secrets.INTERAKT_WEBHOOK_SECRET_SANDBOX }}
+        run: node scripts/assert-production-readiness.mjs
+
   deploy:
+    needs: readiness-gate
+    environment: production
     if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
     runs-on: ubuntu-latest
     concurrency: pawspace-production-deploy
@@ -114,20 +182,32 @@ jobs:
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: node scripts/prod-config.mjs
 
+      # No continue-on-error. A production deploy with no recorded rollback reference is a
+      # deploy that cannot be rolled back, and a failure here means the Cloudflare API is
+      # unreachable or the token is wrong - which is itself a reason not to ship. The
+      # first-ever deploy is still allowed through explicitly below.
       - name: Record the currently deployed production version (rollback reference)
         id: rollback
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
-            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
-          else
-            REFERENCE=""
+          if ! npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
+            echo "Could not reach Cloudflare to record a rollback reference - refusing to deploy." >&2
+            sed -e 's/[A-Za-z0-9_-]\{24,\}/[redacted]/g' rollback-reference.txt >&2 || true
+            exit 1
           fi
-          if [ -z "$REFERENCE" ]; then REFERENCE="first-production-deploy"; fi
+          REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
+          if [ -z "$REFERENCE" ]; then
+            # A reachable API that lists no deployment means this really is the first one.
+            if grep -qiE 'no deployments|not found' rollback-reference.txt; then
+              REFERENCE="first-production-deploy"
+            else
+              echo "Cloudflare responded but no deployment id could be parsed - refusing to deploy blind." >&2
+              exit 1
+            fi
+          fi
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production
