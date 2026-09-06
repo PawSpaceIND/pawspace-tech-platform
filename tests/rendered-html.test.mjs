@@ -254,7 +254,9 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
     ["app/mobile-app/grooming-flow.tsx", "app/mobile-app/training-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/partner-app/page.tsx", "app/api/booking-operations/route.ts", "db/schema.ts"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")),
   );
   assert.match(grooming, /Pay after service/);
-  assert.match(grooming, /Create canonical UAT booking/);
+  // The label lost its internal vocabulary ("canonical", "UAT") because it is a customer-facing CTA;
+  // what this line checks - that the grooming flow still has its booking call to action - is unchanged.
+  assert.match(grooming, /Confirm booking/);
   // This line used to REQUIRE status:pay==="online"?"captured":"created" — it pinned a client-declared
   // capture as a contract, and passed for exactly as long as the flow claimed money it had not
   // received. An online payment is an authorization request; the explicit timing this case is named
