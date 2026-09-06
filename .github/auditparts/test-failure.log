@@ -1,0 +1,2000 @@
+  type: 'test'
+  ...
+# Subtest: with no preview the policy check is offered and the dial is not
+ok 3951 - with no preview the policy check is offered and the dial is not
+  ---
+  duration_ms: 0.113803
+  type: 'test'
+  ...
+# Subtest: a blocked preview does not enable a dial
+ok 3952 - a blocked preview does not enable a dial
+  ---
+  duration_ms: 0.29654
+  type: 'test'
+  ...
+# Subtest: an allowed preview for this exact request enables the dial and supplies its idempotency key
+ok 3953 - an allowed preview for this exact request enables the dial and supplies its idempotency key
+  ---
+  duration_ms: 0.804561
+  type: 'test'
+  ...
+# Subtest: changing ANY field of the request invalidates the previewed decision
+ok 3954 - changing ANY field of the request invalidates the previewed decision
+  ---
+  duration_ms: 0.309415
+  type: 'test'
+  ...
+# Subtest: editing the number after an allowed preview is the case that must never dial
+ok 3955 - editing the number after an allowed preview is the case that must never dial
+  ---
+  duration_ms: 0.131075
+  type: 'test'
+  ...
+# Subtest: whitespace is not a different recipient
+ok 3956 - whitespace is not a different recipient
+  ---
+  duration_ms: 0.093939
+  type: 'test'
+  ...
+# Subtest: previewMatchesForm is false for an absent preview rather than throwing
+ok 3957 - previewMatchesForm is false for an absent preview rather than throwing
+  ---
+  duration_ms: 0.058078
+  type: 'test'
+  ...
+# Subtest: a recipient number is only ever rendered as its last four digits
+ok 3958 - a recipient number is only ever rendered as its last four digits
+  ---
+  duration_ms: 0.078557
+  type: 'test'
+  ...
+# Subtest: the console page routes its dial through this module and sends no field the gate consults
+ok 3959 - the console page routes its dial through this module and sends no field the gate consults
+  ---
+  duration_ms: 0.542644
+  type: 'test'
+  ...
+# (node:11117) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11117) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: voice is OFF by default: an unconfigured environment refuses and records why
+ok 3960 - voice is OFF by default: an unconfigured environment refuses and records why
+  ---
+  duration_ms: 31.999046
+  type: 'test'
+  ...
+# Subtest: an approved environment still refuses without the explicit approval flag
+ok 3961 - an approved environment still refuses without the explicit approval flag
+  ---
+  duration_ms: 8.197493
+  type: 'test'
+  ...
+# Subtest: UAT with credentials but no allow-list refuses - an unbounded approved environment is the accident this prevents
+ok 3962 - UAT with credentials but no allow-list refuses - an unbounded approved environment is the accident this prevents
+  ---
+  duration_ms: 14.560024
+  type: 'test'
+  ...
+# Subtest: no client-supplied field can turn voice on
+ok 3963 - no client-supplied field can turn voice on
+  ---
+  duration_ms: 16.454432
+  type: 'test'
+  ...
+# Subtest: a caller without the authority to launch a dialler is refused
+ok 3964 - a caller without the authority to launch a dialler is refused
+  ---
+  duration_ms: 12.753875
+  type: 'test'
+  ...
+# Subtest: outbound sales/pitch calling stays disabled while it is unapproved, even though it is implemented
+ok 3965 - outbound sales/pitch calling stays disabled while it is unapproved, even though it is implemented
+  ---
+  duration_ms: 15.748944
+  type: 'test'
+  ...
+# Subtest: an unrecognised use case is refused rather than dialled on a free-text string
+ok 3966 - an unrecognised use case is refused rather than dialled on a free-text string
+  ---
+  duration_ms: 5.952376
+  type: 'test'
+  ...
+# Subtest: a use case that must be about a booking cannot be pointed at nobody's booking
+ok 3967 - a use case that must be about a booking cannot be pointed at nobody's booking
+  ---
+  duration_ms: 3.977078
+  type: 'test'
+  ...
+# Subtest: a recipient who is not on the approved allow-list is refused
+ok 3968 - a recipient who is not on the approved allow-list is refused
+  ---
+  duration_ms: 4.576064
+  type: 'test'
+  ...
+# Subtest: consent is proved from a stored record - the caller cannot assert it
+ok 3969 - consent is proved from a stored record - the caller cannot assert it
+  ---
+  duration_ms: 8.013783
+  type: 'test'
+  ...
+# Subtest: revoked consent is refused, not treated as consent that once existed
+ok 3970 - revoked consent is refused, not treated as consent that once existed
+  ---
+  duration_ms: 4.220163
+  type: 'test'
+  ...
+# Subtest: an opted-out number is refused, and an opt-out also revokes consent
+ok 3971 - an opted-out number is refused, and an opt-out also revokes consent
+  ---
+  duration_ms: 4.362381
+  type: 'test'
+  ...
+# Subtest: a CRM opt-out on the lead blocks the call even with voice consent on the number
+ok 3972 - a CRM opt-out on the lead blocks the call even with voice consent on the number
+  ---
+  duration_ms: 4.177797
+  type: 'test'
+  ...
+# Subtest: quiet hours block the dial, and the same request outside them does not
+ok 3973 - quiet hours block the dial, and the same request outside them does not
+  ---
+  duration_ms: 8.563836
+  type: 'test'
+  ...
+# Subtest: a city with no policy of its own gets the conservative default, not free rein
+ok 3974 - a city with no policy of its own gets the conservative default, not free rein
+  ---
+  duration_ms: 4.016793
+  type: 'test'
+  ...
+# Subtest: the frequency cap counts real dials only, and blocks the one over the line
+ok 3975 - the frequency cap counts real dials only, and blocks the one over the line
+  ---
+  duration_ms: 17.645825
+  type: 'test'
+  ...
+# Subtest: with no telephony provider configured the call refuses rather than reporting success
+ok 3976 - with no telephony provider configured the call refuses rather than reporting success
+  ---
+  duration_ms: 3.907707
+  type: 'test'
+  ...
+# Subtest: a provider that refuses the dial lands in provider_unavailable, not a fake dialing state
+ok 3977 - a provider that refuses the dial lands in provider_unavailable, not a fake dialing state
+  ---
+  duration_ms: 4.074415
+  type: 'test'
+  ...
+# Subtest: a permitted call dials through the labelled non-production transport and never claims otherwise
+ok 3978 - a permitted call dials through the labelled non-production transport and never claims otherwise
+  ---
+  duration_ms: 6.054755
+  type: 'test'
+  ...
+# Subtest: replaying a call request does not dial twice
+ok 3979 - replaying a call request does not dial twice
+  ---
+  duration_ms: 4.110592
+  type: 'test'
+  ...
+# Subtest: a call must name the customer or lead it is about, and a real number
+ok 3980 - a call must name the customer or lead it is about, and a real number
+  ---
+  duration_ms: 3.113928
+  type: 'test'
+  ...
+# Subtest: a retry re-proves the whole gate, is correlated, and is bounded
+ok 3981 - a retry re-proves the whole gate, is correlated, and is bounded
+  ---
+  duration_ms: 8.142093
+  type: 'test'
+  ...
+# Subtest: a policy refusal is never retryable - the decision would just be re-made
+ok 3982 - a policy refusal is never retryable - the decision would just be re-made
+  ---
+  duration_ms: 3.71968
+  type: 'test'
+  ...
+# Subtest: a retry after the customer opts out is refused, so one approved dial never licenses a later one
+ok 3983 - a retry after the customer opts out is refused, so one approved dial never licenses a later one
+  ---
+  duration_ms: 7.114988
+  type: 'test'
+  ...
+# Subtest: an impossible transition is refused by the ledger, not just by the pure state machine
+ok 3984 - an impossible transition is refused by the ledger, not just by the pure state machine
+  ---
+  duration_ms: 4.698317
+  type: 'test'
+  ...
+# Subtest: a call that asks for a human gets a real case in the queue Ops works
+ok 3985 - a call that asks for a human gets a real case in the queue Ops works
+  ---
+  duration_ms: 5.357337
+  type: 'test'
+  ...
+# Subtest: a speech-stack failure mid-call can still reach a human
+ok 3986 - a speech-stack failure mid-call can still reach a human
+  ---
+  duration_ms: 9.114305
+  type: 'test'
+  ...
+# Subtest: an opt-out spoken during the call is honoured immediately and blocks the next one
+ok 3987 - an opt-out spoken during the call is honoured immediately and blocks the next one
+  ---
+  duration_ms: 8.289772
+  type: 'test'
+  ...
+# Subtest: a transcript reference is attached to the call, not the transcript itself
+ok 3988 - a transcript reference is attached to the call, not the transcript itself
+  ---
+  duration_ms: 8.170275
+  type: 'test'
+  ...
+# Subtest: scripts are governed configuration, and a script that promises money is rejected
+ok 3989 - scripts are governed configuration, and a script that promises money is rejected
+  ---
+  duration_ms: 4.345051
+  type: 'test'
+  ...
+# Subtest: a use case whose script has been deactivated cannot be called on
+ok 3990 - a use case whose script has been deactivated cannot be called on
+  ---
+  duration_ms: 3.845721
+  type: 'test'
+  ...
+# Subtest: the readiness surface reports zero production calls and leaks no secret
+ok 3991 - the readiness surface reports zero production calls and leaks no secret
+  ---
+  duration_ms: 4.651608
+  type: 'test'
+  ...
+# Subtest: the ledger stores a recipient reference, not a full contact record, and audits every decision
+ok 3992 - the ledger stores a recipient reference, not a full contact record, and audits every decision
+  ---
+  duration_ms: 4.379767
+  type: 'test'
+  ...
+# Subtest: a dry-run policy preview creates nothing and dials nothing
+ok 3993 - a dry-run policy preview creates nothing and dials nothing
+  ---
+  duration_ms: 2.75886
+  type: 'test'
+  ...
+# Subtest: concurrent requests for the same recipient cannot exceed the frequency cap
+ok 3994 - concurrent requests for the same recipient cannot exceed the frequency cap
+  ---
+  duration_ms: 9.841964
+  type: 'test'
+  ...
+# Subtest: a dial the provider refused gives the recipient's allowance back
+ok 3995 - a dial the provider refused gives the recipient's allowance back
+  ---
+  duration_ms: 9.162246
+  type: 'test'
+  ...
+# Subtest: concurrent requests with one idempotency key produce one call, not a raw SQL error
+ok 3996 - concurrent requests with one idempotency key produce one call, not a raw SQL error
+  ---
+  duration_ms: 5.221477
+  type: 'test'
+  ...
+# Subtest: consent withdrawn between the gate and the dial is honoured, not ignored
+ok 3997 - consent withdrawn between the gate and the dial is honoured, not ignored
+  ---
+  duration_ms: 5.795355
+  type: 'test'
+  ...
+# Subtest: an opt-out recorded between the gate and the dial is honoured
+ok 3998 - an opt-out recorded between the gate and the dial is honoured
+  ---
+  duration_ms: 3.885452
+  type: 'test'
+  ...
+# Subtest: voice refuses to dial without a https provider callback configured
+ok 3999 - voice refuses to dial without a https provider callback configured
+  ---
+  duration_ms: 12.324342
+  type: 'test'
+  ...
+# Subtest: one canonical E.164 number is stored, dialled and reused by every retry
+ok 4000 - one canonical E.164 number is stored, dialled and reused by every retry
+  ---
+  duration_ms: 7.738132
+  type: 'test'
+  ...
+# Subtest: two DTMF presses on one call are both recorded, and a redelivery still is not
+ok 4001 - two DTMF presses on one call are both recorded, and a redelivery still is not
+  ---
+  duration_ms: 43.952534
+  type: 'test'
+  ...
+# Subtest: a foreign number sharing the last ten digits cannot ride an approved recipient's checks
+ok 4002 - a foreign number sharing the last ten digits cannot ride an approved recipient's checks
+  ---
+  duration_ms: 5.213807
+  type: 'test'
+  ...
+# Subtest: the weekly marketing cap is enforced atomically, not just read
+ok 4003 - the weekly marketing cap is enforced atomically, not just read
+  ---
+  duration_ms: 12.075498
+  type: 'test'
+  ...
+# Subtest: different status callbacks on one call are all applied; only identical ones deduplicate
+ok 4004 - different status callbacks on one call are all applied; only identical ones deduplicate
+  ---
+  duration_ms: 12.202719
+  type: 'test'
+  ...
+# (node:11128) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11128) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: an unsigned callback is refused and changes nothing
+ok 4005 - an unsigned callback is refused and changes nothing
+  ---
+  duration_ms: 63.9419
+  type: 'test'
+  ...
+# Subtest: a forged signature is refused
+ok 4006 - a forged signature is refused
+  ---
+  duration_ms: 30.763891
+  type: 'test'
+  ...
+# Subtest: a signature over a DIFFERENT body is refused - the body itself is what is signed
+ok 4007 - a signature over a DIFFERENT body is refused - the body itself is what is signed
+  ---
+  duration_ms: 11.857782
+  type: 'test'
+  ...
+# Subtest: a correctly-signed but stale or malformed timestamp is refused
+ok 4008 - a correctly-signed but stale or malformed timestamp is refused
+  ---
+  duration_ms: 8.614764
+  type: 'test'
+  ...
+# Subtest: with no webhook secret configured, every callback is refused
+ok 4009 - with no webhook secret configured, every callback is refused
+  ---
+  duration_ms: 4.259198
+  type: 'test'
+  ...
+# Subtest: both accepted mechanisms verify and advance the call
+ok 4010 - both accepted mechanisms verify and advance the call
+  ---
+  duration_ms: 12.547812
+  type: 'test'
+  ...
+# Subtest: a redelivered callback is answered 200 and applies exactly once
+ok 4011 - a redelivered callback is answered 200 and applies exactly once
+  ---
+  duration_ms: 11.040449
+  type: 'test'
+  ...
+# Subtest: progress, no-answer, busy and failure events each land in their own state
+ok 4012 - progress, no-answer, busy and failure events each land in their own state
+  ---
+  duration_ms: 21.171319
+  type: 'test'
+  ...
+# Subtest: a JSON callback body is accepted as well as a form-encoded one
+ok 4013 - a JSON callback body is accepted as well as a form-encoded one
+  ---
+  duration_ms: 9.673869
+  type: 'test'
+  ...
+# Subtest: a body that is not a parseable event is refused 400, verified or not
+ok 4014 - a body that is not a parseable event is refused 400, verified or not
+  ---
+  duration_ms: 4.521117
+  type: 'test'
+  ...
+# Subtest: a lone terminal callback completes the call by inferring the hop the carrier did not report
+ok 4015 - a lone terminal callback completes the call by inferring the hop the carrier did not report
+  ---
+  duration_ms: 6.031563
+  type: 'test'
+  ...
+# Subtest: a connected event overtaking the dial confirmation is bridged too
+ok 4016 - a connected event overtaking the dial confirmation is bridged too
+  ---
+  duration_ms: 4.982001
+  type: 'test'
+  ...
+# Subtest: an event with no unambiguous path is still refused rather than forced
+ok 4017 - an event with no unambiguous path is still refused rather than forced
+  ---
+  duration_ms: 5.831158
+  type: 'test'
+  ...
+# Subtest: the bridge only ever infers one unambiguous hop
+ok 4018 - the bridge only ever infers one unambiguous hop
+  ---
+  duration_ms: 0.128594
+  type: 'test'
+  ...
+# Subtest: a DTMF event is recorded without moving the call
+ok 4019 - a DTMF event is recorded without moving the call
+  ---
+  duration_ms: 9.401254
+  type: 'test'
+  ...
+# Subtest: only curated fields and a digest of the body are stored - never the provider payload
+ok 4020 - only curated fields and a digest of the body are stored - never the provider payload
+  ---
+  duration_ms: 6.750594
+  type: 'test'
+  ...
+# Subtest: a recording reference is only retained when recording was approved for that call
+ok 4021 - a recording reference is only retained when recording was approved for that call
+  ---
+  duration_ms: 9.687562
+  type: 'test'
+  ...
+# Subtest: an event for an unknown call is acknowledged without inventing one
+ok 4022 - an event for an unknown call is acknowledged without inventing one
+  ---
+  duration_ms: 3.258585
+  type: 'test'
+  ...
+# Subtest: an event with no call reference is acknowledged and parked
+ok 4023 - an event with no call reference is acknowledged and parked
+  ---
+  duration_ms: 3.208421
+  type: 'test'
+  ...
+# Subtest: the disconnected provider refuses every callback and every dial
+ok 4024 - the disconnected provider refuses every callback and every dial
+  ---
+  duration_ms: 0.628685
+  type: 'test'
+  ...
+# Subtest: provider selection is fail-closed and never picks the simulator in live mode
+ok 4025 - provider selection is fail-closed and never picks the simulator in live mode
+  ---
+  duration_ms: 0.208749
+  type: 'test'
+  ...
+# Subtest: the signature verifier is not fooled by a length-matched wrong signature
+ok 4026 - the signature verifier is not fooled by a length-matched wrong signature
+  ---
+  duration_ms: 3.926042
+  type: 'test'
+  ...
+# Subtest: the stale INT-VOICE-01 seed is advanced on an already-seeded database, but operator edits are not
+ok 4027 - the stale INT-VOICE-01 seed is advanced on an already-seeded database, but operator edits are not
+  ---
+  duration_ms: 13.480364
+  type: 'test'
+  ...
+# Subtest: the telephony credential list has exactly one definition
+ok 4028 - the telephony credential list has exactly one definition
+  ---
+  duration_ms: 1.656774
+  type: 'test'
+  ...
+# Subtest: a negative provider status is never classified as connected
+ok 4029 - a negative provider status is never classified as connected
+  ---
+  duration_ms: 78.734916
+  type: 'test'
+  ...
+# Subtest: the Exotel adapter refuses to exist on an incomplete configuration
+ok 4030 - the Exotel adapter refuses to exist on an incomplete configuration
+  ---
+  duration_ms: 0.446454
+  type: 'test'
+  ...
+# Subtest: a caller cannot redirect the carrier's callbacks to an endpoint of their choosing
+ok 4031 - a caller cannot redirect the carrier's callbacks to an endpoint of their choosing
+  ---
+  duration_ms: 5.14385
+  type: 'test'
+  ...
+# Subtest: an oversized or stalled provider response does not hang or exhaust the dial
+ok 4032 - an oversized or stalled provider response does not hang or exhaust the dial
+  ---
+  duration_ms: 12004.044528
+  type: 'test'
+  ...
+# Subtest: the readiness migration survives the runtime credential sync
+ok 4033 - the readiness migration survives the runtime credential sync
+  ---
+  duration_ms: 14.208073
+  type: 'test'
+  ...
+# Subtest: a whitespace-only credential is not reported as configured anywhere
+ok 4034 - a whitespace-only credential is not reported as configured anywhere
+  ---
+  duration_ms: 5.84759
+  type: 'test'
+  ...
+# (node:11142) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11142) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: the gateway maps every voice path explicitly, not through the dashboard.view fallback
+not ok 4035 - the gateway maps every voice path explicitly, not through the dashboard.view fallback
+  ---
+  duration_ms: 36.13198
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:71:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    /api/ai-voice-uat
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:86:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: the gateway admits only an identity that holds the mapped permission
+not ok 4036 - the gateway admits only an identity that holds the mapped permission
+  ---
+  duration_ms: 2.523614
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:94:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    401 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:105:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: an anonymous caller gets nothing from any voice route
+ok 4037 - an anonymous caller gets nothing from any voice route
+  ---
+  duration_ms: 64.002878
+  type: 'test'
+  ...
+# Subtest: a read-only compliance identity cannot start, drive or end an AI voice call
+not ok 4038 - a read-only compliance identity cannot start, drive or end an AI voice call
+  ---
+  duration_ms: 4.828061
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:121:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    auditor start answered 401
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:132:14)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: completing or failing a call now requires authority over that call, not just a call id
+ok 4039 - completing or failing a call now requires authority over that call, not just a call id
+  ---
+  duration_ms: 8.772334
+  type: 'test'
+  ...
+# Subtest: a service provider cannot point the dialler at a customer, an admin can
+not ok 4040 - a service provider cannot point the dialler at a customer, an admin can
+  ---
+  duration_ms: 3.609963
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:165:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    service_provider answered 401
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:170:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: no request field can enable voice through the route
+not ok 4041 - no request field can enable voice through the route
+  ---
+  duration_ms: 4.193726
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:180:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a disabled environment answers 503, not 201
+    
+    401 !== 503
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 503
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:187:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: changing a call script needs settings.manage on top of the call permissions
+not ok 4042 - changing a call script needs settings.manage on top of the call permissions
+  ---
+  duration_ms: 11.038821
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:192:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:201:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a cross-origin voice write is refused before anything is read
+ok 4043 - a cross-origin voice write is refused before anything is read
+  ---
+  duration_ms: 4.112451
+  type: 'test'
+  ...
+# Subtest: the readiness surface is legible to an authorised operator and names no secret value
+not ok 4044 - the readiness surface is legible to an authorised operator and names no secret value
+  ---
+  duration_ms: 4.406358
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:218:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    401 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:221:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: the provider callback route refuses an unsigned or oversized payload
+ok 4045 - the provider callback route refuses an unsigned or oversized payload
+  ---
+  duration_ms: 5.244543
+  type: 'test'
+  ...
+# Subtest: a call audit is only readable by an identity authorised for voice
+not ok 4046 - a call audit is only readable by an identity authorised for voice
+  ---
+  duration_ms: 8.03238
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:238:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:245:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: only a real boolean true counts as voice consent
+not ok 4047 - only a real boolean true counts as voice consent
+  ---
+  duration_ms: 3.569745
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:253:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    consent="false" answered 401
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:260:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a stalled provider body is bounded by the same deadline as a silent provider
+ok 4048 - a stalled provider body is bounded by the same deadline as a silent provider
+  ---
+  duration_ms: 1003.02222
+  type: 'test'
+  ...
+# Subtest: an oversized request body is refused before it is buffered
+not ok 4049 - an oversized request body is refused before it is buffered
+  ---
+  duration_ms: 7.197202
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:288:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a staff credential is not a licence to send any size
+    
+    401 !== 413
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 413
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:321:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: inline audio is bounded before it is decoded, not after
+ok 4050 - inline audio is bounded before it is decoded, not after
+  ---
+  duration_ms: 0.762568
+  type: 'test'
+  ...
+# Subtest: the stuck-call counter measures inactivity, not call age, and honours an injected clock
+ok 4051 - the stuck-call counter measures inactivity, not call age, and honours an injected clock
+  ---
+  duration_ms: 8.245373
+  type: 'test'
+  ...
+# Subtest: a null or scalar JSON body is a 400, not a 500
+not ok 4052 - a null or scalar JSON body is a 400, not a 500
+  ---
+  duration_ms: 2.936917
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:359:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    "null"
+    
+    401 !== 400
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 400
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/voice-route-authorization.test.mjs:369:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a nonsense byte limit makes the audio guard refuse, not proceed
+ok 4053 - a nonsense byte limit makes the audio guard refuse, not proceed
+  ---
+  duration_ms: 0.241984
+  type: 'test'
+  ...
+# Subtest: a call stranded in ANY non-terminal state is surfaced as open
+ok 4054 - a call stranded in ANY non-terminal state is surfaced as open
+  ---
+  duration_ms: 16.269423
+  type: 'test'
+  ...
+# Subtest: recording is refused at the provider boundary without the environment approval
+ok 4055 - recording is refused at the provider boundary without the environment approval
+  ---
+  duration_ms: 1.412125
+  type: 'test'
+  ...
+# (node:11153) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the disconnected stubs refuse rather than fabricating speech
+ok 4056 - the disconnected stubs refuse rather than fabricating speech
+  ---
+  duration_ms: 2.116016
+  type: 'test'
+  ...
+# Subtest: a first-party STT model that never answers hits the deadline
+ok 4057 - a first-party STT model that never answers hits the deadline
+  ---
+  duration_ms: 1001.824168
+  type: 'test'
+  ...
+# Subtest: a first-party STT model that answers with the wrong shape is malformed, not an empty transcript
+ok 4058 - a first-party STT model that answers with the wrong shape is malformed, not an empty transcript
+  ---
+  duration_ms: 1.145203
+  type: 'test'
+  ...
+# Subtest: an empty transcript is a truthful answer about silence, flagged rather than thrown
+ok 4059 - an empty transcript is a truthful answer about silence, flagged rather than thrown
+  ---
+  duration_ms: 0.297852
+  type: 'test'
+  ...
+# Subtest: a first-party STT model that throws is a classified provider failure
+ok 4060 - a first-party STT model that throws is a classified provider failure
+  ---
+  duration_ms: 0.562662
+  type: 'test'
+  ...
+# Subtest: first-party TTS classifies timeout, empty, malformed and unusable audio separately
+ok 4061 - first-party TTS classifies timeout, empty, malformed and unusable audio separately
+  ---
+  duration_ms: 1001.367407
+  type: 'test'
+  ...
+# Subtest: the self-hosted STT endpoint is bounded by a real timeout
+ok 4062 - the self-hosted STT endpoint is bounded by a real timeout
+  ---
+  duration_ms: 1500.092872
+  type: 'test'
+  ...
+# Subtest: the self-hosted endpoint's response shape is validated, not coerced
+ok 4063 - the self-hosted endpoint's response shape is validated, not coerced
+  ---
+  duration_ms: 21.505781
+  type: 'test'
+  ...
+# Subtest: the self-hosted TTS endpoint's audio result is validated before it is handed on
+ok 4064 - the self-hosted TTS endpoint's audio result is validated before it is handed on
+  ---
+  duration_ms: 3.422736
+  type: 'test'
+  ...
+# Subtest: the speech deadline is configurable but bounded
+ok 4065 - the speech deadline is configurable but bounded
+  ---
+  duration_ms: 0.388033
+  type: 'test'
+  ...
+# Subtest: a speech failure carries the stage it came from, so it can be routed to the right call state
+ok 4066 - a speech failure carries the stage it came from, so it can be routed to the right call state
+  ---
+  duration_ms: 0.401042
+  type: 'test'
+  ...
+# Subtest: first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI binding
+ok 4067 - first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI binding
+  ---
+  duration_ms: 0.850182
+  type: 'test'
+  ...
+# Subtest: the unified selector prefers our own Workers AI engine, with self-hosted fallback
+ok 4068 - the unified selector prefers our own Workers AI engine, with self-hosted fallback
+  ---
+  duration_ms: 0.19611
+  type: 'test'
+  ...
+# Subtest: the in-app voice-speech route is fail-closed and permission-gated
+ok 4069 - the in-app voice-speech route is fail-closed and permission-gated
+  ---
+  duration_ms: 0.123238
+  type: 'test'
+  ...
+# Subtest: Dog Walking closes one canonical customer to walker to Ops to Finance path
+ok 4070 - Dog Walking closes one canonical customer to walker to Ops to Finance path
+  ---
+  duration_ms: 5.003287
+  type: 'test'
+  ...
+# Subtest: Dog Walking completion is server-gated by canonical route evidence
+ok 4071 - Dog Walking completion is server-gated by canonical route evidence
+  ---
+  duration_ms: 2.061206
+  type: 'test'
+  ...
+# Subtest: Dog Walking customer confirmation reaches canonical management
+ok 4072 - Dog Walking customer confirmation reaches canonical management
+  ---
+  duration_ms: 0.858612
+  type: 'test'
+  ...
+# Subtest: Dog Walking recovery acceptance is explicit and preserves completed history
+ok 4073 - Dog Walking recovery acceptance is explicit and preserves completed history
+  ---
+  duration_ms: 1.079394
+  type: 'test'
+  ...
+# Subtest: Dog Walking gateway routes every gate to the correct authority
+ok 4074 - Dog Walking gateway routes every gate to the correct authority
+  ---
+  duration_ms: 0.804156
+  type: 'test'
+  ...
+# Subtest: Dog Walking closure remains UAT-only and does not claim production launch
+ok 4075 - Dog Walking closure remains UAT-only and does not claim production launch
+  ---
+  duration_ms: 1.530993
+  type: 'test'
+  ...
+# (node:11186) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11186) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: the walking flow prices everything from /api/walking-commercial and never hardcodes prices
+ok 4076 - the walking flow prices everything from /api/walking-commercial and never hardcodes prices
+  ---
+  duration_ms: 1.078832
+  type: 'test'
+  ...
+# Subtest: booking creation goes through lib/walking-booking-client.ts — the component makes no direct API calls
+ok 4077 - booking creation goes through lib/walking-booking-client.ts — the component makes no direct API calls
+  ---
+  duration_ms: 0.207854
+  type: 'test'
+  ...
+# Subtest: the dogs-only guard is present and cats can never be selected
+ok 4078 - the dogs-only guard is present and cats can never be selected
+  ---
+  duration_ms: 0.14378
+  type: 'test'
+  ...
+# Subtest: the flow is a standalone client component: no imports from other flow/checkout files, no globalThis
+ok 4079 - the flow is a standalone client component: no imports from other flow/checkout files, no globalThis
+  ---
+  duration_ms: 0.266463
+  type: 'test'
+  ...
+# Subtest: the flow respects the scheduler's dog_walking roster hours (06:00-21:00 IST)
+ok 4080 - the flow respects the scheduler's dog_walking roster hours (06:00-21:00 IST)
+  ---
+  duration_ms: 0.184973
+  type: 'test'
+  ...
+# Subtest: walking-booking-client was extended additively — existing signatures unchanged
+ok 4081 - walking-booking-client was extended additively — existing signatures unchanged
+  ---
+  duration_ms: 0.112722
+  type: 'test'
+  ...
+# Subtest: confirmation screen shows walker name + rating and the session list
+ok 4082 - confirmation screen shows walker name + rating and the session list
+  ---
+  duration_ms: 0.176652
+  type: 'test'
+  ...
+# Subtest: real execution: the catalogue the flow renders comes from the real walking package table
+ok 4083 - real execution: the catalogue the flow renders comes from the real walking package table
+  ---
+  duration_ms: 60.669903
+  type: 'test'
+  ...
+# Subtest: real execution: a recurring quote shaped exactly like the flow's confirm() is accepted and server-priced
+ok 4084 - real execution: a recurring quote shaped exactly like the flow's confirm() is accepted and server-priced
+  ---
+  duration_ms: 4.900496
+  type: 'test'
+  ...
+# Subtest: real execution: the server enforces the constraints the flow UI encodes (one dog, walk counts, exact duration)
+ok 4085 - real execution: the server enforces the constraints the flow UI encodes (one dog, walk counts, exact duration)
+  ---
+  duration_ms: 22.427181
+  type: 'test'
+  ...
+# Subtest: real execution: walking_sessions real schema (copied from lib/walking-ops-governance.ts) stores the session list the confirmation screen renders
+ok 4086 - real execution: walking_sessions real schema (copied from lib/walking-ops-governance.ts) stores the session list the confirmation screen renders
+  ---
+  duration_ms: 0.586819
+  type: 'test'
+  ...
+# Subtest: real execution: reserveWalkingSchedule sends the dog_walking scheduling contract and maps the walker rating
+ok 4087 - real execution: reserveWalkingSchedule sends the dog_walking scheduling contract and maps the walker rating
+  ---
+  duration_ms: 2.088641
+  type: 'test'
+  ...
+# Subtest: real execution: reserveWalkingSchedule fails loudly when no walker is assigned, and hides an absent rating
+ok 4088 - real execution: reserveWalkingSchedule fails loudly when no walker is assigned, and hides an absent rating
+  ---
+  duration_ms: 0.652869
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 1 extends the shared scheduler instead of creating a separate allocator
+ok 4089 - Dog Walking Gate 1 extends the shared scheduler instead of creating a separate allocator
+  ---
+  duration_ms: 5.454652
+  type: 'test'
+  ...
+# Subtest: Dog Walking provider capacity is governed by the existing provider model
+ok 4090 - Dog Walking provider capacity is governed by the existing provider model
+  ---
+  duration_ms: 1.79839
+  type: 'test'
+  ...
+# Subtest: Dog Walking commercial truth is server-owned and bounded
+ok 4091 - Dog Walking commercial truth is server-owned and bounded
+  ---
+  duration_ms: 0.944684
+  type: 'test'
+  ...
+# Subtest: Dog Walking quote binds scheduling shape and normalizes timestamp instants
+ok 4092 - Dog Walking quote binds scheduling shape and normalizes timestamp instants
+  ---
+  duration_ms: 0.80151
+  type: 'test'
+  ...
+# Subtest: Dog Walking booking creates one canonical bundle plus one row per reserved walk
+ok 4093 - Dog Walking booking creates one canonical bundle plus one row per reserved walk
+  ---
+  duration_ms: 0.778842
+  type: 'test'
+  ...
+# Subtest: Dog Walking customer UI closes canonical quote to scheduled sessions without fake availability
+ok 4094 - Dog Walking customer UI closes canonical quote to scheduled sessions without fake availability
+  ---
+  duration_ms: 1.209792
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 1 permissions separate public price from authenticated booking
+ok 4095 - Dog Walking Gate 1 permissions separate public price from authenticated booking
+  ---
+  duration_ms: 0.920033
+  type: 'test'
+  ...
+# Subtest: Sitting canonical booking compares reservation instants rather than timestamp formatting
+ok 4096 - Sitting canonical booking compares reservation instants rather than timestamp formatting
+  ---
+  duration_ms: 0.687619
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 2 owns walker acceptance and idempotency
+ok 4097 - Dog Walking Gate 2 owns walker acceptance and idempotency
+  ---
+  duration_ms: 4.286584
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 2 requires governed handover and active sandbox GPS before start
+ok 4098 - Dog Walking Gate 2 requires governed handover and active sandbox GPS before start
+  ---
+  duration_ms: 0.930851
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 2 restricts lifecycle events and leaves evidence to proof governance
+ok 4099 - Dog Walking Gate 2 restricts lifecycle events and leaves evidence to proof governance
+  ---
+  duration_ms: 1.624246
+  type: 'test'
+  ...
+# Subtest: Dog Walking completion creates a payment-due event instead of fake capture
+ok 4100 - Dog Walking completion creates a payment-due event instead of fake capture
+  ---
+  duration_ms: 0.853961
+  type: 'test'
+  ...
+# Subtest: Dog Walking recovery preserves booking and completed sessions
+ok 4101 - Dog Walking recovery preserves booking and completed sessions
+  ---
+  duration_ms: 0.649795
+  type: 'test'
+  ...
+# Subtest: Dog Walking lifecycle API enforces provider and staff authority
+ok 4102 - Dog Walking lifecycle API enforces provider and staff authority
+  ---
+  duration_ms: 0.671234
+  type: 'test'
+  ...
+# Subtest: Walker workspace uses canonical sessions and does not restore fixture earnings or GPS
+ok 4103 - Walker workspace uses canonical sessions and does not restore fixture earnings or GPS
+  ---
+  duration_ms: 0.95982
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 3 treats completed walks as payment-due until sandbox payment is recorded
+ok 4104 - Dog Walking Gate 3 treats completed walks as payment-due until sandbox payment is recorded
+  ---
+  duration_ms: 4.426474
+  type: 'test'
+  ...
+# Subtest: Dog Walking cancellation preserves completed charges and never invents refund
+ok 4105 - Dog Walking cancellation preserves completed charges and never invents refund
+  ---
+  duration_ms: 0.836266
+  type: 'test'
+  ...
+# Subtest: Dog Walking refund ledger is sandbox-only and replay resistant
+ok 4106 - Dog Walking refund ledger is sandbox-only and replay resistant
+  ---
+  duration_ms: 1.46344
+  type: 'test'
+  ...
+# Subtest: Dog Walking settlement waits for completed and paid sessions without inventing payout or tax
+ok 4107 - Dog Walking settlement waits for completed and paid sessions without inventing payout or tax
+  ---
+  duration_ms: 0.70467
+  type: 'test'
+  ...
+# Subtest: Dog Walking reconciliation exposes paid unpaid refund settlement and tax truth
+ok 4108 - Dog Walking reconciliation exposes paid unpaid refund settlement and tax truth
+  ---
+  duration_ms: 0.609368
+  type: 'test'
+  ...
+# Subtest: Dog Walking Finance API separates customer request from Finance authority
+ok 4109 - Dog Walking Finance API separates customer request from Finance authority
+  ---
+  duration_ms: 0.663337
+  type: 'test'
+  ...
+# Subtest: Dog Walking customer management is request-only for cancellation money
+ok 4110 - Dog Walking customer management is request-only for cancellation money
+  ---
+  duration_ms: 0.923915
+  type: 'test'
+  ...
+# Subtest: Dog Walking Finance workspace owns payment refund settlement and reconciliation actions
+ok 4111 - Dog Walking Finance workspace owns payment refund settlement and reconciliation actions
+  ---
+  duration_ms: 0.700766
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 4 media grants are private short-lived and session-bound
+ok 4112 - Dog Walking Gate 4 media grants are private short-lived and session-bound
+  ---
+  duration_ms: 4.270458
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 4 enforces MIME size checksum scan and private proof
+ok 4113 - Dog Walking Gate 4 enforces MIME size checksum scan and private proof
+  ---
+  duration_ms: 0.980222
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 4 route samples are canonical but explicitly sandbox unverified
+ok 4114 - Dog Walking Gate 4 route samples are canonical but explicitly sandbox unverified
+  ---
+  duration_ms: 1.793891
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 4 incidents preserve booking and money authority
+ok 4115 - Dog Walking Gate 4 incidents preserve booking and money authority
+  ---
+  duration_ms: 0.728849
+  type: 'test'
+  ...
+# Subtest: Dog Walking proof API separates provider customer and staff authority
+ok 4116 - Dog Walking proof API separates provider customer and staff authority
+  ---
+  duration_ms: 0.661045
+  type: 'test'
+  ...
+# Subtest: Dog Walking customer incident acknowledgement cannot change money
+ok 4117 - Dog Walking customer incident acknowledgement cannot change money
+  ---
+  duration_ms: 0.602702
+  type: 'test'
+  ...
+# Subtest: Dog Walking provider proof workspace does not self-approve scanner state
+ok 4118 - Dog Walking provider proof workspace does not self-approve scanner state
+  ---
+  duration_ms: 0.966825
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 5 builds one canonical Operations exception queue
+ok 4119 - Dog Walking Gate 5 builds one canonical Operations exception queue
+  ---
+  duration_ms: 4.619802
+  type: 'test'
+  ...
+# Subtest: Dog Walking replacement candidates must cover every remaining walk window
+ok 4120 - Dog Walking replacement candidates must cover every remaining walk window
+  ---
+  duration_ms: 0.85487
+  type: 'test'
+  ...
+# Subtest: Dog Walking recovery preserves completed sessions and moves only remaining sessions
+ok 4121 - Dog Walking recovery preserves completed sessions and moves only remaining sessions
+  ---
+  duration_ms: 1.623278
+  type: 'test'
+  ...
+# Subtest: Replacement walker acceptance verifies booking work order offer sessions and reservations
+ok 4122 - Replacement walker acceptance verifies booking work order offer sessions and reservations
+  ---
+  duration_ms: 1.012431
+  type: 'test'
+  ...
+# Subtest: Operations cannot close recovery before replacement acceptance
+ok 4123 - Operations cannot close recovery before replacement acceptance
+  ---
+  duration_ms: 0.660348
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 5 API is staff permissioned and audited
+ok 4124 - Dog Walking Gate 5 API is staff permissioned and audited
+  ---
+  duration_ms: 0.812013
+  type: 'test'
+  ...
+# Subtest: Dog Walking Team Operations surface keeps specialist authority separate
+ok 4125 - Dog Walking Team Operations surface keeps specialist authority separate
+  ---
+  duration_ms: 1.001164
+  type: 'test'
+  ...
+# Subtest: Dog Walking Gate 5 is engineering closed but explicitly not production ready
+ok 4126 - Dog Walking Gate 5 is engineering closed but explicitly not production ready
+  ---
+  duration_ms: 0.829276
+  type: 'test'
+  ...
+# Subtest: Walking completion accepts only paise-safe configured pricing
+ok 4127 - Walking completion accepts only paise-safe configured pricing
+  ---
+  duration_ms: 0.725467
+  type: 'test'
+  ...
+# Subtest: Walking demo fallback divides only when total paise divides exactly
+ok 4128 - Walking demo fallback divides only when total paise divides exactly
+  ---
+  duration_ms: 0.206882
+  type: 'test'
+  ...
+# Subtest: Walking pricing parser tolerates null pricing
+ok 4129 - Walking pricing parser tolerates null pricing
+  ---
+  duration_ms: 0.126693
+  type: 'test'
+  ...
+# Subtest: Walking completion commits payment, audit, notification, idempotency and governed finance in one batch
+ok 4130 - Walking completion commits payment, audit, notification, idempotency and governed finance in one batch
+  ---
+  duration_ms: 0.248201
+  type: 'test'
+  ...
+# Subtest: Walking client rejects parsed null or non-object JSON safely
+ok 4131 - Walking client rejects parsed null or non-object JSON safely
+  ---
+  duration_ms: 0.169894
+  type: 'test'
+  ...
+# (node:11263) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11263) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: full chain: walking-flow booking path -> walking_sessions -> partner job feed -> completion -> finance
+ok 4132 - full chain: walking-flow booking path -> walking_sessions -> partner job feed -> completion -> finance
+  ---
+  duration_ms: 108.109745
+  type: 'test'
+  ...
+# Subtest: regression: mid-programme replacement resets handover state so the replacement walker can actually walk
+ok 4133 - regression: mid-programme replacement resets handover state so the replacement walker can actually walk
+  ---
+  duration_ms: 65.445007
+  type: 'test'
+  ...
+# Subtest: regression: taxi driver replacement re-attributes pickup/dropoff handover to the replacement driver
+ok 4134 - regression: taxi driver replacement re-attributes pickup/dropoff handover to the replacement driver
+  ---
+  duration_ms: 67.458642
+  type: 'test'
+  ...
+# Subtest: taxi settlement cannot be prepared for an incomplete trip
+ok 4135 - taxi settlement cannot be prepared for an incomplete trip
+  ---
+  duration_ms: 13.047462
+  type: 'test'
+  ...
+# Subtest: regression: walking proof cannot be scan-approved by its submitter; incidents cannot be self-acknowledged or self-resolved
+ok 4136 - regression: walking proof cannot be scan-approved by its submitter; incidents cannot be self-acknowledged or self-resolved
+  ---
+  duration_ms: 32.732339
+  type: 'test'
+  ...
+# Subtest: regression: taxi proof self-approval is refused the same way
+ok 4137 - regression: taxi proof self-approval is refused the same way
+  ---
+  duration_ms: 27.738861
+  type: 'test'
+  ...
+# Subtest: regression: paying the preserved completed walk on a cancelled booking settles booking_payments to paid
+ok 4138 - regression: paying the preserved completed walk on a cancelled booking settles booking_payments to paid
+  ---
+  duration_ms: 29.350144
+  type: 'test'
+  ...
+# Subtest: walking offer expiry, no_show recovery and evidence-class walk events stay governed
+ok 4139 - walking offer expiry, no_show recovery and evidence-class walk events stay governed
+  ---
+  duration_ms: 22.659599
+  type: 'test'
+  ...
+# Subtest: walking and taxi routes keep per-action permission boundaries
+ok 4140 - walking and taxi routes keep per-action permission boundaries
+  ---
+  duration_ms: 0.704351
+  type: 'test'
+  ...
+# (node:11274) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11274) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: D12 maker step records a pending request without minting wallet value
+ok 4141 - D12 maker step records a pending request without minting wallet value
+  ---
+  duration_ms: 10.169467
+  type: 'test'
+  ...
+# Subtest: D12 self-approval is 403; a distinct checker mints exactly once across retries and races
+ok 4142 - D12 self-approval is 403; a distinct checker mints exactly once across retries and races
+  ---
+  duration_ms: 34.590472
+  type: 'test'
+  ...
+# Subtest: D12 binds request and ledger idempotency keys to payload while system credits stay non-blocking
+ok 4143 - D12 binds request and ledger idempotency keys to payload while system credits stay non-blocking
+  ---
+  duration_ms: 6.784208
+  type: 'test'
+  ...
+# Subtest: D12 route contract keeps maker and checker behind the existing finance.manage gateway action
+ok 4144 - D12 route contract keeps maker and checker behind the existing finance.manage gateway action
+  ---
+  duration_ms: 0.551244
+  type: 'test'
+  ...
+# (node:11285) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11285) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: Finance journals must balance, carry at least one line, and are idempotent per group key
+ok 4145 - Finance journals must balance, carry at least one line, and are idempotent per group key
+  ---
+  duration_ms: 37.890052
+  type: 'test'
+  ...
+# Subtest: A journal cannot be relabelled out of its month or dated into a locked period
+ok 4146 - A journal cannot be relabelled out of its month or dated into a locked period
+  ---
+  duration_ms: 5.447806
+  type: 'test'
+  ...
+# Subtest: Wallet credit is idempotent, bound to its payload, and books a liability against contra-revenue
+ok 4147 - Wallet credit is idempotent, bound to its payload, and books a liability against contra-revenue
+  ---
+  duration_ms: 9.613935
+  type: 'test'
+  ...
+# Subtest: A manual wallet credit needs a distinct checker, and the route can never mint one
+not ok 4148 - A manual wallet credit needs a distinct checker, and the route can never mint one
+  ---
+  duration_ms: 19.040979
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/wallet-finance.test.mjs:252:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a staff credit must be a pending request, not a mint: {"status":401,"body":{"error":"Authentication required"}}
+    
+    401 !== 202
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 202
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/wallet-finance.test.mjs:314:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: The 10% enhanced redemption never exceeds the booking and expenses the bonus
+ok 4149 - The 10% enhanced redemption never exceeds the booking and expenses the bonus
+  ---
+  duration_ms: 5.403532
+  type: 'test'
+  ...
+# Subtest: Wallet redemption is once per booking, own-booking only, and capped by credit already applied
+ok 4150 - Wallet redemption is once per booking, own-booking only, and capped by credit already applied
+  ---
+  duration_ms: 6.84316
+  type: 'test'
+  ...
+# Subtest: Revenue recognises per used session and an advance booking only on utilisation
+ok 4151 - Revenue recognises per used session and an advance booking only on utilisation
+  ---
+  duration_ms: 8.453874
+  type: 'test'
+  ...
+# Subtest: The cash-flow statement is direct-method, excludes non-cash journals and reconciles
+not ok 4152 - The cash-flow statement is direct-method, excludes non-cash journals and reconciles
+  ---
+  duration_ms: 6.305859
+  type: 'test'
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/wallet-finance.test.mjs:534:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    a manager holds no finance permission and must be refused: {"status":401,"body":{"error":"Authentication required"},"cacheControl":"no-store"}
+    
+    401 !== 403
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 403
+  actual: 401
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/wallet-finance.test.mjs:612:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: Meta webhook supports secure R2 media ingestion without dropping text or interactive routing
+ok 4153 - Meta webhook supports secure R2 media ingestion without dropping text or interactive routing
+  ---
+  duration_ms: 0.841933
+  type: 'test'
+  ...
+# Subtest: scheduled worker drains WhatsApp communication outbox to Meta or Interakt
+ok 4154 - scheduled worker drains WhatsApp communication outbox to Meta or Interakt
+  ---
+  duration_ms: 0.288953
+  type: 'test'
+  ...
+# Subtest: delivery state helper atomically prevents regression and couples retry dead-letter state with event log
+ok 4155 - delivery state helper atomically prevents regression and couples retry dead-letter state with event log
+  ---
+  duration_ms: 0.324804
+  type: 'test'
+  ...
+# Subtest: CX inbox refreshes threads conversation and controls automatically
+ok 4156 - CX inbox refreshes threads conversation and controls automatically
+  ---
+  duration_ms: 0.235816
+  type: 'test'
+  ...
+# Subtest: template approval is verified live against Meta Graph API with no manual reconciliation route
+ok 4157 - template approval is verified live against Meta Graph API with no manual reconciliation route
+  ---
+  duration_ms: 0.2152
+  type: 'test'
+  ...
+# Subtest: production readiness registry declares the implemented WhatsApp production handlers
+ok 4158 - production readiness registry declares the implemented WhatsApp production handlers
+  ---
+  duration_ms: 0.178767
+  type: 'test'
+  ...
+# (node:11307) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11307) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: WhatsApp analytics reconciles funnel, SLA, automation, queue, consent, attribution and feedback from canonical rows
+ok 4159 - WhatsApp analytics reconciles funnel, SLA, automation, queue, consent, attribution and feedback from canonical rows
+  ---
+  duration_ms: 18.260077
+  type: 'test'
+  ...
+# Subtest: CSV export contains the reconciled SLA, containment, suppression and attribution metrics
+ok 4160 - CSV export contains the reconciled SLA, containment, suppression and attribution metrics
+  ---
+  duration_ms: 12.937411
+  type: 'test'
+  ...
+# Subtest: analytics screen and CSV share the reports.view authorization boundary
+ok 4161 - analytics screen and CSV share the reports.view authorization boundary
+  ---
+  duration_ms: 0.408723
+  type: 'test'
+  ...
+# (node:11318) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11318) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: lead without explicit consent remains staff-only and creates no outbound identity
+ok 4162 - lead without explicit consent remains staff-only and creates no outbound identity
+  ---
+  duration_ms: 128.524659
+  type: 'test'
+  ...
+# Subtest: an approved non-marketing template creates one lead-linked WhatsApp conversation
+ok 4163 - an approved non-marketing template creates one lead-linked WhatsApp conversation
+  ---
+  duration_ms: 7.09683
+  type: 'test'
+  ...
+# Subtest: missing Meta template approval preserves the lead and reports setup required
+ok 4164 - missing Meta template approval preserves the lead and reports setup required
+  ---
+  duration_ms: 5.145357
+  type: 'test'
+  ...
+# Subtest: a lead first saved without consent can be safely retried after consent evidence is captured
+ok 4165 - a lead first saved without consent can be safely retried after consent evidence is captured
+  ---
+  duration_ms: 5.309873
+  type: 'test'
+  ...
+# Subtest: ambiguous phone identity opens review instead of messaging the wrong customer
+ok 4166 - ambiguous phone identity opens review instead of messaging the wrong customer
+  ---
+  duration_ms: 3.421975
+  type: 'test'
+  ...
+# Subtest: a recorded opt-out cannot be overwritten by new lead consent
+ok 4167 - a recorded opt-out cannot be overwritten by new lead consent
+  ---
+  duration_ms: 4.584312
+  type: 'test'
+  ...
+# (node:11329) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11329) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: working-hours and out-of-office rules evaluate deterministically and are audited exactly once
+ok 4168 - working-hours and out-of-office rules evaluate deterministically and are audited exactly once
+  ---
+  duration_ms: 27.550573
+  type: 'test'
+  ...
+# Subtest: keyword rules support an explicit default action without making keyword matching ambiguous
+ok 4169 - keyword rules support an explicit default action without making keyword matching ambiguous
+  ---
+  duration_ms: 1.819352
+  type: 'test'
+  ...
+# Subtest: no-response rule contract explicitly distinguishes template, non-template and all-message cases
+ok 4170 - no-response rule contract explicitly distinguishes template, non-template and all-message cases
+  ---
+  duration_ms: 1.694196
+  type: 'test'
+  ...
+# Subtest: routing actions expose last-assignee, explicit-team and round-robin only through canonical assignment policy
+ok 4171 - routing actions expose last-assignee, explicit-team and round-robin only through canonical assignment policy
+  ---
+  duration_ms: 17.731006
+  type: 'test'
+  ...
+# Subtest: webhook and tool actions reject unlisted or unauthenticated targets and remain non-mutating plans
+ok 4172 - webhook and tool actions reject unlisted or unauthenticated targets and remain non-mutating plans
+  ---
+  duration_ms: 1.705625
+  type: 'test'
+  ...
+# Subtest: recovery profile is exactly 10 minutes, 30 minutes and 3 hours with durable idempotency
+ok 4173 - recovery profile is exactly 10 minutes, 30 minutes and 3 hours with durable idempotency
+  ---
+  duration_ms: 0.744854
+  type: 'test'
+  ...
+# Subtest: new inbound cancels recovery before chatbot can arm its next sequence
+ok 4174 - new inbound cancels recovery before chatbot can arm its next sequence
+  ---
+  duration_ms: 0.201642
+  type: 'test'
+  ...
+# Subtest: chatbot outbound can arm recovery while governed AI drafts cannot
+ok 4175 - chatbot outbound can arm recovery while governed AI drafts cannot
+  ---
+  duration_ms: 0.214527
+  type: 'test'
+  ...
+# Subtest: discount recovery requires consent, marketing template and a business offer reference
+ok 4176 - discount recovery requires consent, marketing template and a business offer reference
+  ---
+  duration_ms: 0.216057
+  type: 'test'
+  ...
+# Subtest: scheduled worker runs the retry-safe recovery sweep automatically
+ok 4177 - scheduled worker runs the retry-safe recovery sweep automatically
+  ---
+  duration_ms: 0.131954
+  type: 'test'
+  ...
+# Subtest: Automation Studio exposes governed rule contracts and UAT evaluation without external mutation
+ok 4178 - Automation Studio exposes governed rule contracts and UAT evaluation without external mutation
+  ---
+  duration_ms: 0.221754
+  type: 'test'
+  ...
+# Subtest: Automation Studio and API remain UAT-only and authorization-gated
+ok 4179 - Automation Studio and API remain UAT-only and authorization-gated
+  ---
+  duration_ms: 0.172682
+  type: 'test'
+  ...
+# (node:11351) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11351) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: chatbot mode runs deterministic qualification and is idempotent
+ok 4180 - chatbot mode runs deterministic qualification and is idempotent
+  ---
+  duration_ms: 28.691186
+  type: 'test'
+  ...
+# Subtest: negated service mentions do not select a service
+ok 4181 - negated service mentions do not select a service
+  ---
+  duration_ms: 11.455522
+  type: 'test'
+  ...
+# Subtest: customer human request immediately hands off and disables chatbot
+ok 4182 - customer human request immediately hands off and disables chatbot
+  ---
+  duration_ms: 11.864716
+  type: 'test'
+  ...
+# Subtest: refund and safety language never stays in deterministic bot
+ok 4183 - refund and safety language never stays in deterministic bot
+  ---
+  duration_ms: 19.301609
+  type: 'test'
+  ...
+# Subtest: chatbot fails closed to human handoff when outbound policy blocks
+ok 4184 - chatbot fails closed to human handoff when outbound policy blocks
+  ---
+  duration_ms: 8.731017
+  type: 'test'
+  ...
+# (node:11362) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11362) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: WhatsApp routing is fail-closed to human only and AI requires explicit mode
+ok 4185 - WhatsApp routing is fail-closed to human only and AI requires explicit mode
+  ---
+  duration_ms: 44.023675
+  type: 'test'
+  ...
+# Subtest: human reply is governed by routing, consent, 24-hour window and idempotency
+ok 4186 - human reply is governed by routing, consent, 24-hour window and idempotency
+  ---
+  duration_ms: 12.188828
+  type: 'test'
+  ...
+# Subtest: operator takeover pauses AI and explicit governed resume reopens AI mode
+ok 4187 - operator takeover pauses AI and explicit governed resume reopens AI mode
+  ---
+  duration_ms: 18.527331
+  type: 'test'
+  ...
+# (node:11373) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11373) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: source attribution dedupes and binds to canonical lead/thread/customer
+ok 4188 - source attribution dedupes and binds to canonical lead/thread/customer
+  ---
+  duration_ms: 37.705407
+  type: 'test'
+  ...
+# Subtest: conversion fact queues one simulator feedback record and never mutates a live ad account
+ok 4189 - conversion fact queues one simulator feedback record and never mutates a live ad account
+  ---
+  duration_ms: 7.412859
+  type: 'test'
+  ...
+# Subtest: simulated provider failures retry then dead-letter without duplicating business facts
+ok 4190 - simulated provider failures retry then dead-letter without duplicating business facts
+  ---
+  duration_ms: 4.168028
+  type: 'test'
+  ...
+# (node:11384) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11384) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: quick replies validate variables and approved-media reference
+ok 4191 - quick replies validate variables and approved-media reference
+  ---
+  duration_ms: 33.560144
+  type: 'test'
+  ...
+# Subtest: tags and per-operator unread/favourite do not mutate canonical ownership
+ok 4192 - tags and per-operator unread/favourite do not mutate canonical ownership
+  ---
+  duration_ms: 3.421561
+  type: 'test'
+  ...
+# Subtest: transcript export masks sensitive payload fields and writes an audit event
+ok 4193 - transcript export masks sensitive payload fields and writes an audit event
+  ---
+  duration_ms: 3.918427
+  type: 'test'
+  ...
+# (node:11395) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11395) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: governed reply buttons and lists enforce Meta-style bounds and stay delivery-disabled
+ok 4194 - governed reply buttons and lists enforce Meta-style bounds and stay delivery-disabled
+  ---
+  duration_ms: 28.603546
+  type: 'test'
+  ...
+# Subtest: Flow submission validates canonical identity/schema and is idempotent without creating parallel business stores
+ok 4195 - Flow submission validates canonical identity/schema and is idempotent without creating parallel business stores
+  ---
+  duration_ms: 11.09963
+  type: 'test'
+  ...
+# Subtest: booking-detail, survey and feedback Flows map only to governed canonical targets
+ok 4196 - booking-detail, survey and feedback Flows map only to governed canonical targets
+  ---
+  duration_ms: 8.109329
+  type: 'test'
+  ...
+# (node:11406) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11406) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: enabled recovery requires explicit quiet-hours and frequency policy
+ok 4197 - enabled recovery requires explicit quiet-hours and frequency policy
+  ---
+  duration_ms: 37.604368
+  type: 'test'
+  ...
+# Subtest: no-response recovery arms exactly 10m, 30m and 3h from one automated outbound
+ok 4198 - no-response recovery arms exactly 10m, 30m and 3h from one automated outbound
+  ---
+  duration_ms: 40.241732
+  type: 'test'
+  ...
+# Subtest: due sweep queues approved discount template once and retry stays idempotent
+ok 4199 - due sweep queues approved discount template once and retry stays idempotent
+  ---
+  duration_ms: 18.764236
+  type: 'test'
+  ...
+# Subtest: quiet hours defer due recovery without creating a message or outbox row
+ok 4200 - quiet hours defer due recovery without creating a message or outbox row
+  ---
+  duration_ms: 11.316182
+  type: 'test'
+  ...
+# Subtest: rolling 24-hour marketing cap defers recovery without business mutation
+ok 4201 - rolling 24-hour marketing cap defers recovery without business mutation
+  ---
+  duration_ms: 15.468634
+  type: 'test'
+  ...
+# Subtest: customer reply and human takeover cancel all remaining recovery reminders
+ok 4202 - customer reply and human takeover cancel all remaining recovery reminders
+  ---
+  duration_ms: 11.480793
+  type: 'test'
+  ...
+# Subtest: routing-state lookup failure defers recovery instead of cancelling as human takeover
+ok 4203 - routing-state lookup failure defers recovery instead of cancelling as human takeover
+  ---
+  duration_ms: 8.472075
+  type: 'test'
+  ...
+# Subtest: discount recovery fails closed without marketing consent or approved offer reference
+ok 4204 - discount recovery fails closed without marketing consent or approved offer reference
+  ---
+  duration_ms: 13.110834
+  type: 'test'
+  ...
+# Subtest: shared inbox uses the governed WhatsApp conversation-control API
+ok 4205 - shared inbox uses the governed WhatsApp conversation-control API
+  ---
+  duration_ms: 1.46828
+  type: 'test'
+  ...
+# Subtest: shared inbox exposes Human, certified Chatbot and AI modes behind governed routing
+ok 4206 - shared inbox exposes Human, certified Chatbot and AI modes behind governed routing
+  ---
+  duration_ms: 0.257573
+  type: 'test'
+  ...
+# Subtest: human reply stays inside service-window and governed outbox constraints
+ok 4207 - human reply stays inside service-window and governed outbox constraints
+  ---
+  duration_ms: 0.166475
+  type: 'test'
+  ...
+# Subtest: AI mode is explicit and production delivery remains disabled
+ok 4208 - AI mode is explicit and production delivery remains disabled
+  ---
+  duration_ms: 0.114086
+  type: 'test'
+  ...
+# (node:11428) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11428) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: draft validation persists deterministic variables and sample payload
+ok 4209 - draft validation persists deterministic variables and sample payload
+  ---
+  duration_ms: 32.776823
+  type: 'test'
+  ...
+# Subtest: template send is blocked until verified approval and pause disables it again
+ok 4210 - template send is blocked until verified approval and pause disables it again
+  ---
+  duration_ms: 7.545091
+  type: 'test'
+  ...
+# Subtest: unapproved template is blocked even inside an active 24-hour session
+ok 4211 - unapproved template is blocked even inside an active 24-hour session
+  ---
+  duration_ms: 3.763314
+  type: 'test'
+  ...
+# Subtest: marketing template send requires explicit marketing consent even inside the session
+ok 4212 - marketing template send requires explicit marketing consent even inside the session
+  ---
+  duration_ms: 6.485255
+  type: 'test'
+  ...
+# Subtest: rejected reconciliation cannot activate the canonical outbox gate
+ok 4213 - rejected reconciliation cannot activate the canonical outbox gate
+  ---
+  duration_ms: 4.789999
+  type: 'test'
+  ...
+# Subtest: template API and console preserve permission, audit and no-live-Meta boundaries
+ok 4214 - template API and console preserve permission, audit and no-live-Meta boundaries
+  ---
+  duration_ms: 0.550281
+  type: 'test'
+  ...
+# (node:11439) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11439) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: draft validation persists deterministic variables and sample payload
+ok 4215 - draft validation persists deterministic variables and sample payload
+  ---
+  duration_ms: 29.711617
+  type: 'test'
+  ...
+# Subtest: template send is blocked until verified approval and pause disables it again
+ok 4216 - template send is blocked until verified approval and pause disables it again
+  ---
+  duration_ms: 7.824467
+  type: 'test'
+  ...
+# Subtest: unapproved template is blocked even inside an active 24-hour session
+ok 4217 - unapproved template is blocked even inside an active 24-hour session
+  ---
+  duration_ms: 3.628247
+  type: 'test'
+  ...
+# Subtest: marketing template send requires explicit marketing consent even inside the session
+ok 4218 - marketing template send requires explicit marketing consent even inside the session
+  ---
+  duration_ms: 6.664512
+  type: 'test'
+  ...
+# Subtest: rejected reconciliation cannot activate the canonical outbox gate
+ok 4219 - rejected reconciliation cannot activate the canonical outbox gate
+  ---
+  duration_ms: 5.31951
+  type: 'test'
+  ...
+# Subtest: template API and console preserve permission, audit and no-live-Meta boundaries
+ok 4220 - template API and console preserve permission, audit and no-live-Meta boundaries
+  ---
+  duration_ms: 0.488507
+  type: 'test'
+  ...
+# Subtest: scheduled worker completes Meta template sync before scheduler and WhatsApp dispatch fan-out
+ok 4221 - scheduled worker completes Meta template sync before scheduler and WhatsApp dispatch fan-out
+  ---
+  duration_ms: 0.500437
+  type: 'test'
+  ...
+# Subtest: template-sync failure blocks every WhatsApp dispatch sweep
+ok 4222 - template-sync failure blocks every WhatsApp dispatch sweep
+  ---
+  duration_ms: 0.319002
+  type: 'test'
+  ...
+# Subtest: template-sync failure does not block sweeps that send no WhatsApp message
+ok 4223 - template-sync failure does not block sweeps that send no WhatsApp message
+  ---
+  duration_ms: 0.615231
+  type: 'test'
+  ...
+# Subtest: WhatsApp-only staging deploy has no Exotel dependency
+ok 4224 - WhatsApp-only staging deploy has no Exotel dependency
+  ---
+  duration_ms: 0.868496
+  type: 'test'
+  ...
+# Subtest: isolated workflow pins one exact application SHA to pawspace-staging
+ok 4225 - isolated workflow pins one exact application SHA to pawspace-staging
+  ---
+  duration_ms: 0.300547
+  type: 'test'
+  ...
+# Subtest: staging restores only when Meta readiness is incomplete
+ok 4226 - staging restores only when Meta readiness is incomplete
+  ---
+  duration_ms: 0.126425
+  type: 'test'
+  ...
+# Subtest: all existing plain staging bindings are snapshotted into the generated config without logging values
+ok 4227 - all existing plain staging bindings are snapshotted into the generated config without logging values
+  ---
+  duration_ms: 0.183263
+  type: 'test'
+  ...
+# Subtest: raw Cloudflare and Wrangler deployment output is contained
+ok 4228 - raw Cloudflare and Wrangler deployment output is contained
+  ---
+  duration_ms: 0.240346
+  type: 'test'
+  ...
+# Subtest: WhatsApp-only staging remains UAT sandbox and proves public webhook boundary
+ok 4229 - WhatsApp-only staging remains UAT sandbox and proves public webhook boundary
+  ---
+  duration_ms: 0.150063
+  type: 'test'
+  ...
+# Subtest: full staging voice mode remains fail-closed on every Exotel credential
+ok 4230 - full staging voice mode remains fail-closed on every Exotel credential
+  ---
+  duration_ms: 0.413489
+  type: 'test'
+  ...
+# (node:11461) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:11461) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# Subtest: Meta webhook implementation verifies the exact raw body with HMAC SHA-256
+ok 4231 - Meta webhook implementation verifies the exact raw body with HMAC SHA-256
+  ---
+  duration_ms: 61.105733
+  type: 'test'
+  ...
+# Subtest: Meta webhook implementation is replay-safe through the existing UAT event ledger
+ok 4232 - Meta webhook implementation is replay-safe through the existing UAT event ledger
+  ---
+  duration_ms: 0.319856
+  type: 'test'
+  ...
+# Subtest: STOP-family opt-outs are explicit whole-message commands
+ok 4233 - STOP-family opt-outs are explicit whole-message commands
+  ---
+  duration_ms: 0.344043
+  type: 'test'
+  ...
+# Subtest: human ownership blocks AI while governed AI drafts remain approval-gated and never auto-send
+ok 4234 - human ownership blocks AI while governed AI drafts remain approval-gated and never auto-send
+  ---
+  duration_ms: 0.741744
+  type: 'test'
+  ...
+# Subtest: Meta delivery callbacks map to canonical communication messages
+ok 4235 - Meta delivery callbacks map to canonical communication messages
+  ---
+  duration_ms: 25.182698
+  type: 'test'
+  ...
+# Subtest: Phase 1B keeps external delivery disabled
+ok 4236 - Phase 1B keeps external delivery disabled
+  ---
+  duration_ms: 9.47965
+  type: 'test'
+  ...
+# Subtest: Meta webhook rejects missing, malformed and mismatched signatures with zero D1 queue writes; valid signature queues exactly one reply
+ok 4237 - Meta webhook rejects missing, malformed and mismatched signatures with zero D1 queue writes; valid signature queues exactly one reply
+  ---
+  duration_ms: 57.459049
+  type: 'test'
+  ...
+1..4237
+# tests 4245
+# suites 0
+# pass 3970
+# fail 275
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 222071.953263
