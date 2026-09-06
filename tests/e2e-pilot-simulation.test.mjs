@@ -1,0 +1,59 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { request as playwrightRequest } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+
+const ENABLED=process.env.PAWSPACE_PILOT_SIMULATION==="1";
+const STAGING_URL=String(process.env.STAGING_URL||"").replace(/\/$/,"");
+const DB="pawspace-staging";
+const RUN_ID=`PILOT-${Date.now().toString(36).toUpperCase()}`;
+const OUT="artifacts/pilot-readiness";
+
+const q=(v)=>`'${String(v??"").replaceAll("'","''")}'`;
+const pct=(values,p)=>{if(!values.length)return null;const a=[...values].sort((x,y)=>x-y);return a[Math.min(a.length-1,Math.ceil(a.length*p/100)-1)];};
+function d1(sql){
+  const raw=execFileSync("npx",["wrangler","d1","execute",DB,"--remote","--json","--command",sql],{encoding:"utf8",env:process.env,maxBuffer:16*1024*1024});
+  const parsed=JSON.parse(raw),entry=Array.isArray(parsed)?parsed[0]:parsed;
+  if(entry?.success===false)throw new Error(`D1 failed: ${JSON.stringify(entry).slice(0,400)}`);
+  return entry?.results??[];
+}
+async function timed(metrics,label,fn){const started=performance.now();try{const v=await fn();metrics.push({label,ok:true,ms:performance.now()-started});return v;}catch(error){metrics.push({label,ok:false,ms:performance.now()-started,error:String(error)});throw error;}}
+async function body(res){try{return await res.json();}catch{return null;}}
+function serviceFor(i){if(i<20)return"dog_training";if(i<35)return"grooming";if(i<40)return"boarding";if(i<45)return"pet_taxi";return"dog_walking";}
+function windowFor(i,service){const start=new Date(Date.now()+(6+Math.floor(i/4))*86_400_000);start.setUTCHours(4+2*(i%4),30,0,0);return{scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+(service==="boarding"?26:1)*3_600_000).toISOString()};}
+function providers(){
+  const rows=d1("SELECT id,name,provider_model,services_json,zones_json FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active'");
+  const map=new Map();for(const row of rows){let services=[],zones=[];try{services=JSON.parse(String(row.services_json||"[]"));zones=JSON.parse(String(row.zones_json||"[]"));}catch{}for(const s of services)if(!map.has(s)&&zones.length)map.set(s,{id:String(row.id),name:String(row.name||row.id),model:String(row.provider_model||"commission"),zone:String(zones[0])});}return map;
+}
+async function actor(i,metrics){
+  const ctx=await playwrightRequest.newContext({baseURL:STAGING_URL,extraHTTPHeaders:{origin:STAGING_URL}}),phone=`99998${String(i+1).padStart(5,"0")}`,name=`Pilot Synthetic ${String(i+1).padStart(2,"0")}`;
+  const r=await timed(metrics,"otp.request",()=>ctx.post("/api/customer-otp",{data:{action:"request",phone}})),rb=await body(r);assert.equal(r.status(),200,JSON.stringify(rb));
+  assert.equal(rb?.data?.sandboxDelivery,true,"50-actor simulation must never fan out live SMS");assert.notEqual(rb?.data?.liveSmsDelivered,true);assert.ok(rb?.data?.sandboxCode);
+  const v=await timed(metrics,"otp.verify",()=>ctx.post("/api/customer-otp",{data:{action:"verify",challengeId:rb.data.challengeId,code:rb.data.sandboxCode,name,cityId:"blr",installId:`${RUN_ID}-${i}`}})),vb=await body(v);assert.equal(v.status(),200,JSON.stringify(vb));
+  return{i,ctx,phone,name,customerId:String(vb?.data?.customerId||""),petId:`${RUN_ID}-PET-${i+1}`,service:serviceFor(i)};
+}
+function seedPets(actors){const now=Date.now(),sql=[];for(const a of actors){sql.push(`INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (${q(a.customerId)},'blr',${q(a.name)},${q(a.phone)},'pilot_simulation','{}',${now},${now}) ON CONFLICT(id) DO UPDATE SET updated_at=${now}`);sql.push(`INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (${q(a.petId)},${q(a.customerId)},${q(`Pilot Pet ${a.i+1}`)},'dog','indie','verified',${q(a.petId)},${now},${now}) ON CONFLICT(id) DO UPDATE SET vaccination_status='verified',updated_at=${now}`);}for(let i=0;i<sql.length;i+=20)d1(sql.slice(i,i+20).join(";"));}
+async function schedule(a,map,metrics){const p=map.get(a.service);if(!p)return{service:a.service,ok:false,status:0,error:"no active provider profile"};const w=windowFor(a.i,a.service),data={clientRequestId:`${RUN_ID}-SG-${a.i+1}`,customerId:a.customerId,petIds:[a.petId],serviceCode:a.service,cityId:"blr",zoneId:p.zone,scheduledStart:w.scheduledStart,scheduledEnd:w.scheduledEnd,latitude:12.9352,longitude:77.6245,serviceRadiusKm:100};if(a.service==="dog_training")Object.assign(data,{occurrences:2,cadenceDays:2});if(a.service==="dog_walking")Object.assign(data,{occurrences:2,cadenceDays:1});if(a.service==="boarding")Object.assign(data,{preferredProviderId:p.id,careMode:"overnight"});const r=await timed(metrics,`schedule.${a.service}`,()=>a.ctx.post("/api/uat-scheduling",{data})),b=await body(r);return{service:a.service,ok:r.status()===200,status:r.status(),error:b?.error||null};}
+function audit(){
+  const unbalanced=d1("SELECT COUNT(*) n FROM (SELECT booking_id,source_type,source_id,narration,created_at FROM finance_journal_entries WHERE posted=1 GROUP BY booking_id,source_type,source_id,narration,created_at HAVING ABS(SUM(COALESCE(debit,0))-SUM(COALESCE(credit,0)))>0.01)")[0]?.n??0;
+  const completed=d1("SELECT COUNT(*) completed,SUM(CASE WHEN EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) THEN 1 ELSE 0 END) journalized FROM canonical_bookings b WHERE b.status='completed'")[0]||{};
+  const orphans=d1("SELECT COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE c.id IS NULL OR w.booking_id IS NULL OR p.booking_id IS NULL")[0]?.n??0;
+  return{unbalancedJournalGroups:Number(unbalanced),completedBookings:Number(completed.completed||0),completedWithJournal:Number(completed.journalized||0),orphanedBookings:Number(orphans)};
+}
+function haptikContract(){const s=readFileSync("app/api/haptik/route.ts","utf8");return{staticKey:/HAPTIK_API_KEY|x-haptik-key/.test(s),hmacSha1:/HMAC|sha-?1|createHmac|subtle\.sign/i.test(s)};}
+
+test("50 synthetic customer profiles exercise isolated staging scheduling with telemetry",{skip:!ENABLED,timeout:240_000},async()=>{
+  assert.match(STAGING_URL,/pawspace-staging/i,"refusing non-staging target");mkdirSync(OUT,{recursive:true});
+  const metrics=[],root=await playwrightRequest.newContext({baseURL:STAGING_URL}),actors=[];
+  try{
+    const health=await timed(metrics,"health",()=>root.get("/healthz"));assert.equal(health.status(),200);
+    actors.push(...await Promise.all(Array.from({length:50},(_,i)=>actor(i,metrics))));seedPets(actors);
+    const map=providers(),schedules=await Promise.all(actors.map(a=>schedule(a,map,metrics).catch(error=>({service:a.service,ok:false,status:0,error:String(error)}))));
+    const ledger=audit(),haptik=haptikContract(),latencies=metrics.filter(x=>x.ok).map(x=>x.ms),byService={};for(const s of schedules){byService[s.service]??={total:0,ok:0};byService[s.service].total++;if(s.ok)byService[s.service].ok++;}
+    const gates=[];if(schedules.some(s=>!s.ok))gates.push(`customer-partner handshake ${schedules.filter(s=>s.ok).length}/50`);if(ledger.unbalancedJournalGroups)gates.push(`${ledger.unbalancedJournalGroups} unbalanced finance journal groups`);if(ledger.orphanedBookings)gates.push(`${ledger.orphanedBookings} orphaned canonical bookings`);if(ledger.completedWithJournal!==ledger.completedBookings)gates.push(`completed journal coverage ${ledger.completedWithJournal}/${ledger.completedBookings}`);if(!haptik.hmacSha1||haptik.staticKey)gates.push("Haptik HMAC-SHA1 contract absent; route uses static API key authentication");
+    const result={runId:RUN_ID,target:STAGING_URL,actors:actors.length,schedules,byService,latency:{p50:pct(latencies,50),p95:pct(latencies,95),p99:pct(latencies,99),max:latencies.length?Math.max(...latencies):null},ledger,haptik,gates,verdict:gates.length?"PILOT BLOCKED":"PILOT READY"};
+    writeFileSync(`${OUT}/metrics.json`,JSON.stringify(result,null,2));writeFileSync(`${OUT}/report.md`,[`# PawSpace 50-Actor Pilot Readiness`,``,`Run: ${RUN_ID}`,`Target: ${STAGING_URL}`,``,`Verdict: **${result.verdict}**`,``,`## Staging matrix`,``,`| Service | Success | Total |`,`|---|---:|---:|`,...Object.entries(byService).map(([k,v])=>`| ${k} | ${v.ok} | ${v.total} |`),``,`OTP: 50/50 sandbox identities; no live SMS fan-out permitted.`,`Latency p50/p95/p99/max: ${[result.latency.p50,result.latency.p95,result.latency.p99,result.latency.max].map(v=>v==null?"n/a":`${v.toFixed(1)} ms`).join(" / ")}`,``,`## D1/finance integrity`,``,`- Unbalanced journal groups: ${ledger.unbalancedJournalGroups}`,`- Completed bookings: ${ledger.completedBookings}`,`- Completed with posted journal: ${ledger.completedWithJournal}`,`- Orphaned bookings: ${ledger.orphanedBookings}`,``,`## Haptik security contract`,``,`HMAC-SHA1 detected: ${haptik.hmacSha1}; static API-key auth detected: ${haptik.staticKey}.`,``,`## Failing gates`,...(gates.length?gates.map(g=>`- ${g}`):["- None"]),``].join("\n"));
+    console.log(readFileSync(`${OUT}/report.md`,`utf8`));assert.equal(gates.length,0,`Pilot readiness gates failed: ${gates.join("; ")}`);
+  }finally{for(const a of actors)await a.ctx.dispose().catch(()=>{});await root.dispose();}
+});
