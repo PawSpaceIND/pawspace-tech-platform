@@ -2,25 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-/*
- * Default the certification environment when the runner has not declared one.
- *
- * These two assertions are a guard, not a preference: this suite must never certify anything against
- * a production environment. But a bare `npm test` on a developer machine sets neither variable, so the
- * guard was failing the whole file before a single test ran — `main` was red out of the box for
- * everyone running the suite locally.
- *
- * `||` fills in ONLY when the variable is absent. An explicitly declared environment still reaches the
- * assertions below unchanged, so a run with APP_ENV=production still fails exactly as it did before.
- * The guard keeps its teeth where it matters; it just no longer punishes the default local run.
- */
 process.env.APP_ENV = process.env.APP_ENV || "staging";
 process.env.FORBID_PRODUCTION = process.env.FORBID_PRODUCTION || "true";
 
 assert.equal(process.env.APP_ENV, "staging", "template-sync certification must run in APP_ENV=staging");
 assert.equal(process.env.FORBID_PRODUCTION, "true", "template-sync certification must run with FORBID_PRODUCTION=true");
 
-// Reuse the established lifecycle execution suite under the exact certification filename.
 await import("./whatsapp-template-lifecycle-execution.test.mjs");
 
 const workerSource = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
@@ -41,14 +28,16 @@ test("scheduled worker completes Meta template sync before scheduler and WhatsAp
   assert.match(fanoutSource, /runWhatsAppOutboxDispatcher\(/, "WhatsApp dispatch must remain in the post-sync fan-out");
 });
 
-test("template-sync failure blocks scheduler and dispatch initialization", () => {
+test("template-sync failure is recorded without blocking scheduler and dispatch initialization", () => {
   const scheduledStart = workerSource.indexOf("async scheduled(");
   const scheduledSource = workerSource.slice(scheduledStart);
   const syncIndex = scheduledSource.indexOf("templateSync=await syncSubmittedMetaTemplateStatuses(");
-  const failureGuardIndex = scheduledSource.indexOf("if(templateSync.failed&&templateSync.processed)throw new Error");
+  const catchIndex = scheduledSource.indexOf("catch(error){templateSyncError=", syncIndex);
   const fanoutIndex = scheduledSource.indexOf("=await Promise.allSettled([");
+  const recordIndex = scheduledSource.indexOf("if(templateSyncError)errors.push(templateSyncError)", fanoutIndex);
 
-  assert.ok(syncIndex >= 0 && failureGuardIndex > syncIndex, "template verification failures must be checked after sync completes");
-  assert.ok(fanoutIndex > failureGuardIndex, "no downstream scheduler/dispatch work may initialize before the template-sync failure guard");
-  assert.match(scheduledSource.slice(syncIndex, fanoutIndex), /blocked before dispatch: whatsapp template sync/);
+  assert.ok(syncIndex >= 0 && catchIndex > syncIndex, "template-sync exceptions must be isolated into templateSyncError");
+  assert.ok(fanoutIndex > catchIndex, "downstream sweeps must initialize after the isolated template-sync attempt");
+  assert.doesNotMatch(scheduledSource.slice(syncIndex, fanoutIndex), /blocked before dispatch|throw new Error/, "template-sync failure must not abort payment/reconciliation fan-out");
+  assert.ok(recordIndex > fanoutIndex, "the isolated template-sync failure must still be reported after all sweeps settle");
 });
