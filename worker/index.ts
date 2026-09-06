@@ -20,6 +20,7 @@ import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
 import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
 import {runTrustSafetySweep} from "../lib/trust-safety-governance";
+import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
 
 interface Env {
   ASSETS: Fetcher;
@@ -52,6 +53,11 @@ function secureApiResponse(response:Response){const secured=new Response(respons
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Finance is a platform invariant, not a route-local assumption. Before any API or voice path can
+    // mutate bookings/payments, prove the journal/earning/settlement support schema exists. The helper
+    // is cached per Worker isolate and retries after transient D1 failures.
+    if(url.pathname.startsWith("/api/")||url.pathname===EXOTEL_AGENTSTREAM_PATH)await ensureFinancialRuntimeSchema(env.DB);
 
     if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
 
@@ -96,6 +102,9 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
+      // Scheduled money work can be the first invocation after a deploy, so it must establish the same
+      // schema invariant as HTTP/voice paths before launching any concurrent sweep.
+      await ensureFinancialRuntimeSchema(env.DB);
       /* SCOPED, not global. This guard used to `throw` sequentially BEFORE the Promise.allSettled below,
        * so a WhatsApp template verification exception stopped every one of the sweeps that follow from
        * starting at all - including razorpayOrderOutbox, settlementRecon and subscriptionMaintenance. A
