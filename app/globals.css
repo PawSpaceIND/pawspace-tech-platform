@@ -316,3 +316,29 @@ main[style*="font-family"] input, main[style*="font-family"] select { font-size:
 main[style*="font-family"] dl { margin: 0; }
 main[style*="font-family"] dt { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ds-text-muted, #6b7a75); }
 main[style*="font-family"] dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Spinner for the customer-app session probe. The app renders this instead of an empty <main> while
+   the identity probe settles, so "loading" is never mistaken for "the page is broken". */
+@keyframes ps-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ps-spin { to { transform: none; } }
+}
+
+/* The order-notifications FAB and the booking checkout bar were both pinned at bottom:18px, and the
+   FAB (z-index 80) sits above the bar (z-index 16). "Confirm booking →" is the bar's last flex child,
+   so on any viewport narrower than the bar's 920px max — every phone, most tablets — the FAB landed
+   directly on the primary call to action and swallowed the tap. The tester could not complete a
+   booking at all.
+   Where the bar is on screen, the FAB moves above it. :has() is the whole modern baseline; the
+   media-query fallback below keeps the button reachable on anything older. */
+body:has(.checkout-bar) .ps-order-fab { bottom: 104px; }
+@supports not selector(body:has(.checkout-bar)) {
+  /* The overlap range is wider than the bar's own 920px cap. The bar is centred, so its right edge is
+     vw/2 + W/2 with W = min(920, vw - 30); the FAB occupies [vw-70, vw-18]. They collide while
+     W > vw - 140 — which is EVERY viewport below 1060px, not just the ones where the bar is still
+     fluid. Below 950px W = vw-30 and the overlap is unconditional; between 950 and 1060 the bar is
+     pinned at 920 and still reaches under the FAB. */
+  @media (max-width: 1059px) {
+    .checkout-bar { padding-right: 78px; }
+  }
+}
