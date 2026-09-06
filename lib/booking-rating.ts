@@ -1,3 +1,5 @@
+import { ensureProviderCapacityTables } from "./provider-capacity-governance";
+
 /**
  * Real post-booking rating capture, universal across all verticals (keyed off canonical_bookings,
  * not a per-vertical table) - genuinely missing before this: no customer-facing way to rate a
@@ -48,7 +50,10 @@ export async function submitBookingRating(db: Db, input: { customerId: string; b
  * exists (a provider must be at least activated for this to apply).
  */
 export async function recomputeProviderRating(db: Db, providerId: string) {
-  await ensureBookingRatingTables(db);
+  // Rating is allowed to be the first consumer of provider capacity on a fresh/partially provisioned
+  // database. The old implementation assumed another route had created this table already, which made
+  // an otherwise valid completed-booking rating fail with `no such table: provider_capacity_profiles`.
+  await Promise.all([ensureBookingRatingTables(db), ensureProviderCapacityTables(db)]);
   const row = await db.prepare("SELECT COUNT(*) count, AVG(stars) avg_stars FROM booking_ratings WHERE provider_id=?").bind(providerId).first<Row>();
   const count = Number(row?.count || 0);
   const average = count > 0 ? Math.round(Number(row?.avg_stars || 0) * 100) / 100 : null;
