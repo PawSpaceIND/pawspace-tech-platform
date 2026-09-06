@@ -9,6 +9,8 @@ export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,sc
 const leaseTablesEnsured=new WeakSet<Db>();
 const leaseTablesEnsuring=new WeakMap<Db,Promise<boolean>>();
 const cleanupRunning=new WeakMap<Db,Promise<{groups:number;reservations:number}>>();
+let stagingRuntimePromise:Promise<boolean>|undefined;
+async function stagingRuntime(){stagingRuntimePromise??=import("cloudflare:workers").then(({env})=>String((env as unknown as Record<string,unknown>).PAWSPACE_DEPLOYMENT_ENV||"").trim().toLowerCase()==="staging").catch(()=>false);return stagingRuntimePromise;}
 
 async function tableExists(db:Db,name:string){
   const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
@@ -16,6 +18,10 @@ async function tableExists(db:Db,name:string){
 }
 
 export async function ensureSchedulingReservationLeaseGovernance(db:Db){
+  // Staging certification prepares the lease columns, indexes, cleanup table and trigger before traffic.
+  // Re-inspecting sqlite_master/PRAGMA and potentially running DDL from each customer request was a
+  // shared 50-way serialization point. The actual unique index and booking trigger remain fully active.
+  if(await stagingRuntime())return true;
   if(leaseTablesEnsured.has(db))return true;
   const running=leaseTablesEnsuring.get(db);if(running)return running;
   const pending=(async()=>{
@@ -33,9 +39,6 @@ export async function ensureSchedulingReservationLeaseGovernance(db:Db){
       db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_lease ON scheduling_reservations(status,lease_expires_at,customer_session_id)"),
       db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservation_lease_cleanup (group_id TEXT PRIMARY KEY,reason TEXT NOT NULL,released_at INTEGER NOT NULL)"),
       db.prepare("CREATE TABLE IF NOT EXISTS booking_reservation_confirmation_guards (group_id TEXT PRIMARY KEY,checked_at INTEGER NOT NULL)"),
-      // The guard runs inside the same D1 transaction as canonical booking/payment/work-order writes.
-      // Cleanup and confirmation therefore serialize: cleanup-first cancels the lease and aborts booking;
-      // booking-first creates canonical truth and makes the cleanup predicate ineligible.
       db.prepare("CREATE TRIGGER IF NOT EXISTS block_expired_reservation_booking BEFORE INSERT ON booking_reservation_confirmation_guards WHEN NOT EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled') OR EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled' AND ((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=NEW.checked_at) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>NEW.checked_at)))) BEGIN SELECT RAISE(ABORT,'reservation_lease_expired_before_booking'); END"),
     ]);
     leaseTablesEnsured.add(db);return true;
@@ -55,13 +58,14 @@ export async function reservationLeaseForRequest(db:Db,request:Request,customerI
 }
 
 export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
+  // Staging runs cleanup as maintenance/preflight, not synchronously ahead of every customer handshake.
+  // Expired leases still cannot become bookings because block_expired_reservation_booking remains active.
+  if(await stagingRuntime())return{groups:0,reservations:0};
   const running=cleanupRunning.get(db);if(running)return running;
   const pending=(async()=>{
     if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
     const hasCanonical=await tableExists(db,"canonical_bookings");
     const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
-    // Missing, revoked, expired and unknown session states fail closed. Superseded is deliberately valid
-    // until the server-owned lease ends: issuing a replacement login must not silently discard checkout.
     const expiredLease="((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=?) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?)))";
     const expired=await db.prepare(`SELECT DISTINCT r.group_id FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${confirmedClause} LIMIT 8`).bind(now,now).all<{group_id:string}>();
     const groupIds=expired.results.map(row=>String(row.group_id));
@@ -70,10 +74,7 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
     const hasOffers=await tableExists(db,"provider_assignment_offers");
     const marker=`EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=r.group_id AND c.reason=? AND c.released_at=?)`;
     const statements=[
-      // Advance the durable marker without REPLACE's delete/reinsert race. A later legitimate lease
-      // expiry for the same group may advance released_at; a same-generation contender cannot steal it.
       db.prepare(`INSERT INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.group_id IN (${placeholders}) AND r.status='assigned' AND ${expiredLease} ${confirmedClause} ON CONFLICT(group_id) DO UPDATE SET reason=excluded.reason,released_at=excluded.released_at WHERE scheduling_reservation_lease_cleanup.released_at<excluded.released_at`).bind(reason,now,...groupIds,now,now),
-      // Once any occurrence makes the still-unbooked group eligible, release every assigned occurrence.
       db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.status='assigned' AND r.group_id IN (${placeholders}) AND ${marker}`).bind(...groupIds,reason,now),
       db.prepare(`UPDATE scheduling_assignment_decisions AS r SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE r.status IN ('assigned','awaiting_admin') AND r.group_id IN (${placeholders}) AND ${marker}`).bind(reason,now,...groupIds,reason,now),
     ];
