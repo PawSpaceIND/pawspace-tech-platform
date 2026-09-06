@@ -40,7 +40,7 @@ export async function ensureSecurityTables(db:Db){
   securityTablesEnsured.add(db);
 }
 
-export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
+export function authFailure(message:string,status:number,code="authorization_failed"){return governedJsonError({error:message,code},status);}
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
@@ -52,21 +52,16 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
   const identity=forwardedIdentity(request);
   if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
-  let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
-  if(!user){
-    const {env}=await import("cloudflare:workers"); const founderEmail=String(env.FOUNDER_EMAIL||"").trim().toLowerCase();
-    if(!founderEmail||identity.email!==founderEmail)throw authFailure("Access has not been provisioned for this identity",403);
-    const now=Date.now(); await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.email,identity.name,"founder","active",now,now).run();
-    user={email:identity.email,name:identity.name,role_code:"founder",status:"active"};
-  }
-  if(user.status!=="active")throw authFailure("Identity is disabled",403);
+  const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
+  if(!user)throw authFailure("Access has not been provisioned for this identity",403,"identity_not_provisioned");
+  if(user.status!=="active")throw authFailure("Identity is disabled",403,"identity_disabled");
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
-  if(!role)throw authFailure("Assigned role is unavailable",403);
+  if(!role)throw authFailure("Assigned role is unavailable",403,"role_unavailable");
   return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
 }
 
 export function requirePermission(actor:AuthenticatedActor,permission:Permission){
-  if(!hasPermission(actor.permissions,permission))throw authFailure("Permission denied",403);
+  if(!hasPermission(actor.permissions,permission))throw authFailure("Permission denied",403,"permission_denied");
   return actor;
 }
 
@@ -75,9 +70,9 @@ export async function authorize(request:Request,permission:Permission){return re
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"});
-  if(binding){if(String(binding.subject_id)!==customerId)throw authFailure("Customer ownership denied",403);return actor;}
+  if(binding){if(String(binding.subject_id)!==customerId)throw authFailure("Customer ownership denied",403,"customer_ownership_denied");return actor;}
   const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw authFailure("Customer ownership denied",403);
+  if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw authFailure("Customer ownership denied",403,"customer_ownership_denied");
   return actor;
 }
 
@@ -88,9 +83,9 @@ export function actorManagesProviders(actor:AuthenticatedActor){
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
   if(actorManagesProviders(actor))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
-  if(binding){if(String(binding.subject_id)!==providerId)throw authFailure("Provider ownership denied",403);return actor;}
+  if(binding){if(String(binding.subject_id)!==providerId)throw authFailure("Provider ownership denied",403,"provider_ownership_denied");return actor;}
   const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!legacy||legacy.status!=="active"||String(legacy.provider_id)!==providerId)throw authFailure("Provider ownership denied",403);
+  if(!legacy||legacy.status!=="active"||String(legacy.provider_id)!==providerId)throw authFailure("Provider ownership denied",403,"provider_ownership_denied");
   return actor;
 }
 
@@ -105,11 +100,6 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
   await securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,detail).run();
 }
 
-/**
- * Reserve a durable audit operation BEFORE calling a helper that encapsulates its own D1 writes.
- * If the Worker dies after the state change but before completion, the reserved outbox row remains as
- * evidence of an in-flight privileged operation instead of leaving an unaudited transition.
- */
 export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,detail:unknown={}){
   const id=crypto.randomUUID(),now=Date.now();
   await db.batch([
@@ -120,7 +110,6 @@ export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action
   return id;
 }
 
-/** Complete the reserved operation atomically with its final central audit event. */
 export async function completeReservedSecurityAudit(db:Db,actor:AuthenticatedActor,operationId:string,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
   const now=Date.now();
   await db.batch([
