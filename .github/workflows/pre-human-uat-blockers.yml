@@ -1,0 +1,65 @@
+name: Pre-human UAT blocker certification
+
+on:
+  push:
+    branches:
+      - fix/pre-human-uat-blockers-20260906
+    paths:
+      - backend/**
+      - qa/pre-human-520x10.mjs
+      - .github/workflows/pre-human-uat-blockers.yml
+
+permissions:
+  contents: read
+
+env:
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
+
+jobs:
+  backend-finance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: High severity dependency gate
+        run: npm audit --audit-level=high
+
+  population-520x10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Build backend modules used by population lane
+        run: |
+          cd backend
+          npm ci
+          npm run build
+          ln -sf src/scheduling.js dist/scheduling.js
+          ln -sf src/finance.js dist/finance.js
+          ln -sf src/invoice-numbering.js dist/invoice-numbering.js
+      - name: Execute 520-customer / 10-provider certification
+        run: node qa/pre-human-520x10.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pre-human-520x10-summary
+          path: qa/pre-human-520x10-summary.json
+          if-no-files-found: warn
