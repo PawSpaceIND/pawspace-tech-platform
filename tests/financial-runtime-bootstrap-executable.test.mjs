@@ -10,7 +10,7 @@ class BoundStatement {
   bind(...values) { return new BoundStatement(this.sqlite, this.sql, values); }
   run() {
     const result = this.sqlite.prepare(this.sql).run(...this.values);
-    return Promise.resolve({ success: true, meta: { changes: Number(result.changes || 0), last_row_id: Number(result.lastInsertRowid || 0) } });
+    return Promise.resolve({ success: true, meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid || 0), rows_written: Number(result.changes) } });
   }
   first(column) {
     const row = this.sqlite.prepare(this.sql).get(...this.values);
@@ -56,17 +56,12 @@ const requiredTables = [
   "razorpay_settlement_recon_runs",
 ];
 
-function blankFinanceDb() {
-  const db = new D1SqliteAdapter();
-  // The partner release trigger deliberately verifies completed bookings. This is the only pre-existing
-  // application table the bootstrap needs to compile that integrity rule; none of the finance tables are seeded.
-  db.sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY, status TEXT NOT NULL)");
-  return db;
-}
+const blankFinanceDb = () => new D1SqliteAdapter();
 
 test("blank D1 runtime bootstrap creates every table required by the critical money path", async () => {
   const db = blankFinanceDb();
   try {
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get().n, 0, "fixture must begin with no application tables");
     const bootstrap = await import("../lib/financial-runtime-bootstrap.ts");
     bootstrap.resetFinancialRuntimeSchemaForTests();
     await bootstrap.ensureFinancialRuntimeSchema(db);
