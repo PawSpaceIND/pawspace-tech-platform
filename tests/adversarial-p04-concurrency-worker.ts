@@ -29,13 +29,17 @@ async function seedBooking(db: D1Database, bookingId: string, status = "confirme
     db.prepare("DELETE FROM sitting_action_keys WHERE booking_id=?").bind(bookingId),
     db.prepare("DELETE FROM sitting_care_events WHERE booking_id=?").bind(bookingId),
     db.prepare("DELETE FROM sitting_customer_notifications WHERE booking_id=?").bind(bookingId),
+    db.prepare("DELETE FROM sitting_care_plan_snapshots WHERE booking_id=?").bind(bookingId),
     db.prepare("DELETE FROM provider_work_orders WHERE booking_id=?").bind(bookingId),
     db.prepare("DELETE FROM canonical_bookings WHERE id=?").bind(bookingId),
   ]);
   await db.batch([
     db.prepare("INSERT INTO canonical_bookings (id,service_code,customer_id,provider_id,schedule_group_id,status,created_at,updated_at) VALUES (?,'pet_sitting',?,?,NULL,?,?,?)").bind(bookingId, customerId, providerId, status, now, now),
-    db.prepare("INSERT INTO provider_work_orders (id,booking_id,provider_id,status,updated_at) VALUES (?,?,?,?,?)").bind(`P04-WO-${bookingId}`, bookingId, providerId, status === "confirmed" ? "offered" : status, now),
+    db.prepare("INSERT INTO provider_work_orders (id,booking_id,provider_id,status,updated_at) VALUES (?,?,?,?,?)").bind(`P04-WO-${bookingId}`, bookingId, providerId, status === "assigned" ? "accepted" : status === "confirmed" ? "offered" : status, now),
   ]);
+  if (status === "assigned") {
+    await db.prepare("INSERT INTO sitting_care_plan_snapshots (booking_id,customer_id,plan_json,status,updated_by,updated_at) VALUES (?,?,?,'ready','p04-harness',?)").bind(bookingId, customerId, JSON.stringify({ emergencyContact: "P04 emergency", vet: "P04 vet", homeAccess: "P04 access" }), now).run();
+  }
   return { bookingId, providerId, customerId, status };
 }
 
@@ -43,13 +47,13 @@ async function state(db: D1Database, bookingId: string) {
   const booking = await db.prepare("SELECT id,status,provider_id,customer_id,updated_at FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
   const workOrder = await db.prepare("SELECT id,status,provider_id,updated_at FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();
   const actionKeys = await db.prepare("SELECT COUNT(*) count FROM sitting_action_keys WHERE booking_id=?").bind(bookingId).first<{ count: number }>();
-  const acceptedEvents = await db.prepare("SELECT COUNT(*) count FROM sitting_care_events WHERE booking_id=? AND event_type='sitter_accepted'").bind(bookingId).first<{ count: number }>();
+  const checkedInEvents = await db.prepare("SELECT COUNT(*) count FROM sitting_care_events WHERE booking_id=? AND event_type='checked_in'").bind(bookingId).first<{ count: number }>();
   const notifications = await db.prepare("SELECT COUNT(*) count FROM sitting_customer_notifications WHERE booking_id=?").bind(bookingId).first<{ count: number }>();
   return {
     booking,
     workOrder,
     actionKeyCount: Number(actionKeys?.count || 0),
-    acceptedEventCount: Number(acceptedEvents?.count || 0),
+    checkedInEventCount: Number(checkedInEvents?.count || 0),
     notificationCount: Number(notifications?.count || 0),
   };
 }
@@ -66,7 +70,7 @@ async function controlledClaimRace(request: Request, env: Env) {
   let release!: () => void;
   const bothRead = new Promise<void>((resolve) => { release = resolve; });
 
-  const actorRun = async (actorId: string) => {
+  const actorRun = async (actorId: string, targetStatus: string) => {
     const actorStart = performance.now();
     const row = await env.DB.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
     const observedStatus = text(row?.status);
@@ -74,15 +78,16 @@ async function controlledClaimRace(request: Request, env: Env) {
     if (reads === 2) release();
     await bothRead;
     const updateStart = performance.now();
-    const result = await env.DB.prepare("UPDATE canonical_bookings SET status='assigned',updated_at=? WHERE id=? AND status=?").bind(Date.now(), bookingId, observedStatus).run();
+    const result = await env.DB.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=? AND status=?").bind(targetStatus, Date.now(), bookingId, observedStatus).run();
     const changes = Number((result as { meta?: { changes?: number } })?.meta?.changes || 0);
     const updateEnd = performance.now();
     return {
       actorId,
+      targetStatus,
       observedStatus,
       metaChanges: changes,
       httpStatus: changes === 1 ? 200 : 409,
-      body: changes === 1 ? { bookingId, status: "assigned" } : { error: "Unable to update lifecycle. Invalid or stale state." },
+      body: changes === 1 ? { bookingId, status: targetStatus } : { error: "Unable to update lifecycle. Invalid or stale state." },
       timingMs: {
         total: Number((updateEnd - actorStart).toFixed(3)),
         claim: Number((updateEnd - updateStart).toFixed(3)),
@@ -92,7 +97,10 @@ async function controlledClaimRace(request: Request, env: Env) {
 
   const startedAt = new Date().toISOString();
   const raceStart = performance.now();
-  const outcomes = await Promise.all([actorRun("controlled-A"), actorRun("controlled-B")]);
+  const outcomes = await Promise.all([
+    actorRun("controlled-A", "assigned"),
+    actorRun("controlled-B", "reassignment_needed"),
+  ]);
   const raceEnd = performance.now();
   return json({
     bookingId,
