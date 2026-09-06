@@ -33,16 +33,12 @@ export async function sendFast2SmsMessage({apiKey,phone,message,udf1="pawspace-l
   if(!safeMessage)throw new Error("SMS message is required");
   const safeUdf=String(udf1||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,64)||"pawspace-live-message";
 
-  const url=new URL("https://www.fast2sms.com/dev/bulkV2");
-  url.searchParams.set("route","q");
-  url.searchParams.set("message",safeMessage);
-  url.searchParams.set("numbers",normalized);
-  url.searchParams.set("sms_details","1");
-  url.searchParams.set("udf1",safeUdf);
+  const url="https://www.fast2sms.com/dev/bulkV2";
+  const requestBody=new URLSearchParams({route:"q",message:safeMessage,numbers:normalized,sms_details:"1",udf1:safeUdf}).toString();
 
   let response:Response;
   try{
-    response=await fetcher(url,{method:"GET",headers:{Authorization:apiKey.trim(),accept:"application/json"}});
+    response=await fetcher(url,{method:"POST",headers:{Authorization:apiKey.trim(),accept:"application/json","content-type":"application/x-www-form-urlencoded;charset=UTF-8"},body:requestBody});
   }catch{
     throw new Fast2SmsProviderError(null,"transport");
   }
