@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           path=Path('lib/customer-otp.ts')
           source=path.read_text()
           marker='const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\n'
@@ -91,6 +92,29 @@ jobs:
           if old not in source: raise SystemExit('customer OTP verification regression fixture not found')
           source=source.replace(old,new,1)
           path.write_text(source)
+
+          path=Path('tests/voice-route-authorization.test.mjs')
+          source=path.read_text()
+          source=source.replace('const gov = await import("../lib/voice-outbound-governance.ts");','const gov = await import("../lib/voice-outbound-governance.ts");\nconst uatAuth = await import("../lib/uat-staging-auth.ts");\nconst UAT_SIGNING_KEY = "voice-route-test-signing-key-0123456789abcdef";\nasync function staffHeaders(role, env = globalThis.__VRA_ENV__, extra = {}) {\n  const token = await uatAuth.issueUatToken(env, `${role}@pawspace.in`, 3600);\n  return { ...extra, cookie: `pawspace_uat=${encodeURIComponent(token)}` };\n}')
+          source=source.replace('globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), ...envOverrides };','globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: UAT_SIGNING_KEY, ...envOverrides };')
+          source=source.replace('const headers = { "content-type": "application/json", ...(role ? { "oai-authenticated-user-email": `${role}@pawspace.in` } : {}) };','const headers = role ? await staffHeaders(role, globalThis.__VRA_ENV__, { "content-type": "application/json" }) : { "content-type": "application/json" };')
+          source=source.replace('const env = { DB: makeD1(sqlite) };','const env = { DB: makeD1(sqlite), PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: UAT_SIGNING_KEY };')
+          old='const init = method === "GET" ? { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } } : { method, headers: { "content-type": "application/json", "oai-authenticated-user-email": "auditor@pawspace.in" }, body: "{}" };'
+          new='const authHeaders = await staffHeaders("auditor", env, { "content-type": "application/json" });\n    const init = method === "GET" ? { headers: authHeaders } : { method, headers: authHeaders, body: "{}" };'
+          if old not in source: raise SystemExit('voice gateway auditor header fixture not found')
+          source=source.replace(old,new,1)
+          old='const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": `${role}@pawspace.in` }, body: "{}" }), env);'
+          new='const authHeaders = await staffHeaders(role, env, { "content-type": "application/json" });\n    const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers: authHeaders, body: "{}" }), env);'
+          if old not in source: raise SystemExit('voice gateway role header fixture not found')
+          source=source.replace(old,new,1)
+          source=source.replace('headers: { "content-type": "application/json", origin: "https://evil.example", "oai-authenticated-user-email": "founder@pawspace.in" },','headers: await staffHeaders("founder", globalThis.__VRA_ENV__, { "content-type": "application/json", origin: "https://evil.example" }),')
+          source=source.replace('const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } }));','const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await staffHeaders("auditor") }));')
+          source=source.replace('const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "admin@pawspace.in" } }));','const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await staffHeaders("admin") }));')
+          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },\n    body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }),\n    body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),')
+          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },\n    body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }),\n    body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),')
+          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" }, body,','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }), body,')
+          if 'oai-authenticated-user-email' in source: raise SystemExit('stale voice route header fixtures remain')
+          path.write_text(source)
           PY
 
       - name: Assert P0 removals
@@ -124,8 +148,10 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/auditparts/test-failure.log
-            git commit -m "ci: capture P0 remediation test failure"
-            git push origin HEAD:fix/audit-p1-remediation
+            if ! git diff --cached --quiet; then
+              git commit -m "ci: capture P0 remediation test failure"
+              git push origin HEAD:fix/audit-p1-remediation
+            fi
             exit "$status"
           fi
 
@@ -136,7 +162,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add lib/customer-otp.ts app/api/customer-otp/route.ts lib/api-gateway.ts lib/server-auth.ts app/mobile-app/customer-login.tsx tests/backend-otp-hardening.test.mjs
+          git add lib/customer-otp.ts app/api/customer-otp/route.ts lib/api-gateway.ts lib/server-auth.ts app/mobile-app/customer-login.tsx tests/backend-otp-hardening.test.mjs tests/voice-route-authorization.test.mjs
           git diff --cached --check
           git commit -m "fix(security): resolve P0-1 header trust and P0-3 OTP generation vulnerabilities"
           git push origin "HEAD:$BRANCH"
