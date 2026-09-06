@@ -29,6 +29,10 @@
  *      This does not depend on rule 1 and is the load-bearing half: a synthetic row seeded before Ops
  *      narrowed the day would otherwise keep widening it forever, and turning seeding off cannot
  *      retract rows already in the table.
+ *
+ * Pilot certification also exercises provider verification on the same matching path. Legacy UAT
+ * providers with no onboarding application are now handled without provisioning verification schema on
+ * every candidate evaluation; real onboarding-backed providers retain the full verification gate.
  */
 
 /** The sources backend/src/domain.ts declares for ProviderAvailability. Nothing else is evidence. */
