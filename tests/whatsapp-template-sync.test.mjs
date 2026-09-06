@@ -33,11 +33,13 @@ test("template-sync failure is recorded without blocking scheduler and dispatch 
   const scheduledSource = workerSource.slice(scheduledStart);
   const syncIndex = scheduledSource.indexOf("templateSync=await syncSubmittedMetaTemplateStatuses(");
   const catchIndex = scheduledSource.indexOf("catch(error){templateSyncError=", syncIndex);
+  const marketingHourIndex = scheduledSource.indexOf("const marketingHour=", catchIndex);
   const fanoutIndex = scheduledSource.indexOf("=await Promise.allSettled([");
   const recordIndex = scheduledSource.indexOf("if(templateSyncError)errors.push(templateSyncError)", fanoutIndex);
 
   assert.ok(syncIndex >= 0 && catchIndex > syncIndex, "template-sync exceptions must be isolated into templateSyncError");
+  assert.ok(marketingHourIndex > catchIndex, "template-sync isolation must finish before unrelated scheduled tasks are initialized");
   assert.ok(fanoutIndex > catchIndex, "downstream sweeps must initialize after the isolated template-sync attempt");
-  assert.doesNotMatch(scheduledSource.slice(syncIndex, fanoutIndex), /blocked before dispatch|throw new Error/, "template-sync failure must not abort payment/reconciliation fan-out");
+  assert.doesNotMatch(scheduledSource.slice(catchIndex, marketingHourIndex), /blocked before dispatch|throw new Error/, "template-sync failure must not abort payment/reconciliation fan-out");
   assert.ok(recordIndex > fanoutIndex, "the isolated template-sync failure must still be reported after all sweeps settle");
 });
