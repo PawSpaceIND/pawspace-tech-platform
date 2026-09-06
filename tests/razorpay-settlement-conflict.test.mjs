@@ -67,6 +67,7 @@ async function loadModules() {
   await writeFile(path.join(tempDir, "financial-lifecycle.mjs"), transpile(financeSource));
   const settlementSource = (await readFile(new URL("lib/razorpay-settlement-reconciliation.ts", repoRoot), "utf8"))
     .replace('from "./financial-lifecycle"', 'from "./financial-lifecycle.mjs"')
+    .replace('from "./financial-runtime-schema"', 'from "./financial-runtime-schema.mjs"')
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
   await writeFile(path.join(tempDir, "razorpay-settlement-reconciliation.mjs"), transpile(settlementSource));
   const finance = await import(`${pathToFileURL(path.join(tempDir, "financial-lifecycle.mjs")).href}?v=${Date.now()}`);
