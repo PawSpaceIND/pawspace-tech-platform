@@ -32,6 +32,9 @@ if (typeof nodeModule.registerHooks === "function") {
 }
 
 // ---- Minimal D1 shim over a real SQLite engine ------------------------------------------------
+// hideActiveReservationReads simulates the concurrency race deterministically: while true, the
+// ENGINE's conflict reads see an empty table (as if the competing transaction had not committed
+// yet), while the guarded INSERT and all writes still hit the real table.
 function makeD1(sqlite, options = {}) {
   function statement(sql, args) {
     return {
@@ -73,9 +76,19 @@ function freshDb() {
   seedCanonicalPets();
 }
 
+/**
+ * Boarding now refuses before reserving unless every selected pet is a canonical record owned by the
+ * booking customer with verified vaccination (issue #197 item 4 — a modified client must not be able to
+ * hold capacity for someone else's pet or an unvaccinated one). These fixtures predate that rule, so the
+ * pets the boarding cases book are seeded here. Ownership and vaccination refusals are proven separately
+ * in tests/boarding-reservation-authority.test.mjs; this file is about capacity and assignment.
+ */
 function seedCanonicalPets() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   const now = Date.now();
+  // A pet belongs to exactly one customer, so each booking customer gets its own. The overnight-capacity
+  // case below books as two different customers, which is why it now names two different pets — the same
+  // pet id under two owners would (correctly) be refused as someone else's pet.
   for (const [petId, customerId] of [["Bruno", "cus_hardening"], ["Bruno2", "cus_other"], ["x", "c"]]) {
     sqlite.prepare("INSERT OR REPLACE INTO canonical_pets (id,customer_id,name,species,vaccination_status,created_at,updated_at) VALUES (?,?,?,'dog','verified',?,?)")
       .run(petId, customerId, petId, now, now);
@@ -95,6 +108,8 @@ async function get(query) {
 }
 const reserve = (overrides) => ({ clientRequestId: overrides.clientRequestId, customerId: "cus_hardening", petIds: ["Bruno"], zoneId: "blr-east", ...overrides });
 
+// ---- Engine real-execution (real schedule(), in-memory repository) ----------------------------
+
 const mkProvider = (id, quality, extra = {}) => ({ id, cityId: "blr", name: id, model: "commission", services: ["grooming"], zones: ["blr-east"], live: true, rating: 4.8, qualityScore: quality, capacity: 1, travelBufferMinutes: 30, maxDailyJobs: 6, ...extra });
 function memoryRepo({ providers, bookings = [], windows = ["09:00-19:00"] }) {
   return {
@@ -107,6 +122,7 @@ function memoryRepo({ providers, bookings = [], windows = ["09:00-19:00"] }) {
 }
 const booking = (providerId, start, end) => ({ id: `b_${providerId}_${start}`, providerId, status: "assigned", scheduledStart: start, scheduledEnd: end, petIds: ["x"], capacityUnits: 1 });
 const groomingReq = (start, end, extra = {}) => ({ cityId: "blr", zoneId: "blr-east", serviceCode: "grooming", petIds: ["Bruno"], scheduledStart: start, scheduledEnd: end, ...extra });
+// 10:00 IST = 04:30Z on a fixed future date — the engine itself has no "must be future" rule.
 const S = "2026-09-01T04:30:00.000Z", E = "2026-09-01T06:30:00.000Z";
 
 test("engine: auto-assign picks the highest-scoring eligible provider", async () => {
@@ -129,16 +145,18 @@ test("engine: preferredProviderId is a soft +20 — wins while eligible, falls b
 test("engine: travel buffer blocks back-to-back jobs inside the buffer and allows them outside it", async () => {
   const providers = [mkProvider("pa", 96), mkProvider("pb", 80)];
   const existingEnd = "2026-09-01T06:30:00.000Z";
+  // gap of 15 min < 30-min buffer -> pa ineligible, lower-scoring pb wins
   const tight = await schedule(memoryRepo({ providers, bookings: [booking("pa", S, existingEnd)] }), groomingReq("2026-09-01T06:45:00.000Z", "2026-09-01T08:45:00.000Z"));
   assert.equal(tight.provider?.id, "pb");
   assert.match(tight.evaluations.find((e) => e.providerId === "pa").reasons.join(" "), /travel\/service buffer/);
+  // gap of exactly 30 min -> pa eligible again and outranks pb
   const spaced = await schedule(memoryRepo({ providers, bookings: [booking("pa", S, existingEnd)] }), groomingReq("2026-09-01T07:00:00.000Z", "2026-09-01T09:00:00.000Z"));
   assert.equal(spaced.provider?.id, "pa");
 });
 
 test("engine: max daily jobs is enforced per IST day", async () => {
   const providers = [mkProvider("pa", 96, { maxDailyJobs: 1 }), mkProvider("pb", 80)];
-  const sameDayOther = booking("pa", "2026-09-01T10:00:00.000Z", "2026-09-01T12:00:00.000Z");
+  const sameDayOther = booking("pa", "2026-09-01T10:00:00.000Z", "2026-09-01T12:00:00.000Z"); // no time overlap
   const decision = await schedule(memoryRepo({ providers, bookings: [sameDayOther] }), groomingReq(S, E));
   assert.equal(decision.provider?.id, "pb");
   assert.match(decision.evaluations.find((e) => e.providerId === "pa").reasons.join(" "), /Daily job limit 1 reached/);
@@ -146,21 +164,23 @@ test("engine: max daily jobs is enforced per IST day", async () => {
 
 test("engine: roster windows are evaluated in IST — 20:00 IST is outside a 09:00-19:00 roster", async () => {
   const providers = [mkProvider("pa", 96)];
-  const late = await schedule(memoryRepo({ providers }), groomingReq("2026-09-01T14:30:00.000Z", "2026-09-01T16:30:00.000Z"));
+  const late = await schedule(memoryRepo({ providers }), groomingReq("2026-09-01T14:30:00.000Z", "2026-09-01T16:30:00.000Z")); // 20:00-22:00 IST
   assert.equal(late.provider, null);
   assert.match(late.evaluations[0].reasons.join(" "), /outside roster/);
-  const morning = await schedule(memoryRepo({ providers }), groomingReq(S, E));
+  const morning = await schedule(memoryRepo({ providers }), groomingReq(S, E)); // 10:00-12:00 IST
   assert.equal(morning.provider?.id, "pa");
 });
 
 test("engine: recurring weekday calendars land every occurrence on the requested IST weekday", async () => {
   const providers = [mkProvider("w1", 96, { services: ["dog_walking"], travelBufferMinutes: 20 })];
-  const start = istInstant(10, 7);
+  const start = istInstant(10, 7); // future 07:00 IST
   const weekday = istWeekday(start);
   const decision = await schedule(memoryRepo({ providers, windows: ["06:00-21:00"] }), { cityId: "blr", zoneId: "blr-east", serviceCode: "dog_walking", petIds: ["Bruno"], scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 30 * 60_000).toISOString(), occurrences: 4, weekdays: [weekday] });
   assert.equal(decision.occurrences.length, 4);
   for (const occ of decision.occurrences) assert.equal(istWeekday(new Date(occ.start)), weekday);
 });
+
+// ---- Route real-execution (real POST/GET handlers on real SQLite via the cloudflare stub) ------
 
 test("route: founder scope — boarding and pet_sitting without a chosen host return 409 host_selection_required", async () => {
   freshDb();
@@ -178,6 +198,8 @@ test("route: boarding with a chosen host reserves, and overnight capacity still 
   const first = await post(reserve({ clientRequestId: "board-1", serviceCode: "boarding", preferredProviderId: "host_maya_rohan", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString() }));
   assert.equal(first.status, 200);
   assert.equal(first.body.data.provider.id, "host_maya_rohan");
+  // host_maya_rohan has capacity 4: a second overlapping stay must still be insertable (the
+  // double-booking guard is per-appointment for slot services, capacity-summed for overnight).
   const second = await post(reserve({ clientRequestId: "board-2", customerId: "cus_other", petIds: ["Bruno2"], serviceCode: "boarding", preferredProviderId: "host_maya_rohan", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString() }));
   assert.equal(second.status, 200, JSON.stringify(second.body));
   assert.equal(second.body.data.provider.id, "host_maya_rohan");
@@ -199,7 +221,7 @@ test("route: auto-assign services pick the highest-scoring provider (pet_taxi ->
 
 test("route: grooming outside the seeded 09:00-19:00 IST roster window is refused", async () => {
   freshDb();
-  const start = istInstant(6, 20);
+  const start = istInstant(6, 20); // 20:00 IST
   const result = await post(reserve({ clientRequestId: "groom-late", serviceCode: "grooming", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 120 * 60_000).toISOString() }));
   assert.equal(result.status, 409);
   assert.equal(result.body.error, "NO_SCHEDULE_AVAILABLE");
@@ -212,6 +234,9 @@ test("route: double-booking is impossible — of two concurrent reserves for one
   const slot = { serviceCode: "grooming", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 120 * 60_000).toISOString(), customRules: pin };
   const winner = await post(reserve({ clientRequestId: "race-a", ...slot }));
   assert.equal(winner.status, 200);
+  // Simulate the TOCTOU race deterministically: the second request's ENGINE reads see an empty
+  // reservations table (the competing transaction "hasn't committed yet"), so evaluation passes —
+  // only the atomic in-statement guard stands between it and a double booking.
   hideReservations = true;
   const loser = await post(reserve({ clientRequestId: "race-b", customerId: "cus_other", ...slot }));
   hideReservations = false;
@@ -239,7 +264,8 @@ test("route: mid-programme provider_unavailability windows now block auto-assign
   const start = istInstant(10, 7);
   const weekday = istWeekday(start);
   const secondWalkDay = istDateKey(istInstant(17, 7));
-  await post(reserve({ clientRequestId: "warm-tables", serviceCode: "dog_walking", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 30 * 60_000).toISOString() }));
+  // walk_nisha (top scorer) goes on leave covering the SECOND walk of the fortnight.
+  await post(reserve({ clientRequestId: "warm-tables", serviceCode: "dog_walking", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 30 * 60_000).toISOString() })); // ensures all tables + roster exist
   sqlite.prepare("UPDATE scheduling_reservations SET status='cancelled'").run();
   sqlite.prepare("DELETE FROM scheduling_assignment_decisions").run();
   sqlite.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES ('leave1','walk_nisha',?,?,'annual leave','active','ops',0,0)")
@@ -275,6 +301,7 @@ test("route: a reassign with no eligible replacement RESTORES the original assig
   const pin = [{ code: "pin", field: "providerId", operator: "eq", value: "groom_arun" }];
   const created = await post(reserve({ clientRequestId: "restore-1", serviceCode: "grooming", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 120 * 60_000).toISOString(), customRules: pin }));
   assert.equal(created.body.data.provider.id, "groom_arun");
+  // reassign excludes groom_arun; the pinned custom rule disqualifies everyone else -> must fail
   const result = await post({ action: "reassign", groupId: "restore-1", reason: "trying to move this booking" });
   assert.equal(result.status, 409);
   assert.equal(result.body.restored, true);
@@ -303,6 +330,8 @@ test("route: GET day board groups reservations into per-provider columns for one
   assert.equal(bad.status, 400);
 });
 
+// ---- Contract tests ----------------------------------------------------------------------------
+
 const routeSource = fs.readFileSync("app/api/uat-scheduling/route.ts", "utf8");
 const gatewaySource = fs.readFileSync("lib/api-gateway.ts", "utf8");
 const pageSource = fs.readFileSync("app/team/scheduling/page.tsx", "utf8");
@@ -326,7 +355,7 @@ test("contract: the staff scheduling board is standalone and uses only the gover
   assert.doesNotMatch(pageSource, /from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/);
 });
 
-test("contract: the double-booking guard and collision-safe restore-on-failure are present in source", () => {
+test("contract: the double-booking guard and restore-on-failure are present in source", () => {
   assert.match(routeSource, /class SlotConflictError extends Error/);
   assert.match(routeSource, /WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\? AND status!='cancelled' AND scheduled_start<\? AND scheduled_end>\?\)/);
   assert.match(routeSource, /COALESCE\(SUM\(capacity_units\),0\)/, "overnight services guard on capacity, not blanket overlap");
