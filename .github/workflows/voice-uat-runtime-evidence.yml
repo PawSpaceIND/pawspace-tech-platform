@@ -17,6 +17,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
       UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
       UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
       UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
@@ -80,6 +81,41 @@ jobs:
             canonical = { customerMatches: null, bookingMatches: null, queryUnavailable: true };
           }
 
+          let allowlistBinding = { secretPresent: false, customerMatches: null, customersWithBookings: null, totalBookingsForMatches: null, uniqueUsableBinding: false };
+          try {
+            const allowlist = String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST || '').trim();
+            const entries = allowlist.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
+            const digits = entries.length === 1 ? entries[0].replace(/\D/g, '') : '';
+            const last10 = digits.slice(-10);
+            if (entries.length === 1 && last10.length === 10) {
+              const phoneSuffix = sqlEscape(last10);
+              const result = rows(execute(`
+                WITH matched AS (
+                  SELECT id,city_id FROM canonical_customers
+                  WHERE replace(replace(replace(replace(primary_phone,' ',''),'-',''),'+',''),'(', '') LIKE '%${phoneSuffix}'
+                )
+                SELECT
+                  (SELECT COUNT(*) FROM matched) AS customer_matches,
+                  (SELECT COUNT(DISTINCT m.id) FROM matched m JOIN canonical_bookings b ON b.customer_id=m.id) AS customers_with_bookings,
+                  (SELECT COUNT(*) FROM matched m JOIN canonical_bookings b ON b.customer_id=m.id) AS total_bookings
+              `));
+              const customerMatches = Number(result[0]?.customer_matches || 0);
+              const customersWithBookings = Number(result[0]?.customers_with_bookings || 0);
+              const totalBookingsForMatches = Number(result[0]?.total_bookings || 0);
+              allowlistBinding = {
+                secretPresent: true,
+                customerMatches,
+                customersWithBookings,
+                totalBookingsForMatches,
+                uniqueUsableBinding: customerMatches === 1 && customersWithBookings === 1 && totalBookingsForMatches >= 1,
+              };
+            } else {
+              allowlistBinding = { secretPresent: Boolean(allowlist), customerMatches: null, customersWithBookings: null, totalBookingsForMatches: null, uniqueUsableBinding: false, malformedOrMultiple: true };
+            }
+          } catch {
+            allowlistBinding = { secretPresent: Boolean(String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST || '').trim()), customerMatches: null, customersWithBookings: null, totalBookingsForMatches: null, uniqueUsableBinding: false, queryUnavailable: true };
+          }
+
           const queueTableExists = tableExists('voice_carrier_uat_queue');
           let queue = null;
           let agentStream = { tablePresent: false, startedEvents: 0, transcriptSegments: 0 };
@@ -127,6 +163,7 @@ jobs:
             queueTableExists,
             configShape: config,
             canonicalBinding: canonical,
+            allowlistBinding,
             queue,
             agentStream,
             secretValuesPrinted: false,
