@@ -1,5 +1,7 @@
 name: Pre-human UAT blocker certification
 
+# Re-triggered after the validated backend dependency repair so the final certification
+# record is tied to the repaired dependency graph rather than the earlier advisory state.
 on:
   push:
     branches:
