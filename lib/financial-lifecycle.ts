@@ -37,6 +37,56 @@ export function paiseToRupeesDisplay(amountPaise: number) {
   return `${major}.${String(minor).padStart(2, "0")}`;
 }
 
+/**
+ * payment_intents and financial_outbox are declared ONLY in drizzle/*.sql, and nothing applies those
+ * migrations to a deployed environment. `wrangler d1 migrations apply` reads ./migrations, there is no
+ * ./migrations directory and no migrations_dir in wrangler.toml — so deploy-release-preview's
+ * `if [ -d migrations ]` guard takes its else branch, and deploy-staging/deploy-production have no
+ * migration step at all. Every sibling table on this path (payment_reconciliation_records,
+ * payment_reconciliation_exceptions, payment_gateway_events, payment_gateway_links) already creates
+ * itself at runtime; these two were the exceptions, so the first real payment write in staging failed
+ * on "no such table" for a reason that had nothing to do with the flow being tested.
+ *
+ * Transcribed from drizzle/*.sql including every CHECK and UNIQUE, so a database created here and one
+ * created by the migration are the same shape. This is a floor, not a replacement for the migration
+ * pipeline: it stops a missing table masquerading as a payments defect. Fixing the pipeline itself is
+ * a separate change and is deliberately not smuggled in here.
+ */
+export async function ensureFinancialLifecycleTables(db: Db) {
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS payment_intents (
+      id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, customer_id TEXT NOT NULL, payment_id TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'razorpay',
+      environment TEXT NOT NULL CHECK (environment IN ('sandbox','live')),
+      idempotency_key TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+      currency TEXT NOT NULL DEFAULT 'INR',
+      state TEXT NOT NULL DEFAULT 'CREATED' CHECK (state IN ('CREATED','AUTHORIZED','CAPTURED','SETTLED','FAILED','CANCELLED')),
+      order_request_state TEXT NOT NULL DEFAULT 'PAYMENT_ORDER_REQUESTED' CHECK (order_request_state IN ('PAYMENT_ORDER_REQUESTED','PROCESSING','ORDER_CREATED','RECONCILIATION_REQUIRED','FAILED')),
+      gateway_order_id TEXT, gateway_payment_id TEXT, gateway_settlement_id TEXT,
+      gross_service_value_paise INTEGER NOT NULL CHECK (gross_service_value_paise >= 0),
+      platform_fee_paise INTEGER NOT NULL CHECK (platform_fee_paise >= 0),
+      partner_earning_paise INTEGER NOT NULL CHECK (partner_earning_paise >= 0),
+      tds_paise INTEGER NOT NULL DEFAULT 0 CHECK (tds_paise >= 0),
+      gst_paise INTEGER NOT NULL DEFAULT 0 CHECK (gst_paise >= 0),
+      commission_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (commission_rate_bps BETWEEN 0 AND 10000),
+      commission_rate_version TEXT NOT NULL, tax_rule_version TEXT NOT NULL,
+      commercial_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      UNIQUE(customer_id, booking_id, idempotency_key), UNIQUE(gateway_order_id),
+      UNIQUE(gateway_payment_id), UNIQUE(gateway_settlement_id))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS financial_outbox (
+      id TEXT PRIMARY KEY, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL,
+      event_type TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE, payload_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','PROCESSING','SUCCEEDED','RETRY','RECONCILIATION_REQUIRED','FAILED')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_owner TEXT, lease_expires_at INTEGER, next_attempt_at INTEGER NOT NULL,
+      request_json TEXT, response_json TEXT, last_error TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_financial_outbox_due ON financial_outbox(status,next_attempt_at,lease_expires_at)"),
+  ]);
+}
+
 export async function claimPaymentIntent(db: Db, input: {
   bookingId: string;
   customerId: string;
@@ -55,6 +105,7 @@ export async function claimPaymentIntent(db: Db, input: {
   commercialSnapshot?: Record<string, unknown>;
   environment: "sandbox" | "live";
 }) {
+  await ensureFinancialLifecycleTables(db);
   const bookingId = input.bookingId.trim(), customerId = input.customerId.trim(), paymentId = input.paymentId.trim(), idempotencyKey = input.idempotencyKey.trim();
   if (!bookingId || !customerId || !paymentId || !idempotencyKey) throw new Error("Payment intent identity is incomplete");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Payment intent amount must be positive integer paise");
