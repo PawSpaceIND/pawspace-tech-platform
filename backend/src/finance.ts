@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Booking, CashCollection, Payment, PaymentMethod, PlatformRepository, ProviderEarning, ProviderPayout, Refund, RequestActor, TaxInvoice } from "./domain.js";
+import { allocateInvoiceNumber, isDuplicateKeyError } from "./invoice-numbering.js";
 
 const id=(prefix:string)=>`${prefix}_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const now=()=>new Date().toISOString();
@@ -25,8 +26,14 @@ export async function capturePayment(repository:PlatformRepository,payment:Payme
 export async function issueInvoice(repository:PlatformRepository,payment:Payment,placeOfSupply="Karnataka",interstate=false){
   const existing=await repository.getInvoiceByBooking(payment.bookingId);if(existing)return existing;
   const tax=calculateInclusiveGst(payment.amount,interstate);const timestamp=now();
-  const invoice:TaxInvoice={id:id("inv"),invoiceNumber:`PS/${new Date().getFullYear()}/${String(Date.now()).slice(-8)}`,bookingId:payment.bookingId,paymentId:payment.id,customerId:payment.customerId,cityId:payment.cityId,placeOfSupply,...tax,issuedAt:timestamp,status:"issued"};
-  return repository.createInvoice(invoice);
+  const invoice:TaxInvoice={id:id("inv"),invoiceNumber:await allocateInvoiceNumber(repository,new Date(timestamp)),bookingId:payment.bookingId,paymentId:payment.id,customerId:payment.customerId,cityId:payment.cityId,placeOfSupply,...tax,issuedAt:timestamp,status:"issued"};
+  try{return await repository.createInvoice(invoice);}catch(error){
+    // A concurrent retry for the same booking can race the initial existence read. The DB unique
+    // constraint is authoritative: if another writer won, return that canonical invoice rather
+    // than forking the booking or turning an idempotent replay into a 500.
+    if(isDuplicateKeyError(error)){const canonical=await repository.getInvoiceByBooking(payment.bookingId);if(canonical)return canonical;}
+    throw error;
+  }
 }
 
 /**
