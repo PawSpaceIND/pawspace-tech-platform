@@ -25,7 +25,7 @@ test("Walking pricing parser tolerates null pricing", () => {
   assert.match(walkingSource, /pricing\?\.perWalkAmount/);
 });
 
-test("Walking completion commits payment, audit, notification, idempotency and governed finance in one batch", () => {
+test("Walking completion CAS-claims booking/session before batching durable completion side effects", () => {
   const start = walkingSource.indexOf('if(input.action==="complete_walk")');
   const end = walkingSource.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"');
   const block = walkingSource.slice(start, end);
@@ -39,14 +39,16 @@ test("Walking completion commits payment, audit, notification, idempotency and g
   assert.match(block, /Your PawSpace walk is complete/);
   assert.match(block, /walking_action_keys/);
   /*
-   * The whole completion commits in ONE batch. walking_session_payment_events.session_id is UNIQUE, so
-   * while the idempotency key was written after the batch through remember(), a worker lost between the
-   * two left a DUE payment row with no key: the retry re-executed, hit that UNIQUE constraint, and the
-   * walk could never be completed through the API again. The key, the payment row, the audit event and
-   * both notifications must therefore land together, and none of them may be a separate awaited call.
+   * Completion first claims the canonical booking and session with strict predecessor-state CAS guards.
+   * The durable payment row, audit event, notifications and idempotency key then land together in one
+   * batch so a lost worker cannot leave a DUE payment row without its replay key. Failed session/finance
+   * work must roll the guarded lifecycle claims back to in_progress before surfacing the error.
    */
-  assert.match(block, /UPDATE canonical_bookings SET status='completed',updated_at=\? WHERE id=\? AND status=\?/);
-  assert.match(block, /assertLifecycleClaim\(batchResults\[2\]\)/);
+  assert.match(block, /UPDATE canonical_bookings SET status=\?,updated_at=\? WHERE id=\? AND status='in_progress'/);
+  assert.match(block, /assertLifecycleClaim\(bookingClaim\)/);
+  assert.match(block, /UPDATE walking_sessions SET status='completed',completion_status='complete',updated_at=\? WHERE id=\? AND status='in_progress'/);
+  assert.match(block, /assertLifecycleClaim\(sessionClaim\)/);
+  assert.match(block, /UPDATE canonical_bookings SET status='in_progress',updated_at=\? WHERE id=\? AND status=\?/);
   assert.doesNotMatch(block, /await event\(/);
   assert.doesNotMatch(block, /await notify\(/);
   assert.doesNotMatch(block, /return remember\(/);
