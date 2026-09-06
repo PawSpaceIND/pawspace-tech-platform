@@ -210,7 +210,7 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
       const b = sqlite.prepare("SELECT service_code,scheduled_start,scheduled_end FROM canonical_bookings WHERE id=?").get(bkg(i));
       sqlite.prepare("INSERT INTO provider_work_orders VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?)")
         .run(`E2E-WO-${i}`, bkg(i), `E2E-SG-${i}`, prov((i % PROVIDERS) + 1), `E2E Provider ${(i % PROVIDERS) + 1}`,
-             (i % 2) ? "commission_standard" : "commission_groomer", b.service_code, b.scheduled_start, b.scheduled_end,
+             "commission", b.service_code, b.scheduled_start, b.scheduled_end,
              i <= 400 ? "completed" : "awaiting_acceptance", NOW, NOW);
     }
     const per = sqlite.prepare("SELECT provider_id,COUNT(*) n FROM provider_work_orders GROUP BY provider_id").all();
@@ -218,11 +218,39 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     return `${per.length} providers, ${per[0].n}-${per[per.length - 1].n} jobs each`;
   });
 
+  /* This probe used to report PASS with "synced 0" - a vacuous pass. syncCompletedCommissionOrders
+   * selects provider_work_orders WHERE provider_model='commission', and the fixture was writing
+   * 'commission_standard' / 'commission_groomer' there. Those are EngagementModel values on
+   * provider_commercial_terms (lib/provider-commercial-terms.ts:44), a different axis; a work
+   * order's provider_model is 'commission' | 'full_time' per app/api/canonical-bookings/route.ts:31.
+   * The WHERE therefore matched nothing and the module did no work while the probe called it green.
+   * Now the vocabulary is correct AND the probe asserts a non-zero result, so it cannot pass idle. */
   await probe("provider-commission-governance", "sync completed orders", async () => {
     const m = await import("../lib/provider-commission-governance.ts");
     await m.ensureProviderCommissionTables(db);
-    const out = await m.syncCompletedCommissionOrders(db);
-    return `synced ${JSON.stringify(out).slice(0, 90)}`;
+    // A commission cannot be computed without an active compensation profile; without one the
+    // module writes status='configuration_required' and a zero amount, which is also a silent pass.
+    for (let p = 1; p <= PROVIDERS; p++) {
+      sqlite.prepare(`INSERT OR REPLACE INTO provider_compensation_profiles
+        (provider_id,engagement_model,default_commission_mode,default_commission_value,status,updated_by,created_at,updated_at)
+        VALUES (?,'commission','percent',20,'active','e2e:ops',?,?)`).run(prov(p), NOW, NOW);
+    }
+    const synced = await m.syncCompletedCommissionOrders(db);
+    if (!Number(synced)) throw new Error("syncCompletedCommissionOrders did no work - 0 orders synced");
+
+    const agg = sqlite.prepare(`SELECT COUNT(*) n,
+        SUM(CASE WHEN status='configuration_required' THEN 1 ELSE 0 END) unconfigured,
+        SUM(CASE WHEN commission_amount>0 THEN 1 ELSE 0 END) priced
+      FROM provider_order_commissions`).get();
+    if (agg.unconfigured) throw new Error(`${agg.unconfigured} commissions landed as configuration_required`);
+    if (agg.priced !== agg.n) throw new Error(`${agg.n - agg.priced} of ${agg.n} commissions priced at zero`);
+
+    // 20 percent of the order, arithmetic checked against canonical_bookings rather than restated.
+    const drift = sqlite.prepare(`SELECT COUNT(*) n FROM provider_order_commissions c
+      JOIN canonical_bookings b ON b.id=c.booking_id
+      WHERE ABS(c.commission_amount - b.total_amount*0.20) > 0.01`).get().n;
+    if (drift) throw new Error(`${drift} commission amounts disagree with 20 percent of the order`);
+    return `${synced} commissions synced, all priced, 0 arithmetic drift at 20 percent`;
   });
 
   await probe("provider-commission-governance", "commission dashboard", async () => {
@@ -231,11 +259,53 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     return `dashboard keys: ${Object.keys(out || {}).slice(0, 6).join(",")}`;
   });
 
-  await probe("partner-settlement-governance", "statements", async () => {
+  /* Also a vacuous pass before: it returned 0 and the probe reported green. The module aggregates
+   * ONLY training_session_earnings joined to completed training_sessions, and the fixture had no
+   * training data at all, so there was nothing to settle and nothing was proven. Seed real earnings
+   * inside the period, then require statements to appear with arithmetic that matches. */
+  await probe("partner-settlement-governance", "statements from real earnings", async () => {
     const m = await import("../lib/partner-settlement-governance.ts");
     await m.ensurePartnerSettlementTables(db);
-    const out = await m.refreshPartnerSettlementStatements(db, "2026-09");
-    return JSON.stringify(out).slice(0, 90);
+    const tp = await import("../lib/training-programme.ts");
+    for (const k of Object.keys(tp)) if (/^ensure/.test(k)) await tp[k](db);
+    const tf = await import("../lib/training-finance.ts");
+    for (const k of Object.keys(tf)) if (/^ensure/.test(k)) await tf[k](db);
+
+    const SETTLING = 10, PER_SESSION = 900;
+    for (let p = 1; p <= SETTLING; p++) {
+      sqlite.prepare(`INSERT OR REPLACE INTO training_sessions
+        (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at)
+        VALUES (?,?,?,?,1,?,?,?,'completed',?,?)`)
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), `E2E-RES-${p}`, prov(p), iso(NOW), iso(NOW + 3600000), NOW, NOW);
+      sqlite.prepare(`INSERT OR REPLACE INTO training_session_earnings
+        (session_id,programme_id,booking_id,provider_id,city_id,package_code,gross_earning,status,completed_at,calculated_at,updated_at)
+        VALUES (?,?,?,?,?,'pkg-std',?,'earned',?,?,?)`)
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), prov(p), CITY, PER_SESSION, NOW, NOW, NOW);
+    }
+
+    await m.refreshPartnerSettlementStatements(db, "2026-09");
+    const rows = sqlite.prepare("SELECT provider_id,earned_amount,payable_amount FROM partner_settlement_statements WHERE period_code='2026-09' ORDER BY provider_id").all();
+    if (rows.length !== SETTLING) throw new Error(`expected ${SETTLING} statements, got ${rows.length}`);
+    const wrong = rows.filter((r) => Math.abs(Number(r.earned_amount) - PER_SESSION) > 0.01);
+    if (wrong.length) throw new Error(`${wrong.length} statements disagree with the seeded earnings`);
+
+    // A settled period must survive an adjustment without losing arithmetic: payable = earned + adj.
+    const first = sqlite.prepare("SELECT id,earned_amount FROM partner_settlement_statements WHERE period_code='2026-09' ORDER BY provider_id LIMIT 1").get();
+    await m.addSettlementAdjustment(db, { statementId: String(first.id), type: "deduction", amount: -100,
+      reason: "e2e settlement adjustment probe", actor: "e2e:finance" });
+    const adjusted = sqlite.prepare("SELECT earned_amount,adjustment_amount,payable_amount FROM partner_settlement_statements WHERE id=?").get(String(first.id));
+    const expected = Number(adjusted.earned_amount) + Number(adjusted.adjustment_amount);
+    if (Math.abs(Number(adjusted.payable_amount) - expected) > 0.01)
+      throw new Error(`payable ${adjusted.payable_amount} != earned ${adjusted.earned_amount} + adjustment ${adjusted.adjustment_amount}`);
+
+    // Payouts must stay policy-gated: refresh writes policy_status='configuration_required'.
+    const gated = sqlite.prepare("SELECT COUNT(*) n FROM partner_settlement_statements WHERE period_code='2026-09' AND policy_status='configuration_required'").get().n;
+    if (gated !== SETTLING) throw new Error(`${SETTLING - gated} statements were not policy-gated on creation`);
+    await m.approveSettlementPolicy(db, { statementId: String(first.id), reason: "e2e policy approval probe", actor: "e2e:finance" });
+    const approved = sqlite.prepare("SELECT policy_status FROM partner_settlement_statements WHERE id=?").get(String(first.id)).policy_status;
+    if (approved !== "approved") throw new Error(`policy approval did not take: ${approved}`);
+
+    return `${rows.length} statements at ${PER_SESSION} each, adjustment arithmetic holds, policy gate enforced then approved`;
   });
 
   await probe("booking-rating", "ratings + provider score", async () => {
@@ -510,7 +580,7 @@ test("E2E-900 concurrency: distributed locking, CAS and double-booking safety", 
       try {
         await db.prepare("INSERT INTO provider_work_orders VALUES (?,?,?,?,?,?,?,?,?,1,'assigned',?,?)")
           .bind(`E2E-WO-RACE-${p}`, target, `SG-${target}`, prov(p + 1), `E2E Provider ${p + 1}`,
-                "commission_standard", "pet_grooming", iso(NOW), iso(NOW + 3600000), NOW, NOW).run();
+                "commission", "pet_grooming", iso(NOW), iso(NOW + 3600000), NOW, NOW).run();
         accepted += 1;
       } catch { rejected += 1; }
     }));
@@ -518,6 +588,125 @@ test("E2E-900 concurrency: distributed locking, CAS and double-booking safety", 
     if (n !== 1) throw new Error(`DOUBLE BOOKING: ${n} work orders for booking ${target}`);
     if (accepted !== 1) throw new Error(`${accepted} concurrent dispatches were accepted, expected 1`);
     return `${PROVIDERS} providers raced one booking -> 1 accepted, ${rejected} refused, 0 double-bookings`;
+  });
+});
+
+/*
+ * Ledger parity. The mandate's hardest ask: collections, commissions and tax withholdings must
+ * reconcile with zero unexplained drift. Every number below is read back out of the database and
+ * compared against another module's number - nothing is restated from a variable the test set.
+ */
+test("E2E-950 financial parity: collections, commissions, tax and double-entry drift", async () => {
+  const fl = await import("../lib/financial-lifecycle.ts");
+  const boot = await import("../lib/financial-runtime-bootstrap.ts");
+  boot.resetFinancialRuntimeSchemaForTests?.();
+  await boot.ensureFinancialRuntimeSchema(db);
+
+  // Post one balanced journal per captured booking: cash in, revenue net of commission, commission
+  // payable. The split is taken from provider_order_commissions, so the journal and the commission
+  // module have to agree or the totals below diverge.
+  await probe("financial-lifecycle", "post 400 booking journals", async () => {
+    const rows = sqlite.prepare(`SELECT c.booking_id, c.provider_id, b.total_amount, c.commission_amount
+      FROM provider_order_commissions c JOIN canonical_bookings b ON b.id=c.booking_id`).all();
+    if (rows.length < 400) throw new Error(`expected at least 400 commissioned bookings, got ${rows.length}`);
+    let posted = 0;
+    for (const r of rows) {
+      const grossPaise = Math.round(Number(r.total_amount) * 100);
+      const commissionPaise = Math.round(Number(r.commission_amount) * 100);
+      const netPaise = grossPaise - commissionPaise;
+      if (netPaise <= 0) throw new Error(`commission exceeds gross on ${r.booking_id}`);
+      await fl.postBalancedJournal(db, {
+        sourceType: "booking_payment", sourceId: String(r.booking_id),
+        sourceEventId: `e2e-parity-${r.booking_id}`, narration: "E2E captured booking revenue",
+        currency: "INR",
+        entries: [
+          { accountCode: "1000_CASH", direction: "DEBIT", amountPaise: grossPaise, bookingId: String(r.booking_id) },
+          { accountCode: "4000_REVENUE", direction: "CREDIT", amountPaise: netPaise, bookingId: String(r.booking_id) },
+          { accountCode: "2000_PARTNER_PAYABLE", direction: "CREDIT", amountPaise: commissionPaise, bookingId: String(r.booking_id), partnerId: String(r.provider_id) },
+        ],
+      });
+      posted++;
+    }
+    return `${posted} balanced journals posted`;
+  });
+
+  await probe("journal", "every transaction balances (per-transaction drift)", async () => {
+    const unbalanced = sqlite.prepare(`SELECT t.id,
+        SUM(CASE WHEN e.direction='DEBIT' THEN e.amount_paise ELSE 0 END) d,
+        SUM(CASE WHEN e.direction='CREDIT' THEN e.amount_paise ELSE 0 END) c
+      FROM journal_transactions t JOIN journal_entries e ON e.transaction_id=t.id
+      GROUP BY t.id HAVING d != c`).all();
+    if (unbalanced.length) throw new Error(`${unbalanced.length} journal transactions do not balance, first ${unbalanced[0].id}`);
+    const n = sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n;
+    if (n < 400) throw new Error(`only ${n} journals present - the check would pass vacuously`);
+    return `${n} transactions, 0 with debit/credit drift`;
+  });
+
+  await probe("journal", "ledger-wide debits equal credits", async () => {
+    const t = sqlite.prepare(`SELECT
+        SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE 0 END) d,
+        SUM(CASE WHEN direction='CREDIT' THEN amount_paise ELSE 0 END) c FROM journal_entries`).get();
+    if (Number(t.d) !== Number(t.c)) throw new Error(`ledger drift: debits ${t.d} != credits ${t.c}`);
+    if (!Number(t.d)) throw new Error("ledger is empty - parity would hold vacuously");
+    return `debits = credits = ${t.d} paise across the whole ledger`;
+  });
+
+  /* Scoped to the journals this probe posted. An unscoped SUM over 1000_CASH also swept up the
+   * single standalone journal E2E-400 posts for its own reachability check, which has no commission
+   * row behind it - a 150000 paise difference the first run of this check correctly flagged. The
+   * lesson is kept rather than papered over: a parity assertion must define its population, or it
+   * reports drift that is really a scoping error. */
+  await probe("journal", "collections parity: cash posted equals money captured", async () => {
+    const cash = sqlite.prepare(`SELECT COALESCE(SUM(e.amount_paise),0) p FROM journal_entries e
+      JOIN journal_transactions t ON t.id=e.transaction_id
+      WHERE e.account_code='1000_CASH' AND e.direction='DEBIT' AND t.source_event_id LIKE 'e2e-parity-%'`).get().p;
+    const captured = sqlite.prepare(`SELECT COALESCE(SUM(b.total_amount),0) a FROM canonical_bookings b
+      WHERE b.id IN (SELECT booking_id FROM provider_order_commissions)`).get().a;
+    const capturedPaise = Math.round(Number(captured) * 100);
+    if (Number(cash) !== capturedPaise) throw new Error(`cash debits ${cash} != captured ${capturedPaise} paise`);
+    return `cash debits reconcile to captured revenue at ${cash} paise`;
+  });
+
+  await probe("journal", "commission parity: payable posted equals commission ledger", async () => {
+    const payable = sqlite.prepare(`SELECT COALESCE(SUM(e.amount_paise),0) p FROM journal_entries e
+      JOIN journal_transactions t ON t.id=e.transaction_id
+      WHERE e.account_code='2000_PARTNER_PAYABLE' AND e.direction='CREDIT' AND t.source_event_id LIKE 'e2e-parity-%'`).get().p;
+    const commission = sqlite.prepare("SELECT COALESCE(SUM(commission_amount),0) a FROM provider_order_commissions").get().a;
+    const commissionPaise = Math.round(Number(commission) * 100);
+    // Exact, not within a tolerance: rounding is done once per booking when the journal is built.
+    if (Number(payable) !== commissionPaise) throw new Error(`partner payable ${payable} != commission ledger ${commissionPaise} paise`);
+    return `partner payable reconciles to provider_order_commissions at ${payable} paise`;
+  });
+
+  await probe("gst-accounting", "tax parity: tax ledger equals invoiced tax", async () => {
+    const invoiced = sqlite.prepare("SELECT COALESCE(SUM(tax_total),0) t FROM finance_invoices WHERE entity_id='E2E-ENTITY'").get().t;
+    const ledger = sqlite.prepare("SELECT COALESCE(SUM(amount),0) t FROM finance_tax_ledger WHERE entity_id='E2E-ENTITY' AND ledger_type='output'").get().t;
+    if (!Number(invoiced)) throw new Error("no invoiced tax - parity would hold vacuously");
+    if (Math.abs(Number(invoiced) - Number(ledger)) > 0.01) throw new Error(`invoiced tax ${invoiced} != tax ledger ${ledger}`);
+    return `invoiced tax and output tax ledger agree at ${ledger}`;
+  });
+
+  await probe("financial-lifecycle", "an unbalanced journal is refused", async () => {
+    await assert.rejects(() => fl.postBalancedJournal(db, {
+      sourceType: "booking_payment", sourceId: bkg(1), sourceEventId: "e2e-parity-unbalanced",
+      narration: "deliberately unbalanced", currency: "INR",
+      entries: [
+        { accountCode: "1000_CASH", direction: "DEBIT", amountPaise: 150000 },
+        { accountCode: "4000_REVENUE", direction: "CREDIT", amountPaise: 149999 },
+      ],
+    }), /balance/i);
+    const leaked = sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_event_id='e2e-parity-unbalanced'").get().n;
+    if (leaked) throw new Error("a refused journal still wrote a transaction row");
+    return "one-paise imbalance refused, nothing written";
+  });
+
+  await probe("journal", "posted entries are immutable", async () => {
+    const e = sqlite.prepare("SELECT id FROM journal_entries LIMIT 1").get();
+    let blocked = false;
+    try { sqlite.prepare("UPDATE journal_entries SET amount_paise=amount_paise+1 WHERE id=?").run(String(e.id)); }
+    catch { blocked = true; }
+    if (!blocked) throw new Error("a posted journal entry was mutated - the immutability trigger did not fire");
+    return "posted journal entries cannot be altered";
   });
 });
 
