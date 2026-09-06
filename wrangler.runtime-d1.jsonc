@@ -5,21 +5,11 @@
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    // This worker is a local executable regression harness. Preview authority is now fail-closed unless
-    // the RUNTIME declares both its non-production class and the local-preview opt-in; a forged Host
-    // header cannot create either value. Keep these declarations confined to this local Wrangler config.
     "NODE_ENV": "test",
-    "PAWSPACE_LOCAL_PREVIEW": "on",
-    // Declared explicitly, as every documented deployment does. The sandbox payment simulators no
-    // longer treat an ABSENT PAWSPACE_PAYMENT_ENV as a sandbox declaration (PTJA W2-07-PAY-003):
-    // an undeclared runtime used to unlock a staff endpoint that records a full-value capture with
-    // zero gateway contact. This harness exercises the sandbox payment path, so it says so.
+    // Runtime regression authority is finite and explicit. The historical PAWSPACE_LOCAL_PREVIEW
+    // superuser flag is intentionally absent, so this scenario cannot inherit ["*"] access.
+    "PAWSPACE_RUNTIME_D1_TEST_AUTH": "scoped",
     "PAWSPACE_PAYMENT_ENV": "sandbox",
-    // Declared for the same reason. /api/uat-scheduling no longer fabricates provider roster unless the
-    // runtime says it is a UAT runtime (PTJA W1-F27): a customer's own reserve used to write the
-    // "published availability" rows the eligibility engine then checked, and could book straight over a
-    // window Ops had narrowed. This harness books through the real reserve path with no Ops-published
-    // availability, so it declares what it is.
     "PAWSPACE_SCHEDULING_ENV": "uat",
     "PAWSPACE_UAT_LOGIN": "on",
     "PAWSPACE_UAT_SIGNING_KEY": "runtime-d1-regression-only-not-a-real-signing-key-20260825",
