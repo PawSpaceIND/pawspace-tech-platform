@@ -11,6 +11,7 @@ on:
       - lib/d1-write-retry.ts
       - lib/provider-assignment-eligibility.ts
       - lib/scheduling-roster-authority.ts
+      - lib/schema-drift-repair.ts
       - scripts/pilot-staging-scheduling-preflight.sql
       - scripts/pilot-staging-baseline-cleanup.sql
       - tests/e2e-pilot-simulation.test.mjs
@@ -21,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pawspace-pilot-remediation-staging-v2
+  group: pawspace-pilot-remediation-staging
   cancel-in-progress: false
 
 jobs:
@@ -92,16 +93,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          COOKIE_JAR="$RUNNER_TEMP/pawspace-pilot-finance.cookies"
-          CODE_JSON="$(node -e 'process.stdout.write(JSON.stringify(process.env.PAWSPACE_UAT_ACCESS_CODE||""))')"
-          trap 'rm -f "$COOKIE_JAR"' EXIT
-          curl --fail-with-body --silent --show-error -c "$COOKIE_JAR" -X POST "$STAGING_URL/api/staging-login" \
-            -H 'content-type: application/json' \
-            --data "{\"action\":\"login\",\"email\":\"founder@pawspace.in\",\"code\":${CODE_JSON}}" \
-            > /tmp/pilot-finance-login.json
-          curl --fail-with-body --silent --show-error -b "$COOKIE_JAR" -X POST "$STAGING_URL/api/pilot-finance-reconcile" \
-            -H 'content-type: application/json' \
-            --data "{\"code\":${CODE_JSON}}" \
+          curl --fail-with-body --silent --show-error -X POST "$STAGING_URL/api/pilot-finance-reconcile" \
+            -H "x-pawspace-uat-access-code: $PAWSPACE_UAT_ACCESS_CODE" \
             > artifacts/pilot-readiness/finance-reconcile.json
       - name: Verify cleaned and journalized staging baseline
         shell: bash
