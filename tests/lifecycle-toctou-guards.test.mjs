@@ -1,3 +1,4 @@
+// P0-4 regression contract: lifecycle state changes must be compare-and-set writes, never read-then-blind-update.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
