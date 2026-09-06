@@ -48,11 +48,11 @@ test("provider UPI/direct contact in chat is redacted and immediately records st
   assert.equal(event.strike_applied, 1);
   assert.match(event.detection_types_json, /phone_number/);
   const strike = sqlite.prepare("SELECT strike_number,action,trust_score_after FROM provider_trust_strikes WHERE provider_id='PRV-TS-1'").get();
-  assert.deepEqual(strike, { strike_number: 1, action: "warning", trust_score_after: 80 });
+  assert.deepEqual({ ...strike }, { strike_number: 1, action: "warning", trust_score_after: 80 });
   const profile = sqlite.prepare("SELECT trust_score,trust_strike_count,status,live FROM provider_capacity_profiles WHERE id='PRV-TS-1'").get();
-  assert.deepEqual(profile, { trust_score: 80, trust_strike_count: 1, status: "active", live: 1 });
+  assert.deepEqual({ ...profile }, { trust_score: 80, trust_strike_count: 1, status: "active", live: 1 });
   const warning = sqlite.prepare("SELECT strike_number,status,channel FROM trust_safety_provider_notifications WHERE provider_id='PRV-TS-1'").get();
-  assert.deepEqual(warning, { strike_number: 1, status: "queued", channel: "whatsapp" });
+  assert.deepEqual({ ...warning }, { strike_number: 1, status: "queued", channel: "whatsapp" });
 });
 
 test("tiered provider enforcement suspends strike 2 and permanently bans strike 3", async () => {
@@ -69,13 +69,13 @@ test("tiered provider enforcement suspends strike 2 and permanently bans strike 
       assert.equal(state.status, "suspended");
       assert.ok(state.suspended_until > now + 7 * 24 * 60 * 60_000 && state.suspended_until <= now + 4 * 7 * 24 * 60 * 60_000);
       const profile = sqlite.prepare("SELECT status,live FROM provider_capacity_profiles WHERE id='PRV-TS-1'").get();
-      assert.deepEqual(profile, { status: "suspended", live: 0 });
+      assert.deepEqual({ ...profile }, { status: "suspended", live: 0 });
     }
   }
   const state = sqlite.prepare("SELECT trust_score,strike_count,status,suspended_until FROM provider_trust_state WHERE provider_id='PRV-TS-1'").get();
-  assert.deepEqual(state, { trust_score: 0, strike_count: 3, status: "banned_permanent", suspended_until: null });
+  assert.deepEqual({ ...state }, { trust_score: 0, strike_count: 3, status: "banned_permanent", suspended_until: null });
   const profile = sqlite.prepare("SELECT trust_score,trust_strike_count,status,live FROM provider_capacity_profiles WHERE id='PRV-TS-1'").get();
-  assert.deepEqual(profile, { trust_score: 0, trust_strike_count: 3, status: "banned_permanent", live: 0 });
+  assert.deepEqual({ ...profile }, { trust_score: 0, trust_strike_count: 3, status: "banned_permanent", live: 0 });
 });
 
 test("globally blocked customer is rejected by the shared Audio Bot pre-dial gate and by canonical booking writes", async () => {
