@@ -1,0 +1,78 @@
+name: Browser E2E
+
+# Runs the seeded Playwright journeys against a locally served build (vinext build ->
+# wrangler dev --local, Miniflare D1). No Cloudflare credentials are needed: Miniflare creates a
+# local SQLite D1, so this works on any runner.
+#
+# The suite is only meaningful because the development-preview superuser is OFF - scripts/e2e/serve.sh
+# declares PAWSPACE_DEPLOYMENT_ENV, which is the first gate in lib/development-preview.ts.
+# e2e/journeys/00-identity.spec.ts asserts that and fails the run if the trap returns, so a green
+# result here cannot be a superuser passing everything.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-e2e:
+    name: Seeded browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_ENV: test
+      E2E_PORT: "8788"
+      E2E_BASE_URL: http://127.0.0.1:8788
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Start the app (Miniflare, preview superuser disabled)
+        run: |
+          E2E_SKIP_BUILD=1 nohup bash scripts/e2e/serve.sh > /tmp/serve.log 2>&1 &
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$E2E_BASE_URL/" || true)
+            [ "$code" != "000" ] && { echo "app up (HTTP $code)"; exit 0; }
+            sleep 2
+          done
+          echo "::error::app did not start"; tail -40 /tmp/serve.log; exit 1
+
+      # The routes create their tables lazily, so the schema must exist before identities are seeded.
+      - name: Warm lazy schema, then seed test identities
+        run: |
+          for p in "/api/canonical-bookings?customerId=E2E-CUS-UI-001" \
+                   "/api/partner-job-feed?providerId=E2E-PRV-UI-001" \
+                   "/api/booking-command-center"; do
+            curl -s -o /dev/null -H "oai-authenticated-user-email: e2e.admin@pawspace.test" "$E2E_BASE_URL$p" || true
+          done
+          node scripts/e2e/seed-identities.mjs
+          node scripts/e2e/seed-identities.mjs   # second pass: tables created by the first now exist
+
+      - name: Run browser journeys
+        run: npx playwright test --config playwright.e2e.config.ts
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-artifacts
+          path: |
+            test-results/
+            /tmp/serve.log
+          if-no-files-found: ignore
+          retention-days: 7
