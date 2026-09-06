@@ -13,6 +13,15 @@ CREATE TABLE IF NOT EXISTS scheduling_availability (
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date);
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source);
 
+-- Keep repeated pilot certifications independent from one another. The synthetic harness deliberately
+-- uses group ids shaped PILOT-<run>-SG-<actor>; old successful runs must not consume a future actor's
+-- deterministic Grooming/Training/Taxi/Walking slot. Delete only that explicit synthetic namespace and
+-- leave every non-PILOT reservation, decision, offer and recovery row untouched.
+DELETE FROM provider_assignment_offers WHERE group_id LIKE 'PILOT-%-SG-%';
+DELETE FROM provider_recovery_cases WHERE group_id LIKE 'PILOT-%-SG-%';
+DELETE FROM scheduling_reservations WHERE group_id LIKE 'PILOT-%-SG-%';
+DELETE FROM scheduling_assignment_decisions WHERE group_id LIKE 'PILOT-%-SG-%';
+
 -- The live matching rule correctly refuses a radius-constrained request when a provider has no active
 -- geocoded home base. Synthetic pilot traffic includes a real geofence, so staging must carry deterministic
 -- Bengaluru home bases for its synthetic provider roster. This is staging-only fixture preparation; it
