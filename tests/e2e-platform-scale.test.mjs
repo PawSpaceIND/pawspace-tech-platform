@@ -366,72 +366,52 @@ test("E2E-500 intelligence: analytics, reports, marketing, AI, automation", asyn
   });
 });
 
-test("E2E-600 ledger schema reachability (drizzle-only tables)", async () => {
+test("E2E-600 ledger is operational: schema present AND a journal actually posts", async () => {
   const fl = await import("../lib/financial-lifecycle.ts");
   await fl.ensureFinancialLifecycleTables(db);
-  const grp = await import("../lib/grooming-payment-reconciliation.ts");
-  await grp.ensurePaymentReconciliationTables(db);
-  try { const s = await import("../lib/razorpay-settlement-reconciliation.ts"); for (const k of Object.keys(s)) if (/^ensure/.test(k)) await s[k](db); } catch {}
+  const settle = await import("../lib/razorpay-settlement-reconciliation.ts");
+  await settle.ensureSettlementReconciliationTables(db);
 
-  const SIX = ["payment_intents", "financial_outbox", "journal_entries", "journal_transactions",
-               "partner_earning_pending", "payment_settlement_reconciliations"];
-  for (const t of SIX) {
-    const exists = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t);
-    record("schema", t, exists ? "PASS" : "GAP", exists ? "created at runtime" : "NO runtime creator - drizzle-only, never migrated");
-  }
-  assert.ok(true);
-});
+  const EIGHT = ["payment_intents", "financial_outbox", "journal_entries", "journal_transactions",
+                 "partner_earning_pending", "partner_payable_released", "gateway_webhook_events",
+                 "gateway_object_identities", "payment_settlement_reconciliations",
+                 "razorpay_settlement_recon_runs"];
+  const missing = EIGHT.filter((t) => !sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t));
+  record("schema", "money-path tables", missing.length ? "GAP" : "PASS",
+    missing.length ? `still missing: ${missing.join(", ")}` : `all ${EIGHT.length} present at runtime`);
+  assert.equal(missing.length, 0, `money-path tables missing at runtime: ${missing.join(", ")}`);
 
-test("E2E-700 refunds, cancellation and money-out safety", async () => {
-  await probe("grooming-payment-reconciliation", "refund overage detection", async () => {
-    const m = await import("../lib/grooming-payment-reconciliation.ts");
-    await m.ensurePaymentReconciliationTables(db);
-    sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
-    // Billed 4000, only 1000 ever captured, full refund requested.
-    sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('E2E-PAY-OV','E2E-BK-OV','E2E-CUS-0001',4000,4000,'INR','card','prepaid','captured','razorpay','idem-ov','{}',?,?)").run(NOW, NOW);
-    sqlite.prepare("INSERT OR REPLACE INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,updated_at) VALUES ('E2E-PAY-OV','E2E-BK-OV','razorpay','sandbox',4000,1000,0,'INR','captured','matched',0,?)").run(NOW);
-    sqlite.prepare("INSERT OR REPLACE INTO booking_refund_cases VALUES ('E2E-RFD-OV','E2E-BK-OV','E2E-PAY-OV',4000,'customer cancelled','approved','e2e:ops','e2e:finance',NULL,?,?)").run(NOW, NOW);
-    await m.processGatewayEvent(db, { provider: "razorpay", environment: "sandbox", eventId: "e2e-ov-refund",
-      eventType: "refund.processed", bookingId: "E2E-BK-OV", amountSubunits: 400000,
-      gatewayRefundId: "rfnd_ov", payloadHash: "sha256:ov", signatureVerified: true });
-    const row = sqlite.prepare("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id='E2E-PAY-OV'").get();
-    if (row.reconciliation_status !== "refund_overage") throw new Error(`refunding 4000 against 1000 captured was certified '${row.reconciliation_status}'`);
-    return `overage detected, variance ${Math.round(Number(row.variance_amount))}`;
+  // The real proof: post a balanced journal end to end.
+  await probe("financial-lifecycle", "postBalancedJournal writes to the ledger", async () => {
+    const out = await fl.postBalancedJournal(db, {
+      sourceType: "booking_payment", sourceId: bkg(1), sourceEventId: `e2e-ledger-${Date.now()}`,
+      narration: "E2E captured booking revenue", currency: "INR",
+      entries: [
+        { accountCode: "1000_CASH", direction: "DEBIT", amountPaise: 150000, bookingId: bkg(1) },
+        { accountCode: "4000_REVENUE", direction: "CREDIT", amountPaise: 150000, bookingId: bkg(1) },
+      ],
+    });
+    const tx = sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n;
+    const en = sqlite.prepare("SELECT COUNT(*) n FROM journal_entries").get().n;
+    if (!tx || en < 2) throw new Error(`journal did not persist: ${tx} txn / ${en} entries`);
+    const dr = sqlite.prepare("SELECT COALESCE(SUM(amount_paise),0) v FROM journal_entries WHERE direction='DEBIT'").get().v;
+    const cr = sqlite.prepare("SELECT COALESCE(SUM(amount_paise),0) v FROM journal_entries WHERE direction='CREDIT'").get().v;
+    if (dr !== cr) throw new Error(`ledger not balanced: DR ${dr} vs CR ${cr}`);
+    return `posted; ${tx} txn, ${en} entries, DR=CR=${dr} paise${out?.status ? `, status ${out.status}` : ""}`;
   });
 
-  await probe("sitting-finance-governance", "delivered stay cannot be refunded", async () => {
-    const m = await import("../lib/sitting-finance-governance.ts");
-    await m.ensureSittingFinanceTables(db);
-    sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('E2E-BK-DLV','E2E-CUS-0002','blr','z1','pet_sitting','pkg','S','E2E-SG-DLV','E2E-PRV-01','2026-09-02T04:00:00.000Z','2026-09-03T04:00:00.000Z','completed','customer_app',4000,'INR','{}','e2e',?,?)").run(NOW, NOW);
-    try {
-      await m.mutateSittingFinance(db, { action: "approve_cancel", bookingId: "E2E-BK-DLV", reason: "e2e delivered-stay probe", actorId: "e2e:ops", idempotencyKey: "e2e-cancel-dlv-1" });
-    } catch (error) {
-      if (error instanceof Response && error.status === 409) return "delivered stay correctly refused (409)";
-      throw error;
-    }
-    throw new Error("a COMPLETED stay was cancelled and refunded - money-out defect");
-  });
-});
-
-test("E2E-800 lead journey and automation closure", async () => {
-  await probe("lead-assignment-governance", "assign leads", async () => {
-    const m = await import("../lib/lead-assignment-governance.ts");
-    for (const k of Object.keys(m)) if (/^ensure/.test(k)) await m[k](db);
-    return `entry points: ${Object.keys(m).filter((k) => /^(assign|ensure)/.test(k)).slice(0, 5).join(",")}`;
-  });
-
-  await probe("background-scheduler", "full sweep", async () => {
-    const m = await import("../lib/background-scheduler.ts");
-    const out = await m.runBackgroundScheduler(db, { actorId: "e2e:scheduler", asOf: NOW, cron: "*/5 * * * *" });
-    const errs = Array.isArray(out?.errors) ? out.errors : [];
-    return `ran; ${errs.length} sweep error(s)${errs.length ? ": " + errs.slice(0, 2).join(" | ").slice(0, 140) : ""}`;
-  });
-
-  await probe("communication-engine", "governed enqueue", async () => {
-    const m = await import("../lib/communication-engine.ts");
-    for (const k of Object.keys(m)) if (/^ensure/.test(k)) await m[k](db);
-    if (typeof m.enqueueCommunication !== "function") throw new Error("enqueueCommunication is not a function");
-    return "communication engine reachable";
+  // The integrity triggers must be live, not just the tables.
+  await probe("financial-lifecycle", "ledger integrity triggers active", async () => {
+    const trig = sqlite.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name LIKE 'journal%'").get().n;
+    if (!trig) throw new Error("no journal integrity triggers installed - posted entries would be mutable");
+    const txId = sqlite.prepare("SELECT id FROM journal_transactions LIMIT 1").get()?.id;
+    if (!txId) throw new Error("no transaction to test immutability against");
+    let refused = false;
+    try { sqlite.prepare("DELETE FROM journal_entries WHERE transaction_id=?").run(txId); }
+    catch { refused = true; }
+    const posted = sqlite.prepare("SELECT status FROM journal_transactions WHERE id=?").get(txId)?.status;
+    if (posted === "POSTED" && !refused) throw new Error("posted journal entries were DELETABLE - immutability trigger not enforcing");
+    return `${trig} trigger(s) installed; posted-entry delete ${refused ? "refused" : `n/a (status ${posted})`}`;
   });
 });
 

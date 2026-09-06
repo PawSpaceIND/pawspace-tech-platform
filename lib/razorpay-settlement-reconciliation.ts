@@ -1,4 +1,4 @@
-import { advancePaymentState } from "./financial-lifecycle";
+import { advancePaymentState, ensureFinancialLifecycleTables } from "./financial-lifecycle";
 import { paymentEnvironment, type PaymentEnvironment } from "./razorpay-client";
 
 type Db = D1Database;
@@ -128,6 +128,41 @@ function nonNegativeInteger(value: unknown, label: string, allowNull = true) {
   return numeric;
 }
 
+/* This module had NO ensure function at all - it simply assumed its two tables existed. They were
+ * declared only in drizzle/0019_razorpay_settlement_reconciliation.sql, which no deploy workflow
+ * applies, so every settlement sweep in production hit "no such table". Same class as the ledger
+ * gap in financial-lifecycle.ts; same fix, following the same repo convention.
+ *
+ * ensureFinancialLifecycleTables runs first because payment_settlement_reconciliations carries a
+ * foreign key to payment_intents, which that module owns. */
+export async function ensureSettlementReconciliationTables(db: Db) {
+  await ensureFinancialLifecycleTables(db);
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS payment_settlement_reconciliations (
+      id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL,
+      environment TEXT NOT NULL CHECK(environment IN ('sandbox','live')),
+      payment_intent_id TEXT NOT NULL, gateway_payment_id TEXT NOT NULL,
+      gateway_settlement_id TEXT NOT NULL, settlement_utr TEXT,
+      amount_paise INTEGER NOT NULL CHECK(amount_paise >= 0),
+      credit_paise INTEGER CHECK(credit_paise IS NULL OR credit_paise >= 0),
+      debit_paise INTEGER CHECK(debit_paise IS NULL OR debit_paise >= 0),
+      fee_paise INTEGER CHECK(fee_paise IS NULL OR fee_paise >= 0),
+      tax_paise INTEGER CHECK(tax_paise IS NULL OR tax_paise >= 0),
+      currency TEXT NOT NULL, settled_at INTEGER NOT NULL, recon_date TEXT NOT NULL,
+      raw_payload_json TEXT NOT NULL, observed_at INTEGER NOT NULL,
+      UNIQUE(provider, environment, gateway_payment_id),
+      FOREIGN KEY(payment_intent_id) REFERENCES payment_intents(id))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS razorpay_settlement_recon_runs (
+      run_key TEXT PRIMARY KEY NOT NULL,
+      environment TEXT NOT NULL CHECK(environment IN ('sandbox','live')),
+      status TEXT NOT NULL CHECK(status IN ('RUNNING','COMPLETED','FAILED')),
+      attempts INTEGER NOT NULL DEFAULT 1 CHECK(attempts >= 1),
+      result_json TEXT, last_error TEXT, started_at INTEGER NOT NULL,
+      finished_at INTEGER, updated_at INTEGER NOT NULL)`),
+    db.prepare("CREATE INDEX IF NOT EXISTS razorpay_settlement_recon_runs_status_idx ON razorpay_settlement_recon_runs(environment, status, started_at)"),
+  ]);
+}
+
 export async function applyRazorpaySettlementReconItems(db: Db, input: {
   environment: PaymentEnvironment;
   reconDate: string;
@@ -197,6 +232,7 @@ function lookbackDates(asOf: number, days = 3) {
 }
 
 export async function runRazorpaySettlementReconciliationSweep(db: Db, env: Env, input: { asOf?: number } = {}) {
+  await ensureSettlementReconciliationTables(db);
   if (!isTrue(env.PAWSPACE_RAZORPAY_SETTLEMENT_RECON_ENABLED)) {
     return { configured: false, skipped: true, reason: "PAWSPACE_RAZORPAY_SETTLEMENT_RECON_ENABLED is not true" };
   }
