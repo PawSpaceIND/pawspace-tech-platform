@@ -1,0 +1,72 @@
+name: Money readiness D1 diagnostic
+
+on:
+  push:
+    branches: [fix/money-readiness]
+    paths:
+      - .github/workflows/money-readiness-d1-diagnostic.yml
+      - scripts/money-readiness-d1-diagnostic.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema-read:
+    name: Read-only schema (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [staging, production]
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Resolve protected target without logging identifiers
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          if [ "${{ matrix.environment }}" = "staging" ]; then TARGET_D1_ID="$STAGING_D1_ID"; else TARGET_D1_ID="$PRODUCTION_D1_ID"; fi
+          if [ -z "$TARGET_D1_ID" ]; then echo "Required D1 identifier is not configured." >&2; exit 1; fi
+          export TARGET_D1_ID
+          node -e 'const fs=require("node:fs");fs.writeFileSync(process.env.RUNNER_TEMP+"/money-readiness-wrangler.json",JSON.stringify({name:"money-readiness-read-only-diagnostic",compatibility_date:"2026-09-06",d1_databases:[{binding:"DB",database_name:"money-readiness-protected-target",database_id:process.env.TARGET_D1_ID}]}))'
+      - name: Execute read-only schema and journal diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          RAW="$RUNNER_TEMP/money-readiness-${{ matrix.environment }}"
+          mkdir -p "$RAW"
+          CONFIG="$RUNNER_TEMP/money-readiness-wrangler.json"
+          if ! npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" --json > "$RAW/tables.json" 2> "$RAW/tables.err"; then
+            echo "Read-only table-map query failed; raw provider output is intentionally suppressed." >&2
+            exit 1
+          fi
+          set +e
+          npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT COUNT(*) AS row_count FROM journal_entries;" --json > "$RAW/journal.json" 2> "$RAW/journal.err"
+          JOURNAL_STATUS=$?
+          npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT COUNT(*) AS row_count FROM finance_journal_entries;" --json > "$RAW/finance.json" 2> "$RAW/finance.err"
+          FINANCE_STATUS=$?
+          set -e
+          node scripts/money-readiness-d1-diagnostic.mjs \
+            --environment "${{ matrix.environment }}" \
+            --tables "$RAW/tables.json" \
+            --journal "$RAW/journal.json" --journal-status "$JOURNAL_STATUS" \
+            --finance "$RAW/finance.json" --finance-status "$FINANCE_STATUS" \
+            | tee "$RUNNER_TEMP/money-readiness-${{ matrix.environment }}-summary.json"
+      - name: Upload sanitized schema evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: money-readiness-${{ matrix.environment }}-schema
+          path: ${{ runner.temp }}/money-readiness-${{ matrix.environment }}-summary.json
+          if-no-files-found: error
+          retention-days: 7
