@@ -9,74 +9,29 @@ const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 const FUTURE_START = "2030-01-10T09:00:00.000Z";
 const FUTURE_END = "2030-01-10T11:00:00.000Z";
 
-// These are the API routes whose unexpected-error boundary was consolidated in PR #273.
-// The older broad sweep remains in unauthenticated-error-redaction.test.mjs so a newly-added
-// public route is still discovered automatically. This matrix complements it by proving every
-// handler changed here reaches the injected fault instead of merely counting a handful of 500s.
 const ROUTES = [
-  "address-autocomplete",
-  "boarding-commercial",
-  "food-commercial",
-  "haptik",
-  "host-profile",
-  "launch-readiness",
-  "live-price-quote",
-  "pet-passport-public",
-  "pricing-quote",
-  "provider-public-profile",
-  "public-contact",
-  "razorpay-webhook",
-  "scheduling-rules",
-  "service-availability",
-  "sitting-commercial",
-  "sitting-payment-sandbox",
-  "taxi-commercial",
-  "training-commercial",
-  "training-trainers",
-  "walking-commercial",
-  "whatsapp-uat-webhook",
+  "address-autocomplete","boarding-commercial","food-commercial","haptik","host-profile","launch-readiness",
+  "live-price-quote","pet-passport-public","pricing-quote","provider-public-profile","public-contact","razorpay-webhook",
+  "scheduling-rules","service-availability","sitting-commercial","sitting-payment-sandbox","taxi-commercial",
+  "training-commercial","training-trainers","walking-commercial","whatsapp-uat-webhook",
 ];
 
-// A D1 failure cannot exercise this handler because it has no D1 dependency at all. The existing
-// LEAK-2 suite injects a throwing runtime binding into this exact GET and asserts the 500 is redacted.
 const EXCLUSIONS = new Map([
   ["address-autocomplete.GET", "No D1 dependency; covered by the runtime-binding fault injection in unauthenticated-error-redaction.test.mjs"],
 ]);
 
 function failingDb(state) {
-  const boom = () => {
-    state.faults += 1;
-    throw new Error(`SQLITE_ERROR: no such column: ${SENTINEL}`);
-  };
-  const statement = () => ({
-    bind: () => statement(),
-    first: async () => boom(),
-    run: async () => boom(),
-    all: async () => boom(),
-  });
-  return {
-    prepare: () => statement(),
-    batch: async () => boom(),
-    exec: async () => boom(),
-  };
+  const boom = () => { state.faults += 1; throw new Error(`SQLITE_ERROR: no such column: ${SENTINEL}`); };
+  const statement = () => ({ bind: () => statement(), first: async () => boom(), run: async () => boom(), all: async () => boom() });
+  return { prepare: () => statement(), batch: async () => boom(), exec: async () => boom() };
 }
 
 function jsonInit(method, body, headers = {}) {
-  return {
-    method,
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  };
+  return { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) };
 }
 
-async function hmac(secret, raw) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+async function hmac(secret, raw, hash="SHA-256") {
+  const key = await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{ name: "HMAC", hash },false,["sign"]);
   const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)));
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -93,20 +48,19 @@ async function fixtureFor(label, route, method) {
     case "food-commercial.POST":
       init = jsonInit(method, { sku: "FOOD-TEST", quantity: 1, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: "CUS-LEAK3", petIds: ["PET-LEAK3"] });
       break;
-    case "haptik.POST":
-      env = { HAPTIK_API_KEY: "test-haptik-key" };
-      init = jsonInit(method, { action: "capture_lead", idempotencyKey: "LEAK3-HAPTIK", phone: "9999999999", name: "Fault Probe" }, { "x-haptik-key": "test-haptik-key" });
+    case "haptik.POST": {
+      const secret="test-haptik-key";
+      const raw=JSON.stringify({ action: "capture_lead", idempotencyKey: "LEAK3-HAPTIK", phone: "9999999999", name: "Fault Probe" });
+      env = { HAPTIK_API_KEY: secret };
+      init = {method,headers:{"content-type":"application/json","x-hub-signature":`sha1=${await hmac(secret,raw,"SHA-1")}`},body:raw};
       break;
+    }
     case "host-profile.GET":
       url += "?providerId=PROV-LEAK3";
       break;
     case "launch-readiness.GET":
     case "launch-readiness.POST":
-      // This route has a custom actor() instead of the standard auth helpers used by the broad
-      // unauthenticated-route classifier. Supply identity so its database-backed actor path runs.
-      init = method === "GET"
-        ? { headers: { "oai-authenticated-user-email": "founder@pawspace.test" } }
-        : jsonInit(method, { action: "update_gate", code: "LEAK3", status: "in_progress" }, { "oai-authenticated-user-email": "founder@pawspace.test" });
+      init = method === "GET" ? { headers: { "oai-authenticated-user-email": "founder@pawspace.test" } } : jsonInit(method, { action: "update_gate", code: "LEAK3", status: "in_progress" }, { "oai-authenticated-user-email": "founder@pawspace.test" });
       break;
     case "live-price-quote.POST":
       init = jsonInit(method, { packageCode: "PKG-LEAK3", fallbackPrice: 1000, scheduledStart: FUTURE_START, cityId: "blr", zoneId: "blr-east", quantity: 1 });
@@ -177,8 +131,6 @@ async function exportedHandlers() {
   return labels.sort();
 }
 
-// Guard the matrix itself: if any consolidated route gains another HTTP method, the proof must add
-// a real fixture or a documented exclusion before CI can pass.
 test("every consolidated route handler is covered by a fault fixture or explicit exclusion", async () => {
   const labels = await exportedHandlers();
   const unknown = [];
@@ -200,9 +152,7 @@ for (const route of ROUTES) {
     if (typeof routeModule[method] !== "function") continue;
     const label = `${route}.${method}`;
     if (EXCLUSIONS.has(label)) {
-      test(`${label}: D1 fault-path exclusion is documented`, () => {
-        assert.match(EXCLUSIONS.get(label), /No D1 dependency/);
-      });
+      test(`${label}: D1 fault-path exclusion is documented`, () => { assert.match(EXCLUSIONS.get(label), /No D1 dependency/); });
       continue;
     }
 
@@ -215,11 +165,7 @@ for (const route of ROUTES) {
       const original = console.error;
       console.error = () => {};
       let response;
-      try {
-        response = await routeModule[method](request);
-      } finally {
-        console.error = original;
-      }
+      try { response = await routeModule[method](request); } finally { console.error = original; }
       assert.ok(response instanceof Response, `${label} must answer with a Response`);
       const body = await response.text();
       assert.ok(state.faults > 0, `${label} did not reach the injected D1 failure; its fixture stopped at validation/auth instead`);
