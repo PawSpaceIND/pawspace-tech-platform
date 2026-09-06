@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { freshSqlite, makeD1, nextKey, seedBoardingStay, validCarePlan } from "./helpers/stay-harness.mjs";
+import { freshSqlite, makeD1, nextKey, refusal, seedBoardingStay, validCarePlan } from "./helpers/stay-harness.mjs";
 
 installWorkersHooks("__BOARDING_CHECKOUT_DAY_DB__", "__BOARDING_CHECKOUT_DAY_ENV__");
 
@@ -51,11 +51,13 @@ test("Boarding checkout day remains a valid care-event day before the checkout b
 
 test("Boarding care events are refused once the checkout boundary has passed", async () => {
   const { db, seeded, act } = await activeStay();
-  const yesterday = new Date(Date.now() - 60_000).toISOString();
-  await db.prepare("UPDATE boarding_stays SET check_out_at=? WHERE id=?").bind(yesterday, seeded.stayId).run();
+  const pastCheckout = new Date(Date.now() - 60_000).toISOString();
+  await db.prepare("UPDATE boarding_stays SET check_out_at=? WHERE id=?").bind(pastCheckout, seeded.stayId).run();
 
-  await assert.rejects(
-    act("care_event", { careEventType: "meal", detail: { stayDate: istDate(yesterday) } }),
-    async (error) => error instanceof Response && error.status === 409 && /checkout boundary/.test(await error.text()),
-  );
+  const refused = await refusal(act("care_event", {
+    careEventType: "meal",
+    detail: { stayDate: istDate(pastCheckout) },
+  }));
+  assert.equal(refused?.status, 409);
+  assert.match(refused.message, /checkout boundary/);
 });
