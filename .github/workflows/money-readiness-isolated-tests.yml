@@ -1,0 +1,38 @@
+name: Money readiness isolated M1-M6 tests
+
+on:
+  push:
+    branches: [fix/money-readiness]
+    paths:
+      - .github/workflows/money-readiness-isolated-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: money-readiness-isolated-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  m1-m6-tests:
+    name: M1-M6 npm test (isolated runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean checkout workspace
+        run: git clean -ffdx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Run exact money-readiness test command
+        run: npm test
