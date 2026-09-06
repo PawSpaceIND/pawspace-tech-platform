@@ -8,6 +8,7 @@ on:
       - app/api/haptik/route.ts
       - app/api/training-sessions/route.ts
       - lib/d1-write-retry.ts
+      - lib/provider-assignment-eligibility.ts
       - lib/scheduling-roster-authority.ts
       - scripts/pilot-staging-scheduling-preflight.sql
       - tests/e2e-pilot-simulation.test.mjs
