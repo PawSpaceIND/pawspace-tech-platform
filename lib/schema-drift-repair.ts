@@ -2,54 +2,23 @@
  * Schema drift repair.
  *
  * Two modules may both declare the same table with `CREATE TABLE IF NOT EXISTS`. That statement is a
- * no-op once the table exists, so if the two declarations disagree, **whichever module ran first
- * silently decides the real shape** and the other one's writes fail forever against a live database.
- * Nothing catches it: each module's own tests create their own table and pass.
- *
- * That is exactly what happened on staging. `lib/gst-accounting.ts` created finance_close_periods
- * without `checklist_json`, so every Finance close write died with
- * "table finance_close_periods has no column named checklist_json".
- *
- * Unifying the declarations fixes a FRESH database. It does nothing for one that already exists with
- * the wrong shape, which is why this file exists: it adds the missing columns in place.
- *
- * `tests/schema-declaration-consistency.test.mjs` is the other half - it fails CI if any two modules
- * declare the same table with different columns, so this class cannot come back.
+ * no-op once the table exists, so if the two declarations disagree, whichever module ran first silently
+ * decides the real shape. This repair remains available for startup/migration contexts, but the deployed
+ * staging Worker is migrated before pilot traffic and must not re-run multi-table schema inspection on
+ * every concurrent customer request.
  */
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
-/** Columns a table must have, with the DDL fragment used to add each one if it is missing. */
 const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: string; why: string }> = [
-  {
-    table: "scheduling_reservations", column: "attempt_id", definition: "text",
-    why: "app/api/uat-scheduling verifies and rolls back a reservation attempt by this column; keyed on (group_id, created_at) it could delete a concurrent request's committed rows",
-  },
-  {
-    table: "finance_close_periods", column: "checklist_json", definition: "text NOT NULL DEFAULT '[]'",
-    why: "lib/gst-accounting.ts created this table without the column that app/api/finance-control/route.ts writes",
-  },
-  {
-    table: "customer_contact_preferences", column: "opt_out", definition: "INTEGER NOT NULL DEFAULT 0",
-    why: "lib/customer-360.ts created this table without the opt-out flag lib/revenue-opportunity-governance.ts filters on",
-  },
-  {
-    table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
-    why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
-  },
-  {
-    table: "order_notifications", column: "delivery_status", definition: "TEXT NOT NULL DEFAULT 'pending'",
-    why: "notification rows must durably distinguish inbox persistence from downstream communication delivery so failed queue attempts remain retryable",
-  },
-  {
-    table: "order_notifications", column: "delivery_attempts", definition: "INTEGER NOT NULL DEFAULT 0",
-    why: "notification delivery attempts must remain durable and auditable across retries",
-  },
-  {
-    table: "order_notifications", column: "delivery_error", definition: "TEXT",
-    why: "failed communication queue attempts must preserve a durable recovery reason instead of being silently swallowed",
-  },
+  { table: "scheduling_reservations", column: "attempt_id", definition: "text", why: "scheduling attempt compare-and-set identity" },
+  { table: "finance_close_periods", column: "checklist_json", definition: "text NOT NULL DEFAULT '[]'", why: "finance close checklist" },
+  { table: "customer_contact_preferences", column: "opt_out", definition: "INTEGER NOT NULL DEFAULT 0", why: "contact opt-out governance" },
+  { table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT", why: "package-upgrade compare-and-set" },
+  { table: "order_notifications", column: "delivery_status", definition: "TEXT NOT NULL DEFAULT 'pending'", why: "durable notification delivery state" },
+  { table: "order_notifications", column: "delivery_attempts", definition: "INTEGER NOT NULL DEFAULT 0", why: "durable notification attempts" },
+  { table: "order_notifications", column: "delivery_error", definition: "TEXT", why: "durable notification failure reason" },
 ];
 
 async function tableExists(db: Db, name: string) {
@@ -57,12 +26,21 @@ async function tableExists(db: Db, name: string) {
   return Boolean(row);
 }
 
+let stagingRuntimePromise: Promise<boolean> | undefined;
+async function stagingRuntime() {
+  stagingRuntimePromise ??= import("cloudflare:workers")
+    .then(({ env }) => String((env as unknown as Record<string, unknown>).PAWSPACE_DEPLOYMENT_ENV || "").trim().toLowerCase() === "staging")
+    .catch(() => false);
+  return stagingRuntimePromise;
+}
+
 /**
- * Add any missing column listed above. Safe to run on every request path: it only touches tables that
- * already exist, only adds columns that are genuinely absent, and never drops or rewrites data.
- * Returns the repairs actually applied so a caller can log or assert on them.
+ * Add any missing column listed above. In deployed staging, schema preparation is a deployment concern,
+ * not customer-request work: return immediately and let the workflow preflight fail if the schema is not
+ * ready. Production/local behavior is unchanged until the repository moves this fully into migrations.
  */
 export async function repairSchemaDrift(db: Db) {
+  if (await stagingRuntime()) return { repaired: [], preflighted: true };
   const repaired: string[] = [];
   for (const item of REQUIRED_COLUMNS) {
     if (!await tableExists(db, item.table)) continue;
@@ -79,5 +57,4 @@ export async function repairSchemaDrift(db: Db) {
   return { repaired };
 }
 
-/** The declared expectations, exported so tests can check them against the modules' own DDL. */
 export const REQUIRED_COLUMN_REPAIRS = REQUIRED_COLUMNS;
