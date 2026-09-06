@@ -1,0 +1,53 @@
+name: Fix backend dependency audit
+
+on:
+  push:
+    branches:
+      - fix/pre-human-uat-blockers-20260906
+    paths:
+      - .github/workflows/qa-fix-backend-audit.yml
+
+permissions:
+  contents: write
+
+env:
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
+
+jobs:
+  patch-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pre-human-uat-blockers-20260906
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Apply same-major and non-breaking audit fixes
+        working-directory: backend
+        run: |
+          npm ci
+          npm install --save-exact fastify@5.12.3
+          npm audit fix
+      - name: Verify backend after dependency repair
+        working-directory: backend
+        run: |
+          npm run typecheck
+          npm test
+          npm audit --audit-level=high
+      - name: Commit repaired dependency graph
+        run: |
+          git config user.name "PawSpace QA Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add backend/package.json backend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No dependency changes required"
+            exit 0
+          fi
+          git commit -m "fix(security): repair backend dependency advisories"
+          git push origin HEAD:fix/pre-human-uat-blockers-20260906
