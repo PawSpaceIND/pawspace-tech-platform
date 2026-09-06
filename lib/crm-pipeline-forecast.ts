@@ -63,7 +63,6 @@ async function historicalStageProbability(db: Db, stage: OpportunityStage) {
   const history = await db.prepare("SELECT COUNT(DISTINCT h.opportunity_id) samples,SUM(CASE WHEN o.status='won' THEN 1 ELSE 0 END) wins FROM crm_opportunity_stage_history h JOIN crm_opportunities o ON o.id=h.opportunity_id WHERE h.to_stage=? AND o.status IN ('won','lost')")
     .bind(stage).first<Row>();
   const samples = Number(history?.samples ?? 0), wins = Number(history?.wins ?? 0);
-  // Bayesian shrinkage prevents one early win/loss from swinging a stage from 10% to 100%.
   return clamp01(((prior * 10) + wins) / (10 + samples));
 }
 
@@ -109,7 +108,7 @@ export async function upsertOpportunityFromLead(db: Db, input: { leadId: string;
   const amount = Math.max(0, Number(input.amount ?? 0));
   const probability = await historicalStageProbability(db, stage);
   const id = uid("OPP");
-  await db.prepare("INSERT INTO crm_opportunities (id,lead_id,customer_id,service_code,owner,stage,status,amount,amount_basis,stage_probability,next_best_action,next_action_at,won_booking_id,source,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?, '',NULL,?,?,?, ?,?,?)")
+  await db.prepare("INSERT INTO crm_opportunities (id,lead_id,customer_id,service_code,owner,stage,status,amount,amount_basis,stage_probability,next_best_action,next_action_at,won_booking_id,source,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?, '',NULL,?,?,?,?,?)")
     .bind(id, input.leadId, lead.customer_id, text(lead.service) || "unknown", text(lead.owner) || "Unassigned", stage, stage === "won" ? "won" : "open", amount, text(input.amountBasis) || (amount > 0 ? "operator_supplied" : "unpriced"), probability, lead.converted_booking_id || null, text(input.source) || "lead_work_items", input.actorId, now, now).run();
   await db.prepare("INSERT INTO crm_opportunity_stage_history (id,opportunity_id,from_stage,to_stage,probability,amount,reason,actor_id,created_at) VALUES (?,?,NULL,?,?,?,?,?,?)")
     .bind(uid("OPH"), id, stage, probability, amount, "Opportunity created from canonical lead", input.actorId, now).run();
