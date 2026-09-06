@@ -7,6 +7,7 @@ const browserHarness = readFileSync(new URL("../lib/voice-ai-browser-harness.ts"
 const route = readFileSync(new URL("../app/api/voice-outbound/route.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/team/voice/ai-test/page.tsx", import.meta.url), "utf8");
 const worker = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
+const stageConfig = readFileSync(new URL("../scripts/stage-config.mjs", import.meta.url), "utf8");
 
 const squash = (value) => value.replace(/\s+/g, "");
 const codeOnly = (value) =>
@@ -18,6 +19,7 @@ const flatBrowserCode = squash(codeOnly(browserHarness));
 const flatRoute = squash(route);
 const flatPage = squash(page);
 const flatWorker = squash(worker);
+const flatStageConfig = squash(codeOnly(stageConfig));
 const has = (haystack, needle, message) => assert.ok(haystack.includes(needle), message);
 
 test("AI voice self-test is UAT-only, one-recipient, non-recording and audited", () => {
@@ -136,7 +138,7 @@ test("browser harness is carrier-free, UAT-only and uses an authenticated short-
 test("authenticated operator API mints the direct browser ticket", () => {
   has(flatRoute, 'scope==="ai_browser_test"');
   has(flatRoute, 'action==="uat_ai_browser_ticket"');
-  has(flatRoute, 'issueDirectBrowserVoiceTicket(env,newURL(request.url).origin)');
+  has(flatRoute, 'issueDirectBrowserVoiceTicket(db,env,newURL(request.url).origin)');
   has(flatRoute, 'requirePermission(actor,"settings.manage")');
   assert.match(route, /voice\.ai_browser_test\.ticket/);
 });
@@ -180,4 +182,43 @@ test("browser page captures mic PCM, resamples to 16-bit and plays raw PCM repli
   assert.match(page, /new Int16Array\(buffer\)/);
   assert.match(page, /Audio clarity/);
   assert.match(page, /totalLatencyMs/);
+});
+
+test("carrier readiness requires the Exotel Voicebot App before any dialing row is created", () => {
+  const missingBlock = voice.slice(voice.indexOf("function missingTelephony"), voice.indexOf("export function aiVoiceSelfTestReadiness"));
+  assert.match(missingBlock, /EXOTEL_VOICE_APP_ID/);
+});
+
+test("browser voice tickets are D1-backed and atomically single-use", () => {
+  assert.match(browserHarness, /ai_browser_voice_tickets/);
+  assert.match(browserHarness, /SET used_at=\?/);
+  assert.match(browserHarness, /used_at IS NULL AND expires_at>=\?/);
+  assert.match(browserHarness, /claim\.meta\?\.changes/);
+  has(flatRoute, "issueDirectBrowserVoiceTicket(db,env,newURL(request.url).origin)");
+});
+
+test("carrier stream negotiation and websocket admission are single-use CAS transitions", () => {
+  assert.match(voice, /state='negotiated'.*state='dialing'/s);
+  assert.match(voice, /state='stream_claimed'.*state='negotiated'/s);
+  assert.match(voice, /streamClaim\.meta\?\.changes/);
+  assert.match(voice, /STREAM_TOKEN_TTL_MS = 2 \* 60_000/);
+});
+
+test("self-test call admission is serialized in D1 before cap and dial", () => {
+  assert.match(voice, /ai_voice_self_test_active_guard/);
+  assert.match(voice, /ON CONFLICT\(slot\) DO NOTHING/);
+  assert.match(voice, /guardClaim\.meta\?\.changes/);
+  assert.match(voice, /releaseActiveGuard/);
+});
+
+test("barge-in cancels queued PCM instead of only clearing carrier playback", () => {
+  assert.match(voice, /playbackGeneration \+= 1/);
+  assert.match(voice, /shouldContinue: \(\) => boolean/);
+  assert.match(voice, /if \(!shouldContinue\(\)\) return false/);
+  assert.match(voice, /\(\) => playbackGeneration === generation/);
+});
+
+test("staging config cannot select a Worker outside the certified staging lane", () => {
+  has(flatStageConfig, 'constWORKER_NAME="pawspace-staging"');
+  assert.doesNotMatch(stageConfig, /process\.env\.PAWSPACE_STAGE_WORKER_NAME/);
 });
