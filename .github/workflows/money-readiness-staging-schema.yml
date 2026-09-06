@@ -1,0 +1,95 @@
+name: Money readiness staging schema M1
+
+on:
+  push:
+    branches: [fix/money-readiness]
+    paths:
+      - lib/money-readiness-schema.ts
+      - tests/money-readiness-schema.test.mjs
+      - .github/workflows/money-readiness-staging-schema.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: money-readiness-staging-schema
+  cancel-in-progress: false
+
+jobs:
+  apply-staging-schema:
+    name: Apply 16-table schema to staging D1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Render idempotent staging schema SQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCHEMA_SQL="$RUNNER_TEMP/money-readiness-staging.sql"
+          SCHEMA_SQL="$SCHEMA_SQL" node --experimental-strip-types --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { MONEY_READINESS_SCHEMA_CONFIG, renderMoneyReadinessSchemaSql } from "./lib/money-readiness-schema.ts";
+          if (MONEY_READINESS_SCHEMA_CONFIG.canonicalJournalTable !== "finance_journal_entries") {
+            throw new Error("Canonical journal must remain finance_journal_entries for M1 staging.");
+          }
+          writeFileSync(process.env.SCHEMA_SQL, renderMoneyReadinessSchemaSql(process.env));
+          NODE
+
+      - name: Apply schema to isolated staging D1 only
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$APP_ENV" != "staging" ] || [ "$FORBID_PRODUCTION" != "true" ]; then
+            echo "Refusing schema apply outside staging/test isolation." >&2
+            exit 1
+          fi
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --file="$RUNNER_TEMP/money-readiness-staging.sql"
+
+      - name: Verify 16 tables and canonical journal
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          VERIFY="$RUNNER_TEMP/money-readiness-staging-verify.json"
+          SQL="SELECT COUNT(*) AS target_table_count, GROUP_CONCAT(name, ',') AS target_tables, (SELECT COUNT(*) FROM finance_journal_entries) AS canonical_journal_rows, (SELECT COUNT(*) FROM journal_entries) AS legacy_journal_rows FROM sqlite_master WHERE type='table' AND name IN ('business_metric_definitions','canonical_revenue_opportunity_context','canonical_revenue_opportunity_service_history','grooming_subscriptions','marketing_audit_events','marketing_campaigns','marketing_promotions','payment_settlement_reconciliations','razorpay_settlement_recon_runs','report_definitions','report_runs','service_proof_ledgers','subscription_automation_rules','subscription_entitlement_events','subscription_entitlements','subscription_events');"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "$SQL" --json > "$VERIFY"
+          VERIFY="$VERIFY" node --experimental-strip-types --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { MONEY_READINESS_REQUIRED_TABLES, MONEY_READINESS_SCHEMA_CONFIG } from "./lib/money-readiness-schema.ts";
+          const payload = JSON.parse(readFileSync(process.env.VERIFY, "utf8"));
+          let row = null;
+          const visit = (value) => {
+            if (row || value == null) return;
+            if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+            if (typeof value !== "object") return;
+            if (Object.prototype.hasOwnProperty.call(value, "target_table_count")) { row = value; return; }
+            for (const child of Object.values(value)) visit(child);
+          };
+          visit(payload);
+          if (!row) throw new Error("Staging verification did not return the expected schema row.");
+          const actual = String(row.target_tables ?? "").split(",").filter(Boolean).sort();
+          const expected = [...MONEY_READINESS_REQUIRED_TABLES].sort();
+          const missing = expected.filter((name) => !actual.includes(name));
+          if (Number(row.target_table_count) !== 16 || missing.length) {
+            throw new Error(`Staging schema mismatch: count=${row.target_table_count}, missing=${missing.join(",")}`);
+          }
+          if (MONEY_READINESS_SCHEMA_CONFIG.canonicalJournalTable !== "finance_journal_entries") {
+            throw new Error("Canonical journal configuration drifted from finance_journal_entries.");
+          }
+          console.log(`M1 staging schema verified: tables=16 canonical=finance_journal_entries canonicalRows=${row.canonical_journal_rows} legacyRows=${row.legacy_journal_rows}`);
+          NODE

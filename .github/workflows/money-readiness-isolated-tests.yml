@@ -5,6 +5,9 @@ on:
     branches: [fix/money-readiness]
     paths:
       - .github/workflows/money-readiness-isolated-tests.yml
+      - .github/workflows/money-readiness-staging-schema.yml
+      - lib/money-readiness-schema.ts
+      - tests/money-readiness-schema.test.mjs
   workflow_dispatch:
 
 permissions:
