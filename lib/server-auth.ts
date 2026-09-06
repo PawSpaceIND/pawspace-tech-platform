@@ -53,9 +53,9 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const identity=forwardedIdentity(request);
   if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
   const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
-  // There is deliberately no founder/bootstrap exception here. Workspace identity headers identify a
-  // caller; they do not authorize account creation. The first founder/admin must be provisioned through
-  // the governed D1 bootstrap process before that identity can authenticate.
+  // FOUNDER_EMAIL is intentionally not consulted here. A configured email or forwarded identity header
+  // is identity evidence only; it is never authorization to auto-create an app_users row. The first
+  // founder/admin must be provisioned through the governed D1 bootstrap process.
   if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
