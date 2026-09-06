@@ -3,7 +3,11 @@ export type IdentitySource="workspace"|"customer_otp"|"partner_otp"|"migration";
 export type PrincipalType="email"|"identity_subject";
 type Row=Record<string,unknown>;
 
-export async function ensureIdentityBindingTables(db:D1Database){await db.batch([
+let stagingRuntimePromise:Promise<boolean>|undefined;
+async function stagingRuntime(){stagingRuntimePromise??=import("cloudflare:workers").then(({env})=>String((env as unknown as Record<string,unknown>).PAWSPACE_DEPLOYMENT_ENV||"").trim().toLowerCase()==="staging").catch(()=>false);return stagingRuntimePromise;}
+
+/** Schema is deployment-owned on staging; local/production retain the legacy defensive bootstrap. */
+export async function ensureIdentityBindingTables(db:D1Database){if(await stagingRuntime())return;await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS identity_bindings (id TEXT PRIMARY KEY,identity_source TEXT NOT NULL,principal_type TEXT NOT NULL,principal_key TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,city_id TEXT,status TEXT NOT NULL DEFAULT 'active',verification_state TEXT NOT NULL DEFAULT 'verified',verified_at INTEGER,expires_at INTEGER,metadata_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(identity_source,principal_type,principal_key,subject_type))"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_identity_bindings_subject ON identity_bindings(subject_type,subject_id,status,verification_state)"),
   db.prepare("CREATE TABLE IF NOT EXISTS identity_binding_audit (id TEXT PRIMARY KEY,binding_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
