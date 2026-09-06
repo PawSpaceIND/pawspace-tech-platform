@@ -32,6 +32,8 @@ jobs:
           cd backend
           npm ci
           npm run build
+          ln -sf src/scheduling.js dist/scheduling.js
+          ln -sf src/finance.js dist/finance.js
       - name: Execute 520-customer / 10-provider certification
         run: node qa/pre-human-520x10.mjs
       - uses: actions/upload-artifact@v4
