@@ -83,6 +83,60 @@ jobs:
           node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs
       - name: Build
         run: npm run build
+      - name: Configure isolated staging base
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Resolve canonical UAT context from allowlisted owner
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { appendFileSync } = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const sqlEscape = value => String(value || '').replaceAll("'", "''");
+          const entries = String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST || '').trim().split(/[\s,;]+/).filter(Boolean);
+          if (entries.length !== 1) throw new Error('Voice UAT requires exactly one allowlisted recipient');
+          const suffix = entries[0].replace(/\D/g, '').slice(-10);
+          if (suffix.length !== 10) throw new Error('Voice UAT allowlist is not one valid E.164 recipient');
+          const execute = sql => {
+            const raw = execFileSync('npx', ['wrangler','d1','execute','pawspace-staging','--remote','--json','--command',sql], {
+              encoding: 'utf8', env: process.env, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore','pipe','pipe'],
+            });
+            const starts = [raw.indexOf('['), raw.indexOf('{')].filter(index => index >= 0);
+            if (!starts.length) throw new Error('Staging D1 returned no JSON');
+            const parsed = JSON.parse(raw.slice(Math.min(...starts)));
+            const blocks = Array.isArray(parsed) ? parsed : [parsed];
+            return blocks.flatMap(block => Array.isArray(block?.results) ? block.results : []);
+          };
+          const owners = execute(`
+            WITH matched AS (
+              SELECT id,city_id FROM canonical_customers
+              WHERE replace(replace(replace(replace(replace(primary_phone,' ',''),'-',''),'+',''),'(',''),')','') LIKE '%${sqlEscape(suffix)}'
+            )
+            SELECT c.id,c.city_id,COUNT(b.id) AS booking_count
+            FROM matched c JOIN canonical_bookings b ON b.customer_id=c.id
+            GROUP BY c.id,c.city_id
+          `);
+          if (owners.length !== 1) throw new Error(`Allowlisted recipient resolves to ${owners.length} booking-owning staging customers; refusing ambiguous carrier UAT`);
+          const customerId = String(owners[0].id || '').trim();
+          const bookings = execute(`SELECT id,city_id FROM canonical_bookings WHERE customer_id='${sqlEscape(customerId)}' ORDER BY updated_at DESC,created_at DESC,id DESC LIMIT 1`);
+          if (bookings.length !== 1) throw new Error('Resolved staging customer has no canonical booking');
+          const bookingId = String(bookings[0].id || '').trim();
+          const cityId = String(bookings[0].city_id || owners[0].city_id || '').trim();
+          if (!customerId || !bookingId || !cityId) throw new Error('Resolved UAT canonical context is incomplete');
+          const consentRef = `github-actions-voice-uat-${process.env.GITHUB_RUN_ID}`;
+          for (const value of [customerId, bookingId, cityId, consentRef]) console.log(`::add-mask::${value}`);
+          appendFileSync(process.env.GITHUB_ENV, `UAT_CUSTOMER_ID=${customerId}\nUAT_BOOKING_ID=${bookingId}\nUAT_CITY_ID=${cityId}\nUAT_CONSENT_SOURCE_REF=${consentRef}\n`);
+          console.log('Canonical UAT context resolved from one allowlisted booking owner; identifiers withheld.');
+          NODE
       - name: Validate seven-parameter UAT preflight
         env:
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
@@ -94,28 +148,12 @@ jobs:
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
           EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
-          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
-          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
-          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
-          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
         run: node scripts/voice-uat-preflight.mjs
-      - name: Configure isolated staging base
-        env:
-          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
-          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-        run: node scripts/stage-config.mjs
       - name: Apply voice UAT overlay
         env:
           PAWSPACE_VOICE_UAT_APPROVED: 'true'
           EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
           EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
-          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
-          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
-          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
-          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
         run: node scripts/stage-voice-uat-config.mjs
       - name: Deploy voice-enabled isolated staging
         id: deploy
@@ -164,6 +202,7 @@ jobs:
           {
             echo '## Voice UAT staging activation'
             echo '- isolated staging deployed: yes'
+            echo '- canonical UAT customer/booking/city resolved from allowlisted booking ownership: yes'
             echo '- Workers AI binding requested: yes'
             echo '- STT: @cf/openai/whisper-large-v3-turbo'
             echo '- in-app TTS: @cf/myshell-ai/melotts'
