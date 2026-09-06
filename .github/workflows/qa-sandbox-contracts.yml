@@ -1,0 +1,40 @@
+name: Pre-human sandbox contracts
+
+on:
+  push:
+    branches:
+      - agent/platform-stack-recertification
+    paths:
+      - .github/workflows/qa-sandbox-contracts.yml
+
+permissions:
+  contents: read
+
+env:
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
+  PAWSPACE_SANDBOX_TESTS_STRICT: 'true'
+
+jobs:
+  sandbox-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Razorpay sandbox and Meta UAT read-only contracts
+        env:
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+        run: node --experimental-strip-types --test tests/integration/razorpay-sandbox.contract.test.mjs tests/integration/meta-graph-sandbox.contract.test.mjs
