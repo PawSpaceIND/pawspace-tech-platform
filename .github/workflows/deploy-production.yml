@@ -110,6 +110,16 @@ jobs:
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: node scripts/prod-config.mjs
 
+      - name: Apply production D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          rm -rf dist/server/drizzle
+          cp -R drizzle dist/server/drizzle
+          npx wrangler d1 migrations apply DB --remote --config dist/server/wrangler.json
+
       - name: Record the currently deployed production version (rollback reference)
         id: rollback
         continue-on-error: true
@@ -170,6 +180,7 @@ jobs:
           if (cfg.name !== "pawspace-prod-bengaluru") fail(`worker is ${cfg.name}, not pawspace-prod-bengaluru`);
           const bound = (cfg.d1_databases || [])[0];
           if (!bound || bound.database_id !== process.env.PRODUCTION_D1_ID) fail("DB binding is not the production database");
+          if (bound.migrations_dir !== "drizzle") fail("DB binding does not use the tracked drizzle migrations");
           for (const forbidden of ["PAWSPACE_LOCAL_PREVIEW", "PAWSPACE_UAT_LOGIN", "PAWSPACE_SCHEDULING_ENV", "META_WHATSAPP_UAT_DELIVERY_ENABLED", "PAWSPACE_MEDIA_ENV"]) {
             if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
           }
