@@ -18,8 +18,8 @@ async function runtime(){const{env}=await import("cloudflare:workers");return en
 export async function POST(request:Request){try{
  const env=await runtime();
  if(String(env.PAWSPACE_DEPLOYMENT_ENV||"").trim().toLowerCase()!=="staging"||String(env.PAWSPACE_SCHEDULING_ENV||"").trim().toLowerCase()!=="uat")return json({error:"Pilot finance reconciliation is staging-only"},404);
- const body=await request.json().catch(()=>({}))as{code?:string};
- if(!uatAccessCodeValid(env as never,body.code))return json({error:"Invalid UAT access code"},401);
+ const code=request.headers.get("x-pawspace-uat-access-code")||"";
+ if(!uatAccessCodeValid(env as never,code))return json({error:"Invalid UAT access code"},401);
  const db=await database();
  const rows=await db.prepare(`
    SELECT b.id,b.scheduled_end,b.updated_at
