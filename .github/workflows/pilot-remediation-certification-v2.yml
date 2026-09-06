@@ -93,7 +93,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error -X POST "$STAGING_URL/api/pilot-finance-reconcile" \
+          COOKIE_JAR="$RUNNER_TEMP/pawspace-pilot-finance.cookies"
+          CODE_JSON="$(node -e 'process.stdout.write(JSON.stringify(process.env.PAWSPACE_UAT_ACCESS_CODE||""))')"
+          trap 'rm -f "$COOKIE_JAR"' EXIT
+          curl --fail-with-body --silent --show-error -c "$COOKIE_JAR" -X POST "$STAGING_URL/api/staging-login" \
+            -H 'content-type: application/json' \
+            --data "{\"action\":\"login\",\"email\":\"founder@pawspace.in\",\"code\":${CODE_JSON}}" \
+            > /tmp/pilot-finance-login.json
+          curl --fail-with-body --silent --show-error -b "$COOKIE_JAR" -X POST "$STAGING_URL/api/pilot-finance-reconcile" \
             -H "x-pawspace-uat-access-code: $PAWSPACE_UAT_ACCESS_CODE" \
             > artifacts/pilot-readiness/finance-reconcile.json
       - name: Verify cleaned and journalized staging baseline
