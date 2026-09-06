@@ -69,3 +69,8 @@ dist/
 # committed to a repository is a data breach that survives in history forever.
 backups/
 *.sql.manifest.json
+
+# Browser E2E local artefacts
+/test-results/
+/playwright-report/
+/dist/server/.wrangler/
