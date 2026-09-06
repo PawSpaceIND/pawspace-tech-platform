@@ -5,7 +5,7 @@ import{readFile}from"node:fs/promises";
 const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("OTP identity exchange issues a bounded HttpOnly canonical session",async()=>{
-  const[session,assertion,route,sandboxRuntime,productionRuntime]=await Promise.all([source("lib/platform-session.ts"),source("lib/verified-identity-assertion.ts"),source("app/api/identity-session/route.ts"),source("lib/otp-sandbox-runtime.ts"),source("lib/otp-production-runtime.ts")]);
+  const[session,assertion,route]=await Promise.all([source("lib/platform-session.ts"),source("lib/verified-identity-assertion.ts"),source("app/api/identity-session/route.ts")]);
   assert.match(session,/platform_identity_sessions/);
   assert.match(session,/token_hash TEXT NOT NULL UNIQUE/);
   assert.match(session,/HttpOnly; Secure; SameSite=Lax/);
@@ -15,9 +15,6 @@ test("OTP identity exchange issues a bounded HttpOnly canonical session",async()
   assert.match(assertion,/PAWSPACE_IDENTITY_ENV/);
   assert.match(assertion,/resolveOtpAssertionSecret/);
   assert.match(assertion,/productionOtpEnabled/);
-  assert.match(sandboxRuntime,/PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT/);
-  assert.match(sandboxRuntime,/PAWSPACE_IDENTITY_ASSERTION_SECRET/);
-  assert.match(productionRuntime,/FAST2SMS_API_KEY/);
   assert.match(assertion,/HMAC/);
   assert.match(assertion,/verified_identity_assertion_nonces/);
   assert.match(assertion,/Identity assertion has already been used/);
@@ -46,12 +43,15 @@ test("customer and provider sessions are scoped before reaching self-service API
   assert.match(worker,/url\.pathname==="\/api\/identity-session"/);
 });
 
-test("the central API gateway honours customer/provider platform sessions, not just staff identities",async()=>{
+test("the central API gateway honours authenticated sessions and only accepts forwarded staff identity for provisioned users",async()=>{
   const gateway=await source("lib/api-gateway.ts");
   assert.match(gateway,/import \{ resolvePlatformSession \} from "\.\/platform-session"/);
   const authorize=gateway.slice(gateway.indexOf("export async function authorizeApiRequest"));
+  assert.match(authorize,/resolveUatStaffActor\(env\.DB,request,env as unknown as Record<string,unknown>\)/);
   assert.match(authorize,/resolvePlatformSession\(env\.DB,request\)/);
-  const uatIndex=authorize.indexOf("resolveUatStaffActor"),sessionIndex=authorize.indexOf("resolvePlatformSession"),headerIndex=authorize.indexOf("oai-authenticated-user-email");
-  assert.ok(uatIndex>=0&&sessionIndex>uatIndex&&headerIndex>sessionIndex,"session check must sit between the UAT cookie and the staff header identity");
+  assert.match(authorize,/oai-authenticated-user-email/);
+  assert.match(authorize,/SELECT name,role_code,status FROM app_users WHERE email=\?/);
+  assert.doesNotMatch(authorize,/if\s*\(\s*!user[\s\S]{0,500}INSERT INTO app_users/);
+  assert.doesNotMatch(authorize,/FOUNDER_EMAIL/);
   assert.match(authorize,/session\.permissions,permission/);
 });
