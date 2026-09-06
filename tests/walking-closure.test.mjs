@@ -288,22 +288,8 @@ test("Dog Walking recovery acceptance is explicit and preserves completed histor
 });
 
 // ---------------------------------------------------------------------------------------------
-/**
- * FINDING — NOT FIXED HERE. `close_recovery` gates on the booking being exactly 'assigned'
- * (lib/walking-ops-governance.ts). Acceptance leaves the booking there, so Operations must close the
- * case in the window between the replacement accepting and the replacement starting the walk. If the
- * replacement starts first, the booking is 'in_progress', and once the last walk completes it is
- * 'completed' -- neither of which 'assigned' will ever match again. The recovery case is then stuck
- * at 'replacement_accepted' permanently, and because getWalkingOpsSnapshot flags any case not in
- * (resolved, closed), the booking sits in the Operations exception queue at HIGH priority for ever,
- * on a programme that in fact finished successfully with a replacement walker.
- *
- * This test pins the behaviour as it actually is today so the defect cannot be lost. It is written
- * to FAIL if the gate is widened -- whoever fixes it should replace this test with the closure they
- * intend, rather than deleting it.
- */
-test("Dog Walking recovery cannot be closed once the replacement has started walking", async () => {
-  const { db, sqlite, booking, walk } = await world({ bookingId: "BKG-WALK-CLOSE-STUCK", walkCount: 2 });
+test("Dog Walking recovery can close after the replacement has started without moving the booking backward", async () => {
+  const { db, sqlite, booking, walk } = await world({ bookingId: "BKG-WALK-CLOSE-ACTIVE", walkCount: 2 });
   await walk("accept");
 
   const done = booking.sessions[0].sessionId;
@@ -311,7 +297,7 @@ test("Dog Walking recovery cannot be closed once the replacement has started wal
   await walk("start_walk", { sessionId: done, ...DOORSTEP });
   for (const n of [1, 2]) {
     sqlite.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,'route_location_sample',?,'{}',?)")
-      .run(`RSS-${n}`, booking.bookingId, done, WALKER, WALKER, Date.now());
+      .run(`RSA-${n}`, booking.bookingId, done, WALKER, WALKER, Date.now());
   }
   await walk("complete_walk", { sessionId: done });
   await walk("walker_unavailable", { reason: "Walker injured before the second walk" });
@@ -323,44 +309,78 @@ test("Dog Walking recovery cannot be closed once the replacement has started wal
     bookingId: booking.bookingId, providerId: REPLACEMENT, actorId: REPLACEMENT, idempotencyKey: nextKey(),
   });
 
-  // Operations does NOT close the case first; the replacement gets going.
   const second = booking.sessions[1].sessionId;
   const asReplacement = (action, extra) => lifecycle.mutateWalkingBooking(db, {
     bookingId: booking.bookingId, action, actorId: REPLACEMENT, idempotencyKey: nextKey(), sessionId: second, ...extra,
   });
   await asReplacement("confirm_handover", { handoverMethod: "building_staff" });
   await asReplacement("start_walk", DOORSTEP);
+  assert.equal((await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(booking.bookingId).first()).status, "in_progress");
 
-  const midWalk = await refusal(ops.mutateWalkingOps(db, {
+  const closed = await ops.mutateWalkingOps(db, {
     bookingId: booking.bookingId, action: "close_recovery", actorId: OPS_STAFF,
-    idempotencyKey: nextKey(), reason: "Replacement walker is out with the dog",
-  }));
-  assert.equal(midWalk?.status, 409);
-  assert.match(midWalk.message, /Replacement walker must accept before Operations can close recovery/);
+    idempotencyKey: nextKey(), reason: "Replacement walker is actively serving the recovered walk",
+  });
+  assert.equal(closed.status, "resolved");
+  assert.equal(closed.bookingStatus, "in_progress");
+  assert.equal((await db.prepare("SELECT status FROM walking_recovery_cases WHERE booking_id=?").bind(booking.bookingId).first()).status, "resolved");
+  assert.equal((await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(booking.bookingId).first()).status, "in_progress");
 
-  // Finish the programme successfully with the replacement.
   for (const n of [3, 4]) {
     sqlite.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,'route_location_sample',?,'{}',?)")
-      .run(`RSS-${n}`, booking.bookingId, second, REPLACEMENT, REPLACEMENT, Date.now());
+      .run(`RSA-${n}`, booking.bookingId, second, REPLACEMENT, REPLACEMENT, Date.now());
+  }
+  await asReplacement("complete_walk", {});
+  assert.equal((await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(booking.bookingId).first()).status, "completed");
+  const entry = (await ops.getWalkingOpsSnapshot(db)).bookings.find((row) => row.id === booking.bookingId);
+  assert.ok(!entry.exceptionFlags.includes("walker_recovery"), "a resolved recovery does not remain in the high-priority queue");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("Dog Walking recovery can close after the recovered programme has completed", async () => {
+  const { db, sqlite, booking, walk } = await world({ bookingId: "BKG-WALK-CLOSE-COMPLETE", walkCount: 2 });
+  await walk("accept");
+
+  const first = booking.sessions[0].sessionId;
+  await walk("confirm_handover", { sessionId: first, handoverMethod: "owner" });
+  await walk("start_walk", { sessionId: first, ...DOORSTEP });
+  for (const n of [1, 2]) {
+    sqlite.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,'route_location_sample',?,'{}',?)")
+      .run(`RSCOMP-${n}`, booking.bookingId, first, WALKER, WALKER, Date.now());
+  }
+  await walk("complete_walk", { sessionId: first });
+  await walk("walker_unavailable", { reason: "Walker unavailable for the final walk" });
+  await ops.mutateWalkingOps(db, {
+    bookingId: booking.bookingId, action: "assign_replacement", actorId: OPS_STAFF,
+    idempotencyKey: nextKey(), providerId: REPLACEMENT, reason: "Replacement covers the final walk",
+  });
+  await recoveryGovernance.acceptWalkingReplacement(db, {
+    bookingId: booking.bookingId, providerId: REPLACEMENT, actorId: REPLACEMENT, idempotencyKey: nextKey(),
+  });
+
+  const second = booking.sessions[1].sessionId;
+  const asReplacement = (action, extra) => lifecycle.mutateWalkingBooking(db, {
+    bookingId: booking.bookingId, action, actorId: REPLACEMENT, idempotencyKey: nextKey(), sessionId: second, ...extra,
+  });
+  await asReplacement("confirm_handover", { handoverMethod: "building_staff" });
+  await asReplacement("start_walk", DOORSTEP);
+  for (const n of [3, 4]) {
+    sqlite.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,'route_location_sample',?,'{}',?)")
+      .run(`RSCOMP-${n}`, booking.bookingId, second, REPLACEMENT, REPLACEMENT, Date.now());
   }
   await asReplacement("complete_walk", {});
   assert.equal((await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(booking.bookingId).first()).status, "completed");
 
-  // Every walk is done and paid-due, and the case can still never be closed.
-  const afterCompletion = await refusal(ops.mutateWalkingOps(db, {
+  const closed = await ops.mutateWalkingOps(db, {
     bookingId: booking.bookingId, action: "close_recovery", actorId: OPS_STAFF,
-    idempotencyKey: nextKey(), reason: "Programme finished, closing the case",
-  }));
-  assert.equal(afterCompletion?.status, 409);
-  assert.equal(
-    (await db.prepare("SELECT status FROM walking_recovery_cases WHERE booking_id=?").bind(booking.bookingId).first()).status,
-    "replacement_accepted",
-    "the case is stranded: neither in_progress nor completed will ever match the 'assigned' gate",
-  );
-
+    idempotencyKey: nextKey(), reason: "Recovered programme completed successfully",
+  });
+  assert.equal(closed.status, "resolved");
+  assert.equal(closed.bookingStatus, "completed");
+  assert.equal((await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(booking.bookingId).first()).status, "completed");
+  assert.equal((await db.prepare("SELECT status FROM walking_recovery_cases WHERE booking_id=?").bind(booking.bookingId).first()).status, "resolved");
   const entry = (await ops.getWalkingOpsSnapshot(db)).bookings.find((row) => row.id === booking.bookingId);
-  assert.ok(entry.exceptionFlags.includes("walker_recovery"), "a successfully finished booking is left in the recovery queue");
-  assert.equal(entry.priority, "high");
+  assert.ok(!entry.exceptionFlags.includes("walker_recovery"));
 });
 
 // ---------------------------------------------------------------------------------------------
