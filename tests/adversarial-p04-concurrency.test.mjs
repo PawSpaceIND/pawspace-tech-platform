@@ -60,23 +60,25 @@ async function login() {
 
 async function directLifecycleRace(cookie, round) {
   const bookingId = `P04-DIRECT-${Date.now()}-${round}`;
-  const setup = await post("/setup", { bookingId, status: "confirmed" });
+  const setup = await post("/setup", { bookingId, status: "assigned" });
   assert.equal(setup.status, 200);
   const raceStartedAt = new Date().toISOString();
   const raceStart = performance.now();
-  const [accept, noShow] = await Promise.all([
-    post("/api/sitting-lifecycle", { bookingId, action: "accept", idempotencyKey: `${bookingId}:accept` }, cookie),
-    post("/api/sitting-lifecycle", { bookingId, action: "no_show", idempotencyKey: `${bookingId}:no-show`, reason: "Adversarial simultaneous no-show" }, cookie),
+  const [actorA, actorB] = await Promise.all([
+    post("/api/sitting-lifecycle", { bookingId, action: "check_in", idempotencyKey: `${bookingId}:check-in:A` }, cookie),
+    post("/api/sitting-lifecycle", { bookingId, action: "check_in", idempotencyKey: `${bookingId}:check-in:B` }, cookie),
   ]);
   const raceDurationMs = Number((performance.now() - raceStart).toFixed(3));
   const final = await get(`/state?bookingId=${encodeURIComponent(bookingId)}`, cookie);
-  const statuses = [accept.status, noShow.status].sort((a, b) => a - b);
-  assert.deepEqual(statuses, [200, 409], `expected one 200 and one 409, got ${JSON.stringify({ accept, noShow })}`);
-  const winner = accept.status === 200 ? "accept" : "no_show";
-  const expectedFinal = winner === "accept" ? "assigned" : "reassignment_needed";
-  assert.equal(final.body?.data?.booking?.status, expectedFinal, "final canonical booking state must match exactly the winning mutation");
+  const statuses = [actorA.status, actorB.status].sort((a, b) => a - b);
+  assert.deepEqual(statuses, [200, 409], `expected one 200 and one 409, got ${JSON.stringify({ actorA, actorB })}`);
+  const winner = actorA.status === 200 ? "actorA" : "actorB";
+  assert.equal(final.body?.data?.booking?.status, "in_progress", "final canonical booking must be in_progress after exactly one check-in");
+  assert.equal(final.body?.data?.workOrder?.status, "in_progress", "work order must match the winning canonical transition");
   assert.equal(final.body?.data?.actionKeyCount, 1, "only the winning mutation may persist an idempotency result");
-  return { bookingId, round, raceStartedAt, raceDurationMs, winner, responses: { accept, noShow }, finalState: final.body?.data };
+  assert.equal(final.body?.data?.checkedInEventCount, 1, "only one checked-in event may exist");
+  assert.equal(final.body?.data?.notificationCount, 2, "only the winning check-in may fan out its two governed notifications");
+  return { bookingId, round, raceStartedAt, raceDurationMs, winner, responses: { actorA, actorB }, finalState: final.body?.data };
 }
 
 async function controlledDatabaseClaimRace(cookie) {
@@ -87,7 +89,9 @@ async function controlledDatabaseClaimRace(cookie) {
   assert.equal(outcomes.length, 2);
   assert.deepEqual(outcomes.map((x) => x.httpStatus).sort((a, b) => a - b), [200, 409]);
   assert.deepEqual(outcomes.map((x) => x.metaChanges).sort((a, b) => a - b), [0, 1]);
-  assert.equal(result.body?.finalState?.booking?.status, "assigned");
+  const winner = outcomes.find((x) => x.metaChanges === 1);
+  assert.ok(winner, "controlled claim must have exactly one winner");
+  assert.equal(result.body?.finalState?.booking?.status, winner.targetStatus, "final DB status must exactly match the one successful guarded claim");
   return result.body;
 }
 
@@ -102,18 +106,27 @@ test("P0-4 adversarial lifecycle concurrency: exactly one winner and stale loser
   const controlled = await controlledDatabaseClaimRace(cookie);
 
   const distribution = directRounds.reduce((acc, item) => {
-    const key = `${item.responses.accept.status}/${item.responses.noShow.status}`;
+    const key = [item.responses.actorA.status, item.responses.actorB.status].sort((a, b) => a - b).join("/");
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
+  const latencies = directRounds.map((item) => item.raceDurationMs);
   const evidence = {
     generatedAt: new Date().toISOString(),
     target: BASE_URL,
+    targetClass: "isolated high-fidelity workerd + D1 harness using hardened Sitting lifecycle branch",
     auth: { mode: "signed staging UAT founder session", login: loginEvidence },
-    invariant: "exactly one success and exactly one HTTP 409 for competing expected-state mutations on one canonical booking",
-    directHttpRace: { rounds: directRounds.length, statusDistribution: distribution, results: directRounds },
+    invariant: "exactly one success and exactly one HTTP 409 for competing lifecycle mutations on one canonical booking",
+    directHttpRace: {
+      mutation: "two simultaneous check_in requests against one assigned Sitting booking",
+      rounds: directRounds.length,
+      statusDistribution: distribution,
+      minRaceDurationMs: Math.min(...latencies),
+      maxRaceDurationMs: Math.max(...latencies),
+      results: directRounds,
+    },
     controlledSameReadClaimRace: controlled,
-    verdict: "P0-4 CONCURRENCY GUARD PROVED",
+    verdict: "P0-4 CONCURRENCY GUARD PROVED ON HARDENED BRANCH",
   };
   await writeFile(`${ARTIFACT_DIR}/evidence.json`, `${JSON.stringify(evidence, null, 2)}\n`);
   await writeFile(`${ARTIFACT_DIR}/report.md`, [
@@ -121,15 +134,19 @@ test("P0-4 adversarial lifecycle concurrency: exactly one winner and stale loser
     "",
     `- Generated: ${evidence.generatedAt}`,
     `- Target: ${BASE_URL}`,
+    "- Target class: isolated high-fidelity workerd + D1 using the hardened Sitting lifecycle implementation",
     "- Auth: signed UAT founder session (cookie value redacted)",
-    `- Direct HTTP races: ${directRounds.length}/${directRounds.length} produced exactly one success and one 409`,
+    `- Direct HTTP races: ${directRounds.length}/${directRounds.length} produced exactly one HTTP 200 and one HTTP 409`,
     `- Status distribution: ${JSON.stringify(distribution)}`,
+    `- Direct race duration range: ${evidence.directHttpRace.minRaceDurationMs}ms to ${evidence.directHttpRace.maxRaceDurationMs}ms`,
     `- Controlled stale-read claim: meta.changes distribution ${JSON.stringify(controlled.outcomes.map((x) => x.metaChanges).sort((a,b)=>a-b))}`,
     `- Controlled HTTP mapping: ${JSON.stringify(controlled.outcomes.map((x) => x.httpStatus).sort((a,b)=>a-b))}`,
     `- Final controlled DB state: ${controlled.finalState?.booking?.status}`,
-    "- Verdict: **P0-4 CONCURRENCY GUARD PROVED**",
+    "- Verdict: **P0-4 CONCURRENCY GUARD PROVED ON HARDENED BRANCH**",
     "",
-    "Each direct race fires `accept` and `no_show` concurrently with `Promise.all` against the exact same confirmed Sitting booking. The winner changes the row; the loser is rejected as stale with HTTP 409. The controlled barrier race independently proves the D1 expected-status claim returns meta.changes 1 for one actor and 0 for the stale actor.",
+    "Each direct race fires two real authenticated `check_in` HTTP requests concurrently with `Promise.all` against the exact same assigned Sitting booking. Exactly one request can claim `assigned -> in_progress`; the other returns HTTP 409. The final canonical booking and work order remain `in_progress`, with one action key, one checked-in event, and one two-channel notification fan-out.",
+    "",
+    "A second barrier-controlled race forces both actors to read the same old status before either update. Their conflicting guarded updates then return `meta.changes` values `[1,0]`, proving the stale actor loses at the database expected-status predicate rather than through timing luck.",
   ].join("\n"));
 
   console.log(JSON.stringify({ verdict: evidence.verdict, directRounds: directRounds.length, distribution, controlled: controlled.outcomes, finalState: controlled.finalState }, null, 2));
