@@ -15,6 +15,8 @@ async function ensureHarnessTables(db: D1Database) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,customer_id TEXT NOT NULL,provider_id TEXT NOT NULL,schedule_group_id TEXT,status TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT,provider_id TEXT,status TEXT NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (id TEXT PRIMARY KEY,group_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER)"),
   ]);
 }
 
