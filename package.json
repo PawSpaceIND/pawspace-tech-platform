@@ -20,6 +20,8 @@
     "test:browser:partner": "playwright test e2e/partner-journey.spec.ts",
     "test:browser:admin": "playwright test e2e/admin-operations.spec.ts",
     "test:razorpay:sandbox": "node scripts/e2e/razorpay-sandbox.mjs",
+    "staging:deploy-overlay": "node scripts/deploy-staging-overlay.mjs",
+    "test:exotel-carrier-uat-controlled": "node scripts/run-exotel-controlled-uat.mjs",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "test:integration": "PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test tests/integration/*.test.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
