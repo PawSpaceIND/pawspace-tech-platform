@@ -39,8 +39,8 @@ export async function rankProvidersForBooking(db: Db, input: { serviceCode: stri
   const work = await readRows(db, "provider_work_orders", "SELECT provider_id,MAX(provider_name) provider_name,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed,SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled,SUM(CASE WHEN status IN ('assigned','awaiting_acceptance','in_progress') AND scheduled_start>=? THEN 1 ELSE 0 END) upcoming_load FROM provider_work_orders WHERE service_code=? GROUP BY provider_id", [nowIso, serviceCode], degradedSources);
   const ratings = await readRows(db, "booking_ratings", "SELECT provider_id,AVG(stars) avg_stars,COUNT(*) rating_count FROM booking_ratings WHERE service_code=? GROUP BY provider_id", [serviceCode], degradedSources);
 
-  const governedRows = await readRows(db, "provider_capacity_profiles", "SELECT id,city_id,services_json,zones_json FROM provider_capacity_profiles WHERE live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)", [effectiveDate, effectiveDate], degradedSources);
-  const governedIds = new Set(governedRows.filter(row => {
+  const governedRows = await readRows(db, "provider_capacity_profiles", "SELECT id,name,city_id,services_json,zones_json FROM provider_capacity_profiles WHERE live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)", [effectiveDate, effectiveDate], degradedSources);
+  const governed = governedRows.filter(row => {
     let services: string[] = [], zones: string[] = [];
     try { services = JSON.parse(String(row.services_json || "[]")); } catch { services = []; }
     try { zones = JSON.parse(String(row.zones_json || "[]")); } catch { zones = []; }
@@ -48,15 +48,17 @@ export async function rankProvidersForBooking(db: Db, input: { serviceCode: stri
     if (input.cityId && String(row.city_id) !== input.cityId) return false;
     if (input.zoneId && !zones.includes(input.zoneId)) return false;
     return true;
-  }).map(row => String(row.id)));
+  });
 
+  const workBy = new Map(work.map(r => [String(r.provider_id), r]));
   const ratingBy = new Map(ratings.map(r => [String(r.provider_id), { avg: Number(r.avg_stars), count: Number(r.rating_count) }]));
   const shortlist = input.candidateProviderIds && input.candidateProviderIds.length ? new Set(input.candidateProviderIds) : null;
-  const ranked = work
-    .filter(r => (!shortlist || shortlist.has(String(r.provider_id))) && governedIds.has(String(r.provider_id)))
-    .map(r => {
-      const completed = Number(r.completed), cancelled = Number(r.cancelled), upcomingLoad = Number(r.upcoming_load);
-      const rating = ratingBy.get(String(r.provider_id)) || { avg: 0, count: 0 };
+  const ranked = governed
+    .filter(row => !shortlist || shortlist.has(String(row.id)))
+    .map(row => {
+      const providerId = String(row.id), history = workBy.get(providerId);
+      const completed = Number(history?.completed || 0), cancelled = Number(history?.cancelled || 0), upcomingLoad = Number(history?.upcoming_load || 0);
+      const rating = ratingBy.get(providerId) || { avg: 0, count: 0 };
       const terminal = completed + cancelled;
       const completionRate = terminal > 0 ? completed / terminal : 0.5;
       const ratingConfidence = clamp01(rating.count / 5);
@@ -64,7 +66,7 @@ export async function rankProvidersForBooking(db: Db, input: { serviceCode: stri
       const availability = 1 / (1 + upcomingLoad);
       const experience = clamp01(completed / 10);
       const rawScore = clamp01(0.30 * completionRate + 0.30 * ratingScore + 0.25 * availability + 0.15 * experience);
-      return { providerId: String(r.provider_id), providerName: String(r.provider_name || r.provider_id), rawScore, score: round2(rawScore), factors: { completionRate: round2(completionRate), avgRating: round2(rating.avg), ratingCount: rating.count, upcomingLoad, completed } };
+      return { providerId, providerName: String(history?.provider_name || row.name || providerId), rawScore, score: round2(rawScore), factors: { completionRate: round2(completionRate), avgRating: round2(rating.avg), ratingCount: rating.count, upcomingLoad, completed } };
     })
     .sort((a, b) => b.rawScore - a.rawScore || a.providerId.localeCompare(b.providerId))
     .map(({ rawScore: _rawScore, ...provider }) => provider);
@@ -88,7 +90,7 @@ export async function forecastDemand(db: Db, input: { serviceCode?: string; city
   const since = at - basisDays * DAY;
   const svc = String(input.serviceCode || "").trim(), city = String(input.cityId || "").trim();
   const degradedSources: string[] = [];
-  const rows = await readRows(db, "canonical_bookings", "SELECT date(created_at/1000,'unixepoch') day,COUNT(*) n FROM canonical_bookings WHERE created_at>=? AND (?='' OR service_code=?) AND (?='' OR city_id=?) GROUP BY day", [since, svc, svc, city, city], degradedSources);
+  const rows = await readRows(db, "canonical_bookings", "SELECT date(created_at/1000,'unixepoch') day,COUNT(*) n FROM canonical_bookings WHERE created_at>=? AND status NOT IN ('draft','cancelled','canceled') AND (?='' OR service_code=?) AND (?='' OR city_id=?) GROUP BY day", [since, svc, svc, city, city], degradedSources);
   const byDay = new Map(rows.map(r => [String(r.day), Number(r.n)]));
   const dowTotals = Array(7).fill(0), dowCounts = Array(7).fill(0);
   for (let d = 0; d < basisDays; d++) {
