@@ -34,7 +34,7 @@ async function journeyWorld() {
   const sqlite = freshSqlite();
   const db = makeD1(sqlite);
   globalThis.__JOURNEY_DB__ = db;
-  globalThis.__JOURNEY_ENV__ = { DB: db };
+  globalThis.__JOURNEY_ENV__ = { DB: db, PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on" };
   ensureCanonicalTables(sqlite);
   sqlite.exec("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)");
   return { sqlite, db };
@@ -127,7 +127,10 @@ test("Grooming fails closed until a governed address is resolved and saved for r
   assert.equal(location.provider_id, booking.providerId, "the location is bound to the booking's provider");
   assert.equal(location.status, "active");
   assert.match(location.address_text, /560001/, "the saved address carries the resolved pincode");
-  assert.equal(Number(location.latitude), 12.9752);
+  assert.equal(Number(location.latitude), Number(data.latitude), "the persisted latitude is the server-governed coordinate");
+  assert.equal(Number(location.longitude), Number(data.longitude), "the persisted longitude is the server-governed coordinate");
+  assert.equal(Number(location.latitude), 12.9716);
+  assert.notEqual(Number(location.latitude), 12.9752, "browser-supplied latitude is never authoritative");
 
   const addresses = await db.prepare("SELECT id,is_default,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY id").bind(CUSTOMER).all();
   assert.equal(addresses.results.length, 2, "the old address is kept, not deleted");

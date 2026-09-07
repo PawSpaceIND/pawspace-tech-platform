@@ -45,8 +45,8 @@ function assertCompleted(result, expected) {
   assert.equal(result.persisted.payment.status, "captured");
   assert.equal(result.persisted.payment.amount, result.persisted.booking.total_amount);
   assert.equal(result.persisted.location.customer_id, expected.customerId);
-  assert.equal(result.persisted.location.latitude, expected.latitude);
-  assert.equal(result.persisted.location.longitude, expected.longitude);
+  assert.equal(Number(result.persisted.location.latitude), Number(result.location.body.data.latitude), "persisted latitude comes from the governed server response");
+  assert.equal(Number(result.persisted.location.longitude), Number(result.location.body.data.longitude), "persisted longitude comes from the governed server response");
   assert.match(result.persisted.location.address_text, new RegExp(expected.pincode));
   assert.equal(result.persisted.address.postal_code, expected.pincode);
   assert.equal(result.jobs.status, 200);
@@ -84,7 +84,7 @@ test("second-city journey preserves city/zone/provider and rejects cross-city co
   const otherCookie = await sessionCookie(ctx.db, "customer", "CUST-CROSS-CITY", "customer:CUST-CROSS-CITY");
   const crossGroup = "GROOM-CROSS-CITY";
   const start = future(5), end = new Date(new Date(start).getTime() + 2 * 60 * 60_000).toISOString();
-  const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { clientRequestId: crossGroup, customerId: "CUST-CROSS-CITY", petIds: ["PET-CROSS"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" }, otherCookie);
+  const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { clientRequestId: crossGroup, customerId: "CUST-CROSS-CITY", petIds: ["PET-CROSS"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", serviceAddress: "Cross City Chennai service address", servicePincode: "600001", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" }, otherCookie);
   assert.equal(scheduled.status, 200);
   const before = ctx.sqlite.prepare("SELECT COUNT(*) c FROM canonical_bookings").get().c;
   const rejected = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", { idempotencyKey: crossGroup, scheduleGroupId: crossGroup, customer: { id: "CUST-CROSS-CITY", name: "Cross City", primaryPhone: "+919900000303" }, pets: [{ sourceId: "PET-CROSS", name: "Rex", species: "dog" }], cityId: "blr", zoneId: "blr-east", serviceCode: "grooming", packageCode: "dog-basic", packageName: "Bath & Basic", scheduledStart: start, scheduledEnd: end, provider: scheduled.body.data.provider, totalAmount: 1899, amountDueNow: 1899, payment: { method: "upi", mode: "prepaid", status: "created", detail: "cross-city attack" }, pricing: { discount: 0 } }, otherCookie);
@@ -102,7 +102,7 @@ test("unsupported location and no-capacity failures create no booking/payment/wo
 
   const cookie = await sessionCookie(ctx.db, "customer", "CUST-NOCAP", "customer:CUST-NOCAP");
   await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
-  const base = { customerId: "CUST-NOCAP", petIds: ["PET-NOCAP"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", scheduledStart: future(7), scheduledEnd: future(9), preferredProviderId: "groom_maa" };
+  const base = { customerId: "CUST-NOCAP", petIds: ["PET-NOCAP"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", serviceAddress: "No capacity Chennai service address", servicePincode: "600001", scheduledStart: future(7), scheduledEnd: future(9), preferredProviderId: "groom_maa" };
   const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...base, clientRequestId: "NOCAP-1" }, cookie);
   const second = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...base, clientRequestId: "NOCAP-2", customerId: "CUST-NOCAP-2" }, await sessionCookie(ctx.db, "customer", "CUST-NOCAP-2", "customer:CUST-NOCAP-2"));
   assert.equal(first.status, 200);

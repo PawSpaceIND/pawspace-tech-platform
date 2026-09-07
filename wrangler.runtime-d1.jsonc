@@ -15,6 +15,10 @@
     // an undeclared runtime used to unlock a staff endpoint that records a full-value capture with
     // zero gateway contact. This harness exercises the sandbox payment path, so it says so.
     "PAWSPACE_PAYMENT_ENV": "sandbox",
+    "PAWSPACE_PAYMENT_LIVE_APPROVED": "false",
+    // The service-discovery fixture is server-owned and can activate only under sandbox test/UAT.
+    // It supplies deterministic governed address/geocode/provider-base evidence for this local D1 harness.
+    "PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE": "on",
     // Declared for the same reason. /api/uat-scheduling no longer fabricates provider roster unless the
     // runtime says it is a UAT runtime (PTJA W1-F27): a customer's own reserve used to write the
     // "published availability" rows the eligibility engine then checked, and could book straight over a
