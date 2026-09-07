@@ -1,4 +1,4 @@
-import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /*
  * Precondition for every journey below: the development-preview superuser must be OFF.
@@ -8,20 +8,19 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
  * If this test fails, every journey after it is meaningless - they would all pass as a superuser.
  */
 test("preview superuser is disabled: privileged APIs refuse an unauthenticated caller", async () => {
-  // Authentication is a server/API invariant, not a browser-device behavior. Build a standalone
-  // request context so the Pixel 7 project's mobile user-agent/network context cannot affect this
-  // precondition check. The context intentionally carries no authentication headers.
-  const api = await playwrightRequest.newContext({
-    baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:8788",
-  });
-  try {
-    for (const path of ["/api/customer-360?customerId=E2E-CUS-UI-001", "/api/crm", "/api/pricing-control"]) {
-      const res = await api.get(path);
-      expect(res.status(), `${path} must not be readable without authentication`).toBeGreaterThanOrEqual(401);
-      expect(res.status(), `${path} must not be readable without authentication`).toBeLessThan(500);
-    }
-  } finally {
-    await api.dispose();
+  // Authentication is a server/API invariant, not a browser-device behavior. Use Node's native
+  // fetch instead of a Playwright request context so Desktop Chrome / Pixel 7 project settings can
+  // never alter this unauthenticated precondition. The explicit deadline is intentionally stricter
+  // than the suite timeout: an auth refusal that stalls is itself a harness/server failure.
+  const baseURL = process.env.E2E_BASE_URL || "http://127.0.0.1:8788";
+  for (const path of ["/api/customer-360?customerId=E2E-CUS-UI-001", "/api/crm", "/api/pricing-control"]) {
+    const res = await fetch(new URL(path, baseURL), {
+      headers: { "user-agent": "PawSpace-E2E-Auth-Precondition/1.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status, `${path} must not be readable without authentication`).toBeGreaterThanOrEqual(401);
+    expect(res.status, `${path} must not be readable without authentication`).toBeLessThan(500);
+    await res.body?.cancel();
   }
 });
 
