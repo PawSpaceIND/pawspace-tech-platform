@@ -1,0 +1,72 @@
+name: Razorpay Sandbox E2E
+
+# Runs the payment/refund path against the REAL Razorpay sandbox API.
+#
+# This cannot run in a local agent session: the credentials live in GitHub repository secrets, and
+# Razorpay cannot deliver inbound webhooks to a developer machine. So the outbound half is real here
+# (order create, capture, refund - actual HTTPS calls to api.razorpay.com), and the inbound half is
+# replayed locally from the real signing secret. That split is deliberate and is asserted below, so
+# nobody reads this workflow as proof of end-to-end webhook delivery.
+#
+# Manual dispatch only. It spends real sandbox API calls and should not fire on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this run is needed"
+        required: false
+        default: "manual verification"
+
+permissions:
+  contents: read
+
+jobs:
+  razorpay-sandbox:
+    name: Razorpay sandbox payment and refund
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+      PAWSPACE_DEPLOYMENT_ENV: sandbox_ci
+      PAWSPACE_COMMUNICATION_ENV: sandbox
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      # Fail loudly rather than silently "passing" with no credentials. A green run that never
+      # contacted Razorpay would be worse than a red one.
+      - name: Assert sandbox credentials are present
+        run: |
+          missing=0
+          for v in RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set"; missing=1; fi
+          done
+          case "$RAZORPAY_KEY_ID" in
+            rzp_test_*) echo "key id is a TEST key" ;;
+            *) echo "::error::RAZORPAY_KEY_ID is not a rzp_test_ key - refusing to run against live"; missing=1 ;;
+          esac
+          [ "$missing" = "0" ]
+
+      - name: Razorpay sandbox payment + refund E2E
+        run: node --experimental-strip-types --test tests/integration/razorpay-sandbox.test.mjs
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-sandbox-evidence
+          path: /tmp/razorpay-evidence/
+          if-no-files-found: ignore
+          retention-days: 7

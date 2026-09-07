@@ -83,7 +83,11 @@ async function loadFinanceModule() {
     .replaceAll('from"./payment-pilot-guard"', 'from"./payment-pilot-guard.mjs"');
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorpaySource));
 
+  const runtimeSchemaSource = await readFile(new URL("lib/financial-runtime-schema.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "financial-runtime-schema.mjs"), transpile(runtimeSchemaSource));
+
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
+    .replace('from "./financial-runtime-schema"', 'from "./financial-runtime-schema.mjs"')
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
   await writeFile(path.join(tempDir, "financial-lifecycle.mjs"), transpile(financeSource));
 

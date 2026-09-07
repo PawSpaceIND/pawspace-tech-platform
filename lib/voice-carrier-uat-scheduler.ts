@@ -1,4 +1,4 @@
-import { ensureVoiceCallTables, recordVoiceConsent, requestOutboundVoiceCall } from "./voice-outbound-governance";
+import { ensureVoiceCallTables, recordVoiceConsent, requestControlledCarrierUatCall } from "./voice-outbound-governance";
 
 type Env = Record<string, unknown>;
 type Row = Record<string, unknown>;
@@ -6,7 +6,7 @@ const text = (value: unknown) => String(value ?? "").trim();
 const phoneKey = (value: unknown) => text(value).replace(/\D/g, "").slice(-10);
 
 export const VOICE_CARRIER_UAT_RUN_AT = "2026-09-06T02:30:00.000Z"; // 08:00 IST
-const RUN_ID = "VOICE-UAT-20260906-0800-IST";
+const RUN_ID = "VOICE-UAT-20260906-CONTROLLED-RETRY-1";
 
 function requireUatConfig(env: Env) {
   if (text(env.PAWSPACE_VOICE_ENV) !== "uat" || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true") throw new Error("carrier UAT scheduler is enabled only in approved UAT mode");
@@ -52,15 +52,13 @@ export async function runDueVoiceCarrierUat(db: D1Database, env: Env, asOf = Dat
   const claimed = await db.prepare("UPDATE voice_carrier_uat_queue SET status='running',started_at=?,updated_at=? WHERE id=? AND status='pending'").bind(asOf, asOf, RUN_ID).run();
   if (!Number(claimed.meta?.changes || 0)) return { status: "already_claimed" as const };
   try {
-    const result = await requestOutboundVoiceCall(db, env, {
-      idempotencyKey: "voice-carrier-uat:2026-09-06:0800-ist",
+    const result = await requestControlledCarrierUatCall(db, env, {
+      idempotencyKey: "voice-carrier-uat:2026-09-06:controlled-retry-1",
       useCase: "booking_confirmation",
       phone: cfg.rawNumber,
       cityId: cfg.cityId,
       customerId: cfg.customerId,
       bookingId: cfg.bookingId,
-      actorId: "system:voice-uat-scheduler",
-      actorPermissions: ["communications.call", "customers.manage"],
       asOf,
     });
     const status = result.dialed ? "completed" : "failed";

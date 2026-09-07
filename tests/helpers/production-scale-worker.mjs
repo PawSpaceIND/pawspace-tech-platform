@@ -1,6 +1,6 @@
 import{parentPort,workerData}from"node:worker_threads";
 import{DatabaseSync}from"node:sqlite";
-const db=new DatabaseSync(workerData.dbPath);db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;");
+const db=new DatabaseSync(workerData.dbPath);db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;");
 const latencies=[];let busyRetries=0,unrecoveredBusyCollisions=0;
 const sleepBuffer=new Int32Array(new SharedArrayBuffer(4));
 function isBusy(error){const value=String(error?.code||error);return value.includes("SQLITE_BUSY")||value.includes("SQLITE_BUSY_SNAPSHOT");}

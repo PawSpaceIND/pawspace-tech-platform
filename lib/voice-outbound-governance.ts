@@ -195,6 +195,29 @@ export type VoiceCallRequest = {
   asOf?: number;
 };
 
+// A caller cannot request this exception: the marker is a module-private Symbol that only the
+// controlled carrier-UAT wrapper below can attach. This keeps the production/general UAT frequency
+// cap impossible to bypass through JSON, route fields, actor spoofing, or retries.
+const CONTROLLED_UAT_FREQUENCY_TOKEN = Symbol("controlled-voice-uat-frequency-isolation");
+type InternalVoiceCallRequest = VoiceCallRequest & { [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true };
+
+function controlledUatFrequencyIsolated(env: Env, input: VoiceCallRequest, phoneKey: string) {
+  const internal = input as InternalVoiceCallRequest;
+  if (internal[CONTROLLED_UAT_FREQUENCY_TOKEN] !== true) return false;
+  const gate = resolveVoiceCallGate(env);
+  return gate.ok
+    && gate.mode === "uat"
+    && text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() === "true"
+    && text(env.PAWSPACE_VOICE_UAT_AUTORUN).toLowerCase() === "true"
+    && text(env.PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED).toLowerCase() === "true"
+    && gate.allowlist.length === 1
+    && gate.allowlist[0] === phoneKey
+    && text(input.useCase) === "booking_confirmation"
+    && text(input.customerId).length > 0
+    && text(input.bookingId).length > 0
+    && text(input.idempotencyKey).startsWith("voice-carrier-uat:");
+}
+
 function inQuietHours(hour: number, start: number, end: number) { return start > end ? hour >= start || hour < end : hour >= start && hour < end; }
 
 async function quietHoursPolicy(db: Db, cityId: string) {
@@ -272,8 +295,13 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
   const dailyCap = Math.min(useCase?.maxAttempts ?? 1, policy.maxAttempts);
-  const capOk = attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d);
-  add("frequency_cap", capOk, "blocked_frequency_cap", capOk ? `${attempts24h} of ${dailyCap} attempts used in the last 24h` : `Frequency cap reached (${attempts24h}/${dailyCap} in 24h${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
+  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
+  const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
+  add("frequency_cap", capOk, "blocked_frequency_cap",
+    frequencyCapIsolated
+      ? `Controlled carrier UAT one-shot is isolated from historical recipient frequency (${attempts24h} prior dial(s) in 24h); normal caps remain unchanged`
+      : capOk ? `${attempts24h} of ${dailyCap} attempts used in the last 24h`
+        : `Frequency cap reached (${attempts24h}/${dailyCap} in 24h${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
 
   const provider = selectTelephonyProvider(env);
   const providerOk = provider.status === "connected" || provider.status === "simulated";
@@ -298,6 +326,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
     dailyCap, capWindowStart: now - 86_400_000,
+    frequencyCapIsolated,
     marketingCap: useCase?.purpose === "marketing" ? policy.promotionalCap7d : null,
     marketingWindowStart: now - 7 * 86_400_000,
   };
@@ -412,7 +441,7 @@ function summarise(row: Row) {
  *
  * Idempotent per idempotencyKey: a retried request returns the existing call rather than dialling twice.
  */
-export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCallRequest) {
+async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: InternalVoiceCallRequest) {
   await ensureVoiceCallTables(db);
   const now = input.asOf ?? Date.now();
   const idempotencyKey = text(input.idempotencyKey);
@@ -467,7 +496,7 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   }
   // 2. The frequency cap, claimed atomically. The count the gate read is advisory - it produces a good
   //    audit message - but this single statement is what actually bounds concurrent dials.
-  if (!(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: policy.dailyCap, windowStart: policy.capWindowStart, now, marketingCap: policy.marketingCap, marketingWindowStart: policy.marketingWindowStart }))) {
+  if (!policy.frequencyCapIsolated && !(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: policy.dailyCap, windowStart: policy.capWindowStart, now, marketingCap: policy.marketingCap, marketingWindowStart: policy.marketingWindowStart }))) {
     const reason = `Frequency cap for this recipient was reached by a concurrent request (limit ${policy.dailyCap} in 24h)`;
     await applyTransition(db, { callId: id, to: "blocked_frequency_cap", reason, actor: input.actorId, detail: { concurrentClaim: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
@@ -497,6 +526,38 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   }
   const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
   return { duplicatePrevented: false, dialled: true, blockedBy: null, blockedDetail: null, policyChecks: policy.checks, openingDisclosure: policy.scriptDisclosure, ...summarise(row!) };
+}
+
+/** Public/general entry point: request data can never attach the module-private UAT marker. */
+export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCallRequest) {
+  return requestOutboundVoiceCallInternal(db, env, input);
+}
+
+/**
+ * The single controlled-live carrier UAT entry point. It is intentionally narrower than the general
+ * API: exact UAT approvals, exactly one allowlisted recipient, booking-confirmation context and a
+ * dedicated idempotency key are all required before the unforgeable module-private marker is attached.
+ */
+export async function requestControlledCarrierUatCall(db: Db, env: Env, input: Omit<VoiceCallRequest, "actorId" | "actorPermissions">) {
+  const gate = resolveVoiceCallGate(env);
+  const dialNumber = canonicalDialNumber(env, input.phone);
+  const targetKey = normalisedDialKey(dialNumber || input.phone);
+  if (!gate.ok || gate.mode !== "uat"
+    || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true"
+    || text(env.PAWSPACE_VOICE_UAT_AUTORUN).toLowerCase() !== "true"
+    || text(env.PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED).toLowerCase() !== "true") {
+    throw new Error("Controlled carrier UAT frequency isolation requires explicitly approved UAT autorun with confirmed consent");
+  }
+  if (gate.allowlist.length !== 1 || !targetKey || gate.allowlist[0] !== targetKey) throw new Error("Controlled carrier UAT requires exactly the single approved allowlisted recipient");
+  if (text(input.useCase) !== "booking_confirmation" || !text(input.customerId) || !text(input.bookingId)) throw new Error("Controlled carrier UAT requires canonical booking-confirmation context");
+  if (!text(input.idempotencyKey).startsWith("voice-carrier-uat:")) throw new Error("Controlled carrier UAT requires a dedicated voice-carrier-uat idempotency key");
+  return requestOutboundVoiceCallInternal(db, env, {
+    ...input,
+    actorId: "system:voice-uat-scheduler",
+    actorPermissions: ["communications.call", "customers.manage"],
+    simulatedOutcome: null,
+    [CONTROLLED_UAT_FREQUENCY_TOKEN]: true,
+  });
 }
 
 /**

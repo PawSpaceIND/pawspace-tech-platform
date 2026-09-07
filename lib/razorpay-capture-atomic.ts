@@ -1,4 +1,5 @@
 import { ACCT } from "./finance-accounts";
+import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { postCollectionEvent } from "./collection-ledger";
 import { convertLeadOnPaymentCaptured } from "./lead-conversion-attribution";
 import { cancelRecoveryEntitlements } from "./payment-recovery-governance";
@@ -23,21 +24,6 @@ export type AtomicRazorpayCaptureInput = {
   detail?: Record<string, unknown>;
 };
 
-/**
- * A capture whose amount does not match what the order was opened for is a GOVERNED outcome, not an
- * internal failure. lib/grooming-payment-reconciliation.ts already owns the whole answer: a
- * `("captured","amount_mismatch")` reconciliation record carrying the variance, a
- * `capture_amount_mismatch` exception for the finance console to triage, and a
- * `{status:"exception"}` envelope for the caller.
- *
- * Throwing a bare Error here pre-empted all of it. The webhook route's outer catch turned it into
- * `500 {"error":"Unable to process Razorpay webhook"}`, so a gateway retried it as a server fault,
- * ops never saw an exception to triage, and the reconciliation ledger recorded nothing at all - the
- * one case where a shortfall MUST be visible was the one case that left no trace.
- *
- * This is raised instead so the route can hand the event to that handler. Nothing is written before
- * the checks that raise it, so delegation starts from a clean slate.
- */
 export class RazorpayCaptureAmountMismatchError extends Error {
   readonly expectedPaise: number;
   readonly receivedPaise: number;
@@ -58,6 +44,7 @@ function captureKey(input: AtomicRazorpayCaptureInput) {
 }
 
 export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayCaptureInput) {
+  await ensureFinancialRuntimeTables(db);
   if (!input.inboxId || !input.eventId || !input.bookingId || !input.paymentId) throw new Error("Atomic capture identity is incomplete");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Captured Razorpay amount must be positive integer paise");
 
@@ -177,6 +164,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
 }
 
 export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId: string; workerId: string; leaseMs?: number }) {
+  await ensureFinancialRuntimeTables(db);
   const now = Date.now();
   const leaseMs = Math.max(5_000, Math.min(input.leaseMs || 30_000, 120_000));
   await db.prepare("UPDATE financial_outbox SET status='RETRY',lease_owner=NULL,lease_expires_at=NULL,last_error=COALESCE(last_error,'stale_capture_effects_lease'),next_attempt_at=?,updated_at=? WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?")
@@ -233,6 +221,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
 }
 
 export async function captureEffectsOutboxForEvent(db: Db, eventId: string) {
+  await ensureFinancialRuntimeTables(db);
   return db.prepare("SELECT id,status,last_error FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND json_extract(payload_json,'$.eventId')=? ORDER BY created_at DESC LIMIT 1")
     .bind(eventId).first<Row>();
 }

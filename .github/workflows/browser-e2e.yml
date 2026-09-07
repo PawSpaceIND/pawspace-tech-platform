@@ -1,86 +1,110 @@
-name: Browser E2E
+name: Browser E2E (hardened, preview superuser disabled)
 
+# Runs the seeded Playwright journeys against a locally served build (vinext build ->
+# wrangler dev --local, Miniflare D1). No Cloudflare credentials are needed: Miniflare creates a
+# local SQLite D1, so this works on any runner.
+#
+# The suite is only meaningful because the development-preview superuser is OFF - scripts/e2e/serve.sh
+# declares PAWSPACE_DEPLOYMENT_ENV, which is the first gate in lib/development-preview.ts.
+# e2e/journeys/00-identity.spec.ts asserts that and fails the run if the trap returns, so a green
+# result here cannot be a superuser passing everything.
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: browser-e2e-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  playwright-personas:
-    name: Playwright customer partner admin
+  browser-e2e:
+    name: Seeded browser journeys
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       NODE_ENV: test
-      APP_ENV: staging
-      FORBID_PRODUCTION: 'true'
-      PAWSPACE_LOCAL_PREVIEW: 'on'
-      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+      E2E_PORT: "8788"
+      E2E_BASE_URL: http://127.0.0.1:8788
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.16.0'
+          node-version: 22
           cache: npm
-      - run: npm ci
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Run real browser personas against local Miniflare/Vite
-        run: npx playwright test e2e/customer-booking.spec.ts e2e/partner-journey.spec.ts e2e/admin-operations.spec.ts --project=chromium
-      - name: Upload Playwright evidence
-        if: always()
+
+      - name: Build the app
+        run: npm run build
+
+      # seed-identities.mjs intentionally writes the local Miniflare SQLite file directly. Never do
+      # that while Wrangler owns the file: it can terminate Miniflare mid-suite. Bootstrap app_users,
+      # stop, seed identities offline, restart to create the lazy canonical tables as the seeded admin,
+      # stop again, seed the canonical fixtures offline, then make one clean final start for Playwright.
+      - name: Prepare local D1 fixtures with Miniflare stopped during writes
+        run: |
+          start_server() {
+            nohup setsid env E2E_SKIP_BUILD=1 bash scripts/e2e/serve-hardened.sh >> /tmp/serve.log 2>&1 &
+            echo $! > /tmp/e2e-server.pid
+            for i in $(seq 1 60); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$E2E_BASE_URL/" || true)
+              [ "$code" != "000" ] && { echo "app up (HTTP $code)"; return 0; }
+              sleep 2
+            done
+            echo "::error::app did not start"; tail -80 /tmp/serve.log; return 1
+          }
+
+          stop_server() {
+            pid=$(cat /tmp/e2e-server.pid)
+            kill -- "-$pid" 2>/dev/null || true
+            for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "$E2E_BASE_URL/" || true)
+              [ "$code" = "000" ] && return 0
+              sleep 1
+            done
+            echo "::error::local E2E server did not stop"; tail -80 /tmp/serve.log; return 1
+          }
+
+          : > /tmp/serve.log
+
+          # A protected route resolves identity before denying the unknown user, materializing app_users.
+          # Stop Miniflare before the direct SQLite seed so the backing file has a single writer.
+          start_server
+          curl -s -o /dev/null -H "oai-authenticated-user-email: e2e.admin@pawspace.test" \
+            "$E2E_BASE_URL/api/canonical-bookings?customerId=E2E-CUS-UI-001" || true
+          stop_server
+          node scripts/e2e/seed-identities.mjs
+
+          # With the admin identity now present, these requests can create their lazy canonical tables.
+          start_server
+          for p in "/api/canonical-bookings?customerId=E2E-CUS-UI-001" \
+                   "/api/partner-job-feed?providerId=E2E-PRV-UI-001" \
+                   "/api/booking-command-center"; do
+            curl -fsS -o /dev/null -H "oai-authenticated-user-email: e2e.admin@pawspace.test" "$E2E_BASE_URL$p" || true
+          done
+          stop_server
+
+          # Second offline pass fills every fixture whose table was materialized by the warm requests.
+          node scripts/e2e/seed-identities.mjs
+
+          # Final clean server owns the database for the entire Playwright run; no direct SQLite writes follow.
+          start_server
+
+      - name: Run browser journeys
+        run: npx playwright test --config playwright.e2e.config.ts
+
+      - name: Upload failure evidence
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-e2e-evidence
+          name: browser-e2e-artifacts
           path: |
-            playwright-report/
             test-results/
-          if-no-files-found: warn
-
-  razorpay-sandbox:
-    name: Razorpay sandbox safety and provider check
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-      RAZORPAY_SANDBOX_PAYMENT_ID: ${{ secrets.RAZORPAY_SANDBOX_PAYMENT_ID }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.16.0'
-          cache: npm
-      - run: npm ci
-      - name: Prove live keys are rejected before any provider request
-        shell: bash
-        run: |
-          set -euo pipefail
-          set +e
-          output=$(RAZORPAY_KEY_ID_SANDBOX=rzp_live_forbidden RAZORPAY_KEY_SECRET_SANDBOX=not-a-secret node scripts/e2e/razorpay-sandbox.mjs 2>&1)
-          status=$?
-          set -e
-          test "$status" -ne 0
-          printf '%s\n' "$output" | grep -q 'requires an rzp_test_ key id'
-          if printf '%s\n' "$output" | grep -q 'not-a-secret'; then
-            echo 'Sandbox harness leaked the credential value.'
-            exit 1
-          fi
-          echo 'PASS live-key rejection and secret redaction guard'
-      - name: Run real Razorpay sandbox provider check when credentials are configured
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${RAZORPAY_KEY_ID_SANDBOX:-}" ] || [ -z "${RAZORPAY_KEY_SECRET_SANDBOX:-}" ]; then
-            echo 'SKIP real Razorpay provider check: sandbox credentials are not configured in GitHub Actions.'
-            exit 0
-          fi
-          npm run test:razorpay:sandbox
+            /tmp/serve.log
+          if-no-files-found: ignore
+          retention-days: 7
