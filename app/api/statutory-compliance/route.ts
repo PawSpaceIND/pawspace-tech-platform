@@ -1,7 +1,7 @@
 import{authError,authorize,securityAudit}from"../../../lib/server-auth";
 import{statutoryCalendar,recordStatutoryFiling,recordBoardApproval,runStatutoryReminderSweep,type ObligationCode}from"../../../lib/statutory-compliance";
 import{computeMonthlyTds,recordTdsDeposit,prepareTdsQuarterlyReturn,markTdsReturnFiled,tdsDashboard}from"../../../lib/tds-governance";
-import{computeMonthlyTcs,recordTcsDeposit,prepareGstr8,tcsDashboard}from"../../../lib/tcs-governance";
+import{computeMonthlyTcsStatutory,recordTcsDeposit,prepareGstr8Statutory,tcsDashboard}from"../../../lib/statutory-tcs";
 import{reconcilePartnerPayoutTax}from"../../../lib/tds-tcs-reconciliation";
 import{monthlyCloseView,closeMonth}from"../../../lib/finance-monthly-close";
 
@@ -54,13 +54,13 @@ export async function POST(request:Request){try{
   return json({data:result},201);
  }
  if(action==="compute_tcs"){
-  const result=await computeMonthlyTcs(db,{period,actorId:actor.email});
-  await securityAudit(db,actor,"statutory.compute_tcs","tcs_period",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount});
+  const result=await computeMonthlyTcsStatutory(db,{period,actorId:actor.email});
+  await securityAudit(db,actor,"statutory.compute_tcs","tcs_period",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount,returnedSupplyValue:result.returnedSupplyValue});
   return json({data:result});
  }
  if(action==="prepare_gstr8"){
-  const result=await prepareGstr8(db,{period,actorId:actor.email});
-  await securityAudit(db,actor,"statutory.prepare_gstr8","tcs_statement",period,"completed",{totalTcs:result.totalTcs});
+  const result=await prepareGstr8Statutory(db,{period,actorId:actor.email});
+  await securityAudit(db,actor,"statutory.prepare_gstr8","tcs_statement",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount});
   return json({data:result});
  }
  if(action==="record_tcs_deposit"){
