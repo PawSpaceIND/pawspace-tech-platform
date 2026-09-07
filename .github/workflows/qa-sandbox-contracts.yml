@@ -38,3 +38,43 @@ jobs:
           META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
           META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
         run: node --experimental-strip-types --test tests/integration/razorpay-sandbox.contract.test.mjs tests/integration/meta-graph-sandbox.contract.test.mjs
+
+  idfy-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Fail closed unless IDfy sandbox is explicitly confirmed
+        env:
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_URL: ${{ secrets.IDFY_URL }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          IDFY_SANDBOX_CONFIRMED: ${{ secrets.IDFY_SANDBOX_CONFIRMED }}
+        run: |
+          missing=""
+          [ -n "$IDFY_API_KEY" ] || missing="$missing IDFY_API_KEY"
+          [ -n "$IDFY_ACCOUNT_ID" ] || missing="$missing IDFY_ACCOUNT_ID"
+          [ -n "$IDFY_URL" ] || missing="$missing IDFY_URL"
+          [ -n "$IDFY_WEBHOOK_SECRET" ] || missing="$missing IDFY_WEBHOOK_SECRET"
+          if [ -n "$missing" ]; then
+            echo "Missing IDfy repository secrets:$missing"
+            exit 1
+          fi
+          if [ "$(printf '%s' "$IDFY_SANDBOX_CONFIRMED" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
+            echo "IDFY_SANDBOX_CONFIRMED is not true; refusing all outbound IDfy traffic."
+            exit 1
+          fi
+          echo "IDfy credential set is present and sandbox confirmation is explicit."
+      - name: IDfy strict sandbox contract
+        env:
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_URL: ${{ secrets.IDFY_URL }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+        run: node --experimental-strip-types --test tests/integration/idfy-sandbox.contract.test.mjs
