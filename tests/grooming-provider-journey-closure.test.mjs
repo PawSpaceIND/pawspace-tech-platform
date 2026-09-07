@@ -62,7 +62,7 @@ async function setup() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__GROOM_PROVIDER_DB__ = db;
-  globalThis.__GROOM_PROVIDER_ENV__ = {};
+  globalThis.__GROOM_PROVIDER_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox" };
 
   const now = Date.now();
   sqlite.exec(`
@@ -107,6 +107,14 @@ async function setup() {
     );
   `);
 
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  const { ensureGroomingMapTables } = await import("../lib/grooming-maps.ts");
+  const { ensureUniversalLocationTables } = await import("../lib/universal-location-recovery.ts");
+  await ensureSecurityTables(db);
+  await ensureGroomingMapTables(db);
+  await ensureUniversalLocationTables(db);
+  await db.prepare("INSERT OR REPLACE INTO booking_punctuality_policies (id,service_code,city_id,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES ('GPS-GROOM-PROVIDER-UAT','grooming',NULL,1,300,50,'approved','2020-01-01',NULL,'journey-test',?)").bind(now).run();
+
   sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
     .run("CUS-GROOM-1", "blr", "Ananya Sharma", "9999900601", null, "ananya@example.test", "customer_app", "{}", now, now);
   sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
@@ -117,6 +125,8 @@ async function setup() {
   insertBooking.run("BK-GROOM-OTHER", "ik-groom-other", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-OTHER", "PRV-GROOM-B", "2026-08-22T07:30:00.000Z", "2026-08-22T09:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
   sqlite.prepare("INSERT INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
     .run("BK-GROOM-JOURNEY", "Indiranagar test doorstep", DOORSTEP.latitude, DOORSTEP.longitude, "test_fixture", now, now);
+  sqlite.prepare("INSERT INTO booking_service_locations (booking_id,customer_id,provider_id,address_text,latitude,longitude,source,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'active',?,?)")
+    .run("BK-GROOM-JOURNEY", "CUS-GROOM-1", "PRV-GROOM-A", "Indiranagar test doorstep", DOORSTEP.latitude, DOORSTEP.longitude, "customer_verified_coordinates", now, now);
 
   const insertWork = sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   insertWork.run("WO-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "Arun Groomer", "full_time", "grooming", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", 1, "assigned", "{}", now, now);
@@ -140,7 +150,22 @@ async function lifecycle(cookie, action) {
   const response = await POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action, ...(action === "arrived" ? DOORSTEP : {}) }),
+    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action }),
+  }));
+  return { status: response.status, body: await response.json() };
+}
+
+async function providerTelemetry(cookie) {
+  const { POST } = await import("../app/api/grooming-route/route.ts");
+  const capturedAt = Date.now();
+  const response = await POST(new Request("https://uat.pawspace.in/api/grooming-route", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      bookingId: "BK-GROOM-JOURNEY", providerId: "PRV-GROOM-A",
+      latitude: DOORSTEP.latitude, longitude: DOORSTEP.longitude,
+      accuracyMeters: 10, capturedAt, idempotencyKey: `provider-journey:${capturedAt}`,
+    }),
   }));
   return { status: response.status, body: await response.json() };
 }
@@ -175,6 +200,10 @@ test("authenticated groomer can accept, start journey, arrive, and start service
   ];
 
   for (const [action, expectedStatus, expectedEvent] of steps) {
+    if (action === "arrived") {
+      const telemetry = await providerTelemetry(cookie);
+      assert.equal(telemetry.status, 201, `trusted GPS should be accepted: ${JSON.stringify(telemetry.body)}`);
+    }
     const result = await lifecycle(cookie, action);
     assert.equal(result.status, 200, `${action} should succeed: ${JSON.stringify(result.body)}`);
     assert.equal(String(result.body.data.booking.status), expectedStatus);
@@ -194,12 +223,14 @@ test("authenticated groomer can accept, start journey, arrive, and start service
     ORDER BY CASE action
       WHEN 'grooming.accept' THEN 1
       WHEN 'grooming.on_the_way' THEN 2
-      WHEN 'grooming.arrived' THEN 3
-      WHEN 'grooming.start_service' THEN 4
+      WHEN 'grooming.provider_location.update' THEN 3
+      WHEN 'grooming.arrived' THEN 4
+      WHEN 'grooming.start_service' THEN 5
       ELSE 99 END`).all();
   assert.deepEqual(actions.map((row) => [row.action, row.outcome]), [
     ["grooming.accept", "completed"],
     ["grooming.on_the_way", "completed"],
+    ["grooming.provider_location.update", "completed"],
     ["grooming.arrived", "completed"],
     ["grooming.start_service", "completed"],
   ]);
