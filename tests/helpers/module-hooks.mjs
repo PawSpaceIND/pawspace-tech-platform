@@ -16,19 +16,39 @@ import { fileURLToPath } from "node:url";
 
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
 // `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
-// AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
-// Reuse the process-global instance if this helper is evaluated through more than one module context:
-// every installed worker shim reads that global, so runWithWorkersDb must write to the same instance.
+// AsyncLocalStorage is the primary isolation mechanism. The active DB key is a synchronous fallback
+// for registerHooks/data-URL shims that were cached before a nested suite installed its own resolver.
 export const WORKERS_DB_ALS_KEY = "__PAWSPACE_SCOPED_WORKERS_DB__";
+export const WORKERS_DB_ACTIVE_KEY = "__PAWSPACE_ACTIVE_WORKERS_DB__";
 const existingWorkersDbAls = globalThis[WORKERS_DB_ALS_KEY];
 const workersDbAls = existingWorkersDbAls && typeof existingWorkersDbAls.run === "function" && typeof existingWorkersDbAls.getStore === "function"
   ? existingWorkersDbAls
   : new AsyncLocalStorage();
 if (!existingWorkersDbAls) globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
 
+function restoreActiveWorkersDb(previous) {
+  if (previous === undefined) delete globalThis[WORKERS_DB_ACTIVE_KEY];
+  else globalThis[WORKERS_DB_ACTIVE_KEY] = previous;
+}
+
 export function runWithWorkersDb(db, callback) {
   const als = globalThis[WORKERS_DB_ALS_KEY] ?? workersDbAls;
-  return als.run(db, callback);
+  const previous = globalThis[WORKERS_DB_ACTIVE_KEY];
+  globalThis[WORKERS_DB_ACTIVE_KEY] = db;
+  return als.run(db, () => {
+    let result;
+    try {
+      result = callback();
+    } catch (error) {
+      restoreActiveWorkersDb(previous);
+      throw error;
+    }
+    if (result && typeof result.finally === "function") {
+      return result.finally(() => restoreActiveWorkersDb(previous));
+    }
+    restoreActiveWorkersDb(previous);
+    return result;
+  });
 }
 
 // Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
@@ -135,7 +155,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   }
   installedWorkersDbGlobals.add(globalName);
 
-  const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
+  const shim = `export const env = new Proxy({}, { get: (_, key) => { const active = globalThis[${JSON.stringify(WORKERS_DB_ACTIVE_KEY)}]; if (key === "DB" && active) return active; const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
   // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI. Node 22.15+
