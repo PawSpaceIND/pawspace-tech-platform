@@ -1,28 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
 import { freshCountingD1 } from "./d1-harness.mjs";
-import { runWithWorkersDb } from "./module-hooks.mjs";
+import { installWorkersHooks, runWithWorkersDb } from "./module-hooks.mjs";
+
+const WORKERS_DB_GLOBAL = "__GROOM_JOURNEY_DB__";
+const WORKERS_ENV_GLOBAL = "__GROOM_JOURNEY_ENV__";
+installWorkersHooks(WORKERS_DB_GLOBAL, WORKERS_ENV_GLOBAL);
 
 const state = { db: null, env: null };
-const WORKERS_STUB = `export const env=new Proxy({}, {get:(_,key)=>globalThis.__GROOM_JOURNEY_STATE__.env?.[key]});`;
-const WORKERS_URL = `data:text/javascript,${encodeURIComponent(WORKERS_STUB)}`;
-globalThis.__GROOM_JOURNEY_STATE__ = state;
-
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: WORKERS_URL, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(WORKERS_URL)};export async function resolve(specifier,context,nextResolve){if(specifier==="cloudflare:workers")return{url:workersUrl,shortCircuit:true};try{return await nextResolve(specifier,context);}catch(error){if(specifier.startsWith(".")&&!specifier.endsWith(".ts"))return nextResolve(specifier+".ts",context);throw error;}}`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
 
 function createD1(sqlite) {
   const counted = freshCountingD1({ sqlite });
@@ -55,8 +39,14 @@ export async function setupJourney() {
     PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
     PAWSPACE_SCHEDULING_ENV: "uat",
     PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
+    PAWSPACE_LOCAL_PREVIEW: "on",
+    PAWSPACE_VOICE_TRANSPORT: "local_simulator_non_production",
+    APP_ENV: "staging",
+    FORBID_PRODUCTION: "true",
     NODE_ENV: "test",
   };
+  globalThis[WORKERS_DB_GLOBAL] = db;
+  globalThis[WORKERS_ENV_GLOBAL] = state.env;
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
@@ -91,92 +81,97 @@ async function routeCall(modulePath, method, path, body, cookie = "", origin = "
 
 export async function runCompletedJourney(ctx, config) {
   const { db, sqlite } = ctx;
-  const customerCookie = await sessionCookie(db, "customer", config.customerId, `customer:${config.customerId}`);
-  const { resolveZoneByPincode } = await import("../../lib/service-zones.ts");
-  const coverage = await resolveZoneByPincode(db, config.pincode);
-  if (!coverage) throw new Error(`No service coverage for ${config.pincode}`);
+  return runWithWorkersDb(db, async () => {
+    const customerCookie = await sessionCookie(db, "customer", config.customerId, `customer:${config.customerId}`);
+    const { resolveZoneByPincode } = await import("../../lib/service-zones.ts");
+    const coverage = await resolveZoneByPincode(db, config.pincode);
+    if (!coverage) throw new Error(`No service coverage for ${config.pincode}`);
 
-  const start = new Date(config.start), end = new Date(start.getTime() + 2 * 60 * 60_000);
-  const serviceAddress = `${config.customerName} service address`;
-  const schedulePayload = {
-    clientRequestId: config.groupId, customerId: config.customerId, petIds: [config.petSourceId],
-    serviceCode: "grooming", cityId: config.cityId, zoneId: config.zoneId,
-    serviceAddress, servicePincode: config.pincode,
-    scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(),
-    preferredProviderId: config.preferredProviderId,
-  };
-  const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
-  const scheduleReplay = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
-  const provider = scheduled.body.data?.provider;
-  if (!provider) throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
+    const start = new Date(config.start), end = new Date(start.getTime() + 2 * 60 * 60_000);
+    const serviceAddress = `${config.customerName} service address`;
+    const schedulePayload = {
+      clientRequestId: config.groupId, customerId: config.customerId, petIds: [config.petSourceId],
+      serviceCode: "grooming", cityId: config.cityId, zoneId: config.zoneId,
+      serviceAddress, servicePincode: config.pincode,
+      scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(),
+      preferredProviderId: config.preferredProviderId,
+    };
+    const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
+    const scheduleReplay = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
+    const provider = scheduled.body.data?.provider;
+    if (!provider) throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
 
-  let coupon = null;
-  if (config.couponCode) {
-    const { quoteCoupon } = await import("../../lib/coupon-governance.ts");
-    coupon = await quoteCoupon(db, { code: config.couponCode, customerId: config.customerId, serviceCode: "grooming", cityId: config.cityId, channel: "customer_app", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
-  }
-  const total = coupon?.valid ? coupon.finalAmount : 1899;
-  const bookingPayload = {
-    idempotencyKey: config.groupId, scheduleGroupId: config.groupId,
-    customer: { id: config.customerId, name: config.customerName, primaryPhone: config.phone },
-    pets: [{ sourceId: config.petSourceId, name: config.petName, species: "dog", breed: "Indie", vaccinationStatus: "vaccinated" }],
-    cityId: config.cityId, zoneId: config.zoneId, serviceCode: "grooming", packageCode: "dog-basic", packageName: "client-tampered-name",
-    scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), provider,
-    totalAmount: total, amountDueNow: total,
-    payment: { method: "upi", mode: "prepaid", status: "created", detail: "sandbox golden journey" },
-    pricing: { discount: coupon?.discount || 0, ...(coupon?.quoteId ? { couponCode: config.couponCode, couponQuoteId: coupon.quoteId } : {}) },
-  };
-  const booked = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
-  const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
-  const bookingId = booked.body.data?.bookingId;
-  const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: serviceAddress, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
+    let coupon = null;
+    if (config.couponCode) {
+      const { quoteCoupon } = await import("../../lib/coupon-governance.ts");
+      coupon = await quoteCoupon(db, { code: config.couponCode, customerId: config.customerId, serviceCode: "grooming", cityId: config.cityId, channel: "customer_app", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
+    }
+    const total = coupon?.valid ? coupon.finalAmount : 1899;
+    const bookingPayload = {
+      idempotencyKey: config.groupId, scheduleGroupId: config.groupId,
+      customer: { id: config.customerId, name: config.customerName, primaryPhone: config.phone },
+      pets: [{ sourceId: config.petSourceId, name: config.petName, species: "dog", breed: "Indie", vaccinationStatus: "vaccinated" }],
+      cityId: config.cityId, zoneId: config.zoneId, serviceCode: "grooming", packageCode: "dog-basic", packageName: "client-tampered-name",
+      scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), provider,
+      totalAmount: total, amountDueNow: total,
+      payment: { method: "upi", mode: "prepaid", status: "created", detail: "sandbox golden journey" },
+      pricing: { discount: coupon?.discount || 0, ...(coupon?.quoteId ? { couponCode: config.couponCode, couponQuoteId: coupon.quoteId } : {}) },
+    };
+    const booked = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
+    if (![200, 201].includes(booked.status) || !booked.body.data?.bookingId) {
+      throw new Error(`Canonical booking failed: ${booked.status} ${JSON.stringify(booked.body)}`);
+    }
+    const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
+    const bookingId = booked.body.data.bookingId;
+    const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: serviceAddress, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
 
-  const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
-  const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
-  const captured = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", capture);
-  const captureReplay = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", capture);
+    const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
+    const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
+    const captured = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", capture);
+    const captureReplay = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", capture);
 
-  if (config.stopAfterCapture) return {
-    coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay,
-    bookingId, provider, total, customerCookie, bookingPayload,
-  };
+    if (config.stopAfterCapture) return {
+      coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay,
+      bookingId, provider, total, customerCookie, bookingPayload,
+    };
 
-  const providerCookie = await sessionCookie(db, "provider", provider.id, `provider:${provider.id}`);
-  const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
-  const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
-  const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
-  const invalidEarlyComplete = await lifecycle("complete");
+    const providerCookie = await sessionCookie(db, "provider", provider.id, `provider:${provider.id}`);
+    const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
+    const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
+    const transitions = [];
+    for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
+    const invalidEarlyComplete = await lifecycle("complete");
 
-  const media = [];
-  for (const purpose of ["before_service", "after_service"]) {
-    const sha256 = purpose === "before_service" ? "a".repeat(64) : "b".repeat(64);
-    const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256, fileName: `${purpose}.jpg` }, providerCookie);
-    const { id, upload } = prepared.body.data;
-    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "confirm_upload", uploadToken: upload.token, storageReference: upload.objectKey, observedSizeBytes: 128, observedSha256: sha256, observedMimeType: "image/jpeg" });
-    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "record_scan", scanResult: "clean", reason: `Reviewed the ${purpose.replace("_", " ")} photo` });
-    media.push(prepared.body.data.ref);
-  }
-  const proof = await lifecycle("add_proof", { beforePhotoRef: media[0], afterPhotoRef: media[1], checklist: ["coat", "nails", "ears"], completionNotes: "Completed safely" });
-  const completed = await lifecycle("complete");
-  const visible = await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
+    const media = [];
+    for (const purpose of ["before_service", "after_service"]) {
+      const sha256 = purpose === "before_service" ? "a".repeat(64) : "b".repeat(64);
+      const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256, fileName: `${purpose}.jpg` }, providerCookie);
+      const { id, upload } = prepared.body.data;
+      await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "confirm_upload", uploadToken: upload.token, storageReference: upload.objectKey, observedSizeBytes: 128, observedSha256: sha256, observedMimeType: "image/jpeg" });
+      await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "record_scan", scanResult: "clean", reason: `Reviewed the ${purpose.replace("_", " ")} photo` });
+      media.push(prepared.body.data.ref);
+    }
+    const proof = await lifecycle("add_proof", { beforePhotoRef: media[0], afterPhotoRef: media[1], checklist: ["coat", "nails", "ears"], completionNotes: "Completed safely" });
+    const completed = await lifecycle("complete");
+    const visible = await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
 
-  return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total,
-    persisted: {
-      booking: sqlite.prepare("SELECT * FROM canonical_bookings WHERE id=?").get(bookingId),
-      pet: sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").get(config.customerId),
-      reservation: sqlite.prepare("SELECT * FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(config.groupId),
-      work: sqlite.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").get(bookingId),
-      payment: sqlite.prepare("SELECT * FROM booking_payments WHERE booking_id=?").get(bookingId),
-      location: sqlite.prepare("SELECT * FROM booking_service_locations WHERE booking_id=?").get(bookingId),
-      address: sqlite.prepare("SELECT * FROM customer_addresses WHERE customer_id=? AND is_default=1").get(config.customerId),
-      counts: {
-        bookings: sqlite.prepare("SELECT COUNT(*) c FROM canonical_bookings WHERE idempotency_key=?").get(config.groupId).c,
-        payments: sqlite.prepare("SELECT COUNT(*) c FROM booking_payments WHERE booking_id=?").get(bookingId).c,
-        events: sqlite.prepare("SELECT COUNT(*) c FROM payment_gateway_events WHERE provider='razorpay' AND event_id=?").get(`evt_${config.groupId}`).c,
+    return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total,
+      persisted: {
+        booking: sqlite.prepare("SELECT * FROM canonical_bookings WHERE id=?").get(bookingId),
+        pet: sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").get(config.customerId),
+        reservation: sqlite.prepare("SELECT * FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(config.groupId),
+        work: sqlite.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").get(bookingId),
+        payment: sqlite.prepare("SELECT * FROM booking_payments WHERE booking_id=?").get(bookingId),
+        location: sqlite.prepare("SELECT * FROM booking_service_locations WHERE booking_id=?").get(bookingId),
+        address: sqlite.prepare("SELECT * FROM customer_addresses WHERE customer_id=? AND is_default=1").get(config.customerId),
+        counts: {
+          bookings: sqlite.prepare("SELECT COUNT(*) c FROM canonical_bookings WHERE idempotency_key=?").get(config.groupId).c,
+          payments: sqlite.prepare("SELECT COUNT(*) c FROM booking_payments WHERE booking_id=?").get(bookingId).c,
+          events: sqlite.prepare("SELECT COUNT(*) c FROM payment_gateway_events WHERE provider='razorpay' AND event_id=?").get(`evt_${config.groupId}`).c,
+        },
       },
-    },
-  };
+    };
+  });
 }
 
 export { routeCall };
