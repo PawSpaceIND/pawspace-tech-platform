@@ -37,20 +37,23 @@ export async function sendFast2SmsMessage({apiKey,phone,message,udf1="pawspace-l
   const url="https://www.fast2sms.com/dev/bulkV2";
   const requestBody=new URLSearchParams({route:"q",message:safeMessage,numbers:normalized,sms_details:"1",udf1:safeUdf}).toString();
 
-  // [AUDIT-2026-09-06 ②] Bound the outbound Fast2SMS call so a hung gateway connection cannot stall the
-  // OTP request path indefinitely. An abort surfaces as a transport-class provider error, fail-safe.
+  // [AUDIT-2026-09-06 ②] Bound the whole outbound Fast2SMS exchange — connection AND response-body read —
+  // so a gateway that stalls at any point cannot stall the OTP request path. An abort surfaces as a
+  // transport-class provider error, fail-safe. (The body read is inside the timeout window on purpose:
+  // clearing the timer at headers-received would leave a slow body stream unbounded.)
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),FAST2SMS_TIMEOUT_MS);
   let response:Response;
+  let payload:Fast2SmsPayload|null=null;
   try{
     response=await fetcher(url,{method:"POST",headers:{Authorization:apiKey.trim(),accept:"application/json","content-type":"application/x-www-form-urlencoded;charset=UTF-8"},body:requestBody,signal:controller.signal});
+    // A malformed body is handled below as a provider error; only a timeout abort must propagate.
+    try{payload=await response.json() as Fast2SmsPayload;}catch(error){if(controller.signal.aborted)throw error;}
   }catch{
     throw new Fast2SmsProviderError(null,"transport");
   }finally{
     clearTimeout(timeout);
   }
-  let payload:Fast2SmsPayload|null=null;
-  try{payload=await response.json() as Fast2SmsPayload;}catch{}
   if(!response.ok||payload?.return!==true){
     const providerStatusCode=payload?.status_code===undefined?null:String(payload.status_code);
     throw new Fast2SmsProviderError(response.status,providerStatusCode);
