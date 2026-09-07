@@ -92,7 +92,7 @@ async function world() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PTJA_F38_DB__ = db;
-  globalThis.__PTJA_F38_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
+  globalThis.__PTJA_F38_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox" };
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedDefaultZones } = await import("../lib/service-zones.ts");
   const { seedDefaultCityLaunchConfigs } = await import("../lib/city-governance.ts");
@@ -137,7 +137,7 @@ async function world() {
 
   const resolveZone = () => get("../app/api/service-zone/route.ts", `/api/service-zone?pincode=${TARGET}`);
   const saveAddress = () => post("../app/api/grooming-service-location/route.ts", "/api/grooming-service-location",
-    { bookingId: "BK-F38", customerId: "CUST-F38", address: "221B Koramangala 5th Block", pincode: TARGET }, { cookie });
+    { bookingId: "BK-F38", customerId: "CUST-F38", address: "221B Koramangala 5th Block", pincode: TARGET, latitude: 12.9352, longitude: 77.6245 }, { cookie });
   const durableRows = () => ({
     serviceLocations: sqlite.prepare("SELECT COUNT(*) n FROM booking_service_locations").get().n,
     addresses: sqlite.prepare("SELECT COUNT(*) n FROM customer_addresses").get().n,

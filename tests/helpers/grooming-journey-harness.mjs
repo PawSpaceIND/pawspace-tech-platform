@@ -66,22 +66,25 @@ export async function setupJourney() {
    // PAWSPACE_MEDIA_ENV is declared because media release is now environment-aware: an absent value
   // reads as PRODUCTION, the strict default, where unscanned media stays quarantined. These are the UAT
   // journeys. [PTJA-W3-SC]
- globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
+ globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
   const { seedDefaultGroomingPolicy } = await import("../../lib/grooming-policy-governance.ts");
   const { ensureSecurityTables } = await import("../../lib/server-auth.ts");
+  const { ensureUniversalLocationTables } = await import("../../lib/universal-location-recovery.ts");
   await ensureSecurityTables(db);
   await seedDefaultZones(db);
   await seedProviderCapacityDefaults(db);
   await seedDefaultGroomingPolicy(db);
+  await ensureUniversalLocationTables(db);
   const now = Date.now();
   await db.batch([
     db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-GROOM-CLOSURE','closure-admin@pawspace.test','Grooming closure operator','founder','active',?,?)").bind(now,now),
     db.prepare("INSERT OR REPLACE INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES ('600001','chennai-core','maa','Chennai','George Town',?)").bind(now),
     db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('groom_maa','maa','Meena R.','full_time','[\"grooming\"]','[\"chennai-core\"]',1,4.9,96,1,30,4,3,'active',1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
     db.prepare("INSERT INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_maa','grooming-default','maa',NULL,'enforce',0,100,100,0,1,2,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
+    db.prepare("INSERT OR REPLACE INTO booking_punctuality_policies (id,service_code,city_id,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES ('GPS-GROOM-UAT','grooming',NULL,1,300,50,'approved','2020-01-01',NULL,'journey_seed',?)").bind(now),
   ]);
   return { sqlite, db, close: () => sqlite.close() };
 }
@@ -158,7 +161,17 @@ export async function runCompletedJourney(ctx, config) {
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
   const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
   const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
+  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) {
+    if (action === "arrived") {
+      const capturedAt = Date.now();
+      const telemetry = await routeCall("../../app/api/grooming-route/route.ts", "POST", "/api/grooming-route", {
+        bookingId, providerId: provider.id, latitude: config.latitude, longitude: config.longitude,
+        accuracyMeters: 10, capturedAt, idempotencyKey: `golden:${bookingId}:${capturedAt}`,
+      }, providerCookie);
+      if (telemetry.status !== 201) throw new Error(`Trusted GPS setup failed: ${telemetry.status} ${JSON.stringify(telemetry.body)}`);
+    }
+    transitions.push(await lifecycle(action));
+  }
   const invalidEarlyComplete = await lifecycle("complete");
 
   const media = [];
