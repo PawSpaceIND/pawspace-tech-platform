@@ -1,0 +1,30 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import fs from"node:fs";
+import{DatabaseSync}from"node:sqlite";
+import{componentsForSupply,resolveTaxPlaceOfSupply}from"../lib/tax-pos-resolver.ts";
+import{assertBookingSettlementParity}from"../lib/settlement-parity.ts";
+
+if(process.env.PAWSPACE_PAYMENT_ENV!=="sandbox")throw new Error("tax compliance audit requires PAWSPACE_PAYMENT_ENV=sandbox");
+if(process.env.FORBID_PRODUCTION!=="true")throw new Error("tax compliance audit requires FORBID_PRODUCTION=true");
+
+type Args=unknown[];
+function makeD1(sqlite:DatabaseSync){function statement(sql:string,args:Args=[]){return{sql,args,bind:(...b:Args)=>statement(sql,b),first:async()=>sqlite.prepare(sql).get(...args)??null,run:async()=>{const r=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(r.changes)}};},all:async()=>({results:sqlite.prepare(sql).all(...args)})};}return{prepare:(sql:string)=>statement(sql),batch:async(list:any[])=>{sqlite.exec("BEGIN IMMEDIATE");try{const out=[];for(const s of list)out.push(await s.run());sqlite.exec("COMMIT");return out;}catch(error){sqlite.exec("ROLLBACK");throw error;}},exec:async(sql:string)=>{sqlite.exec(sql);return{count:0,duration:0};}}as any;}
+
+const read=(path:string)=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("sandbox locks are mandatory and production paths remain fail-closed",()=>{assert.equal(process.env.PAWSPACE_PAYMENT_ENV,"sandbox");assert.equal(process.env.FORBID_PRODUCTION,"true");const route=read("app/api/gst-accounting/route.ts");assert.match(route,/productionReady:false/);assert.match(route,/liveFilingEnabled:false/);});
+
+test("POS resolver selects intra/inter heads and Section 12 training rule",()=>{const intra=resolveTaxPlaceOfSupply({supplierGstin:"29ABCDE1234F1Z5",recipientState:"29",serviceState:"29",placeOfSupplyRule:"recipient_location"});assert.equal(intra.supplyType,"intra");assert.equal(intra.posState,"29");assert.deepEqual(componentsForSupply([{code:"CGST",rate:9},{code:"SGST",rate:9}],"inter"),[{code:"IGST",rate:18}]);const inter=resolveTaxPlaceOfSupply({supplierGstin:"29ABCDE1234F1Z5",recipientGstin:"27AAAAA0000A1Z5",recipientRegistered:true,serviceState:"29",placeOfSupplyRule:"recipient_location"});assert.equal(inter.supplyType,"inter");assert.equal(inter.posState,"27");const trainingB2c=resolveTaxPlaceOfSupply({supplierGstin:"29ABCDE1234F1Z5",recipientState:"27",recipientRegistered:false,serviceState:"29",placeOfSupplyRule:"training_performance"});assert.equal(trainingB2c.posState,"29");const trainingB2b=resolveTaxPlaceOfSupply({supplierGstin:"29ABCDE1234F1Z5",recipientGstin:"27AAAAA0000A1Z5",recipientRegistered:true,serviceState:"29",placeOfSupplyRule:"training_performance"});assert.equal(trainingB2b.posState,"27");});
+
+test("statutory invoice source freezes POS metadata and uses FY/CAS serial governance",()=>{const src=read("lib/statutory-invoicing.ts");for(const marker of["finance_document_series_v2","financial_year","finance_invoice_serial_claims","source_event_key TEXT NOT NULL UNIQUE","finance_document_voids","supplier_gstin","recipient_gstin","pos_state","pos_rule","supply_type","db.batch(statements)","next_number=?"])assert.match(src,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));assert.match(src,/invoice_series_exceeds_16_characters/);const closeout=read("lib/finance-filing-closeout.ts");assert.match(closeout,/issueInvoiceStatutory/);});
+
+test("Section 52 source is return-adjusted, GSTIN/POS rich and effective-dated",()=>{const src=read("lib/statutory-tcs.ts");for(const marker of["returned_supply_value","gross_supply_value","supplier_gstin","supplier_state","operator_gstin","pos_state","rate_version","rate_effective_from","tcsRateS52For","finance_provider_tax_profiles","returnedValue"])assert.match(src,new RegExp(marker));assert.doesNotMatch(src,/OPERATOR_STATE_CODE/);const rates=read("lib/tcs-rate.ts");assert.match(rates,/CHANGE_DATE="2024-07-10"/);assert.match(rates,/total:0\.005/);});
+
+test("settlement parity persists a clean equation and blocks a one-rupee drift",async()=>{const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);sqlite.exec("CREATE TABLE booking_payments (booking_id TEXT PRIMARY KEY,amount REAL,amount_due_now REAL,status TEXT); INSERT INTO booking_payments VALUES ('B1',1180,1180,'captured');");const ok=await assertBookingSettlementParity(db,{bookingId:"B1",actorId:"audit",pawspaceEntitlement:200,statutoryLiabilities:180,providerSettlement:800,refundsAdjustments:0});assert.equal(ok.status,"reconciled");assert.equal(ok.variance,0);await assert.rejects(()=>assertBookingSettlementParity(db,{bookingId:"B1",actorId:"audit",pawspaceEntitlement:201,statutoryLiabilities:180,providerSettlement:800,refundsAdjustments:0}),/Settlement parity failed/);const row=sqlite.prepare("SELECT status,variance FROM booking_settlement_reconciliations WHERE booking_id='B1'").get() as any;assert.equal(row.status,"blocked");assert.equal(Number(row.variance),-1);});
+
+test("provider payout and completion paths carry TCS into net settlement",()=>{const payout=read("lib/provider-payout-statutory.ts"),completion=read("lib/service-completion-finance.ts"),route=read("app/api/provider-commercial-terms/route.ts");assert.match(payout,/providerSettlement/);assert.match(payout,/providerNetPayout-tcsWithheld/);assert.match(completion,/2140-TCS Payable/);assert.match(completion,/assertBookingSettlementParity/);assert.doesNotMatch(completion,/OPERATOR_STATE_CODE/);assert.match(route,/computeOrderPayoutStatutory/);});
+
+test("dedicated statutory routes use upgraded TCS/GSTR-8 implementation",()=>{const route=read("app/api/statutory-compliance/route.ts");assert.match(route,/computeMonthlyTcsStatutory/);assert.match(route,/prepareGstr8Statutory/);});
+
+test("package exposes the exact requested audit hook",()=>{const pkg=JSON.parse(read("package.json"));assert.equal(pkg.scripts["test:tax-compliance-audit"],"node --import tsx scripts/run-tax-compliance-audit.test.ts");});
