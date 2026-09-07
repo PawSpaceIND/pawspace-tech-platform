@@ -109,6 +109,24 @@ done
 stop_server
 node scripts/e2e/seed-identities.mjs
 
-# One clean owner of the D1 file for the whole browser suite.
-start_server
-npx playwright test --config playwright.e2e.config.ts
+# Wrangler 4.92.0 can lose its local ProxyController connection during a long-lived built-worker run.
+# Keep the same persisted Miniflare D1 state, but give each real journey file a fresh server lifetime.
+# This does not retry failed tests or weaken assertions: any journey failure still fails the gate once.
+journeys=(
+  e2e/journeys/00-identity.spec.ts
+  e2e/journeys/01-customer.spec.ts
+  e2e/journeys/02-partner.spec.ts
+  e2e/journeys/03-admin.spec.ts
+)
+
+for journey in "${journeys[@]}"; do
+  echo "[e2e] running ${journey} with a fresh built-worker server"
+  start_server
+  if ! npx playwright test --config playwright.e2e.config.ts "$journey"; then
+    echo "[e2e] journey failed: ${journey}" >&2
+    log_tail
+    stop_server || true
+    exit 1
+  fi
+  stop_server
+done
