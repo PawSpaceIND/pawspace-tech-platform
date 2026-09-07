@@ -45,7 +45,7 @@ test("customer and partner OTPs use Web Crypto CSPRNG and never Math.random",asy
  for(let i=0;i<256;i++)assert.match(secureSixDigitOtp(),/^[1-9][0-9]{5}$/);
 });
 
-test("customer OTP persists only a salted keyed verifier, verifies correctly, and purges stale rows",async()=>{
+test("customer OTP persists only a salted keyed verifier, erases it on use, and purges stale rows",async()=>{
  const{requestCustomerOtp,verifyCustomerOtp,purgeCustomerOtpChallenges}=await import("../lib/customer-otp.ts");
  const{sqlite,db}=fresh();
  const challenge=await requestCustomerOtp(db,{phone:"9876543210"});
@@ -54,6 +54,8 @@ test("customer OTP persists only a salted keyed verifier, verifies correctly, an
  assert.notEqual(row.verifier_hash,challenge.sandboxCode);assert.ok(!JSON.stringify(row).includes(challenge.sandboxCode));
  const verified=await verifyCustomerOtp(db,{challengeId:challenge.challengeId,code:challenge.sandboxCode});
  assert.ok(verified.assertion.includes("."));
+ const consumed=sqlite.prepare("SELECT consumed,verifier_salt,verifier_hash FROM customer_otp_challenges WHERE id=?").get(challenge.challengeId);
+ assert.equal(consumed.consumed,1);assert.equal(consumed.verifier_salt,null);assert.equal(consumed.verifier_hash,null);
  sqlite.prepare("UPDATE customer_otp_challenges SET created_at=? WHERE id=?").run(Date.now()-2*60*60*1000,challenge.challengeId);
  await purgeCustomerOtpChallenges(db);
  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM customer_otp_challenges WHERE id=?").get(challenge.challengeId).c,0);
@@ -63,7 +65,7 @@ test("customer OTP persists only a salted keyed verifier, verifies correctly, an
  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM customer_otp_challenges WHERE id=?").get(expired.challengeId).c,0);
 });
 
-test("partner OTP persists only a salted keyed verifier and verifies correctly",async()=>{
+test("partner OTP persists only a salted keyed verifier and erases it on use",async()=>{
  const{requestPartnerOtp,verifyPartnerOtp}=await import("../lib/partner-otp.ts");
  const{sqlite,db}=fresh();
  const challenge=await requestPartnerOtp(db,{phone:"9988776655"});
@@ -71,6 +73,8 @@ test("partner OTP persists only a salted keyed verifier and verifies correctly",
  assert.equal(row.code,"[hashed]");assert.ok(row.verifier_salt.length>=32);assert.ok(row.verifier_hash.length>20);assert.ok(!JSON.stringify(row).includes(challenge.sandboxCode));
  const verified=await verifyPartnerOtp(db,{challengeId:challenge.challengeId,code:challenge.sandboxCode,name:"Audit Provider"});
  assert.ok(verified.assertion.includes("."));
+ const consumed=sqlite.prepare("SELECT consumed,verifier_salt,verifier_hash FROM partner_otp_challenges WHERE id=?").get(challenge.challengeId);
+ assert.equal(consumed.consumed,1);assert.equal(consumed.verifier_salt,null);assert.equal(consumed.verifier_hash,null);
 });
 
 test("UAT access codes and signed tokens are checked through constant-time comparison",async()=>{
