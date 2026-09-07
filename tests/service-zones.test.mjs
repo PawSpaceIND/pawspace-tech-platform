@@ -74,6 +74,8 @@ test("address-picker component collects pincode and resolves zone",async()=>{
   assert.match(page,/\/api\/service-zone/);
   assert.match(page,/replace\(\/\\D\/g,""\)\.slice\(0,6\)/);
   assert.match(page,/onZoneResolved/);
-  assert.match(page,/setPincode/);
-  assert.match(page,/const\[pincode,setPincode\]/);
+  assert.match(page,/\[pincode,setPincode\]=useState/);
+  assert.match(page,/resolveServiceCoverage\(pincode\)/);
+  assert.match(page,/resolveAddress\(/);
+  assert.match(page,/validGpsCoordinates/);
 });

@@ -38,6 +38,9 @@ export PAWSPACE_PAYMENT_ENV="sandbox"
 export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
 export PAWSPACE_SCHEDULING_ENV="uat"
 export PAWSPACE_MEDIA_ENV="uat"
+# Server-owned deterministic service-discovery evidence for the local hardened journey only.
+# resolveGovernedServiceAddress refuses this fixture unless payment is sandbox and runtime is test/UAT.
+export PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="on"
 
 # Wrangler's terminal output can collapse a fatal Miniflare/workerd exception to a bare [ERROR] and
 # write the useful detail only to its own log. Pin that log to an artifact-friendly location so a
@@ -63,4 +66,5 @@ exec npx wrangler dev \
   --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
   --var PAWSPACE_SCHEDULING_ENV:uat \
   --var PAWSPACE_MEDIA_ENV:uat \
+  --var PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE:on \
   --var PAWSPACE_WORKSPACE_IDENTITY_TRUST:openai-dispatch
