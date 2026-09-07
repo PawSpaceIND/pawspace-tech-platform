@@ -80,6 +80,12 @@ export function haversineDistanceKm(a:{latitude:number;longitude:number},b:{lati
   return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
 }
 
+function validateManualOverride(input:ScheduleRequest){
+  if(!input.manualProviderId)return;
+  const reason=String(input.manualOverrideReason??"").trim();
+  if(reason.length<8)throw Object.assign(new Error("Manual provider override requires a clear reason of at least 8 characters"),{statusCode:422});
+}
+
 function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
   const requested=recurring?(input.occurrences??1):1;
@@ -151,13 +157,14 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
 }
 
 export async function schedule(repository:PlatformRepository,input:ScheduleRequest):Promise<ScheduleDecision>{
+  validateManualOverride(input);
   const occurrences=buildOccurrences(input); const candidates=await repository.listEligibleProviders(input.cityId,input.zoneId,input.serviceCode); const pets=await petsFor(repository,input.petIds);
   const evaluations=await Promise.all(candidates.map(p=>evaluateProvider(repository as SchedulingRepository,p,input,occurrences,pets)));
   const ranked=evaluations.filter(e=>e.eligible).sort((a,b)=>{const scoreDelta=b.score-a.score;if(Math.abs(scoreDelta)>SCORE_EPSILON)return scoreDelta;return a.workload-b.workload||a.distanceKm-b.distanceKm||a.providerId.localeCompare(b.providerId);}); const selectedEval=ranked[0]; const provider=selectedEval?candidates.find(p=>p.id===selectedEval.providerId)??null:null;
   const shortlist=ranked.slice(0,3).map(item=>({provider:candidates.find(p=>p.id===item.providerId)!,score:item.score,reasons:item.reasons}));
   if(!provider)return {provider:null,mode:"manual_review",occurrences,evaluations,shortlist:[],explanation:["No provider passed every scheduling rule","Booking retained for Ops intervention"]};
-  const override=Boolean(input.manualProviderId&&input.manualOverrideReason); const mode=override?"automatic":provider.model==="full_time"?"automatic":"offer";
-  return {provider,mode,occurrences,evaluations,shortlist,offerExpiresAt:mode==="offer"?new Date(Date.now()+3*msMinute).toISOString():undefined,explanation:[`${scheduleRules[input.serviceCode].label} rule pack passed`,`${occurrences.length} occurrence${occurrences.length===1?"":"s"} reserved with one provider`,...selectedEval!.reasons,`Ranked workload ${selectedEval!.workload}, distance ${Number.isFinite(selectedEval!.distanceKm)?selectedEval!.distanceKm.toFixed(2)+" km":"n/a"}, residual capacity ${selectedEval!.residualCapacity}`,override?`Ops override: ${input.manualOverrideReason}`:provider.model==="full_time"?"Full-time provider auto-assigned":"Commission provider receives a 3-minute offer"]};
+  const override=Boolean(input.manualProviderId); const mode=override?"automatic":provider.model==="full_time"?"automatic":"offer";
+  return {provider,mode,occurrences,evaluations,shortlist,offerExpiresAt:mode==="offer"?new Date(Date.now()+3*msMinute).toISOString():undefined,explanation:[`${scheduleRules[input.serviceCode].label} rule pack passed`,`${occurrences.length} occurrence${occurrences.length===1?"":"s"} reserved with one provider`,...selectedEval!.reasons,`Ranked workload ${selectedEval!.workload}, distance ${Number.isFinite(selectedEval!.distanceKm)?selectedEval!.distanceKm.toFixed(2)+" km":"n/a"}, residual capacity ${selectedEval!.residualCapacity}`,override?`Ops override: ${String(input.manualOverrideReason).trim()}`:provider.model==="full_time"?"Full-time provider auto-assigned":"Commission provider receives a 3-minute offer"]};
 }
 
 export async function listScheduleSlots(repository:PlatformRepository,input:Omit<ScheduleRequest,"petIds"|"scheduledStart"|"scheduledEnd">&{date:string;petIds?:string[]}):Promise<Array<{start:string;end:string;available:boolean;eligibleProviders:number;reason?:string}>>{
