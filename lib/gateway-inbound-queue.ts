@@ -28,7 +28,7 @@ function parseHeaders(value:unknown){let parsed:Record<string,string>={};try{par
 function environment(value:unknown):GatewayInboundEnvironment{const mode=text(value).toLowerCase();if(mode==="sandbox"||mode==="uat"||mode==="live")return mode;throw new Error("Inbound webhook environment must be sandbox, uat or live");}
 function retryDelayMs(attempt:number){return Math.min(MAX_RETRY_MS,BASE_RETRY_MS*Math.pow(2,Math.max(0,attempt-1)));}
 async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
-async function scrubExpiredSignedPaymentPayloads(db:Db,now:number){if(!await tableExists(db,"gateway_webhook_events"))return 0;try{const result=await db.prepare("UPDATE gateway_webhook_events SET raw_payload='{}' WHERE processed_at IS NOT NULL AND processed_at<=? AND raw_payload<>'{}'").bind(now-RAW_PAYLOAD_RETENTION_MS).run();return Number(result.meta?.changes||0);}catch{return 0;}}
+async function scrubExpiredSignedPaymentPayloads(db:Db,now:number){if(!await tableExists(db,"gateway_webhook_events"))return 0;try{const result=await db.prepare("UPDATE gateway_webhook_events SET raw_payload='{}' WHERE processing_status IN ('PROCESSED','REJECTED') AND processed_at IS NOT NULL AND processed_at<=? AND raw_payload<>'{}'").bind(now-RAW_PAYLOAD_RETENTION_MS).run();return Number(result.meta?.changes||0);}catch{return 0;}}
 
 export async function ensureGatewayInboundQueueTables(db:Db){
  await db.batch([
@@ -145,7 +145,7 @@ export async function runInboundWebhookAttempt(db:Db,input:{queueId:string;worke
 export async function drainGatewayInboundQueue(db:Db,handlers:Record<string,GatewayInboundHandler>,input:{limit?:number;now?:number;workerPrefix?:string}={}){
  await ensureGatewayInboundQueueTables(db);const now=input.now??Date.now(),limit=Math.max(1,Math.min(100,Math.floor(input.limit??25))),due=rows(await db.prepare("SELECT id,route_key FROM gateway_inbound_queue WHERE status IN ('RECEIVED','RETRY') AND next_attempt_at<=? ORDER BY next_attempt_at,received_at LIMIT ?").bind(now,limit).all<Row>());let processed=0,retried=0,deadLettered=0,unhandled=0;
  for(const item of due){const routeKey=text(item.route_key),handler=handlers[routeKey],workerId=`${text(input.workerPrefix)||"gateway-inbound"}:${crypto.randomUUID()}`;
-  const chosen=handler||async()=>{throw new Error(`No retry handler registered for inbound route ${routeKey}`);};const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler:chosen,now});if(!handler)unhandled++;if(result.claimed&&result.ok)processed++;else if(result.claimed&&"failure"in result&&result.failure?.status==="DEAD_LETTER")deadLettered++;else if(result.claimed)retried++;
+  const chosen:GatewayInboundHandler=handler??(async()=>{throw new Error(`No retry handler registered for inbound route ${routeKey}`);});const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler:chosen,now});if(!handler)unhandled++;if(result.claimed&&result.ok)processed++;else if(result.claimed&&"failure"in result&&result.failure?.status==="DEAD_LETTER")deadLettered++;else if(result.claimed)retried++;
  }
  return{examined:due.length,processed,retried,deadLettered,unhandled};
 }
