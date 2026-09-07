@@ -17,7 +17,7 @@ export const escrowLedgerTransactions=sqliteTable("escrow_ledger_transactions",{
 },table=>[index("idx_escrow_ledger_booking").on(table.bookingId,table.createdAt)]);
 
 export const leadIntakeAdAttribution=sqliteTable("lead_intake_ad_attribution",{
- id:text("id").primaryKey(),contactId:text("contact_id").notNull().unique(),leadId:text("lead_id").notNull().unique(),sourcePlatform:text("source_platform").notNull(),gclid:text("gclid"),fbclid:text("fbclid"),wbraid:text("wbraid"),clickId:text("click_id"),utmSource:text("utm_source"),utmMedium:text("utm_medium"),utmCampaign:text("utm_campaign"),campaignId:text("campaign_id"),adId:text("ad_id"),landingUrl:text("landing_url"),metadataJson:text("metadata_json").notNull().default("{}"),createdAt:integer("created_at").notNull(),updatedAt:integer("updated_at").notNull(),
+ id:text("id").primaryKey(),contactId:text("contact_id").notNull().unique(),leadId:text("lead_id").notNull().unique(),sourcePlatform:text("source_platform").notNull(),gclid:text("gclid"),fbclid:text("fbclid"),wbraid:text("wbraid"),gbraid:text("gbraid"),clickId:text("click_id"),utmSource:text("utm_source"),utmMedium:text("utm_medium"),utmCampaign:text("utm_campaign"),utmContent:text("utm_content"),utmTerm:text("utm_term"),campaignId:text("campaign_id"),adId:text("ad_id"),landingUrl:text("landing_url"),metadataJson:text("metadata_json").notNull().default("{}"),createdAt:integer("created_at").notNull(),updatedAt:integer("updated_at").notNull(),
 },table=>[index("idx_lead_intake_ad_campaign").on(table.sourcePlatform,table.campaignId,table.adId,table.createdAt)]);
 
 export const whatsappLeadAttributionIntake=sqliteTable("whatsapp_lead_attribution_intake",{
