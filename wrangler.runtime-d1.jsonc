@@ -10,6 +10,9 @@
     // header cannot create either value. Keep these declarations confined to this local Wrangler config.
     "NODE_ENV": "test",
     "PAWSPACE_LOCAL_PREVIEW": "on",
+    // Explicit, server-owned service-discovery fixture. This is accepted only when the runtime is both
+    // sandbox and test/UAT; production/staging customer traffic cannot use it.
+    "PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE": "on",
     // Declared explicitly, as every documented deployment does. The sandbox payment simulators no
     // longer treat an ABSENT PAWSPACE_PAYMENT_ENV as a sandbox declaration (PTJA W2-07-PAY-003):
     // an undeclared runtime used to unlock a staff endpoint that records a full-value capture with
