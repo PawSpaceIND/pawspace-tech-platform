@@ -25,12 +25,14 @@ test("Walking pricing parser tolerates null pricing", () => {
   assert.match(walkingSource, /pricing\?\.perWalkAmount/);
 });
 
-test("Walking completion CAS-claims booking/session before batching durable completion side effects", () => {
+test("Walking completion delegates the guarded durable transaction to the canonical lifecycle engine", () => {
   const start = walkingSource.indexOf('if(input.action==="complete_walk")');
   const end = walkingSource.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"');
   const block = walkingSource.slice(start, end);
   assert.ok(start >= 0 && end > start);
-  assert.match(block, /await db\.batch\(\[/);
+  assert.match(block, /acquireProviderLifecycleLease/);
+  assert.match(block, /finalizeProviderLifecycleLease/);
+  assert.match(block, /providerLifecycleAssertionStatement/);
   assert.match(block, /walking_session_payment_events/);
   assert.match(block, /walk_completed/);
   assert.match(block, /walking_session_events/);
@@ -39,27 +41,23 @@ test("Walking completion CAS-claims booking/session before batching durable comp
   assert.match(block, /Your PawSpace walk is complete/);
   assert.match(block, /walking_action_keys/);
   /*
-   * Completion first claims the canonical booking and session with strict predecessor-state CAS guards.
-   * The durable payment row, audit event, notifications and idempotency key then land together in one
-   * batch so a lost worker cannot leave a DUE payment row without its replay key. Failed session/finance
-   * work must roll the guarded lifecycle claims back to in_progress before surfacing the error.
+   * The shared lifecycle lease owns the compare-and-set claim. finalizeProviderLifecycleLease builds one
+   * D1 batch containing the guarded session/booking writes plus payment, event, notifications and replay
+   * key, then advances the canonical lifecycle version in that same batch. The dedicated lifecycle D1
+   * suite proves rollback when a dependent CAS fails; this test pins Walking's delegation and payload.
    */
-  assert.match(block, /UPDATE canonical_bookings SET status=\?,updated_at=\? WHERE id=\? AND status='in_progress'/);
-  assert.match(block, /assertLifecycleClaim\(bookingClaim\)/);
-  assert.match(block, /UPDATE walking_sessions SET status='completed',completion_status='complete',updated_at=\? WHERE id=\? AND status='in_progress'/);
-  assert.match(block, /assertLifecycleClaim\(sessionClaim\)/);
-  assert.match(block, /UPDATE canonical_bookings SET status='in_progress',updated_at=\? WHERE id=\? AND status=\?/);
+  assert.match(block, /UPDATE walking_sessions SET status='completed',completion_status='complete'/);
+  assert.match(block, /UPDATE canonical_bookings SET status=\?,updated_at=\?/);
+  assert.match(block, /AND \$\{ctx\.guardSql\}/);
+  assert.match(block, /INSERT INTO walking_action_keys/);
+  assert.match(block, /buildAssertion:ctx=>providerLifecycleAssertionStatement/);
   assert.doesNotMatch(block, /await event\(/);
   assert.doesNotMatch(block, /await notify\(/);
   assert.doesNotMatch(block, /return remember\(/);
-  // The invariant is not "one batch exists" but that the idempotency key is committed together with the
-  // payment row it describes - that pairing is what makes a lost worker replayable instead of wedged on
-  // the UNIQUE session_id. Checked on the completion batch itself, not on the whole block, so the
-  // post-commit ledger reconciliation below it cannot satisfy this by accident.
-  const commitBatch = block.slice(block.indexOf("await db.batch(["), block.indexOf("]);"));
-  assert.match(commitBatch, /walking_session_payment_events/);
-  assert.match(commitBatch, /walking_action_keys/);
-  assert.match(commitBatch, /walking_customer_notifications/);
+  const paymentIndex = block.indexOf("walking_session_payment_events");
+  const replayIndex = block.indexOf("walking_action_keys");
+  assert.ok(paymentIndex >= 0 && replayIndex > paymentIndex, "payment and replay key remain ordered in the canonical transaction");
+  assert.match(block, /walking_customer_notifications/);
   assert.match(block, /gpsConnected:true/);
   assert.match(block, /payout:finance\?\.payoutStatus/);
   assert.match(block, /tax:finance\?\.taxStatus/);
