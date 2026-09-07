@@ -90,19 +90,20 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
 
- // Capacity-weighted utilisation using the same authored-wins roster authority as scheduling.
+ // Capacity-weighted utilisation using authored-wins availability. Legacy fixtures without a
+ // capacity-profile table (or without a row for a provider) retain unit-capacity arithmetic. A
+ // present but inactive/expired profile is never revived by the fallback.
  let utilisationPct:number|null=null;
- if(await tableExists(db,"scheduling_reservations")&&await tableExists(db,"scheduling_availability")&&await tableExists(db,"provider_capacity_profiles")){
+ const hasReservations=await tableExists(db,"scheduling_reservations"),hasAvailability=await tableExists(db,"scheduling_availability");
+ if(hasReservations&&hasAvailability){
   const city=String(input.cityId||"");
+  const hasCapacityProfiles=await tableExists(db,"provider_capacity_profiles");
   const reservations=await safeAll(db,["scheduling_reservations"],"SELECT scheduled_start,scheduled_end,capacity_units FROM scheduling_reservations WHERE status!='cancelled' AND substr(scheduled_start,1,10)>=? AND substr(scheduled_start,1,10)<=? AND (?='' OR city_id=?)",[from,to,city,city],guards);
   const bookedCapacityHours=reservations.reduce((sum,row)=>sum+Math.max(0,(new Date(String(row.scheduled_end)).getTime()-new Date(String(row.scheduled_start)).getTime())/3_600_000)*Math.max(1,Number(row.capacity_units||1)),0);
-  const roster=await safeAll(db,["scheduling_availability","provider_capacity_profiles"],`SELECT a.provider_id,a.date,a.windows_json,p.capacity
+  const roster=await safeAll(db,["scheduling_availability"],`SELECT a.provider_id,a.city_id,a.date,a.windows_json,a.source
     FROM scheduling_availability a
-    JOIN provider_capacity_profiles p ON p.id=a.provider_id
     WHERE a.date>=? AND a.date<=?
-      AND p.live=1 AND p.status='active'
-      AND p.effective_from<=a.date AND (p.effective_to IS NULL OR p.effective_to>=a.date)
-      AND (?='' OR p.city_id=?)
+      AND (?='' OR a.city_id=?)
       AND (
         a.source IN ('partner_app','operations','roster')
         OR NOT EXISTS (
@@ -111,8 +112,26 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
             AND authored.source IN ('partner_app','operations','roster')
         )
       )`,[from,to,city,city],guards);
+  const profiles=new Map<string,Row>();
+  if(hasCapacityProfiles){
+   const rows=await safeAll(db,["provider_capacity_profiles"],"SELECT id,city_id,live,status,capacity,effective_from,effective_to FROM provider_capacity_profiles",[],guards);
+   for(const row of rows)profiles.set(String(row.id),row);
+  }
   let rosterCapacityHours=0;
-  for(const row of roster){let windows:string[]=[];try{windows=JSON.parse(String(row.windows_json||"[]"));}catch{windows=[];}const capacity=Math.max(1,Number(row.capacity||1));for(const window of windows){const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(match)rosterCapacityHours+=Math.max(0,(Number(match[3])*60+Number(match[4])-Number(match[1])*60-Number(match[2]))/60)*capacity;}}
+  for(const row of roster){
+   let capacity=1;
+   if(hasCapacityProfiles){
+    const profile=profiles.get(String(row.provider_id));
+    if(profile){
+     const date=String(row.date),effectiveFrom=String(profile.effective_from||""),effectiveTo=profile.effective_to==null?null:String(profile.effective_to);
+     if(!Boolean(profile.live)||String(profile.status)!=="active"||effectiveFrom>date||(effectiveTo!==null&&effectiveTo<date))continue;
+     if(city&&String(profile.city_id)!==city)continue;
+     capacity=Math.max(1,Number(profile.capacity||1));
+    }
+   }
+   let windows:string[]=[];try{windows=JSON.parse(String(row.windows_json||"[]"));}catch{windows=[];}
+   for(const window of windows){const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(match)rosterCapacityHours+=Math.max(0,(Number(match[3])*60+Number(match[4])-Number(match[1])*60-Number(match[2]))/60)*capacity;}
+  }
   utilisationPct=rosterCapacityHours>0?pct(bookedCapacityHours,rosterCapacityHours):null;
  }
 
@@ -143,7 +162,7 @@ function coverageNote(){return{
  discounts:"coupon_redemptions + paw_points_ledger redemptions (Rs.0.50/point) + pawspace_wallet_ledger applied value",
  providerPayout:"provider_order_payouts (sandbox rail)",
  refunds:"booking_refund_cases status=processing|processed|completed",
- utilisation:"authoritative scheduling_availability capacity-hours; authored roster wins over uat_roster; city-scoped when requested",
+ utilisation:"authoritative scheduling_availability capacity-hours; governed capacity when present, unit-capacity fallback only for missing legacy profile data; authored roster wins over uat_roster; city-scoped when requested",
  tax:"configuration_required - no published tax policy; excluded from contribution, never zeroed",
  paymentFee:"configuration_required - gateway fees are sandbox; excluded from contribution, never zeroed",
  variableCost:"configuration_required - COGS/variable cost rules not configured; excluded, never zeroed",
