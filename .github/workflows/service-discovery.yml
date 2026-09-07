@@ -1,0 +1,41 @@
+name: Service Discovery Certification
+
+on:
+  pull_request:
+    paths:
+      - 'app/api/uat-scheduling/**'
+      - 'app/api/grooming-service-location/**'
+      - 'app/training/**'
+      - 'app/mobile-app/address-picker.tsx'
+      - 'backend/src/scheduling.ts'
+      - 'lib/address-autocomplete.ts'
+      - 'lib/service-discovery-address.ts'
+      - 'lib/service-zones.ts'
+      - 'lib/uat-scheduling-client.ts'
+      - 'tests/service-discovery-capacity.test.mjs'
+      - 'package.json'
+      - '.github/workflows/service-discovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  service-discovery:
+    name: Service discovery / capacity governance
+    runs-on: ubuntu-latest
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Verify service discovery under sandbox isolation
+        run: PAWSPACE_PAYMENT_ENV="sandbox" npm run test:service-discovery
