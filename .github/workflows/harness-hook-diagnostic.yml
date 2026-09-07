@@ -20,6 +20,7 @@ jobs:
       PAWSPACE_LOCAL_PREVIEW: 'on'
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
