@@ -4,10 +4,9 @@ name: Browser E2E (hardened, preview superuser disabled)
 # wrangler dev --local, Miniflare D1). No Cloudflare credentials are needed: Miniflare creates a
 # local SQLite D1, so this works on any runner.
 #
-# The suite is only meaningful because the development-preview superuser is OFF - scripts/e2e/serve.sh
-# declares PAWSPACE_DEPLOYMENT_ENV, which is the first gate in lib/development-preview.ts.
-# e2e/journeys/00-identity.spec.ts asserts that and fails the run if the trap returns, so a green
-# result here cannot be a superuser passing everything.
+# scripts/e2e/run-hardened.sh is the single local/CI entry point. It owns every server start/stop,
+# seeds only while Miniflare is stopped, waits for the port to close before restarting, and keeps
+# Wrangler's internal diagnostics for transient workerd/Miniflare crashes.
 on:
   pull_request:
     branches: [main]
@@ -25,6 +24,9 @@ jobs:
       NODE_ENV: test
       E2E_PORT: "8788"
       E2E_BASE_URL: http://127.0.0.1:8788
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      WRANGLER_LOG_PATH: /tmp/wrangler-e2e.log
     steps:
       - uses: actions/checkout@v4
 
@@ -42,61 +44,10 @@ jobs:
       - name: Build the app
         run: npm run build
 
-      # seed-identities.mjs intentionally writes the local Miniflare SQLite file directly. Never do
-      # that while Wrangler owns the file: it can terminate Miniflare mid-suite. Bootstrap app_users,
-      # stop, seed identities offline, restart to create the lazy canonical tables as the seeded admin,
-      # stop again, seed the canonical fixtures offline, then make one clean final start for Playwright.
-      - name: Prepare local D1 fixtures with Miniflare stopped during writes
-        run: |
-          start_server() {
-            nohup setsid env E2E_SKIP_BUILD=1 bash scripts/e2e/serve-hardened.sh >> /tmp/serve.log 2>&1 &
-            echo $! > /tmp/e2e-server.pid
-            for i in $(seq 1 60); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$E2E_BASE_URL/" || true)
-              [ "$code" != "000" ] && { echo "app up (HTTP $code)"; return 0; }
-              sleep 2
-            done
-            echo "::error::app did not start"; tail -80 /tmp/serve.log; return 1
-          }
-
-          stop_server() {
-            pid=$(cat /tmp/e2e-server.pid)
-            kill -- "-$pid" 2>/dev/null || true
-            for i in $(seq 1 30); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "$E2E_BASE_URL/" || true)
-              [ "$code" = "000" ] && return 0
-              sleep 1
-            done
-            echo "::error::local E2E server did not stop"; tail -80 /tmp/serve.log; return 1
-          }
-
-          : > /tmp/serve.log
-
-          # A protected route resolves identity before denying the unknown user, materializing app_users.
-          # Stop Miniflare before the direct SQLite seed so the backing file has a single writer.
-          start_server
-          curl -s -o /dev/null -H "oai-authenticated-user-email: e2e.admin@pawspace.test" \
-            "$E2E_BASE_URL/api/canonical-bookings?customerId=E2E-CUS-UI-001" || true
-          stop_server
-          node scripts/e2e/seed-identities.mjs
-
-          # With the admin identity now present, these requests can create their lazy canonical tables.
-          start_server
-          for p in "/api/canonical-bookings?customerId=E2E-CUS-UI-001" \
-                   "/api/partner-job-feed?providerId=E2E-PRV-UI-001" \
-                   "/api/booking-command-center"; do
-            curl -fsS -o /dev/null -H "oai-authenticated-user-email: e2e.admin@pawspace.test" "$E2E_BASE_URL$p" || true
-          done
-          stop_server
-
-          # Second offline pass fills every fixture whose table was materialized by the warm requests.
-          node scripts/e2e/seed-identities.mjs
-
-          # Final clean server owns the database for the entire Playwright run; no direct SQLite writes follow.
-          start_server
-
-      - name: Run browser journeys
-        run: npx playwright test --config playwright.e2e.config.ts
+      - name: Run hardened seeded browser journeys
+        env:
+          E2E_SKIP_BUILD: "1"
+        run: npm run test:e2e
 
       - name: Upload failure evidence
         if: failure()
@@ -106,5 +57,6 @@ jobs:
           path: |
             test-results/
             /tmp/serve.log
+            /tmp/wrangler-e2e.log
           if-no-files-found: ignore
           retention-days: 7
