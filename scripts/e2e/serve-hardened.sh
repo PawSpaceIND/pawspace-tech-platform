@@ -49,10 +49,14 @@ fi
 
 mkdir -p "$PERSIST_DIR"
 echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
+# The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
+# OpenAI Sites dispatch layer. This explicit trust marker is LOCAL E2E simulation only; the standalone
+# staging worker intentionally does not set it, so raw external identity headers fail closed there.
 exec npx wrangler dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
   --var PAWSPACE_LOCAL_PREVIEW:off \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
-  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false
+  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
+  --var PAWSPACE_WORKSPACE_IDENTITY_TRUST:openai-dispatch
