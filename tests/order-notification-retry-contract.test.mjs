@@ -15,7 +15,8 @@ test("failed or pending communication delivery is retried on the same idempotenc
   assert.match(source, /deliveryStatus==="failed"\|\|deliveryStatus==="pending"/);
   assert.match(source, /retried:true/);
   assert.match(source, /delivery_status='failed'/);
-  assert.match(source, /delivery_status='queued'/);
+  assert.match(source, /const deliveryStatus=text\(\(communication as Row\)\.status\)\|\|text\(message\?\.status\)\|\|"queued"/);
+  assert.match(source, /UPDATE order_notifications SET delivery_status=\?,delivery_attempts=delivery_attempts\+1,delivery_error=\?/);
 });
 
 test("successful payment capture is customer-facing and produces receipt wording", () => {
