@@ -132,9 +132,8 @@ jobs:
           const bookingId = String(bookings[0].id || '').trim();
           const cityId = String(bookings[0].city_id || owners[0].city_id || '').trim();
           if (!customerId || !bookingId || !cityId) throw new Error('Resolved UAT canonical context is incomplete');
-          const consentRef = `github-actions-voice-uat-${process.env.GITHUB_RUN_ID}`;
-          for (const value of [customerId, bookingId, cityId, consentRef]) console.log(`::add-mask::${value}`);
-          appendFileSync(process.env.GITHUB_ENV, `UAT_CUSTOMER_ID=${customerId}\nUAT_BOOKING_ID=${bookingId}\nUAT_CITY_ID=${cityId}\nUAT_CONSENT_SOURCE_REF=${consentRef}\n`);
+          for (const value of [customerId, bookingId, cityId]) console.log(`::add-mask::${value}`);
+          appendFileSync(process.env.GITHUB_ENV, `UAT_CUSTOMER_ID=${customerId}\nUAT_BOOKING_ID=${bookingId}\nUAT_CITY_ID=${cityId}\n`);
           console.log('Canonical UAT context resolved from one allowlisted booking owner; identifiers withheld.');
           NODE
       - name: Validate seven-parameter UAT preflight
@@ -212,8 +211,9 @@ jobs:
             echo '- seven-parameter UAT preflight: passed'
             echo '- single allow-listed E.164 test recipient validated: yes'
             echo '- AgentStream wss endpoint configured: yes'
-            echo '- one-shot dispatch target: 2026-09-06 08:00 IST'
+            echo '- automatic carrier dispatch: disabled'
+            echo '- automatic consent creation: disabled'
             echo '- real call placed by this workflow: no'
-            echo '- consent written by this workflow: no (staging scheduler writes only the explicitly source-attributed record before the due time)'
+            echo '- next step: operator records genuine consent, runs policy_preview, then explicitly places one controlled UAT call'
             echo "- staging origin: $STAGING_URL"
           } >> "$GITHUB_STEP_SUMMARY"
