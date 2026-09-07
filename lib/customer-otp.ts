@@ -64,7 +64,7 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
  if(!salt||!stored)throw new Error("OTP challenge is no longer valid - request a new one");
  const candidate=await otpVerifier(input.challengeId,salt,text(input.code));
  if(!constantTimeEqual(stored,candidate)){await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();throw new Error("Incorrect OTP code");}
- const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
+ const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1,verifier_salt=NULL,verifier_hash=NULL WHERE id=? AND consumed=0").bind(input.challengeId).run();
  if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
  const phone=text(row.phone);
  let customer=await resolveOtpCustomer(db,phone);
