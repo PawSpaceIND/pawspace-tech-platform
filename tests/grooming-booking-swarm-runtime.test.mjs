@@ -6,8 +6,8 @@ import { freshCountingD1 } from "./helpers/d1-harness.mjs";
 installWorkersHooks("__GROOM_SWARM_DB__", "__GROOM_SWARM_ENV__");
 
 const CITIES = [
-  { id: "blr", zone: "blr-east", foreignZone: "maa-central", providerPrefix: "groom_" },
-  { id: "maa", zone: "maa-central", foreignZone: "blr-east", providerPrefix: "maa_groom_" },
+  { id: "blr", zone: "blr-east", foreignZone: "maa-central", providerPrefix: "groom_", pincode: "560038", address: "Swarm address, Indiranagar, Bengaluru" },
+  { id: "maa", zone: "maa-central", foreignZone: "blr-east", providerPrefix: "maa_groom_", pincode: "600001", address: "Swarm address, George Town, Chennai" },
 ];
 const PACKAGE = { code: "dog-basic", name: "Bath & Basic", amount: 1899 };
 
@@ -33,7 +33,10 @@ function scheduleBody(city, index, accepted) {
     petIds: [`SWARM-PET-${attempt}`],
     serviceCode: "grooming",
     cityId: city.id,
-    zoneId: accepted ? city.zone : city.foreignZone,
+    // Deliberately spoof the browser zone. The server must overwrite it from the governed address.
+    zoneId: city.foreignZone,
+    serviceAddress: accepted ? city.address : "5 Connaught Place, New Delhi",
+    servicePincode: accepted ? city.pincode : "110001",
     scheduledStart: window.start,
     scheduledEnd: window.end,
   };
@@ -50,6 +53,7 @@ async function reserve(body) {
 
 function bookingBody(input, scheduled) {
   const provider = scheduled.body.data.provider;
+  const authority = scheduled.body.data.addressAuthority;
   const attempt = input.clientRequestId.replace("SWARM-GROUP-", "");
   return {
     idempotencyKey: `SWARM-BOOK-${attempt}`,
@@ -60,8 +64,8 @@ function bookingBody(input, scheduled) {
       primaryPhone: `+9198${attempt.replace(/\D/g, "").padStart(8, "0").slice(-8)}`,
     },
     pets: [{ sourceId: input.petIds[0], name: `Milo ${attempt}`, species: "dog", vaccinationStatus: "verified" }],
-    cityId: input.cityId,
-    zoneId: input.zoneId,
+    cityId: authority.cityId,
+    zoneId: authority.zoneId,
     serviceCode: "grooming",
     packageCode: PACKAGE.code,
     packageName: PACKAGE.name,
@@ -87,25 +91,38 @@ async function book(body) {
 async function setup() {
   const harness = freshCountingD1({ maxBoundParams: 100 });
   globalThis.__GROOM_SWARM_DB__ = harness.db;
-  // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
-  // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
-  // books through the real reserve path with no Ops-published availability, so it says so.
-  globalThis.__GROOM_SWARM_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" };
+  globalThis.__GROOM_SWARM_ENV__ = {
+    PAWSPACE_PAYMENT_ENV: "sandbox",
+    PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+    PAWSPACE_SCHEDULING_ENV: "uat",
+    PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
+    NODE_ENV: "test",
+  };
 
+  const { seedDefaultZones } = await import("../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   const { ensureGroomingPolicyTables } = await import("../lib/grooming-policy-governance.ts");
+  await seedDefaultZones(harness.db);
   await seedProviderCapacityDefaults(harness.db);
   await ensureGroomingPolicyTables(harness.db);
 
   const now = Date.now();
+  await harness.db.prepare(
+    "INSERT OR REPLACE INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES ('600001','maa-central','maa','Chennai','George Town',?)",
+  ).bind(now).run();
+  await harness.db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+
   const providers = [
-    ["maa_groom_anbu", "Anbu R.", "full_time", 4.9, 96],
-    ["maa_groom_devi", "Devi S.", "commission", 4.8, 93],
-    ["maa_groom_kumar", "Kumar P.", "full_time", 4.7, 90],
+    ["maa_groom_anbu", "Anbu R.", "full_time", 4.9, 96, 13.0827, 80.2707],
+    ["maa_groom_devi", "Devi S.", "commission", 4.8, 93, 13.0847, 80.2727],
+    ["maa_groom_kumar", "Kumar P.", "full_time", 4.7, 90, 13.0867, 80.2747],
   ];
   await harness.db.batch(providers.map(([id, name, model, rating, quality]) => harness.db.prepare(
     "INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,'maa',?,?,?, ?,1,?,?,1,30,5,3,'active',1,'2026-08-01',NULL,'swarm-test',?)",
   ).bind(id, name, model, JSON.stringify(["grooming"]), JSON.stringify(["maa-central"]), rating, quality, now)));
+  await harness.db.batch(providers.map(([id,,,,,latitude,longitude]) => harness.db.prepare(
+    "INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) VALUES (?,?,?,?,?,0,NULL,'Swarm sandbox home base','swarm-test',?)",
+  ).bind(`PHB-${id}`, id, "Swarm sandbox Chennai base", latitude, longitude, now)));
   await harness.db.prepare(
     "INSERT INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_maa_swarm','grooming-default','maa',NULL,'enforce',0,100,100,0,1,2,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'swarm-test',?)",
   ).bind(now).run();
@@ -123,13 +140,15 @@ test("60 governed Grooming attempts persist an exact two-city booking swarm with
     const scheduled = await reserve(input);
     if (!attempt.accepted) {
       assert.equal(scheduled.status, 409, `${input.clientRequestId} must fail closed: ${JSON.stringify(scheduled.body)}`);
-      assert.equal(scheduled.body.error, "NO_SCHEDULE_AVAILABLE");
+      assert.ok(scheduled.body.error, "an unserved governed address must explain its refusal");
       rejections.push({ input, scheduled });
       continue;
     }
 
     assert.equal(scheduled.status, 200, `${input.clientRequestId} must reserve: ${JSON.stringify(scheduled.body)}`);
     assert.equal(scheduled.body.data.status, "assigned");
+    assert.equal(scheduled.body.data.addressAuthority.cityId, attempt.city.id);
+    assert.equal(scheduled.body.data.addressAuthority.zoneId, attempt.city.zone, "server-derived zone overrides spoofed browser zone");
     assert.ok(String(scheduled.body.data.provider.id).startsWith(attempt.city.providerPrefix));
     const created = await book(bookingBody(input, scheduled));
     assert.equal(created.status, 201, `${input.clientRequestId} must book: ${JSON.stringify(created.body)}`);
