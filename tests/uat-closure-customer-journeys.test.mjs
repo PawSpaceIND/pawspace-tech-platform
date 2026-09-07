@@ -134,7 +134,8 @@ test("Grooming fails closed until a governed address is resolved and saved for r
   await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,area,city,postal_code,is_default,created_at,updated_at) VALUES ('ADDR-OLD',?,'Old home','1 Old Street','Whitefield','Bengaluru','560066',1,?,?)")
     .bind(CUSTOMER, Date.now(), Date.now()).run();
 
-  // The matching address is accepted, and it is what gets SAVED for routing.
+  // The matching address is accepted, and it is what gets SAVED for routing. Browser coordinates are
+  // deliberately spoofed here: the server-owned sandbox geocoder must overwrite them before persistence.
   const saved = await post(valid({ latitude: 12.9752, longitude: 77.6050 }), { cookie });
   assert.equal(saved.status, 201);
   const data = (await saved.json()).data;
@@ -148,7 +149,8 @@ test("Grooming fails closed until a governed address is resolved and saved for r
   assert.equal(location.provider_id, booking.providerId, "the location is bound to the booking's provider");
   assert.equal(location.status, "active");
   assert.match(location.address_text, /560001/, "the saved address carries the resolved pincode");
-  assert.equal(Number(location.latitude), 12.9752);
+  assert.equal(Number(location.latitude), 12.9716, "browser latitude is overwritten by governed geocoding");
+  assert.equal(Number(location.longitude), 77.5946, "browser longitude is overwritten by governed geocoding");
 
   // The customer's address book is updated too, and the PREVIOUS default is demoted rather than left
   // alongside the new one -- two defaults would make the routed address ambiguous.
