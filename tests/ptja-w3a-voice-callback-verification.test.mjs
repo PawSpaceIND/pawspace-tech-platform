@@ -149,7 +149,7 @@ test("MR01-03: provider rejection fails closed and leaves the D1 lifecycle uncha
 
 test("MR01-04: a byte-identical provider result is replay-safe", async () => {
   await voiceWorld();
-  authoritativeDetails({ Status: "completed", Duration: 18 });
+  const fetchCount = authoritativeDetails({ Status: "completed", Duration: 18 });
   const first = await callback(forgedTrigger());
   assert.equal(first.status, 200);
   assert.equal(first.body?.applied, true);
@@ -157,8 +157,32 @@ test("MR01-04: a byte-identical provider result is replay-safe", async () => {
   assert.equal(replay.status, 200, "duplicates are acknowledged so the carrier can stop retrying");
   assert.equal(replay.body?.applied, false);
   assert.equal(replay.body?.duplicate, true);
+  assert.equal(fetchCount(), 2, "a repeated owned trigger must perform a fresh authoritative reconciliation");
   assert.equal(callState(), "completed");
   assert.equal(eventCount(), 1, "a replay must not create a second provider event");
+});
+
+test("MR01-04A: repeated owned callbacks can advance connected to completed only through fresh Exotel Call Details", async () => {
+  await voiceWorld();
+  let calls = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    calls += 1;
+    const parsed = new URL(String(url));
+    assert.equal(parsed.pathname, `/v1/Accounts/s/Calls/${CALL_SID}.json`);
+    assert.equal(new Headers(init.headers).get("authorization"), `Basic ${btoa("k:t")}`);
+    const authoritative = calls === 1
+      ? { Sid: CALL_SID, Status: "in-progress", Duration: 7 }
+      : { Sid: CALL_SID, Status: "completed", Duration: 18 };
+    return Response.json({ Call: authoritative });
+  };
+  const first = await callback(forgedTrigger({ CallStatus: "completed" }));
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(callState(), "connected", "first authoritative provider state must win");
+  const second = await callback(forgedTrigger({ CallStatus: "failed" }));
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  assert.equal(callState(), "completed", "second authoritative reconciliation must advance lifecycle");
+  assert.equal(calls, 2, "both owned callbacks must fetch Exotel Call Details");
+  assert.equal(eventCount(), 2, "distinct authoritative provider states remain auditable");
 });
 
 test("MR01-05: missing Exotel Call Details credentials fail closed for an owned CallSid", async () => {
