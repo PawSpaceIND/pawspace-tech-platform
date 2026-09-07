@@ -12,6 +12,7 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && PAWSPACE_LOCAL_PREVIEW=on PAWSPACE_VOICE_TRANSPORT=local_simulator_non_production NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs",
     "test:ops-intelligence": "PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/ops-intelligence.test.mjs",
+    "test:schema-governance": "PAWSPACE_PAYMENT_ENV=sandbox FORBID_PRODUCTION=true NODE_ENV=test APP_ENV=staging node --experimental-strip-types --test --test-concurrency=1 tests/schema-creation-source-contract.test.mjs tests/schema-governance-runtime.test.mjs tests/schema-migration-idempotency.test.mjs tests/schema-query-plan.test.mjs",
     "test:e2e": "bash scripts/e2e/run-hardened.sh",
     "test:browser": "playwright test",
     "test:browser:customer": "playwright test e2e/customer-booking.spec.ts",

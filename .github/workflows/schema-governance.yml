@@ -1,0 +1,36 @@
+name: Schema governance
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema-governance:
+    name: Schema governance
+    runs-on: ubuntu-latest
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      FORBID_PRODUCTION: 'true'
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Runtime schema, migration replay and query plan gate
+        run: npm run test:schema-governance
