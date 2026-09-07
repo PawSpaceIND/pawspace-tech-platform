@@ -1,49 +1,40 @@
 import { DatabaseSync } from "node:sqlite";
-import { installWorkersHooks } from "./module-hooks.mjs";
-import { installFinancialLifecycleSchema } from "./financial-lifecycle-schema.mjs";
+import * as nodeModule from "node:module";
+import { freshCountingD1 } from "./d1-harness.mjs";
 
-installWorkersHooks("__GROOM_GOLDEN_DB__", "__GROOM_GOLDEN_ENV__");
+const state = { db: null, env: null };
+const WORKERS_STUB = `export const env=new Proxy({}, {get:(_,key)=>globalThis.__GROOM_JOURNEY_STATE__.env?.[key]});`;
+const WORKERS_URL = `data:text/javascript,${encodeURIComponent(WORKERS_STUB)}`;
+globalThis.__GROOM_JOURNEY_STATE__ = state;
 
-function makeD1(sqlite) {
-  const statement = (sql, args = []) => ({
-    _sql: sql,
-    bind: (...bound) => statement(sql, bound),
-    first: async () => sqlite.prepare(sql).get(...args) ?? null,
-    run: async () => {
-      const info = sqlite.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(info.changes || 0) } };
-    },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  const db = {
-    beforeBatch: null,
-    prepare: (sql) => statement(sql),
-    batch: async (items) => {
-      if (typeof db.beforeBatch === "function") await db.beforeBatch(items);
-      sqlite.exec("BEGIN IMMEDIATE");
-      try {
-        const results = [];
-        for (const item of items) results.push(await item.run());
-        sqlite.exec("COMMIT");
-        return results;
-      } catch (error) {
-        sqlite.exec("ROLLBACK");
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers") return { url: WORKERS_URL, shortCircuit: true };
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
         throw error;
       }
     },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-  return db;
+  });
+} else {
+  const hook = `const workersUrl=${JSON.stringify(WORKERS_URL)};export async function resolve(specifier,context,nextResolve){if(specifier==="cloudflare:workers")return{url:workersUrl,shortCircuit:true};try{return await nextResolve(specifier,context);}catch(error){if(specifier.startsWith(".")&&!specifier.endsWith(".ts"))return nextResolve(specifier+".ts",context);throw error;}}`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
 
-async function sessionCookie(db, subjectType, subjectId, principalKey) {
+function createD1(sqlite) {
+  const counted = freshCountingD1({ sqlite });
+  return counted.db;
+}
+
+export async function sessionCookie(db, subjectType, subjectId, principalKey) {
   const { upsertIdentityBinding } = await import("../../lib/identity-binding.ts");
   const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../../lib/platform-session.ts");
   const binding = await upsertIdentityBinding(db, {
     identitySource: subjectType === "provider" ? "partner_otp" : "customer_otp",
     principalType: "identity_subject", principalKey, subjectType, subjectId,
-    verificationState: "verified", actorId: "grooming-golden-journey",
-    reason: "authenticated executable grooming journey",
+    verificationState: "verified", actorId: "journey-harness", reason: "Grooming golden journey executable harness",
   });
   const issued = await issuePlatformSession(db, {
     bindingId: String(binding.id), identitySource: String(binding.identity_source),
@@ -55,18 +46,16 @@ async function sessionCookie(db, subjectType, subjectId, principalKey) {
 
 export async function setupJourney() {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
-  const db = makeD1(sqlite);
-  installFinancialLifecycleSchema(sqlite);
-  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'test_fixture',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
-  globalThis.__GROOM_GOLDEN_DB__ = db;
-  // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
-  // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
-  // books through the real reserve path with no Ops-published availability, so it says so.
-   // PAWSPACE_MEDIA_ENV is declared because media release is now environment-aware: an absent value
-  // reads as PRODUCTION, the strict default, where unscanned media stays quarantined. These are the UAT
-  // journeys. [PTJA-W3-SC]
- globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
+  const db = createD1(sqlite);
+  state.db = db;
+  state.env = {
+    DB: db,
+    PAWSPACE_PAYMENT_ENV: "sandbox",
+    PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+    PAWSPACE_SCHEDULING_ENV: "uat",
+    PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
+    NODE_ENV: "test",
+  };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
@@ -104,20 +93,18 @@ export async function runCompletedJourney(ctx, config) {
   if (!coverage) throw new Error(`No service coverage for ${config.pincode}`);
 
   const start = new Date(config.start), end = new Date(start.getTime() + 2 * 60 * 60_000);
+  const serviceAddress = `${config.customerName} service address`;
   const schedulePayload = {
     clientRequestId: config.groupId, customerId: config.customerId, petIds: [config.petSourceId],
     serviceCode: "grooming", cityId: config.cityId, zoneId: config.zoneId,
+    serviceAddress, servicePincode: config.pincode,
     scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(),
     preferredProviderId: config.preferredProviderId,
   };
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const scheduleReplay = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const provider = scheduled.body.data?.provider;
-  if (!provider) {
-  console.error(">>> FAILED PAYLOAD:", JSON.stringify(schedulePayload, null, 2));
-  console.error(">>> RESPONSE BODY:", JSON.stringify(scheduled, null, 2));
-  throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
-}
+  if (!provider) throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
 
   let coupon = null;
   if (config.couponCode) {
@@ -138,11 +125,7 @@ export async function runCompletedJourney(ctx, config) {
   const booked = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
-  const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
-  // No booking_service_addresses fixture here on purpose. ARRIVED resolves the doorstep through
-  // lib/booking-doorstep.ts, which reads booking_service_locations - the table the real
-  // /api/grooming-service-location call above actually writes. Seeding the travel table instead was what
-  // let the geofence pass in tests while it was unreachable for every real customer.
+  const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: serviceAddress, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
@@ -163,9 +146,6 @@ export async function runCompletedJourney(ctx, config) {
 
   const media = [];
   for (const purpose of ["before_service", "after_service"]) {
-    // The signed-upload boundary [PTJA-W2-B4-M04]: the provider requests a short-lived token bound to
-    // one object key, uploads, and the confirmation presents that token together with what the stored
-    // object actually is. Review is a separate identity - the provider cookie prepares, staff decides.
     const sha256 = purpose === "before_service" ? "a".repeat(64) : "b".repeat(64);
     const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256, fileName: `${purpose}.jpg` }, providerCookie);
     const { id, upload } = prepared.body.data;
@@ -195,4 +175,4 @@ export async function runCompletedJourney(ctx, config) {
   };
 }
 
-export { routeCall, sessionCookie };
+export { routeCall };
