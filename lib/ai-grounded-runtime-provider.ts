@@ -1,4 +1,5 @@
-import{aiProviderConnection,requestAiDraft}from"./ai-provider-adapter";
+import{AI_PROVIDER_REF,aiProviderConnection,requestAiDraft}from"./ai-provider-adapter";
+import{resolveActiveAiBusinessConfig}from"./ai-business-configuration";
 import{prepareAiToolExecution,type AiToolChannel,type AiToolIntent}from"./ai-tool-registry";
 import type{AiProviderInput,AiResponseProvider}from"./ai-conversation-orchestrator";
 import type{AuthenticatedActor}from"./server-auth";
@@ -12,7 +13,7 @@ const CHANNEL_PROMPTS:Record<AiToolChannel,string>={
  whatsapp:`Channel: WhatsApp. You may use compact bullets and simple emphasis. Keep the response scannable and concise. Include payment links only when a governed server tool supplied the exact link.`,
  voice:`Channel: Voice/TTS. Speak naturally in short conversational sentences. No markdown, no bullets, no emojis, no URLs unless the caller explicitly asks for one, no tables, and no long monologues. Prefer one to three short sentences, then ask a brief follow-up when needed.`,
 };
-export function pawspaceChannelSystemPrompt(channel:AiToolChannel){return`${BASE_PROMPT}\n\n${CHANNEL_PROMPTS[channel]}`;}
+export function pawspaceChannelSystemPrompt(channel:AiToolChannel,activePrompt?:string|null){const configured=text(activePrompt);return[BASE_PROMPT,configured?`Active approved PawSpace prompt policy:\n${configured}`:"",CHANNEL_PROMPTS[channel]].filter(Boolean).join("\n\n");}
 
 const HUMAN_EXCEPTION_PATTERNS=[
  /\b(refund|money back|payment dispute|charged twice|wrong charge)\b/i,
@@ -53,4 +54,16 @@ export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:Auth
  return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyToolsOnly:true,carrierIndependent:true,mutationsAuthorized:false}},groundingRefs:knowledgeRefs(knowledge)};
 }
 
-export async function createGroundedAiRuntimeProvider(db:D1Database,actor:AuthenticatedActor,channel:AiToolChannel):Promise<AiResponseProvider>{const connection=await aiProviderConnection();return{status:connection.connected?"connected":"not_connected",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,deadlineMs:connection.timeoutMs,async generate(input:AiProviderInput){if(requiresImmediateHumanHandoff(input.inputText))return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true,highImpactAction:true};const grounded=await buildGroundedAiTurnContext(db,{actor,threadId:input.threadId,customerId:input.customerId,intent:input.intent.intent as AiToolIntent,channel,query:input.inputText,canonicalContext:input.context});const result=await requestAiDraft({systemPrompt:pawspaceChannelSystemPrompt(channel),userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),maxTokens:channel==="voice"?450:1200});if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true};return{text:result.text,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,highImpactAction:false};}};}
+export async function createGroundedAiRuntimeProvider(db:D1Database,actor:AuthenticatedActor,channel:AiToolChannel):Promise<AiResponseProvider>{
+ const connection=await aiProviderConnection();
+ return{status:connection.connected?"connected":"not_connected",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,deadlineMs:connection.timeoutMs,async generate(input:AiProviderInput){
+  if(requiresImmediateHumanHandoff(input.inputText))return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true,highImpactAction:true};
+  const intent=input.intent.intent as AiToolIntent;
+  const active=await resolveActiveAiBusinessConfig(db,{channel,intent,provider:connection.providerRef||AI_PROVIDER_REF,model:connection.modelRef});
+  if(!active.enabled||active.configurationRequired)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true};
+  const grounded=await buildGroundedAiTurnContext(db,{actor,threadId:input.threadId,customerId:input.customerId,intent,channel,query:input.inputText,canonicalContext:input.context});
+  const result=await requestAiDraft({systemPrompt:pawspaceChannelSystemPrompt(channel,active.promptPolicy?.systemPrompt),userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context,aiConfiguration:{profileId:active.profile?.id||null,profileVersion:active.profile?.version||null,promptPolicyId:active.promptPolicy?.id||null,promptPolicyVersion:active.promptPolicy?.version||null}}),maxTokens:channel==="voice"?450:1200,channel,intent});
+  if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true};
+  return{text:result.text,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,highImpactAction:false};
+ }};
+}
