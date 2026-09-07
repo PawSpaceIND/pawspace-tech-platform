@@ -23,7 +23,7 @@ async function ensureVerifierColumns(db:Db){
  const columns=new Set((info.results||[]).map(row=>String(row.name||"")));
  if(!columns.has("verifier_salt"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_salt TEXT").run();
  if(!columns.has("verifier_hash"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_hash TEXT").run();
- await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE verifier_hash IS NULL AND code<>?").bind(HASHED_MARKER).run();
+ await db.prepare("UPDATE customer_otp_challenges SET consumed=1,code=?,verifier_salt=NULL,verifier_hash=NULL WHERE verifier_hash IS NULL AND code<>?").bind(HASHED_MARKER,HASHED_MARKER).run();
 }
 
 export async function purgeCustomerOtpChallenges(db:Db,now=Date.now()){
