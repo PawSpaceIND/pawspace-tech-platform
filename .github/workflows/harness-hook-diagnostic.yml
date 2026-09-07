@@ -44,7 +44,7 @@ jobs:
           preflight=$?
           if [ "$preflight" -eq 0 ]; then
             mapfile -t suites < harness-suites.txt
-            node --experimental-strip-types --test "${suites[@]}" >> hook-path.tap 2>&1
+            node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}" >> hook-path.tap 2>&1
             status=$?
           else
             status=$preflight
