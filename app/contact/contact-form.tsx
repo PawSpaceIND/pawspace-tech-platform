@@ -1,16 +1,19 @@
 "use client";
-import{useState}from"react";
+import{useEffect,useState}from"react";
+import{captureMarketingAttributionFromWindow,type MarketingAttributionCapture}from"../../lib/marketing-attribution";
 import styles from"../components/marketing/premium-marketing.module.css";
 
 export default function ContactForm(){
   const[status,setStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
   const[error,setError]=useState("");
+  const[attribution,setAttribution]=useState<MarketingAttributionCapture>({});
+  useEffect(()=>{setAttribution(captureMarketingAttributionFromWindow());},[]);
 
   async function onSubmit(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();
     setStatus("sending");setError("");
     const form=event.currentTarget,data=new FormData(form);
-    const body={name:String(data.get("name")||""),phone:String(data.get("phone")||""),email:String(data.get("email")||""),service:String(data.get("service")||""),message:String(data.get("message")||""),whatsappConsent:data.get("whatsappConsent")==="yes"};
+    const body={name:String(data.get("name")||""),phone:String(data.get("phone")||""),email:String(data.get("email")||""),service:String(data.get("service")||""),message:String(data.get("message")||""),whatsappConsent:data.get("whatsappConsent")==="yes",attribution};
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
       const result=await response.json() as{error?:string};
