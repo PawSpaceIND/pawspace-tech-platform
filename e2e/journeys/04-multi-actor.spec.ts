@@ -117,13 +117,31 @@ test("correlated journey: customer reserves/books -> assigned provider completes
     });
     await expectOk(captured, "finance sandbox payment capture");
 
-    for (const [action, extra] of [
-      ["accept", {}],
-      ["on_the_way", {}],
-      ["arrived", { latitude: 12.9719, longitude: 77.6412 }],
-      ["start_service", {}],
-    ] as const) {
-      const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action, ...extra } });
+    for (const action of ["accept", "on_the_way"] as const) {
+      const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
+      const body = await expectOk(response, `provider ${action}`);
+      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+    }
+
+    // ARRIVED is now fail-closed against fresh, trusted, server-bound GPS evidence. Feed the provider's
+    // foreground location through the governed telemetry route first; lifecycle coordinates are
+    // intentionally ignored by the production arrival gate.
+    const gps = await provider.post("/api/grooming-route", {
+      data: {
+        bookingId,
+        providerId: PROVIDER_ID,
+        latitude: 12.9719,
+        longitude: 77.6412,
+        accuracyMeters: 10,
+        capturedAt: Date.now(),
+        idempotencyKey: `gps_${suffix}`,
+      },
+    });
+    const gpsBody = await expectOk(gps, "provider trusted GPS telemetry");
+    expect(gpsBody?.data?.trustState).toBe("accepted");
+
+    for (const action of ["arrived", "start_service"] as const) {
+      const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
       expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
     }
