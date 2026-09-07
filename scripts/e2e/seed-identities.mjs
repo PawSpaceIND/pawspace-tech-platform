@@ -98,7 +98,7 @@ export function seed(dbPath = locateDb()) {
     services_json: '["grooming"]', zones_json: '["blr-east"]', live: 1,
     rating: 4.9, quality_score: 95, capacity: 1, travel_buffer_minutes: 30,
     max_daily_jobs: 6, acceptance_timeout_minutes: 3, status: "active", version: 1,
-    effective_from: "2026-08-01", effective_to: null, updated_by: "founder_seed", updated_at: now,
+    effective_from: "2026-08-01", effective_to: null, updated_by: "e2e:seed", updated_at: now,
   }));
   out.push(upsert(db, "booking_punctuality_policies", {
     id: "GPS-GROOM-E2E", service_code: "grooming", city_id: null, provider_model: null,

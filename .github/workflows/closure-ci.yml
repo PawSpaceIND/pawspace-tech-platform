@@ -341,16 +341,22 @@ jobs:
         run: |
           set -euo pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
-          mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          while IFS= read -r suite; do
+            echo "::group::registerHooks $suite"
+            node --experimental-strip-types --test --test-concurrency=1 "$suite"
+            echo "::endgroup::"
+          done < harness-suites.txt
       - name: Loader-hook fallback compatibility path
         shell: bash
         env:
           PAWSPACE_FORCE_LOADER_HOOK: '1'
         run: |
           set -euo pipefail
-          mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          while IFS= read -r suite; do
+            echo "::group::loader fallback $suite"
+            node --experimental-strip-types --test --test-concurrency=1 "$suite"
+            echo "::endgroup::"
+          done < harness-suites.txt
 
   backend:
     name: Backend
