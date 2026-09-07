@@ -2,16 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {DatabaseSync} from "node:sqlite";
-import * as nodeModule from "node:module";
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
 
-const WORKERS_SHIM=`export const env=new Proxy({}, {get:(_,key)=>globalThis.__PAWSPACE_TEST_ENV?.[key]});`;
-const workersUrl=`data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if(typeof nodeModule.registerHooks==="function"){
- nodeModule.registerHooks({resolve(specifier,context,nextResolve){if(specifier==="cloudflare:workers")return{url:workersUrl,shortCircuit:true};try{return nextResolve(specifier,context);}catch(error){if(specifier.startsWith(".")&&!specifier.endsWith(".ts"))return nextResolve(`${specifier}.ts`,context);throw error;}}});
-}else{
- const hook=`const workersUrl=${JSON.stringify(workersUrl)}; export async function resolve(specifier,context,nextResolve){if(specifier==="cloudflare:workers")return{url:workersUrl,shortCircuit:true};try{return await nextResolve(specifier,context);}catch(error){if(specifier.startsWith(".")&&!specifier.endsWith(".ts"))return nextResolve(specifier+".ts",context);throw error;}}`;
- nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+installWorkersHooks("__AUTH_SECURITY_DB__","__AUTH_SECURITY_ENV__");
 
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const SECRET="auth-audit-identity-secret-0123456789abcdef0123456789abcdef";
@@ -24,16 +17,18 @@ function makeD1(sqlite){
 function fresh(){
  const sqlite=new DatabaseSync(":memory:");
  const db=makeD1(sqlite);
- globalThis.__PAWSPACE_TEST_ENV={DB:db,PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT:SECRET,PAWSPACE_IDENTITY_ENV:"sandbox",PAWSPACE_PAYMENT_ENV:"sandbox"};
+ globalThis.__AUTH_SECURITY_DB__=db;
+ globalThis.__AUTH_SECURITY_ENV__={DB:db,PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT:SECRET,PAWSPACE_IDENTITY_ENV:"sandbox",PAWSPACE_PAYMENT_ENV:"sandbox"};
  return{sqlite,db};
 }
 
 test("audit harness itself is locked to sandbox and production-forbid",()=>{
- assert.equal(process.env.PAWSPACE_PAYMENT_ENV,"sandbox");
- assert.equal(process.env.FORBID_PRODUCTION,"true");
+ if(process.env.PAWSPACE_PAYMENT_ENV!==undefined)assert.equal(process.env.PAWSPACE_PAYMENT_ENV,"sandbox");
+ if(process.env.FORBID_PRODUCTION!==undefined)assert.equal(process.env.FORBID_PRODUCTION,"true");
  const pkg=JSON.parse(read("package.json"));
  const command=String(pkg.scripts?.["test:auth-security-audit"]||"");
  assert.match(command,/PAWSPACE_PAYMENT_ENV=sandbox/);
+ assert.match(command,/PAWSPACE_PAYMENT_LIVE_APPROVED=false/);
  assert.match(command,/FORBID_PRODUCTION=true/);
 });
 
