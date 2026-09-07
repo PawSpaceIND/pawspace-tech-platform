@@ -1,7 +1,7 @@
 import{ensureLeadLifecycleColumn,normalizeLeadServiceCode}from"./lead-lifecycle-governance";
+import{recordMarketingConversionFact}from"./marketing-attribution-server";
 
-type Db=D1Database;
-type Row=Record<string,unknown>;
+type Db=D1Database;type Row=Record<string,unknown>;
 
 const leadWorkItemsEnsured=new WeakSet<Db>();
 export async function ensureLeadWorkItemsTable(db:Db){
@@ -30,6 +30,11 @@ async function recordAttribution(db:Db,input:{bookingId:string;customerId:string
     .bind(input.bookingId,input.customerId,input.serviceCode,input.type,input.leadId??null,input.type==="lead"?"lead_work_item":"system_direct_booking",JSON.stringify(input.detail??{}),Date.now()).run();
 }
 
+async function bookingCommercials(db:Db,bookingId:string){
+ const booking=await db.prepare("SELECT total_amount,currency FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(()=>null);
+ return{valueMinor:Math.max(0,Math.round(Number(booking?.total_amount||0)*100)),currency:String(booking?.currency||"INR")};
+}
+
 export async function bookingAttributionSummary(db:Db,input:{from?:number;to?:number}={}){
   await ensureLeadWorkItemsTable(db);
   const rows=await db.prepare("SELECT attribution_type,COUNT(*) n FROM booking_attribution WHERE recorded_at>=? AND recorded_at<=? GROUP BY attribution_type")
@@ -53,14 +58,18 @@ export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;
     return{leadId:null,converted:false,attribution:"direct_booking"};
   }
   const leadId=String(openLead.id),now=Date.now();
-  const payment=await db.prepare("SELECT status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  const payment=await db.prepare("SELECT id,status,amount,currency FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
   const captured=String(payment?.status||"")==="captured";
   await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"lead",leadId,detail:{matchedOn:"customer_and_normalized_service"}});
+  const commercial=await bookingCommercials(db,input.bookingId);
+  await recordMarketingConversionFact(db,{eventType:"booking_created",businessReference:input.bookingId,leadId,customerId:input.customerId,bookingId:input.bookingId,valueMinor:commercial.valueMinor,currency:commercial.currency,occurredAt:now}).catch(()=>{});
   if(captured){
     await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',lifecycle_state='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state!='dropped'").bind(input.bookingId,now,leadId).run();
+    await recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:String(payment?.id||input.bookingId),leadId,customerId:input.customerId,bookingId:input.bookingId,paymentId:String(payment?.id||""),valueMinor:Math.max(0,Math.round(Number(payment?.amount||0)*100)),currency:String(payment?.currency||commercial.currency),occurredAt:now}).catch(()=>{});
     return{leadId,converted:true,attribution:"lead"};
   }
   await db.prepare("UPDATE lead_work_items SET last_outcome='booking_initiated',initiated_booking_id=?,lifecycle_state=CASE WHEN lifecycle_state IN ('new','contacted') THEN 'qualified' ELSE lifecycle_state END,next_action_at=?,updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state NOT IN ('converted','dropped')").bind(input.bookingId,now,now,leadId).run();
+  await recordMarketingConversionFact(db,{eventType:"lead_qualified",businessReference:leadId,leadId,customerId:input.customerId,occurredAt:now}).catch(()=>{});
   return{leadId,converted:false,attribution:"lead"};
 }
 
@@ -78,5 +87,8 @@ export async function convertLeadOnPaymentCaptured(db:Db,input:{customerId:strin
   const leadId=String(openLead.id),now=Date.now();
   const changed=await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',lifecycle_state='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state NOT IN ('converted','dropped')").bind(input.bookingId,now,leadId).run();
   if(Number(changed.meta?.changes||0)!==1)return null;
+  const payment=await db.prepare("SELECT id,amount,currency FROM booking_payments WHERE booking_id=? AND status='captured' ORDER BY updated_at DESC LIMIT 1").bind(input.bookingId).first<Row>().catch(()=>null);
+  const commercial=await bookingCommercials(db,input.bookingId);
+  await recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:String(payment?.id||input.bookingId),leadId,customerId:input.customerId,bookingId:input.bookingId,paymentId:String(payment?.id||""),valueMinor:payment?Math.max(0,Math.round(Number(payment.amount||0)*100)):commercial.valueMinor,currency:String(payment?.currency||commercial.currency),occurredAt:now}).catch(()=>{});
   return{leadId};
 }
