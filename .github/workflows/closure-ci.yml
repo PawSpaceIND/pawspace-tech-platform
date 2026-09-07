@@ -44,6 +44,7 @@ jobs:
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
       PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
@@ -323,6 +324,7 @@ jobs:
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
       PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
