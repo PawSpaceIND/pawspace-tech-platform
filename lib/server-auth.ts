@@ -44,6 +44,7 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
+  // Legacy FOUNDER_EMAIL configuration is never authentication or authorization authority; workspace identity must come from the governed ingress resolver below.
   const identity=resolveTrustedWorkspaceIdentity(request,runtime);
   if(!identity)throw markGovernedHttpError(signInRequiredResponse(runtime));
   const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
