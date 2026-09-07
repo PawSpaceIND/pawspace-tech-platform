@@ -23,15 +23,36 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PERSIST_DIR="$ROOT/dist/server/.wrangler/state"
 cd "$ROOT"
 
+# This harness is never allowed to inherit a live-money posture from the caller. Refuse first so an
+# accidental live shell is visible rather than silently rewritten, then pass the canonical sandbox
+# values into the Worker explicitly (process env alone is not a Worker binding).
+if [ "${PAWSPACE_PAYMENT_ENV:-sandbox}" != "sandbox" ]; then
+  echo "[e2e] refusing to start: PAWSPACE_PAYMENT_ENV must be sandbox" >&2
+  exit 1
+fi
+if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
+  echo "[e2e] refusing to start: PAWSPACE_PAYMENT_LIVE_APPROVED must be false" >&2
+  exit 1
+fi
+export PAWSPACE_PAYMENT_ENV="sandbox"
+export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
+
+# Wrangler's terminal output can collapse a fatal Miniflare/workerd exception to a bare [ERROR] and
+# write the useful detail only to its own log. Pin that log to an artifact-friendly location so a
+# transient server death has a root-cause trace instead of fifteen follow-on ECONNREFUSED failures.
+export WRANGLER_LOG_PATH="${WRANGLER_LOG_PATH:-/tmp/wrangler-e2e.log}"
+
 if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
   echo "[e2e] building..."
   npm run build
 fi
 
 mkdir -p "$PERSIST_DIR"
-echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED)"
+echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
 exec npx wrangler dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
-  --var PAWSPACE_LOCAL_PREVIEW:off
+  --var PAWSPACE_LOCAL_PREVIEW:off \
+  --var PAWSPACE_PAYMENT_ENV:sandbox \
+  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false
