@@ -1,4 +1,4 @@
-import{recordWhatsAppLeadAttribution}from"./whatsapp-conversion-feedback";
+import{recordIntakeLeadAttribution,recordWhatsAppLeadAttribution}from"./whatsapp-conversion-feedback";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -19,13 +19,15 @@ export async function ensureLeadIntakeAdAttribution(db:Db){await db.batch([
 ]);}
 
 export async function recordLeadIntakeAdAttribution(db:Db,input:LeadAdAttributionInput){
- await ensureLeadIntakeAdAttribution(db);const normalized=normalizeLeadAdAttribution(input);if(!normalized.hasAttribution)return{recorded:false,reason:"no_ad_attribution",mirroredToWhatsApp:false};
+ await ensureLeadIntakeAdAttribution(db);const normalized=normalizeLeadAdAttribution(input);if(!normalized.hasAttribution)return{recorded:false,reason:"no_ad_attribution",mirroredToWhatsApp:false,downstreamBound:false};
  const now=input.now??Date.now(),existing=await db.prepare("SELECT * FROM lead_intake_ad_attribution WHERE lead_id=? OR contact_id=? LIMIT 1").bind(input.leadId,input.contactId).first<Row>();
  if(!existing)await db.prepare("INSERT INTO lead_intake_ad_attribution (id,contact_id,lead_id,source_platform,gclid,fbclid,wbraid,click_id,utm_source,utm_medium,utm_campaign,campaign_id,ad_id,landing_url,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
   .bind(uid("ATTR"),input.contactId,input.leadId,normalized.sourcePlatform,normalized.gclid,normalized.fbclid,normalized.wbraid,normalized.clickId,normalized.utmSource,normalized.utmMedium,normalized.utmCampaign,normalized.campaignId,normalized.adId,normalized.landingUrl,JSON.stringify({capturedAtIntake:true}),now,now).run();
- let mirroredToWhatsApp=false;const threadId=text(input.threadId,120);
- if(threadId&&(normalized.sourcePlatform==="google"||normalized.sourcePlatform==="meta")){
-  await recordWhatsAppLeadAttribution(db,{sourcePlatform:normalized.sourcePlatform,sourceEventId:`public-intake:${input.leadId}`,leadId:input.leadId,customerId:input.contactId,threadId,campaignId:normalized.campaignId,adId:normalized.adId,clickId:normalized.clickId,utmSource:normalized.utmSource,utmMedium:normalized.utmMedium,utmCampaign:normalized.utmCampaign,metadata:{origin:"public_contact",gclid:normalized.gclid,fbclid:normalized.fbclid,wbraid:normalized.wbraid,landingUrl:normalized.landingUrl}});mirroredToWhatsApp=true;
+ let downstreamBound=false,mirroredToWhatsApp=false;const threadId=text(input.threadId,120);
+ if(normalized.sourcePlatform==="google"||normalized.sourcePlatform==="meta"){
+  const sourceEventId=`public-intake:${input.leadId}`;
+  await recordIntakeLeadAttribution(db,{sourcePlatform:normalized.sourcePlatform,sourceEventId,leadId:input.leadId,customerId:input.contactId,campaignId:normalized.campaignId,adId:normalized.adId,clickId:normalized.clickId,gclid:normalized.gclid,fbclid:normalized.fbclid,wbraid:normalized.wbraid,utmSource:normalized.utmSource,utmMedium:normalized.utmMedium,utmCampaign:normalized.utmCampaign,landingUrl:normalized.landingUrl,metadata:{origin:"public_contact",capturedAtIntake:true},now});downstreamBound=true;
+  if(threadId){await recordWhatsAppLeadAttribution(db,{sourcePlatform:normalized.sourcePlatform,sourceEventId,leadId:input.leadId,customerId:input.contactId,threadId,campaignId:normalized.campaignId,adId:normalized.adId,clickId:normalized.clickId,utmSource:normalized.utmSource,utmMedium:normalized.utmMedium,utmCampaign:normalized.utmCampaign,metadata:{origin:"public_contact",gclid:normalized.gclid,fbclid:normalized.fbclid,wbraid:normalized.wbraid,landingUrl:normalized.landingUrl}});mirroredToWhatsApp=true;}
  }
- return{recorded:true,duplicatePrevented:Boolean(existing),sourcePlatform:normalized.sourcePlatform,clickId:normalized.clickId,mirroredToWhatsApp};
+ return{recorded:true,duplicatePrevented:Boolean(existing),sourcePlatform:normalized.sourcePlatform,clickId:normalized.clickId,mirroredToWhatsApp,downstreamBound};
 }
