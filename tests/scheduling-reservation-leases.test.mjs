@@ -156,7 +156,7 @@ test("expired reservation cleanup restores real scheduler capacity", async (t) =
   const firstSession = await customerSession(ctx, firstCustomer), secondCookie = await sessionCookie(ctx.db, "customer", secondCustomer, `customer:${secondCustomer}`);
   const startDate = new Date(Date.now() + 7 * 86_400_000); startDate.setUTCHours(10, 0, 0, 0);
   const start = startDate.toISOString(), end = new Date(startDate.getTime() + 2 * 60 * 60_000).toISOString();
-  const payload = { petIds: ["PET-MAA-LEASE"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" };
+  const payload = { petIds: ["PET-MAA-LEASE"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", serviceAddress: "Chennai lease capacity service address", servicePincode: "600001", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" };
   const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: firstGroup, customerId: firstCustomer }, firstSession.cookie);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const blocked = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: secondGroup, customerId: secondCustomer }, secondCookie);

@@ -1,21 +1,11 @@
+import{validateIndianPincode}from"./pincode-validation";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export type ServiceZone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
 export type ZoneAssignment={pincode:string;zoneId:string;city:string;cityId?:string;area:string};
 
-// Bengaluru service zone mapping: pincode -> zone
-// Zones: blr-east, blr-west, blr-north, blr-south, blr-central
-// Bengaluru pincode -> zone. The previous table was fabricated: it placed Koramangala in the WEST
-// zone under pincode 560018 (which is Chamarajpet), Whitefield in the NORTH under 560048, listed
-// "Whitehall" as a locality, and omitted HSR Layout, Koramangala, Bellandur, BTM, Bannerghatta and
-// Indiranagar's real pincodes entirely. A customer in HSR Layout - one of the densest pet-owning
-// areas in the city - was told PawSpace does not serve them, and the funnel ended there.
-//
-// These are the operations-reviewed pincodes and their real zones. The resolver deliberately fails
-// closed instead of treating a broad city radius/range as proof that a pincode can be fulfilled.
 const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
-  // blr-east
   "560016":{pincode:"560016",zoneId:"blr-east",city:"Bengaluru",area:"Ramamurthy Nagar"},
   "560017":{pincode:"560017",zoneId:"blr-east",city:"Bengaluru",area:"Vimanapura"},
   "560036":{pincode:"560036",zoneId:"blr-east",city:"Bengaluru",area:"KR Puram"},
@@ -30,7 +20,6 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560087":{pincode:"560087",zoneId:"blr-east",city:"Bengaluru",area:"Varthur"},
   "560093":{pincode:"560093",zoneId:"blr-east",city:"Bengaluru",area:"CV Raman Nagar"},
   "560103":{pincode:"560103",zoneId:"blr-east",city:"Bengaluru",area:"Bellandur"},
-  // blr-south
   "560011":{pincode:"560011",zoneId:"blr-south",city:"Bengaluru",area:"Jayanagar 4th Block"},
   "560029":{pincode:"560029",zoneId:"blr-south",city:"Bengaluru",area:"Wilson Garden & Lakkasandra"},
   "560034":{pincode:"560034",zoneId:"blr-south",city:"Bengaluru",area:"Koramangala"},
@@ -46,7 +35,6 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560095":{pincode:"560095",zoneId:"blr-south",city:"Bengaluru",area:"Koramangala 8th Block"},
   "560100":{pincode:"560100",zoneId:"blr-south",city:"Bengaluru",area:"Electronic City"},
   "560102":{pincode:"560102",zoneId:"blr-south",city:"Bengaluru",area:"HSR Layout"},
-  // blr-central
   "560001":{pincode:"560001",zoneId:"blr-central",city:"Bengaluru",area:"MG Road & CBD"},
   "560002":{pincode:"560002",zoneId:"blr-central",city:"Bengaluru",area:"Chickpet"},
   "560005":{pincode:"560005",zoneId:"blr-central",city:"Bengaluru",area:"Frazer Town"},
@@ -60,7 +48,6 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560051":{pincode:"560051",zoneId:"blr-central",city:"Bengaluru",area:"Vasanth Nagar"},
   "560052":{pincode:"560052",zoneId:"blr-central",city:"Bengaluru",area:"Gandhi Nagar"},
   "560053":{pincode:"560053",zoneId:"blr-central",city:"Bengaluru",area:"Balepet"},
-  // blr-north
   "560003":{pincode:"560003",zoneId:"blr-north",city:"Bengaluru",area:"Malleswaram"},
   "560024":{pincode:"560024",zoneId:"blr-north",city:"Bengaluru",area:"Ganganagar"},
   "560032":{pincode:"560032",zoneId:"blr-north",city:"Bengaluru",area:"RT Nagar & Hebbal"},
@@ -75,7 +62,6 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560092":{pincode:"560092",zoneId:"blr-north",city:"Bengaluru",area:"Sahakar Nagar"},
   "560094":{pincode:"560094",zoneId:"blr-north",city:"Bengaluru",area:"Sanjaynagar"},
   "560097":{pincode:"560097",zoneId:"blr-north",city:"Bengaluru",area:"Vidyaranyapura"},
-  // blr-west
   "560010":{pincode:"560010",zoneId:"blr-west",city:"Bengaluru",area:"Rajajinagar"},
   "560015":{pincode:"560015",zoneId:"blr-west",city:"Bengaluru",area:"Peenya"},
   "560018":{pincode:"560018",zoneId:"blr-west",city:"Bengaluru",area:"Chamarajpet"},
@@ -94,9 +80,7 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560098":{pincode:"560098",zoneId:"blr-west",city:"Bengaluru",area:"Rajarajeshwari Nagar"},
 };
 
-/** The exact, operations-reviewed Bengaluru coverage advertised by UAT. */
 export const BENGALURU_SUPPORTED_PINCODES=Object.freeze(Object.keys(PINCODE_ZONE_MAP).sort());
-
 export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-east":{zoneId:"blr-east",zoneName:"East Bengaluru",description:"Indiranagar, Whitefield, Marathahalli, Bellandur",color:"#00BCD4",serviceAvailable:true},
   "blr-north":{zoneId:"blr-north",zoneName:"North Bengaluru",description:"Hebbal, Yelahanka, Malleswaram, RT Nagar",color:"#FF9800",serviceAvailable:true},
@@ -105,58 +89,15 @@ export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-central":{zoneId:"blr-central",zoneName:"Central Bengaluru",description:"CBD, Shivajinagar, Ulsoor",color:"#E91E63",serviceAvailable:true},
 };
 
-export async function ensureServiceZonesTables(db:Db){
-  await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)"),
-  ]);
-  const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();
-  if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
-}
+export async function ensureServiceZonesTables(db:Db){await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)")]);const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});}
 
 export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:ServiceZone;assignment:ZoneAssignment}|null>{
   await ensureServiceZonesTables(db);
-  const normalized=pincode.replace(/\D/g,"").slice(0,6);
-
-  // First try in-memory lookup
-  const assignment=PINCODE_ZONE_MAP[normalized];
-  if(assignment){
-    const zone=SERVICE_ZONES[assignment.zoneId];
-    if(zone)return{zone,assignment:{...assignment,cityId:"blr"}};
-  }
-
-  // Fallback to database query (for custom/extended zones)
+  const parsed=validateIndianPincode(pincode);if(!parsed.ok)return null;const normalized=parsed.pincode;
+  const assignment=PINCODE_ZONE_MAP[normalized];if(assignment){const zone=SERVICE_ZONES[assignment.zoneId];if(zone)return{zone,assignment:{...assignment,cityId:"blr"}};}
   const row=await db.prepare("SELECT zone_id,city_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
-  if(row){
-    const zoneId=String(row.zone_id||"").trim(),cityId=String(row.city_id||"").trim().toLowerCase(),city=String(row.city||"").trim(),area=String(row.area||"").trim();
-    // A database row is an explicit, operations-reviewed mapping.  It must be usable for a launched
-    // second city without requiring a code deployment to extend Bengaluru's presentation constants.
-    // We still fail closed when any identity field is missing: a broad city launch range never reaches
-    // this branch, and an incomplete row cannot silently open a service area.
-    if(zoneId&&cityId&&city&&area){
-      const zone=SERVICE_ZONES[zoneId]??{zoneId,zoneName:`${city} service zone`,description:area,color:"#6B3FA0",serviceAvailable:true};
-      const assignment:ZoneAssignment={pincode:normalized,zoneId,cityId,city,area};
-      return{zone,assignment};
-    }
-  }
-
-  // Fail closed. A broad city range is not proof that Operations can fulfil a particular pincode.
-  // New coverage becomes bookable only after an explicit service-zone mapping is reviewed.
+  if(row){const zoneId=String(row.zone_id||"").trim(),cityId=String(row.city_id||"").trim().toLowerCase(),city=String(row.city||"").trim(),area=String(row.area||"").trim();if(zoneId&&cityId&&city&&area){const zone=SERVICE_ZONES[zoneId]??{zoneId,zoneName:`${city} service zone`,description:area,color:"#6B3FA0",serviceAvailable:true};return{zone,assignment:{pincode:normalized,zoneId,cityId,city,area}};}}
   return null;
 }
-
-export async function listServiceZones(db:Db):Promise<ServiceZone[]>{
-  await ensureServiceZonesTables(db);
-  return Object.values(SERVICE_ZONES);
-}
-
-export async function seedDefaultZones(db:Db){
-  await ensureServiceZonesTables(db);
-  const now=Date.now();
-  const entries=Object.values(PINCODE_ZONE_MAP);
-  const batch=entries.map(entry=>
-    db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,'blr',?,?,?) ON CONFLICT(pincode) DO UPDATE SET city_id=COALESCE(service_zone_mappings.city_id,'blr')")
-      .bind(entry.pincode,entry.zoneId,entry.city,entry.area,now)
-  );
-  if(batch.length>0)await db.batch(batch);
-}
+export async function listServiceZones(db:Db):Promise<ServiceZone[]>{await ensureServiceZonesTables(db);return Object.values(SERVICE_ZONES);}
+export async function seedDefaultZones(db:Db){await ensureServiceZonesTables(db);const now=Date.now(),entries=Object.values(PINCODE_ZONE_MAP),batch=entries.map(entry=>db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,'blr',?,?,?) ON CONFLICT(pincode) DO UPDATE SET city_id=COALESCE(service_zone_mappings.city_id,'blr')").bind(entry.pincode,entry.zoneId,entry.city,entry.area,now));if(batch.length>0)await db.batch(batch);}
