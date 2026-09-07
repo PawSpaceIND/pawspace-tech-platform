@@ -11,6 +11,7 @@
     "build": "bash scripts/build-verified.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && PAWSPACE_LOCAL_PREVIEW=on PAWSPACE_VOICE_TRANSPORT=local_simulator_non_production NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs",
+    "test:marketing-attribution": "NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true PAWSPACE_GOOGLE_DATA_MANAGER_UPLOAD_ENABLED=false PAWSPACE_META_CAPI_UPLOAD_ENABLED=false node --experimental-strip-types --test --test-concurrency=1 tests/marketing-attribution-lifecycle.test.mjs tests/marketing-ad-connectors.test.mjs tests/google-ads-conversion-consent.test.mjs",
     "test:e2e": "bash scripts/e2e/run-hardened.sh",
     "test:browser": "playwright test",
     "test:browser:customer": "playwright test e2e/customer-booking.spec.ts",
