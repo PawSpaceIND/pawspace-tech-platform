@@ -18,7 +18,6 @@ const approved = String(process.env.PAWSPACE_VOICE_UAT_APPROVED || "").trim().to
 const customerId = pick("UAT_CUSTOMER_ID", "PAWSPACE_VOICE_UAT_CUSTOMER_ID");
 const bookingId = pick("UAT_BOOKING_ID", "PAWSPACE_VOICE_UAT_BOOKING_ID");
 const cityId = pick("UAT_CITY_ID", "PAWSPACE_VOICE_UAT_CITY_ID");
-const consentSource = pick("UAT_CONSENT_SOURCE_REF", "PAWSPACE_VOICE_UAT_CONSENT_SOURCE");
 
 const problems = [];
 if (cfg.name !== "pawspace-staging" || cfg.vars?.PAWSPACE_DEPLOYMENT_ENV !== "staging") problems.push("base config is not the isolated pawspace-staging profile");
@@ -26,7 +25,6 @@ if (!approved) problems.push("PAWSPACE_VOICE_UAT_APPROVED must be exactly true f
 try { if (!callback || new URL(callback).protocol !== "https:") problems.push("EXOTEL_CALLBACK_URL must be an absolute https URL"); } catch { problems.push("EXOTEL_CALLBACK_URL is malformed"); }
 try { if (!streamUrl || new URL(streamUrl).protocol !== "wss:") problems.push("EXOTEL_AGENTSTREAM_WSS_URL must be an absolute wss URL"); } catch { problems.push("EXOTEL_AGENTSTREAM_WSS_URL is malformed"); }
 if (!customerId || !bookingId || !cityId) problems.push("UAT customer, booking and city IDs must be configured");
-if (consentSource.length < 4) problems.push("UAT_CONSENT_SOURCE_REF must identify the real consent evidence source");
 if (problems.length) {
   console.error("Refusing to activate voice UAT:");
   for (const problem of problems) console.error(`  - ${problem}`);
@@ -37,13 +35,13 @@ cfg.vars = {
   ...cfg.vars,
   PAWSPACE_VOICE_ENV: "uat",
   PAWSPACE_VOICE_UAT_APPROVED: "true",
-  PAWSPACE_VOICE_UAT_AUTORUN: "true",
-  PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true",
-  PAWSPACE_VOICE_UAT_CONSENT_SOURCE: consentSource,
+  // Staging activation is deploy-and-validate only. A real carrier call requires an explicit
+  // operator action after genuine consent and a successful policy preview.
+  PAWSPACE_VOICE_UAT_AUTORUN: "false",
+  PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "false",
   PAWSPACE_VOICE_UAT_CUSTOMER_ID: customerId,
   PAWSPACE_VOICE_UAT_BOOKING_ID: bookingId,
   PAWSPACE_VOICE_UAT_CITY_ID: cityId,
-  PAWSPACE_VOICE_UAT_RUN_AT: "2026-09-06T02:30:00.000Z",
   PAWSPACE_VOICE_STATUS_CALLBACK_URL: callback,
   PAWSPACE_VOICE_STREAM_URL: streamUrl,
   VOICE_STT_MODEL: "@cf/openai/whisper-large-v3-turbo",
@@ -60,4 +58,4 @@ for (const secretName of [
 ]) delete cfg.vars[secretName];
 
 writeFileSync(path, JSON.stringify(cfg));
-console.log("Voice UAT overlay applied: bidirectional AgentStream enabled, carrier linear16 TTS pinned, one-shot 08:00 IST queue armed; secret values withheld.");
+console.log("Voice UAT overlay applied: bidirectional AgentStream enabled, carrier linear16 TTS pinned; automatic dial and consent creation disabled; explicit operator action required.");
