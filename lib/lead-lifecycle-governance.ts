@@ -1,3 +1,5 @@
+import{recordMarketingConversionFact}from"./marketing-attribution-server";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -47,7 +49,7 @@ export async function ensureLeadLifecycleColumn(db:Db){
 
 export async function transitionLeadLifecycle(db:Db,input:{leadId:string;to:LeadLifecycleState;actorId:string;now?:number;detail?:Record<string,unknown>}){
   await ensureLeadLifecycleColumn(db);
-  const row=await db.prepare("SELECT lifecycle_state,converted_booking_id FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>();
+  const row=await db.prepare("SELECT lifecycle_state,converted_booking_id,customer_id FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>();
   if(!row)throw new Error("Lead not found");
   const from=(text(row.lifecycle_state)||"new") as LeadLifecycleState;
   if(from===input.to)return{leadId:input.leadId,from,to:input.to,duplicatePrevented:true};
@@ -61,6 +63,7 @@ export async function transitionLeadLifecycle(db:Db,input:{leadId:string;to:Lead
   if(Number(result.meta?.changes||0)!==1)throw new Error("Lead changed concurrently; reload before retrying");
   const auditTable=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crm_engine_audit_events'").first<Row>().catch(()=>null);
   if(auditTable)await db.prepare("INSERT INTO crm_engine_audit_events (id,entity_type,entity_id,action,actor_email,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("LEADAUD"),"lead",input.leadId,"lifecycle_transition",input.actorId,JSON.stringify({from,to:input.to,...(input.detail??{})}),now).run();
+  if(input.to==="qualified")await recordMarketingConversionFact(db,{eventType:"lead_qualified",businessReference:input.leadId,leadId:input.leadId,customerId:text(row.customer_id),occurredAt:now}).catch(()=>{});
   return{leadId:input.leadId,from,to:input.to,duplicatePrevented:false};
 }
 
