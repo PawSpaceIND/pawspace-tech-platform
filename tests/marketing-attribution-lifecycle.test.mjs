@@ -41,7 +41,7 @@ test("canonical booking and payment transitions emit booking_created and payment
  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,service_code TEXT,total_amount REAL,currency TEXT);CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT,status TEXT,amount REAL,currency TEXT,updated_at INTEGER)");
  await conversion.ensureLeadWorkItemsTable(db);
  const now=Date.now();
- sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,recycle_cycle,opt_out,created_at,updated_at,lifecycle_state) VALUES ('L2','C2','website','grooming','owner','manager','active','day_1',1,?,?,?,?,0,0,?,?,'new')").run(now,now,now,now,now);
+ sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,recycle_cycle,opt_out,created_at,updated_at,lifecycle_state) VALUES ('L2','C2','website','grooming','owner','manager','active','day_1',1,?,?,?,0,0,?,?,'new')").run(now,now,now,now,now);
  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('B2','grooming',1499,'INR')").run();
  await server.persistLeadMarketingAttribution(db,{leadId:"L2",customerId:"C2",capture:{gclid:"GCLID-2",utm_source:"google"}});
  const linked=await conversion.attributeBookingToOpenLead(db,{customerId:"C2",bookingId:"B2"});assert.equal(linked.leadId,"L2");
