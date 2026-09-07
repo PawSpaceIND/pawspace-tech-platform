@@ -16,6 +16,6 @@ const suites=[
  "tests/scheduling-reservation-leases.test.mjs",
  "tests/uat-scheduling-reservation-ownership-runtime.test.mjs",
 ];
-const result=spawnSync(process.execPath,["--experimental-strip-types","--test","--test-concurrency=1",...suites],{stdio:"inherit",env:{...process.env,PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",FORBID_PRODUCTION:"true",NODE_ENV:"test",APP_ENV:"staging",PAWSPACE_LOCAL_PREVIEW:"on"}});
+const result=spawnSync(process.execPath,["--experimental-strip-types","--test","--test-concurrency=1",...suites],{stdio:"inherit",env:{...process.env,PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE:"on",PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",FORBID_PRODUCTION:"true",NODE_ENV:"test",APP_ENV:"staging",PAWSPACE_LOCAL_PREVIEW:"on"}});
 if(result.error)throw result.error;
 process.exit(result.status??1);
