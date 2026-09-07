@@ -88,7 +88,7 @@ export async function captureInboundWebhook(db:Db,input:{provider:string;routeKe
  const id=`GIN-${crypto.randomUUID()}`,headersJson=JSON.stringify(safeHeaders(input.headers)),expiresAt=now+RAW_PAYLOAD_RETENTION_MS;
  await db.prepare(`INSERT INTO gateway_inbound_queue
   (id,provider,route_key,environment,event_id,message_id,payload_sha256,raw_payload,headers_json,status,attempts,max_attempts,next_attempt_at,received_at,updated_at,payload_expires_at)
-  VALUES (?,?,?,?,?,?,?,?,?,'RECEIVED',0,?,?,?,?,?,?)`)
+  VALUES (?,?,?,?,?,?,?,?,?,'RECEIVED',0,?,?,?,?,?)`)
   .bind(id,provider,routeKey,env,eventId,messageId,hash,rawBody,headersJson,maxAttempts,now,now,now,expiresAt).run();
  const row=await db.prepare("SELECT * FROM gateway_inbound_queue WHERE id=?").bind(id).first<Row>();
  if(!row)throw new Error("Inbound webhook queue persistence failed");
