@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { maskEmployeePhone } from "../lib/people-foundation.ts";
 
 const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("employee PII masking executes the canonical People module",()=>{assert.equal(maskEmployeePhone("9876543210"),"+91 ••••••3210");});
 
 test("legacy provider status mutation is ownership-bound and lifecycle-governed",async()=>{const src=await read("backend/src/app.ts");assert.match(src,/existing\.providerId!==a\.id/);assert.match(src,/assertBookingStatusTransition/);assert.match(src,/from:existing\.status/);});
 
