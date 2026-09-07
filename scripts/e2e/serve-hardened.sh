@@ -41,15 +41,11 @@ if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
 fi
 
 mkdir -p "$PERSIST_DIR"
-# Wrangler 4.92.0 reproducibly terminated its local ProxyController during this hardened built-worker
-# journey with "Network connection lost". Keep the remediation isolated to this certification harness
-# and pin an exact newer CLI without changing application/runtime dependencies.
-E2E_WRANGLER_VERSION="${E2E_WRANGLER_VERSION:-4.129.0}"
-echo "[e2e] starting wrangler ${E2E_WRANGLER_VERSION} dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
+echo "[e2e] starting repository Wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
 # The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
 # OpenAI Sites dispatch layer. This explicit trust marker is LOCAL E2E simulation only; the standalone
 # staging worker intentionally does not set it, so raw external identity headers fail closed there.
-exec npx --yes "wrangler@${E2E_WRANGLER_VERSION}" dev \
+exec npx wrangler dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
