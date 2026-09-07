@@ -54,8 +54,8 @@ async function world() {
   return { sqlite, db };
 }
 function term(sqlite, id, model) { sqlite.prepare("INSERT INTO provider_commercial_terms (id,engagement_model) VALUES (?,?)").run(id, model); }
-function payout(sqlite, { booking, provider, order, gst, term, at, net = 0 }) {
-  sqlite.prepare("INSERT OR IGNORE INTO canonical_bookings (id,customer_id,city_id) VALUES (?,?,'blr')").run(booking, `CUS-${booking}`);
+function payout(sqlite, { booking, provider, order, gst, term, at, net = 0, city = "blr" }) {
+  sqlite.prepare("INSERT OR IGNORE INTO canonical_bookings (id,customer_id,city_id) VALUES (?,?,?)").run(booking, `CUS-${booking}`, city);
   sqlite.prepare("INSERT INTO provider_payout_computations (booking_id,provider_id,service_code,order_value,provider_net_payout,provider_gst_deducted,term_id,computed_at) VALUES (?,?,?,?,?,?,?,?)")
     .run(booking, provider, "boarding", order, net, gst, term, at);
 }
@@ -85,6 +85,27 @@ test("s52 TCS engine collects 1% of net value on marketplace supplies only, spli
 
   await tcs.recordTcsDeposit(db, { period: PERIOD, challanReference: "CH-1", amount: 15, actorId: ACTOR });
   await assert.rejects(() => tcs.recordTcsDeposit(db, { period: "2026-08", challanReference: "CH-2", amount: 99, actorId: ACTOR }), (e) => e instanceof Response && e.status === 409);
+});
+
+test("s52 place of supply decides the tax heads: a supply outside the operator state collects IGST", async () => {
+  const { sqlite, db } = await world();
+  const tcs = await import("../lib/tcs-governance.ts");
+  term(sqlite, "T_mkt", "commission_standard");
+  payout(sqlite, { booking: "bk_blr", provider: "P1", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 7, 10) });
+  payout(sqlite, { booking: "bk_bom", provider: "P2", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 7, 11), city: "mumbai" });
+
+  const res = await tcs.computeMonthlyTcs(db, { period: PERIOD, actorId: ACTOR });
+  assert.equal(res.totalNetValue, 2000);
+  assert.equal(res.totalTcs, 20, "1% of 2000 either way - tax heads change, never the total");
+  assert.equal(res.cgstTcs, 5);
+  assert.equal(res.sgstTcs, 5);
+  assert.equal(res.igstTcs, 10);
+
+  const heads = sqlite.prepare("SELECT booking_id,supply_type,cgst_tcs,sgst_tcs,igst_tcs FROM tcs_collections WHERE period=? ORDER BY booking_id").all(PERIOD);
+  assert.deepEqual(heads.map((r) => [r.booking_id, r.supply_type]), [["bk_blr", "intra"], ["bk_bom", "inter"]]);
+  assert.equal(heads[0].igst_tcs, 0, "an intra-state supply never carries IGST");
+  assert.equal(heads[1].cgst_tcs, 0);
+  assert.equal(heads[1].sgst_tcs, 0);
 });
 
 test("computeMonthlyTcs is idempotent (re-run replaces the period, no duplicate rows)", async () => {
