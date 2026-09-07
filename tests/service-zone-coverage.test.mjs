@@ -81,12 +81,13 @@ function fresh({ live = true, pincodes = BENGALURU_SUPPORTED_PINCODES.join(",") 
   return { sqlite, db };
 }
 
-test("the resolver fails closed instead of treating a broad city range as a service zone", () => {
+test("the resolver fails closed instead of treating a broad city range as a service zone", async () => {
   const resolver = read("lib/service-zones.ts");
   const referenced = [...resolver.matchAll(/FROM (city_launch_config[a-z_]*)/g)].map(match => match[1]);
   assert.deepEqual(referenced, [], "city launch ranges must not fabricate operational zone coverage");
   assert.match(resolver, /PINCODE_ZONE_MAP\[normalized\]/);
-  assert.match(resolver, /Fail closed/);
+  const { db } = fresh();
+  assert.equal(await resolveZoneByPincode(db, "560999"), null, "an unreviewed PIN must fail closed at runtime");
 });
 
 // The areas PawSpace actually operates in. Each must resolve, and to the right zone.

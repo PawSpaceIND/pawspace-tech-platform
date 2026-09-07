@@ -1,0 +1,9 @@
+/** Node ESM compatibility entrypoint for extensionless imports of pincode-validation.
+ * Keep behavior identical to pincode-validation.ts without introducing browser authority or normalization.
+ */
+export function validateIndianPincode(value){
+  if(value==null||String(value).trim()==="")return{ok:false,reason:"missing"};
+  const pincode=String(value).trim();
+  if(!/^[1-9][0-9]{5}$/.test(pincode))return{ok:false,reason:"malformed"};
+  return{ok:true,pincode};
+}

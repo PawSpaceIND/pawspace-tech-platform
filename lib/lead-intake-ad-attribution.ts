@@ -1,7 +1,7 @@
 import{recordIntakeLeadAttribution,recordWhatsAppLeadAttribution}from"./whatsapp-conversion-feedback";
 
 type Db=D1Database;type Row=Record<string,unknown>;
-export type LeadAdAttributionInput={contactId:string;leadId:string;threadId?:string|null;gclid?:string|null;fbclid?:string|null;wbraid?:string|null;gbraid?:string|null;utmSource?:string|null;utmMedium?:string|null;utmCampaign?:string|null;utmContent?:string|null;utmTerm?:string|null;campaignId?:string|null;adId?:string|null;landingUrl?:string|null;now?:number};
+export type LeadAdAttributionInput={contactId:string;leadId:string;threadId?:string|null;origin?:string|null;gclid?:string|null;fbclid?:string|null;wbraid?:string|null;gbraid?:string|null;utmSource?:string|null;utmMedium?:string|null;utmCampaign?:string|null;utmContent?:string|null;utmTerm?:string|null;campaignId?:string|null;adId?:string|null;landingUrl?:string|null;now?:number};
 const text=(value:unknown,max=255)=>String(value??"").replace(/[\u0000-\u001F\u007F]/g," ").trim().slice(0,max);
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const extendedColumns:[string,string][]=[["gbraid","TEXT"],["utm_content","TEXT"],["utm_term","TEXT"]];
@@ -24,12 +24,12 @@ export async function ensureLeadIntakeAdAttribution(db:Db){
 
 export async function recordLeadIntakeAdAttribution(db:Db,input:LeadAdAttributionInput){
  await ensureLeadIntakeAdAttribution(db);const normalized=normalizeLeadAdAttribution(input);if(!normalized.hasAttribution)return{recorded:false,reason:"no_ad_attribution",mirroredToWhatsApp:false,downstreamBound:false};
- const now=input.now??Date.now(),existing=await db.prepare("SELECT * FROM lead_intake_ad_attribution WHERE lead_id=? OR contact_id=? LIMIT 1").bind(input.leadId,input.contactId).first<Row>();
+ const now=input.now??Date.now(),origin=text(input.origin,80)||"public_contact",existing=await db.prepare("SELECT * FROM lead_intake_ad_attribution WHERE lead_id=? OR contact_id=? LIMIT 1").bind(input.leadId,input.contactId).first<Row>();
  if(!existing)await db.prepare("INSERT INTO lead_intake_ad_attribution (id,contact_id,lead_id,source_platform,gclid,fbclid,wbraid,gbraid,click_id,utm_source,utm_medium,utm_campaign,utm_content,utm_term,campaign_id,ad_id,landing_url,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-  .bind(uid("ATTR"),input.contactId,input.leadId,normalized.sourcePlatform,normalized.gclid,normalized.fbclid,normalized.wbraid,normalized.gbraid,normalized.clickId,normalized.utmSource,normalized.utmMedium,normalized.utmCampaign,normalized.utmContent,normalized.utmTerm,normalized.campaignId,normalized.adId,normalized.landingUrl,JSON.stringify({capturedAtIntake:true,gbraid:normalized.gbraid,utmContent:normalized.utmContent,utmTerm:normalized.utmTerm}),now,now).run();
+  .bind(uid("ATTR"),input.contactId,input.leadId,normalized.sourcePlatform,normalized.gclid,normalized.fbclid,normalized.wbraid,normalized.gbraid,normalized.clickId,normalized.utmSource,normalized.utmMedium,normalized.utmCampaign,normalized.utmContent,normalized.utmTerm,normalized.campaignId,normalized.adId,normalized.landingUrl,JSON.stringify({capturedAtIntake:true,origin,gbraid:normalized.gbraid,utmContent:normalized.utmContent,utmTerm:normalized.utmTerm}),now,now).run();
  let downstreamBound=false,mirroredToWhatsApp=false;const threadId=text(input.threadId,120);
  if(normalized.sourcePlatform==="google"||normalized.sourcePlatform==="meta"){
-  const sourceEventId=`public-intake:${input.leadId}`,extendedMetadata={origin:"public_contact",capturedAtIntake:true,gbraid:normalized.gbraid,utmContent:normalized.utmContent,utmTerm:normalized.utmTerm};
+  const sourceEventId=`${origin}:${input.leadId}`,extendedMetadata={origin,capturedAtIntake:true,gbraid:normalized.gbraid,utmContent:normalized.utmContent,utmTerm:normalized.utmTerm};
   await recordIntakeLeadAttribution(db,{sourcePlatform:normalized.sourcePlatform,sourceEventId,leadId:input.leadId,customerId:input.contactId,campaignId:normalized.campaignId,adId:normalized.adId,clickId:normalized.clickId,gclid:normalized.gclid,fbclid:normalized.fbclid,wbraid:normalized.wbraid,utmSource:normalized.utmSource,utmMedium:normalized.utmMedium,utmCampaign:normalized.utmCampaign,landingUrl:normalized.landingUrl,metadata:extendedMetadata,now});downstreamBound=true;
   if(threadId){await recordWhatsAppLeadAttribution(db,{sourcePlatform:normalized.sourcePlatform,sourceEventId,leadId:input.leadId,customerId:input.contactId,threadId,campaignId:normalized.campaignId,adId:normalized.adId,clickId:normalized.clickId,utmSource:normalized.utmSource,utmMedium:normalized.utmMedium,utmCampaign:normalized.utmCampaign,metadata:{...extendedMetadata,gclid:normalized.gclid,fbclid:normalized.fbclid,wbraid:normalized.wbraid}});mirroredToWhatsApp=true;}
  }
