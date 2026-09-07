@@ -55,7 +55,7 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const validated=validateIndianPincode(String(row.postal_code||""));if(!validated.ok)throw new Response("The saved service address has an invalid PIN code",{status:409});
   const resolved=await resolveZoneByPincode(db,validated.pincode);if(!resolved||!resolved.zone.serviceAvailable)throw new Response("PawSpace is not currently serving this service address",{status:409});
   const cityId=String(resolved.assignment.cityId||"").trim().toLowerCase();if(!cityId)throw new Response("The service address has no governed city",{status:409});
-  const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw new Response("PawSpace is not currently serving this address",{status:409});
+  const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw Response.json({error:"PawSpace is not currently serving this address",code:cityVerdict.reason,cityId:cityVerdict.cityCode},{status:409});
   const address=suppliedAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
