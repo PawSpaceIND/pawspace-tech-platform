@@ -47,6 +47,11 @@ export async function setupJourney() {
   };
   globalThis[WORKERS_DB_GLOBAL] = db;
   globalThis[WORKERS_ENV_GLOBAL] = state.env;
+  // R04-14/15 execute this journey inside the collection-ledger test process, where server-auth may
+  // already have resolved cloudflare:workers through the ledger suite's cached shim. ALS remains the
+  // primary request scope; this test-only bridge makes that cached shim's DB fallback point at the same
+  // isolated journey D1, so real routes and the synchronous SQLite assertions cannot split databases.
+  if (globalThis.__PTJA_LEDGER_DB__) globalThis.__PTJA_LEDGER_DB__ = db;
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
