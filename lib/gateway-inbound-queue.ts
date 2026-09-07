@@ -15,6 +15,8 @@ const MAX_RETRY_MS=60*60_000;
 const SAFE_HEADER_NAMES=new Set([
  "content-type","x-razorpay-event-id","x-razorpay-signature","x-hub-signature-256",
  "x-pawspace-email-signature","x-signature","x-pawspace-communication-provider",
+ "x-pawspace-communication-timestamp","x-pawspace-communication-signature",
+ "x-pawspace-signature","x-pawspace-event-id","x-pawspace-whatsapp-provider",
  "interakt-signature","x-exotel-signature","x-pawspace-voice-signature"
 ]);
 
@@ -25,6 +27,8 @@ function safeHeaders(input:Headers|Record<string,string>|undefined){const header
 function parseHeaders(value:unknown){let parsed:Record<string,string>={};try{parsed=JSON.parse(text(value)||"{}")as Record<string,string>;}catch{}return new Headers(parsed);}
 function environment(value:unknown):GatewayInboundEnvironment{const mode=text(value).toLowerCase();if(mode==="sandbox"||mode==="uat"||mode==="live")return mode;throw new Error("Inbound webhook environment must be sandbox, uat or live");}
 function retryDelayMs(attempt:number){return Math.min(MAX_RETRY_MS,BASE_RETRY_MS*Math.pow(2,Math.max(0,attempt-1)));}
+async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
+async function scrubExpiredSignedPaymentPayloads(db:Db,now:number){if(!await tableExists(db,"gateway_webhook_events"))return 0;try{const result=await db.prepare("UPDATE gateway_webhook_events SET raw_payload='{}' WHERE processed_at IS NOT NULL AND processed_at<=? AND raw_payload<>'{}'").bind(now-RAW_PAYLOAD_RETENTION_MS).run();return Number(result.meta?.changes||0);}catch{return 0;}}
 
 export async function ensureGatewayInboundQueueTables(db:Db){
  await db.batch([
@@ -76,6 +80,7 @@ export async function captureInboundWebhook(db:Db,input:{provider:string;routeKe
  if(!eventId)throw new Response("Inbound webhook event ID is required",{status:400});
  if(input.requireMessageId&&!messageId)throw new Response("Inbound webhook message ID is required",{status:400});
  const env=environment(input.environment),hash=await gatewayInboundPayloadHash(rawBody),now=input.now??Date.now(),maxAttempts=Math.max(1,Math.min(12,Math.floor(input.maxAttempts??MAX_ATTEMPTS)));
+ await scrubExpiredSignedPaymentPayloads(db,now);
  const byId=await db.prepare("SELECT * FROM gateway_inbound_queue WHERE provider=? AND environment=? AND route_key=? AND event_id=?").bind(provider,env,routeKey,eventId).first<Row>();
  if(byId){if(text(byId.payload_sha256)!==hash)throw new Response("Inbound webhook event ID payload mismatch",{status:409});return{row:byId,duplicatePrevented:true as const,duplicateReason:"event_id"as const};}
  const byPayload=await db.prepare("SELECT * FROM gateway_inbound_queue WHERE provider=? AND environment=? AND route_key=? AND payload_sha256=?").bind(provider,env,routeKey,hash).first<Row>();
@@ -140,7 +145,7 @@ export async function runInboundWebhookAttempt(db:Db,input:{queueId:string;worke
 export async function drainGatewayInboundQueue(db:Db,handlers:Record<string,GatewayInboundHandler>,input:{limit?:number;now?:number;workerPrefix?:string}={}){
  await ensureGatewayInboundQueueTables(db);const now=input.now??Date.now(),limit=Math.max(1,Math.min(100,Math.floor(input.limit??25))),due=rows(await db.prepare("SELECT id,route_key FROM gateway_inbound_queue WHERE status IN ('RECEIVED','RETRY') AND next_attempt_at<=? ORDER BY next_attempt_at,received_at LIMIT ?").bind(now,limit).all<Row>());let processed=0,retried=0,deadLettered=0,unhandled=0;
  for(const item of due){const routeKey=text(item.route_key),handler=handlers[routeKey],workerId=`${text(input.workerPrefix)||"gateway-inbound"}:${crypto.randomUUID()}`;
-  const chosen=handler||async()=>{throw new Error(`No retry handler registered for inbound route ${routeKey}`);};const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler:chosen,now});if(!handler)unhandled++;if(result.claimed&&result.ok)processed++;else if(result.claimed&&result.failure?.status==="DEAD_LETTER")deadLettered++;else if(result.claimed)retried++;
+  const chosen=handler||async()=>{throw new Error(`No retry handler registered for inbound route ${routeKey}`);};const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler:chosen,now});if(!handler)unhandled++;if(result.claimed&&result.ok)processed++;else if(result.claimed&&"failure"in result&&result.failure?.status==="DEAD_LETTER")deadLettered++;else if(result.claimed)retried++;
  }
  return{examined:due.length,processed,retried,deadLettered,unhandled};
 }
@@ -150,5 +155,6 @@ export async function purgeExpiredInboundPayloads(db:Db,now=Date.now()){
  const pending=rows(await db.prepare("SELECT id FROM gateway_inbound_queue WHERE raw_payload IS NOT NULL AND payload_expires_at<=? AND status IN ('RECEIVED','RETRY')").bind(now).all<Row>());let deadLettered=0;
  for(const item of pending){const worker=`payload-retention:${crypto.randomUUID()}`,claimed=await claimInboundWebhook(db,{queueId:text(item.id),workerId:worker,now});if(!claimed)continue;const result=await failInboundWebhook(db,{queueId:text(item.id),workerId:worker,error:new Error("Inbound webhook payload retention window expired"),now});if(result.status==="DEAD_LETTER")deadLettered++;}
  const scrubbed=await db.prepare("UPDATE gateway_inbound_queue SET raw_payload=NULL,headers_json='{}',updated_at=? WHERE raw_payload IS NOT NULL AND payload_expires_at<=? AND status IN ('PROCESSED','DEAD_LETTER','REJECTED')").bind(now,now).run();
- return{deadLettered,scrubbed:Number(scrubbed.meta?.changes||0)};
+ const legacySignedPaymentPayloads=await scrubExpiredSignedPaymentPayloads(db,now);
+ return{deadLettered,scrubbed:Number(scrubbed.meta?.changes||0),legacySignedPaymentPayloads};
 }
