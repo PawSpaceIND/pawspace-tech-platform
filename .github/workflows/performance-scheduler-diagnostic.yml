@@ -1,0 +1,47 @@
+name: Performance scheduler diagnostic
+
+on:
+  push:
+    branches:
+      - fix/performance-concurrency-load-certification
+
+permissions:
+  contents: read
+
+env:
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  PAWSPACE_PAYMENT_ENV: sandbox
+  FORBID_PRODUCTION: 'true'
+  APP_ENV: staging
+  NODE_ENV: test
+
+jobs:
+  diagnose:
+    if: "${{ github.event.head_commit.message == 'diag(perf): capture staging scheduler failure body' }}"
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Capture scheduler response
+        env:
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {createHmac,randomUUID} from 'node:crypto';
+          const secret=process.env.PAWSPACE_UAT_SIGNING_KEY||'';
+          if(secret.length<32) throw new Error('missing signing key');
+          const payload=Buffer.from(JSON.stringify({email:'founder@pawspace.in',exp:Date.now()+3600000})).toString('base64url');
+          const sig=createHmac('sha256',secret).update(payload).digest('base64url');
+          const cookie=`pawspace_uat=${encodeURIComponent(`${payload}.${sig}`)}`;
+          const d=new Date(Date.now()+14*86400000); d.setUTCHours(5,0,0,0);
+          const e=new Date(d.getTime()+2*3600000);
+          const id=`diag-${Date.now()}-${randomUUID().slice(0,8)}`;
+          const body={clientRequestId:id,customerId:`${id}-cust`,petIds:[`${id}-pet`],serviceCode:'grooming',cityId:'blr',zoneId:'blr-east',scheduledStart:d.toISOString(),scheduledEnd:e.toISOString(),occurrences:1,assignmentStrategy:'auto'};
+          const r=await fetch(process.env.STAGING_URL+'/api/uat-scheduling',{method:'POST',headers:{'content-type':'application/json',origin:process.env.STAGING_URL,cookie},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+          const text=await r.text();
+          console.log(JSON.stringify({status:r.status,body:text.slice(0,4000)},null,2));
+          if(r.status===500) process.exit(1);
+          NODE
