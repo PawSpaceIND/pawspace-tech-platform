@@ -2,13 +2,13 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 import{DatabaseSync}from"node:sqlite";
-import{componentsForSupply,resolveTaxPlaceOfSupply}from"../lib/tax-pos-resolver.ts";
-import{assertBookingSettlementParity}from"../lib/settlement-parity.ts";
+import{componentsForSupply,resolveTaxPlaceOfSupply}from"../lib/tax-pos-resolver";
+import{assertBookingSettlementParity}from"../lib/settlement-parity";
 
 if(process.env.PAWSPACE_PAYMENT_ENV!=="sandbox")throw new Error("tax compliance audit requires PAWSPACE_PAYMENT_ENV=sandbox");
 if(process.env.FORBID_PRODUCTION!=="true")throw new Error("tax compliance audit requires FORBID_PRODUCTION=true");
 
-type Args=unknown[];
+type Args=any[];
 function makeD1(sqlite:DatabaseSync){function statement(sql:string,args:Args=[]){return{sql,args,bind:(...b:Args)=>statement(sql,b),first:async()=>sqlite.prepare(sql).get(...args)??null,run:async()=>{const r=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(r.changes)}};},all:async()=>({results:sqlite.prepare(sql).all(...args)})};}return{prepare:(sql:string)=>statement(sql),batch:async(list:any[])=>{sqlite.exec("BEGIN IMMEDIATE");try{const out=[];for(const s of list)out.push(await s.run());sqlite.exec("COMMIT");return out;}catch(error){sqlite.exec("ROLLBACK");throw error;}},exec:async(sql:string)=>{sqlite.exec(sql);return{count:0,duration:0};}}as any;}
 
 const read=(path:string)=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
