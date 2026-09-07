@@ -111,7 +111,7 @@ const approvedMonthlyPackage = (sqlite, period) =>
 const groomingInvoice = (overrides = {}) => ({
   action: "issue_invoice", entityId: ENTITY, customerId: "CUST-CLOSE-1",
   sourceType: "booking", sourceId: "BKG-CLOSE-1", sourceEventKey: "booking:BKG-CLOSE-1:invoice",
-  issueDate: "2026-08-12", currency: "INR", reason: "service completed",
+  issueDate: "2026-08-12", currency: "INR", reason: "service completed", serviceState: "29",
   lines: [
     { lineKey: "session-1", description: "Grooming session", serviceCode: "grooming", taxableAmount: 1000 },
     { lineKey: "session-2", description: "Grooming session", serviceCode: "grooming", taxableAmount: 1000 },
