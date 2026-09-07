@@ -20,6 +20,7 @@ import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
 import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
 import {runTrustSafetySweep} from "../lib/trust-safety-governance";
+import {purgeExpiredAiContexts} from "../lib/ai-governance";
 import {handleAiVoiceSelfTestNegotiate,handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-harness";
 import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
@@ -134,7 +135,8 @@ const worker = {
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
+      const [aiContextPurge,cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
+        purgeExpiredAiContexts(env.DB,controller.scheduledTime),
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -151,6 +153,7 @@ const worker = {
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
+      if(aiContextPurge.status==="rejected")errors.push(`AI context purge: ${aiContextPurge.reason instanceof Error?aiContextPurge.reason.message:String(aiContextPurge.reason)}`);
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
       if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);
       if(outboxDispatch.status==="rejected")errors.push(`communication outbox dispatcher: ${outboxDispatch.reason instanceof Error?outboxDispatch.reason.message:String(outboxDispatch.reason)}`);else if(outboxDispatch.value.errors.length)errors.push(...outboxDispatch.value.errors.map(error=>`communication outbox dispatcher: ${error}`));
