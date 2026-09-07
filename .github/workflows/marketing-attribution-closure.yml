@@ -2,6 +2,7 @@ name: Marketing Attribution Closure
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "app/landing-pages/**"
       - "app/contact/**"
