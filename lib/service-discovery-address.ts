@@ -25,6 +25,7 @@ async function ensureTestProviderHomeBases(db:Db){
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
   const bases=[
     {providerId:"groom_arun",...fixtureCoordinates("blr")},{providerId:"groom_kiran",latitude:12.9736,longitude:77.5966},{providerId:"groom_sanjay",latitude:12.9756,longitude:77.5986},
+    {providerId:"E2E-PRV-UI-001",latitude:12.9716,longitude:77.5946},
     {providerId:"train_kiran",latitude:12.9776,longitude:77.6006},{providerId:"train_ramesh",latitude:12.9796,longitude:77.6026},{providerId:"train_meera",latitude:12.9816,longitude:77.6046},
     {providerId:"groom_maa",...fixtureCoordinates("maa")},
   ],now=Date.now();
