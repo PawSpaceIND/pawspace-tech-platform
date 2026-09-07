@@ -6,6 +6,7 @@
 import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-bounds";
 import { sanitizeAiProviderText } from "./ai-provider-safety";
 import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
+import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
 
 export const DEFAULT_AI_MODEL_REF = "claude-sonnet-4-6";
 export const AI_PROVIDER_REF = "anthropic";
@@ -119,20 +120,20 @@ async function governanceAllowsExternalAi(
   modelRef: string,
 ): Promise<boolean> {
   const db = env.DB as D1Database | undefined;
-  if (!db) return str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() !== "production";
+  const production = str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production";
+  if (!db) return !production;
   try {
-    const { resolveActiveAiBusinessConfig } = await import("./ai-business-configuration");
-    const active = await resolveActiveAiBusinessConfig(db, {
+    const switches = await resolveExplicitAiKillSwitches(db, {
       channel: String(input.channel || "direct"),
       intent: String(input.intent || "direct"),
       provider: AI_PROVIDER_REF,
       model: modelRef,
     });
-    return active.enabled !== false;
+    return switches.length === 0;
   } catch {
-    // Unit harnesses may omit the business-config schema; production must never turn a governance
-    // read failure into permission to contact the provider.
-    return str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() !== "production";
+    // Unit/migration harnesses may not own ai_kill_switches yet. Production never converts an
+    // unreadable governance control plane into permission to contact the provider.
+    return !production;
   }
 }
 
