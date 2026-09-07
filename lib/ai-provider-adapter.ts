@@ -1,10 +1,11 @@
 /**
  * The single boundary between PawSpace and an external language-model provider.
- * Every external request is privacy-sanitized and checked against runtime AI kill switches here.
+ * Every external request is privacy-sanitized, governance-checked, budgeted and circuit-broken here.
  */
 
 import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-bounds";
 import { sanitizeAiProviderText } from "./ai-provider-safety";
+import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
 
 export const DEFAULT_AI_MODEL_REF = "claude-sonnet-4-6";
 export const AI_PROVIDER_REF = "anthropic";
@@ -19,6 +20,9 @@ export const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 export type AiFailureClass =
   | "not_configured"
   | "governance_blocked"
+  | "quota_exceeded"
+  | "circuit_open"
+  | "runtime_control_unavailable"
   | "timeout"
   | "network"
   | "rate_limited"
@@ -34,6 +38,9 @@ export const isRetryableAiFailure = (failure: AiFailureClass) => RETRYABLE.has(f
 const FAILURE_REASON: Record<AiFailureClass, string> = {
   not_configured: "PAWSPACE_AI_PROVIDER_API_KEY is not configured - no external AI provider is connected and every conversation goes to a human",
   governance_blocked: "External AI is disabled by an active PawSpace AI governance control",
+  quota_exceeded: "External AI is temporarily disabled because the configured request, token, or estimated-spend budget has been reached",
+  circuit_open: "External AI is temporarily disabled because the provider circuit breaker is open",
+  runtime_control_unavailable: "External AI is disabled because its runtime budget control could not be verified",
   timeout: "The AI provider did not respond within the configured deadline",
   network: "The AI provider could not be reached",
   rate_limited: "The AI provider rate-limited this request",
@@ -50,7 +57,7 @@ function reasonFor(failure: AiFailureClass, status?: number): string {
 }
 
 export type AiDraftFailure = { connected: false; reason: string; failure: AiFailureClass; retryable: boolean; status?: number };
-export type AiDraftSuccess = { connected: true; text: string; modelRef: string; providerRef: string; latencyMs: number; stopReason: string | null };
+export type AiDraftSuccess = { connected: true; text: string; modelRef: string; providerRef: string; latencyMs: number; stopReason: string | null; usageTokens?: number };
 export type AiDraftResult = AiDraftSuccess | AiDraftFailure;
 
 const fail = (failure: AiFailureClass, status?: number): AiDraftFailure => ({
@@ -89,9 +96,9 @@ export function aiFailureForStatus(status: number): AiFailureClass {
   return "client_error";
 }
 
-export function extractAiText(parsed: unknown): { text: string; stopReason: string | null } | { failure: AiFailureClass } {
+export function extractAiText(parsed: unknown): { text: string; stopReason: string | null; usageTokens?: number } | { failure: AiFailureClass } {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { failure: "malformed_output" };
-  const body = parsed as { content?: unknown; stop_reason?: unknown; type?: unknown };
+  const body = parsed as { content?: unknown; stop_reason?: unknown; type?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } };
   if (body.type === "error") return { failure: "provider_error" };
   if (!Array.isArray(body.content)) return { failure: "malformed_output" };
   const text = body.content
@@ -101,7 +108,9 @@ export function extractAiText(parsed: unknown): { text: string; stopReason: stri
     .join("\n")
     .trim();
   if (!text) return { failure: "empty_output" };
-  return { text, stopReason: typeof body.stop_reason === "string" ? body.stop_reason : null };
+  const inputTokens = Number(body.usage?.input_tokens), outputTokens = Number(body.usage?.output_tokens);
+  const usageTokens = Number.isFinite(inputTokens) && inputTokens >= 0 && Number.isFinite(outputTokens) && outputTokens >= 0 ? Math.floor(inputTokens + outputTokens) : undefined;
+  return { text, stopReason: typeof body.stop_reason === "string" ? body.stop_reason : null, ...(usageTokens === undefined ? {} : { usageTokens }) };
 }
 
 async function governanceAllowsExternalAi(
@@ -121,8 +130,8 @@ async function governanceAllowsExternalAi(
     });
     return active.enabled !== false;
   } catch {
-    // A broken governance read must not silently disable every AI request during migration/test setup.
-    // Once the tables exist, explicit disabled controls always fail closed through active.enabled=false.
+    // Some non-runtime unit harnesses do not create the business-config tables. Explicit production
+    // runtime calls use DB-backed controls and the grounded provider additionally requires active config.
     return true;
   }
 }
@@ -163,6 +172,22 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
+  const maxTokens = Math.min(8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000)));
+  const db = env.DB as D1Database | undefined;
+  if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
+
+  let reservation: AiRuntimeReservation = null;
+  if (db) {
+    const preflight = await reserveAiProviderRequest(db, env, { provider: AI_PROVIDER_REF, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    if (!preflight.allowed) return fail(preflight.reason);
+    reservation = preflight.reservation;
+  }
+
+  const finishFailure = async (failure: AiFailureClass, status?: number) => {
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
+    return fail(failure, status);
+  };
+
   const timeoutMs = aiTimeoutMs(env);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -174,35 +199,32 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
         method: "POST",
         signal: controller.signal,
         headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
-        body: JSON.stringify({
-          model: modelRef,
-          max_tokens: Math.min(8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000))),
-          system: safeSystemPrompt,
-          messages: [{ role: "user", content: safeUserPrompt }],
-        }),
+        body: JSON.stringify({ model: modelRef, max_tokens: maxTokens, system: safeSystemPrompt, messages: [{ role: "user", content: safeUserPrompt }] }),
       });
     } catch {
-      return fail(controller.signal.aborted ? "timeout" : "network");
+      return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      return fail(aiFailureForStatus(response.status), response.status);
+      const failure = aiFailureForStatus(response.status);
+      return await finishFailure(failure, response.status);
     }
 
     let raw: string;
     try {
       raw = await readBoundedText(response, MAX_AI_RESPONSE_BYTES);
     } catch (error) {
-      if (error instanceof ProviderResponseTooLarge) return fail("oversized_output");
-      return fail(controller.signal.aborted ? "timeout" : "network");
+      if (error instanceof ProviderResponseTooLarge) return await finishFailure("oversized_output");
+      return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
     let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { return fail("malformed_output"); }
+    try { parsed = JSON.parse(raw); } catch { return await finishFailure("malformed_output"); }
     const extracted = extractAiText(parsed);
-    if ("failure" in extracted) return fail(extracted.failure);
+    if ("failure" in extracted) return await finishFailure(extracted.failure);
 
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, actualTokens: extracted.usageTokens });
     return {
       connected: true,
       text: extracted.text,
@@ -210,6 +232,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       providerRef: AI_PROVIDER_REF,
       latencyMs: Date.now() - started,
       stopReason: extracted.stopReason,
+      ...(extracted.usageTokens === undefined ? {} : { usageTokens: extracted.usageTokens }),
     };
   } finally {
     clearTimeout(timer);
