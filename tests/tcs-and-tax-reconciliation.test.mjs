@@ -3,10 +3,6 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
-// s52 GST TCS engine (lib/tcs-governance.ts) and the read-only TDS/TCS reconciliation utility
-// (lib/tds-tcs-reconciliation.ts). The reconciler cross-checks recorded ledgers against statutory
-// rates/arithmetic, PAN readiness and deposits, and never mutates.
-
 const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
 const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
 if (typeof nodeModule.registerHooks === "function") {
@@ -60,7 +56,7 @@ function payout(sqlite, { booking, provider, order, gst, term, at, net = 0, city
     .run(booking, provider, "boarding", order, net, gst, term, at);
 }
 
-test("s52 TCS engine collects 1% of net value on marketplace supplies only, split CGST+SGST", async () => {
+test("s52 TCS engine collects current 0.5% of net value on marketplace supplies only, split CGST+SGST", async () => {
   const { sqlite, db } = await world();
   const tcs = await import("../lib/tcs-governance.ts");
   term(sqlite, "T_mkt", "commission_standard");
@@ -73,21 +69,22 @@ test("s52 TCS engine collects 1% of net value on marketplace supplies only, spli
   const res = await tcs.computeMonthlyTcs(db, { period: PERIOD, actorId: ACTOR });
   assert.equal(res.supplierCount, 1);
   assert.equal(res.totalNetValue, 1500);
-  assert.equal(res.totalTcs, 15, "1% of 1500");
-  assert.equal(res.cgstTcs, 7.5); assert.equal(res.sgstTcs, 7.5);
+  assert.equal(res.totalTcs, 7.5, "0.5% of 1500");
+  assert.equal(res.cgstTcs, 3.75); assert.equal(res.sgstTcs, 3.75);
   const rows = sqlite.prepare("SELECT COUNT(*) n FROM tcs_collections WHERE period=?").get(PERIOD);
   assert.equal(rows.n, 2, "only the two marketplace bookings in-period are recorded");
+  assert.deepEqual(sqlite.prepare("SELECT DISTINCT rate_pct FROM tcs_collections WHERE period=?").all(PERIOD).map(r=>r.rate_pct), [0.5]);
 
   const gstr8 = await tcs.prepareGstr8(db, { period: PERIOD, actorId: ACTOR });
-  assert.equal(gstr8.totalTcs, 15);
+  assert.equal(gstr8.totalTcs, 7.5);
   assert.equal(gstr8.suppliers[0].supplierId, "P1");
   assert.equal(gstr8.liveFilingEnabled, false);
 
-  await tcs.recordTcsDeposit(db, { period: PERIOD, challanReference: "CH-1", amount: 15, actorId: ACTOR });
+  await tcs.recordTcsDeposit(db, { period: PERIOD, challanReference: "CH-1", amount: 7.5, actorId: ACTOR });
   await assert.rejects(() => tcs.recordTcsDeposit(db, { period: "2026-08", challanReference: "CH-2", amount: 99, actorId: ACTOR }), (e) => e instanceof Response && e.status === 409);
 });
 
-test("s52 place of supply decides the tax heads: a supply outside the operator state collects IGST", async () => {
+test("s52 place of supply decides the tax heads at current rate: intra uses CGST+SGST, inter uses IGST", async () => {
   const { sqlite, db } = await world();
   const tcs = await import("../lib/tcs-governance.ts");
   term(sqlite, "T_mkt", "commission_standard");
@@ -96,16 +93,25 @@ test("s52 place of supply decides the tax heads: a supply outside the operator s
 
   const res = await tcs.computeMonthlyTcs(db, { period: PERIOD, actorId: ACTOR });
   assert.equal(res.totalNetValue, 2000);
-  assert.equal(res.totalTcs, 20, "1% of 2000 either way - tax heads change, never the total");
-  assert.equal(res.cgstTcs, 5);
-  assert.equal(res.sgstTcs, 5);
-  assert.equal(res.igstTcs, 10);
+  assert.equal(res.totalTcs, 10, "0.5% of 2000 either way - tax heads change, never the total");
+  assert.equal(res.cgstTcs, 2.5);
+  assert.equal(res.sgstTcs, 2.5);
+  assert.equal(res.igstTcs, 5);
 
   const heads = sqlite.prepare("SELECT booking_id,supply_type,cgst_tcs,sgst_tcs,igst_tcs FROM tcs_collections WHERE period=? ORDER BY booking_id").all(PERIOD);
   assert.deepEqual(heads.map((r) => [r.booking_id, r.supply_type]), [["bk_blr", "intra"], ["bk_bom", "inter"]]);
   assert.equal(heads[0].igst_tcs, 0, "an intra-state supply never carries IGST");
   assert.equal(heads[1].cgst_tcs, 0);
   assert.equal(heads[1].sgst_tcs, 0);
+});
+
+test("s52 rate is effective-dated across 10 July 2024 without rewriting historical liability", async () => {
+  const { tcsRateS52For } = await import("../lib/tcs-governance.ts");
+  assert.equal(tcsRateS52For(istMs(2024, 7, 9)).total, 0.01, "9 July 2024 remains at historical 1%");
+  assert.equal(tcsRateS52For(istMs(2024, 7, 10)).total, 0.005, "10 July 2024 uses the reduced 0.5% rate");
+  assert.equal(tcsRateS52For(istMs(2024, 7, 10)).cgst, 0.0025);
+  assert.equal(tcsRateS52For(istMs(2024, 7, 10)).sgst, 0.0025);
+  assert.equal(tcsRateS52For(istMs(2024, 7, 10)).igst, 0.005);
 });
 
 test("computeMonthlyTcs is idempotent (re-run replaces the period, no duplicate rows)", async () => {
@@ -142,17 +148,17 @@ test("TDS reconciliation flags rate/amount mismatch, PAN-pending, and deposit ga
   assert.equal(after.summary.depositStatus, "matched");
 });
 
-test("TCS reconciliation verifies recorded collections and catches a tampered row", async () => {
+test("TCS reconciliation verifies current-rate collections and catches a tampered row", async () => {
   const { sqlite, db } = await world();
   const tcs = await import("../lib/tcs-governance.ts");
   const recon = await import("../lib/tds-tcs-reconciliation.ts");
   term(sqlite, "T_mkt", "commission_standard");
   payout(sqlite, { booking: "bk1", provider: "P1", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 7, 10) });
   await tcs.computeMonthlyTcs(db, { period: PERIOD, actorId: ACTOR });
-  await tcs.recordTcsDeposit(db, { period: PERIOD, challanReference: "CH-1", amount: 10, actorId: ACTOR });
+  await tcs.recordTcsDeposit(db, { period: PERIOD, challanReference: "CH-1", amount: 5, actorId: ACTOR });
   const clean = await recon.reconcileTcs(db, { period: PERIOD });
   assert.equal(clean.summary.reconciled, true);
-  assert.equal(clean.summary.recordedTcs, 10);
+  assert.equal(clean.summary.recordedTcs, 5);
 
   sqlite.prepare("UPDATE tcs_collections SET tcs_total=99 WHERE period=?").run(PERIOD);
   const tampered = await recon.reconcileTcs(db, { period: PERIOD });
