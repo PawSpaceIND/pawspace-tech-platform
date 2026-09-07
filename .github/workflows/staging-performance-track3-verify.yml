@@ -4,21 +4,22 @@ on:
   push:
     branches:
       - fix/staging-performance-remediation
-    paths:
-      - .github/workflows/staging-performance-track3-verify.yml
+      - fix/performance-concurrency-load-certification
 
 permissions:
   contents: read
 
 concurrency:
-  group: staging-performance-track3-remediation
+  group: staging-performance-track3-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  EXPECTED_SHA: 43156cd1900177831f33c25a7e81fe46a5e96601
+  EXPECTED_SHA: ${{ github.sha }}
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
   NODE_ENV: test
   APP_ENV: staging
+  PAWSPACE_PAYMENT_ENV: sandbox
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
   FORBID_PRODUCTION: 'true'
 
 jobs:
@@ -38,6 +39,8 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm run install:ci
+      - name: Run local performance/load guards
+        run: npm run test:performance-load
       - run: npm run build
       - name: Configure isolated staging
         env:
@@ -113,7 +116,8 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
           PERF_RUN_ID: remediation-${{ github.run_id }}-${{ github.run_attempt }}
-        run: node scripts/ops/staging-performance-gate.mjs
+          PERFORMANCE_LOAD_HOSTED: 'true'
+        run: npm run test:performance-load
       - name: Verify D1 Track 3 invariants
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
