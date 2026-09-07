@@ -76,8 +76,13 @@ async function request(path, options = {}) {
   if (!response.ok) throw new Error(`${options.method || 'GET'} ${path} -> ${response.status}: ${payload?.error || text.slice(0,200)}`);
   return {response, payload};
 }
+async function transientSetupRequest(path, options = {}) {
+  const {response,payload,text} = await rawRequestWithTransientRetry(path, options);
+  if (!response.ok) throw new Error(`${options.method || 'GET'} ${path} -> ${response.status}: ${payload?.error || text.slice(0,200)}`);
+  return {response, payload};
+}
 
-const login = await request('/api/staging-login', {method:'POST', body:{action:'login', code:ACCESS, email:'founder@pawspace.in'}});
+const login = await transientSetupRequest('/api/staging-login', {method:'POST', body:{action:'login', code:ACCESS, email:'founder@pawspace.in'}});
 const setCookie = login.response.headers.get('set-cookie') || '';
 const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
