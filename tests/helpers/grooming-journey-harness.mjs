@@ -47,6 +47,10 @@ export async function setupJourney() {
   };
   globalThis[WORKERS_DB_GLOBAL] = db;
   globalThis[WORKERS_ENV_GLOBAL] = state.env;
+  // R04-14/15 deliberately import this journey from inside the ledger suite, whose cached
+  // cloudflare:workers shim owns __PTJA_LEDGER_DB__. Point that owning test-only binding at
+  // this journey's isolated D1 so the nested real routes and the assertions observe one database.
+  if (globalThis.__PTJA_LEDGER_DB__) globalThis.__PTJA_LEDGER_DB__ = db;
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
