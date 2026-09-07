@@ -54,7 +54,7 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const address=suppliedAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
-    const geocoded=fixture?{status:"configured"as const,address,latitude:12.9716,longitude:77.5946}:await geocodeAddress({address});
+    const geocoded=fixture?{status:"configured"as const,address,latitude:12.9716,longitude:77.5946,error:undefined}:await geocodeAddress({address});
     if(geocoded.status!=="configured"||!Number.isFinite(geocoded.latitude)||!Number.isFinite(geocoded.longitude))throw new Response(geocoded.error||"The service address could not be geocoded for provider matching",{status:409});
     const now=Date.now(),id=String(row.id);
     if(suppliedAddress||fixture){
