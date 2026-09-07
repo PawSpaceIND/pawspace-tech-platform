@@ -22,12 +22,12 @@ on:
         default: sandbox
         options: [sandbox]
       communication_env:
-        description: 'live or sandbox — decides whether real people receive real messages'
+        description: 'live or sandbox - decides whether real people receive real messages'
         required: true
         type: choice
         options: [sandbox, live]
       maps_env:
-        description: 'live or sandbox — decides whether location and ETA are real'
+        description: 'live or sandbox - decides whether location and ETA are real'
         required: true
         type: choice
         options: [sandbox, live]
@@ -46,20 +46,9 @@ on:
 
 jobs:
   # ------------------------------------------------------------------------------------
-  # Nothing reaches production without passing this first.
-  #
-  # scripts/assert-production-readiness.mjs is fail-closed and has always existed - but it
-  # lived ONLY in production-signoff.yml, a SEPARATE workflow that this deploy did not
-  # depend on. The entire gate on a real production deploy was therefore one free-text
-  # confirmation string, typed by one person, unreviewed. The 18 outstanding credential
-  # gaps tracked in #542 could not have stopped a deploy, because nothing on this path
-  # ever asked.
-  #
-  # STRICT is 'true' here, unlike the reporting-only dry run in production-signoff.yml:
-  # on this path a configuration gap MUST fail the job. The approved release-phase test-API
-  # policy override is carried over unchanged, so this is not stricter than the standing
-  # policy - it simply enforces that policy where it was previously unenforced. Changing
-  # the posture now requires editing this file under review, not typing into a dispatch box.
+  # Nothing reaches production without passing this first. This gate runs the real production
+  # profile: production-only credentials must exist under canonical names, test/UAT aliases are
+  # forbidden, and payment routing must remain sandbox-only with live approval explicitly false.
   # ------------------------------------------------------------------------------------
   readiness-gate:
     if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
@@ -76,19 +65,15 @@ jobs:
       - run: npm ci
       - name: Production readiness must certify before anything deploys
         env:
-          PAWSPACE_PRODUCTION_ENFORCE: 'false'
-          # A gap fails this job. This is the difference between reporting and gating.
+          PAWSPACE_PRODUCTION_ENFORCE: 'true'
           PAWSPACE_READINESS_DRY_RUN_STRICT: 'true'
-          # Approved release-phase policy, identical to production-signoff.yml.
-          PAWSPACE_TEST_API_POLICY_OVERRIDE: 'true'
+          PAWSPACE_TEST_API_POLICY_OVERRIDE: 'false'
+          PAWSPACE_PAYMENT_ENV: 'sandbox'
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
           IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
           IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
           IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
           IDFY_URL: ${{ vars.IDFY_URL }}
-          IDFY_API_KEY_SANDBOX: ${{ secrets.IDFY_API_KEY_SANDBOX }}
-          IDFY_ACCOUNT_ID_SANDBOX: ${{ secrets.IDFY_ACCOUNT_ID_SANDBOX }}
-          IDFY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.IDFY_WEBHOOK_SECRET_SANDBOX }}
-          IDFY_URL_SANDBOX: ${{ vars.IDFY_URL_SANDBOX }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
@@ -102,13 +87,6 @@ jobs:
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
           META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
           META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
-          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
-          META_WHATSAPP_APP_SECRET_UAT: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT }}
-          META_WHATSAPP_VERIFY_TOKEN_UAT: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN_UAT }}
-          META_WHATSAPP_WABA_ID_UAT: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
-          META_WHATSAPP_PHONE_NUMBER_ID_UAT: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
-          INTERAKT_API_KEY_SANDBOX: ${{ secrets.INTERAKT_API_KEY_SANDBOX }}
-          INTERAKT_WEBHOOK_SECRET_SANDBOX: ${{ secrets.INTERAKT_WEBHOOK_SECRET_SANDBOX }}
         run: node scripts/assert-production-readiness.mjs
 
   deploy:
