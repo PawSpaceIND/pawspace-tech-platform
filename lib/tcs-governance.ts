@@ -3,10 +3,12 @@
 // marketplace (commission-model) providers, must collect TCS on the net value of those supplies and
 // file GSTR-8. This computes the liability from REAL payout data; it never disburses or files.
 
+import{TCS_RATE_S52,tcsRateS52For}from"./tcs-rate";
+export{TCS_RATE_S52,tcsRateS52For}from"./tcs-rate";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export const TCS_PRODUCTION_READY=false;
-export const TCS_RATE_S52={total:0.01,cgst:0.005,sgst:0.005,igst:0.01} as const;
 const MARKETPLACE_MODELS=new Set(["commission_standard","commission_groomer"]);
 const OPERATOR_STATE_CODE="29"; // Karnataka
 const CITY_STATE_CODE:Record<string,string>={blr:"29",bengaluru:"29",hyderabad:"36",hyd:"36",chennai:"33",maa:"33",mumbai:"27",bom:"27",pune:"27",delhi:"07",del:"07",gurugram:"06",gurgaon:"06",noida:"09",kolkata:"19",ccu:"19"};
@@ -35,28 +37,14 @@ export async function resolveBookingPlaceOfSupply(db:Db,bookingId:string){const 
 export type TcsComputation={period:string;supplierCount:number;totalNetValue:number;totalTcs:number;cgstTcs:number;sgstTcs:number;igstTcs:number;issues:string[];depositDueDate:string};
 export async function computeMonthlyTcs(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<TcsComputation>{
  await ensureTcsTables(db);const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];
- /* The source read runs BEFORE the DELETE, and a failure REFUSES rather than returning [].
-  *
-  * This used to DELETE the period's tcs_collections and then read through safeAll, which is
-  * `catch{return[]}`. When the read failed, the prior computation was already destroyed and the month
-  * recomputed to zero: measured at Rs 1,695 of s52 TCS on Rs 1,69,500 of marketplace supplies filed to
-  * GSTR-8 as Rs 0, with the ten supplier rows gone, `issues` EMPTY so nothing on screen separated it
-  * from a genuinely zero month, and recordTcsDeposit then REFUSING the true deposit because it must
-  * equal the computed liability of 0.
-  *
-  * Refusing is the only safe answer: a statutory computation that cannot read its source must not
-  * publish a number, and must not destroy the number it already had. [AUDIT-C3] */
  let payouts:Row[];
- /* A source table that has never existed is a legitimately empty month - a fresh database with no
-  * payouts yet. A table that EXISTS but whose read fails is the schema-drift / D1-refusal case this
-  * guard is for, and must refuse rather than publish a zero. */
  if(!(await tableExists(db,"provider_payout_computations"))){payouts=[];}
  else try{payouts=((await db.prepare("SELECT c.booking_id,c.provider_id,c.service_code,c.order_value,c.provider_gst_deducted,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?").bind(startMs,endMs).all<Row>()).results)||[];}
  catch(error){throw new Error(`TCS source read failed for ${input.period}; refusing to recompute. Existing tcs_collections rows are preserved. (${error instanceof Error?error.message:String(error)})`);}
  await db.prepare("DELETE FROM tcs_collections WHERE period=?").bind(input.period).run();
- const rows:Array<{supplierId:string;serviceCode:string;bookingId:string;supplyType:"intra"|"inter";orderValue:number;netValue:number;cgst:number;sgst:number;igst:number;total:number}>=[];
- for(const p of payouts){const model=text(p.engagement_model).toLowerCase();if(!MARKETPLACE_MODELS.has(model))continue;const orderValue=round2(num(p.order_value)),netValue=round2(orderValue-num(p.provider_gst_deducted));if(netValue<=0)continue;const pos=await resolveBookingPlaceOfSupply(db,text(p.booking_id)),supplyType:"intra"|"inter"=pos.stateCode===OPERATOR_STATE_CODE?"intra":"inter";const cgst=supplyType==="intra"?round2(netValue*TCS_RATE_S52.cgst):0,sgst=supplyType==="intra"?round2(netValue*TCS_RATE_S52.sgst):0,igst=supplyType==="inter"?round2(netValue*TCS_RATE_S52.igst):0,total=round2(cgst+sgst+igst);rows.push({supplierId:text(p.provider_id),serviceCode:text(p.service_code),bookingId:text(p.booking_id),supplyType,orderValue,netValue,cgst,sgst,igst,total});}
- const statements=rows.map(r=>db.prepare("INSERT OR REPLACE INTO tcs_collections (id,period,supplier_id,service_code,booking_id,supply_type,order_value,net_taxable_value,cgst_tcs,sgst_tcs,igst_tcs,tcs_total,rate_pct,source_ref,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`TCS-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,r.supplierId,r.serviceCode,r.bookingId,r.supplyType,r.orderValue,r.netValue,r.cgst,r.sgst,r.igst,r.total,TCS_RATE_S52.total*100,r.bookingId,now));if(statements.length)await db.batch(statements);
+ const rows:Array<{supplierId:string;serviceCode:string;bookingId:string;supplyType:"intra"|"inter";orderValue:number;netValue:number;cgst:number;sgst:number;igst:number;total:number;ratePct:number}>=[];
+ for(const p of payouts){const model=text(p.engagement_model).toLowerCase();if(!MARKETPLACE_MODELS.has(model))continue;const orderValue=round2(num(p.order_value)),netValue=round2(orderValue-num(p.provider_gst_deducted));if(netValue<=0)continue;const pos=await resolveBookingPlaceOfSupply(db,text(p.booking_id)),supplyType:"intra"|"inter"=pos.stateCode===OPERATOR_STATE_CODE?"intra":"inter",rate=tcsRateS52For(num(p.computed_at)),cgst=supplyType==="intra"?round2(netValue*rate.cgst):0,sgst=supplyType==="intra"?round2(netValue*rate.sgst):0,igst=supplyType==="inter"?round2(netValue*rate.igst):0,total=round2(cgst+sgst+igst);rows.push({supplierId:text(p.provider_id),serviceCode:text(p.service_code),bookingId:text(p.booking_id),supplyType,orderValue,netValue,cgst,sgst,igst,total,ratePct:rate.total*100});}
+ const statements=rows.map(r=>db.prepare("INSERT OR REPLACE INTO tcs_collections (id,period,supplier_id,service_code,booking_id,supply_type,order_value,net_taxable_value,cgst_tcs,sgst_tcs,igst_tcs,tcs_total,rate_pct,source_ref,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`TCS-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,r.supplierId,r.serviceCode,r.bookingId,r.supplyType,r.orderValue,r.netValue,r.cgst,r.sgst,r.igst,r.total,r.ratePct,r.bookingId,now));if(statements.length)await db.batch(statements);
  if(rows.length)issues.push("s52 base = order_value − provider_gst_deducted; confirm this net-taxable-value definition with Finance/CA before production filing.");const totals=rows.reduce((a,r)=>({net:a.net+r.netValue,cgst:a.cgst+r.cgst,sgst:a.sgst+r.sgst,igst:a.igst+r.igst,total:a.total+r.total}),{net:0,cgst:0,sgst:0,igst:0,total:0}),suppliers=new Set(rows.map(r=>r.supplierId)),[year,month]=input.period.split("-").map(Number),depositDueDate=`${month===12?year+1:year}-${String(month===12?1:month+1).padStart(2,"0")}-10`;return{period:input.period,supplierCount:suppliers.size,totalNetValue:round2(totals.net),totalTcs:round2(totals.total),cgstTcs:round2(totals.cgst),sgstTcs:round2(totals.sgst),igstTcs:round2(totals.igst),issues,depositDueDate};
 }
 
@@ -64,4 +52,4 @@ export async function prepareGstr8(db:Db,input:{period:string;actorId:string;asO
 
 export async function recordTcsDeposit(db:Db,input:{period:string;challanReference:string;amount:number;actorId:string;asOf?:number}){await ensureTcsTables(db);const challan=text(input.challanReference);if(!challan)throw new Response("Challan reference is required",{status:400});const computed=await db.prepare("SELECT COALESCE(SUM(tcs_total),0) total FROM tcs_collections WHERE period=?").bind(input.period).first<Row>(),liability=round2(num(computed?.total));if(Math.abs(liability-round2(num(input.amount)))>0.01)throw new Response(`Deposit must equal the computed TCS liability of ${liability} for ${input.period}`,{status:409});const[year,month]=input.period.split("-").map(Number),dueDate=`${month===12?year+1:year}-${String(month===12?1:month+1).padStart(2,"0")}-10`,now=input.asOf??Date.now(),existing=await db.prepare("SELECT period FROM tcs_deposits WHERE period=?").bind(input.period).first<Row>();if(existing)return{period:input.period,amount:liability,duplicatePrevented:true};await db.prepare("INSERT INTO tcs_deposits (period,amount,challan_reference,due_date,deposited_by,deposited_at,status) VALUES (?,?,?,?,?,?,'deposited')").bind(input.period,liability,challan,dueDate,input.actorId,now).run();return{period:input.period,amount:liability,challanReference:challan,dueDate,duplicatePrevented:false};}
 
-export async function tcsDashboard(db:Db,period:string){await ensureTcsTables(db);const collections=await safeAll(db,"SELECT supplier_id,service_code,booking_id,supply_type,order_value,net_taxable_value,cgst_tcs,sgst_tcs,igst_tcs,tcs_total,rate_pct FROM tcs_collections WHERE period=? ORDER BY tcs_total DESC",[period]);const statement=await db.prepare("SELECT * FROM tcs_statements WHERE period=?").bind(period).first<Row>(),deposit=await db.prepare("SELECT * FROM tcs_deposits WHERE period=?").bind(period).first<Row>();return{period,collections,statement:statement||null,deposit:deposit||null,productionReady:false};}
+export async function tcsDashboard(db:Db,period:string){await ensureTcsTables(db);const collections=await safeAll(db,"SELECT supplier_id,service_code,booking_id,supply_type,order_value,net_taxable_value,cgst_tcs,sgst_tcs,igst_tcs,tcs_total,rate_pct FROM tcs_collections WHERE period=? ORDER BY tcs_total DESC",[period]);const statement=await db.prepare("SELECT * FROM tcs_statements WHERE period=?").bind(period).first<Row>(),deposit=await db.prepare("SELECT * FROM tcs_deposits WHERE period=?").bind(period).first<Row>();return{period,collections,statement:statement||null,deposit:deposit||null,productionReady:false,currentRate:TCS_RATE_S52};}
