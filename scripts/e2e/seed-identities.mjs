@@ -35,6 +35,7 @@ export const IDENTITIES = {
 export const CUSTOMER_ID = "E2E-CUS-UI-001";
 export const PROVIDER_ID = "E2E-PRV-UI-001";
 export const BOOKING_ID = "E2E-BK-UI-001";
+const PROVIDER_APPLICATION_ID = "E2E-POAPP-UI-001";
 
 const has = (db, table) => Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
 
@@ -65,6 +66,11 @@ export function seed(dbPath = locateDb()) {
   // fail closed unless an approved punctuality/tracking policy exists, so seed the same local-only UAT
   // policy shape used by the executable grooming journey harness rather than bypassing the guard.
   db.exec("CREATE TABLE IF NOT EXISTS booking_punctuality_policies (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,city_id TEXT,provider_model TEXT,tracking_enabled INTEGER NOT NULL DEFAULT 0,eta_freshness_seconds INTEGER,allowed_accuracy_meters REAL,grace_minutes INTEGER,customer_alert_minutes INTEGER,ops_escalation_minutes INTEGER,reassignment_minutes INTEGER,evidence_requirements_json TEXT NOT NULL DEFAULT '[]',excluded_reasons_json TEXT NOT NULL DEFAULT '[]',raw_gps_retention_days INTEGER,approval_state TEXT NOT NULL DEFAULT 'draft',effective_from TEXT NOT NULL,effective_to TEXT,approved_by TEXT,updated_at INTEGER NOT NULL)");
+  // Provider assignment is intentionally fail-closed when onboarding verification is absent. The
+  // hardened E2E actor therefore carries a real local application plus the current grooming mandate
+  // (Aadhaar + PAN) instead of relying on the founder_seed UAT exemption used by legacy fixtures.
+  db.exec("CREATE TABLE IF NOT EXISTS provider_onboarding_applications (id TEXT PRIMARY KEY,provider_id TEXT,vertical_key TEXT NOT NULL,country_code TEXT NOT NULL,region_code TEXT,city_code TEXT,status TEXT NOT NULL,locale_code TEXT NOT NULL,basic_info_json TEXT NOT NULL,policy_ref TEXT,quiz_version_ref TEXT,verification_status TEXT NOT NULL DEFAULT 'not_started',quiz_status TEXT NOT NULL DEFAULT 'not_started',interview_status TEXT NOT NULL DEFAULT 'not_started',human_decision TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  db.exec("CREATE TABLE IF NOT EXISTS provider_verifications (id TEXT PRIMARY KEY,application_id TEXT NOT NULL,category TEXT NOT NULL,verification_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',automated INTEGER NOT NULL DEFAULT 0,provider_ref TEXT,detail_json TEXT NOT NULL DEFAULT '{}',updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,expires_at INTEGER,UNIQUE(application_id,verification_type))");
 
   for (const who of Object.values(IDENTITIES)) {
     out.push(upsert(db, "app_users", {
@@ -99,6 +105,26 @@ export function seed(dbPath = locateDb()) {
     rating: 4.9, quality_score: 95, capacity: 1, travel_buffer_minutes: 30,
     max_daily_jobs: 6, acceptance_timeout_minutes: 3, status: "active", version: 1,
     effective_from: "2026-08-01", effective_to: null, updated_by: "e2e:seed", updated_at: now,
+  }));
+  out.push(upsert(db, "provider_onboarding_applications", {
+    id: PROVIDER_APPLICATION_ID, provider_id: PROVIDER_ID, vertical_key: "grooming",
+    country_code: "IN", region_code: "KA", city_code: "BLR", status: "verification",
+    locale_code: "en", basic_info_json: "{}", verification_status: "verified",
+    quiz_status: "not_started", interview_status: "not_started", created_by: "e2e:seed",
+    created_at: now, updated_at: now,
+  }));
+  const verificationExpiry = now + 30 * 86400000;
+  out.push(upsert(db, "provider_verifications", {
+    id: "E2E-PVER-AADHAAR-001", application_id: PROVIDER_APPLICATION_ID, category: "groomer",
+    verification_type: "aadhaar", status: "verified", automated: 1,
+    detail_json: '{"source":"e2e_local_fixture"}', updated_by: "e2e:seed",
+    created_at: now, updated_at: now, expires_at: verificationExpiry,
+  }));
+  out.push(upsert(db, "provider_verifications", {
+    id: "E2E-PVER-PAN-001", application_id: PROVIDER_APPLICATION_ID, category: "groomer",
+    verification_type: "pan", status: "verified", automated: 1,
+    detail_json: '{"source":"e2e_local_fixture"}', updated_by: "e2e:seed",
+    created_at: now, updated_at: now, expires_at: verificationExpiry,
   }));
   out.push(upsert(db, "booking_punctuality_policies", {
     id: "GPS-GROOM-E2E", service_code: "grooming", city_id: null, provider_model: null,
