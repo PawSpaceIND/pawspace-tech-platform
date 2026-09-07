@@ -1,5 +1,6 @@
 export type TrustedWorkspaceIdentity={email:string;name:string};
 const DIRECT_EDGE_SUFFIXES=[".workers.dev",".pages.dev"];
+const WORKSPACE_IDENTITY_HEADERS=["oai-authenticated-user-email","oai-authenticated-user-full-name","oai-authenticated-user-full-name-encoding"];
 
 function text(value:unknown){return String(value??"").trim();}
 function runtimeText(runtime:Record<string,unknown>,name:string){return text(runtime?.[name]).toLowerCase();}
@@ -25,4 +26,12 @@ export function resolveTrustedWorkspaceIdentity(request:Request,runtime:Record<s
  let name=email.split("@")[0]||"Workspace user";
  if(request.headers.get("oai-authenticated-user-full-name-encoding")==="percent-encoded-utf-8"&&encoded){try{name=decodeURIComponent(encoded)}catch{}}
  return{email,name};
+}
+
+/** Remove spoofable workspace identity headers before central gateway inspection on untrusted ingress. */
+export function requestForAuthorization(request:Request,runtime:Record<string,unknown>={}){
+ if(trustedWorkspaceHeaderIngress(request,runtime))return request.clone();
+ const headers=new Headers(request.headers);
+ for(const name of WORKSPACE_IDENTITY_HEADERS)headers.delete(name);
+ return new Request(request,{headers});
 }
