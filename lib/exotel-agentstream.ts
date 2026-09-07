@@ -1,6 +1,7 @@
 import { orchestrateAiTurn, type AiResponseProvider } from "./ai-conversation-orchestrator";
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
+import { verifyAgentStreamStart } from "./voice-agentstream-auth";
 import { DEFAULT_SPEECH_TIMEOUT_MS, withSpeechDeadline } from "./voice-speech-failures";
 import type { AuthenticatedActor } from "./server-auth";
 
@@ -142,6 +143,8 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   if (!accountSid || accountSid !== text(env.EXOTEL_SID)) throw new Error("AgentStream account_sid does not match the configured Exotel account");
   const order = await env.DB.prepare("SELECT id,customer_id,state,provider,provider_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
   if (!order) throw new Error("AgentStream call is not present in the governed outbound ledger");
+  const auth = await verifyAgentStreamStart(env, start.custom_parameters, text(order.id));
+  if (!auth.verified) throw new Error(auth.reason || "AgentStream authentication failed");
   if (!text(order.customer_id)) throw new Error("AgentStream voice AI requires a canonical customer");
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
   if (["blocked_disabled", "blocked_permission", "blocked_use_case", "blocked_not_allowlisted", "blocked_consent", "blocked_opt_out", "blocked_quiet_hours", "blocked_frequency_cap", "provider_unavailable", "ended", "cancelled"].includes(text(order.state))) throw new Error("AgentStream call is not in an active carrier state");
@@ -152,7 +155,7 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,'exotel','outbound','active','verified','en',?,?)").bind(aiCallId, threadId, customerId, now, serviceActor.email),
     env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=?").bind(aiCallId, aiCallId, now, text(order.id), providerCallId),
-    env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), aiCallId, "agentstream_started", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16" }), now),
+    env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), aiCallId, "agentstream_started", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16", authenticated: true }), now),
   ]);
   return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0 };
 }
