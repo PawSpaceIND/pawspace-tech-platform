@@ -8,11 +8,9 @@ const quiz = await read("../lib/provider-quiz-ai-draft.ts");
 const evalSec = await read("../lib/ai-evaluation-security.ts");
 const webChat = await read("../lib/ai-web-chat-adapter.ts");
 
-// Permanent readiness gate for AI activation: the whole switch is one secret
-// (PAWSPACE_AI_PROVIDER_API_KEY). These invariants must hold so that setting the key
-// flips AI on cleanly, removing it fails safe, and the human-in-the-loop guardrails
-// can never be silently weakened. (The deep flip-on behaviour is exercised by the
-// scratchpad execution preflight; this is the CI-run contract check.)
+// Permanent readiness gate for AI activation: the whole credential switch is one secret
+// (PAWSPACE_AI_PROVIDER_API_KEY). Non-secret runtime governance selectors may also be read by the
+// adapter, but they must never introduce a second provider credential or a local generation path.
 
 // This test used to pin the adapter's literal source: `if (!apiKey) { return { connected: false`,
 // a fixed model string, and a sentence from a comment. Hardening the adapter broke all three while
@@ -22,12 +20,15 @@ const webChat = await read("../lib/ai-web-chat-adapter.ts");
 // place); the behaviour itself is executed in tests/ai-provider-adapter-execution.test.mjs.
 test("AI activation is a single, reversible, fail-safe key switch", () => {
   assert.match(adapter, /PAWSPACE_AI_PROVIDER_API_KEY/);
-  // The switch stays exactly one credential. Counting occurrences would break on formatting, so this
-  // pins the SET of environment names the adapter reads: a second credential name is a second switch,
-  // and a second switch is how "AI is off" stops being a single reversible fact.
+  // Pin the exact environment names this provider boundary may read. PAWSPACE_DEPLOYMENT_ENV is a
+  // non-secret fail-closed governance selector: production must refuse provider access when the D1
+  // governance/runtime-control plane cannot be verified. It is intentionally not an activation key.
   const envNames = [...new Set([...adapter.matchAll(/"(PAWSPACE_[A-Z_0-9]+|[A-Z_0-9]*API_KEY|[A-Z_0-9]*TOKEN|[A-Z_0-9]*SECRET)"/g)].map(m => m[1]))].sort();
-  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS"],
-    `the adapter reads ${envNames.join(", ")}; only the first is a credential and there must be no other`);
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_DEPLOYMENT_ENV"],
+    `the adapter reads an unexpected environment name: ${envNames.join(", ")}`);
+  const credentialNames = envNames.filter(name => /(?:API_KEY|TOKEN|SECRET)$/.test(name));
+  assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY"],
+    `the adapter must have exactly one provider credential switch, got ${credentialNames.join(", ")}`);
   assert.match(adapter, /https:\/\/api\.anthropic\.com\/v1\/messages/);
   assert.match(adapter, /"x-api-key": apiKey/);
   // No local generation: an offline fallback string would make a silent provider look like an answer.
