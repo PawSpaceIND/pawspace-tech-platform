@@ -1,10 +1,13 @@
 "use client";
-import{useState}from"react";
+import{useEffect,useState}from"react";
+import{captureMarketingAttributionFromWindow,type MarketingAttributionCapture}from"../../lib/marketing-attribution";
 import styles from"./landing-pages.module.css";
 
 export default function LandingLeadForm({service,pet,formTitle,formCta}:{service:string;pet:string;formTitle:string;formCta:string}){
   const[status,setStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
   const[error,setError]=useState("");
+  const[attribution,setAttribution]=useState<MarketingAttributionCapture>({});
+  useEffect(()=>{setAttribution(captureMarketingAttributionFromWindow());},[]);
 
   async function onSubmit(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();
@@ -17,6 +20,7 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
       petNames:pet,
       service,
       whatsappConsent:data.get("whatsappConsent")==="yes",
+      attribution,
     };
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
