@@ -1,10 +1,14 @@
 "use client";
 import{useState}from"react";
+import{useQueryParameter}from"../../lib/use-query-parameter";
 import styles from"./landing-pages.module.css";
+
+const adParam=(value:string|null,max=180)=>String(value||"").trim().slice(0,max);
 
 export default function LandingLeadForm({service,pet,formTitle,formCta}:{service:string;pet:string;formTitle:string;formCta:string}){
   const[status,setStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
   const[error,setError]=useState("");
+  const gclid=useQueryParameter("gclid"),fbclid=useQueryParameter("fbclid"),wbraid=useQueryParameter("wbraid"),utmSource=useQueryParameter("utm_source"),utmMedium=useQueryParameter("utm_medium"),utmCampaign=useQueryParameter("utm_campaign"),campaignId=useQueryParameter("campaign_id"),adId=useQueryParameter("ad_id");
 
   async function onSubmit(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();
@@ -17,6 +21,15 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
       petNames:pet,
       service,
       whatsappConsent:data.get("whatsappConsent")==="yes",
+      gclid:adParam(gclid),
+      fbclid:adParam(fbclid),
+      wbraid:adParam(wbraid),
+      utmSource:adParam(utmSource,120),
+      utmMedium:adParam(utmMedium,120),
+      utmCampaign:adParam(utmCampaign),
+      campaignId:adParam(campaignId),
+      adId:adParam(adId),
+      landingUrl:window.location.href.slice(0,500),
     };
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
