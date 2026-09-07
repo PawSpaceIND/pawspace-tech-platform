@@ -1,5 +1,6 @@
 import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { createPaymentOrderPaise, paymentEnvironment } from "./razorpay-client";
+import { custodyReleaseBlockReason, markCustodyReleased, synchronizeFinancialCustody } from "./financial-custody";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -38,10 +39,6 @@ export function paiseToRupeesDisplay(amountPaise: number) {
   return `${major}.${String(minor).padStart(2, "0")}`;
 }
 
-/**
- * Runtime schema floor for finance paths that can execute before deploy-time migrations have run.
- * The canonical definitions live in financial-runtime-schema.ts and mirror the final Drizzle shapes.
- */
 export async function ensureFinancialLifecycleTables(db: Db) {
   await ensureFinancialRuntimeTables(db);
 }
@@ -258,6 +255,14 @@ export async function releasePartnerEarning(db: Db, input: { bookingId: string; 
     JOIN canonical_bookings b ON b.id=e.booking_id WHERE e.booking_id=?`).bind(input.bookingId).first<Row>();
   if (!earning) throw new Error("Pending partner earning was not found");
   if (String(earning.booking_status).toLowerCase() !== "completed") throw new Error("Partner earning cannot be released before booking completion");
+  const custody = await synchronizeFinancialCustody(db,{bookingId:input.bookingId,pendingEarningId:String(earning.id),now});
+  const blocked = custodyReleaseBlockReason(custody?.state);
+  if (blocked) throw new Error(blocked);
+  if (String(custody?.state)==="RELEASED") {
+    const replay = await db.prepare("SELECT * FROM partner_payable_released WHERE booking_id=? AND release_type=?").bind(input.bookingId,input.releaseType).first<Row>();
+    if (!replay) throw new Error("Custody is released but partner payable evidence is missing");
+    return { released: replay, duplicate: true };
+  }
   const results = await db.batch([
     db.prepare(`INSERT INTO partner_payable_released
       (id,booking_id,partner_id,pending_earning_id,release_type,amount_paise,currency,transfer_status,released_at,updated_at)
@@ -276,6 +281,7 @@ export async function releasePartnerEarning(db: Db, input: { bookingId: string; 
   if (!released) throw new Error("Partner earning release failed");
   const source = await db.prepare("SELECT status FROM partner_earning_pending WHERE id=?").bind(String(earning.id)).first<Row>();
   if (String(source?.status || "") !== "RELEASED") throw new Error("Partner earning release was not atomic");
+  await markCustodyReleased(db,{bookingId:input.bookingId,pendingEarningId:String(earning.id),now});
   return { released, duplicate: !inserted };
 }
 
