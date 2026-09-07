@@ -15,7 +15,7 @@ function makeD1(sqlite){
   return{prepare:(sql)=>statement(sql),batch:async(list)=>{sqlite.exec("BEGIN");try{const out=[];for(const item of list)out.push(await item.run());sqlite.exec("COMMIT");return out;}catch(error){sqlite.exec("ROLLBACK");throw error;}},exec:async(sql)=>sqlite.exec(sql)};
 }
 
-const {rankProvidersForBooking}=await import("../lib/ops-intelligence-governance.ts");
+const {rankProvidersForBooking,forecastDemand}=await import("../lib/ops-intelligence-governance.ts");
 const {ensureProviderPerformanceTelemetry,providerPerformanceStatement}=await import("../lib/provider-performance-telemetry.ts");
 const {buildUnitEconomics}=await import("../lib/unit-economics.ts");
 
@@ -23,22 +23,24 @@ function rankingDb(){
   const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);
   sqlite.exec("CREATE TABLE provider_work_orders(provider_id TEXT,provider_name TEXT,status TEXT,scheduled_start TEXT,service_code TEXT)");
   sqlite.exec("CREATE TABLE booking_ratings(provider_id TEXT,stars REAL,service_code TEXT)");
-  sqlite.exec("CREATE TABLE provider_capacity_profiles(id TEXT PRIMARY KEY,city_id TEXT,services_json TEXT,zones_json TEXT,live INTEGER,status TEXT,effective_from TEXT,effective_to TEXT)");
+  sqlite.exec("CREATE TABLE provider_capacity_profiles(id TEXT PRIMARY KEY,name TEXT,city_id TEXT,services_json TEXT,zones_json TEXT,live INTEGER,status TEXT,effective_from TEXT,effective_to TEXT)");
   return{sqlite,db};
 }
 
-test("provider ranking is deterministic, governed, advisory and fail-visible",async()=>{
+test("provider ranking is deterministic, governed, advisory and includes cold-start capacity",async()=>{
   const{sqlite,db}=rankingDb();
   const at=Date.UTC(2026,8,7,6);
-  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,1,'active','2026-01-01',NULL)").run("A","blr",'["grooming"]','["blr-east"]');
-  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,1,'active','2026-01-01',NULL)").run("B","blr",'["grooming"]','["blr-east"]');
-  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,0,'active','2026-01-01',NULL)").run("OFF","blr",'["grooming"]','["blr-east"]');
+  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,?,1,'active','2026-01-01',NULL)").run("A","Provider A","blr",'["grooming"]','["blr-east"]');
+  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,?,1,'active','2026-01-01',NULL)").run("B","Provider B","blr",'["grooming"]','["blr-east"]');
+  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,?,1,'active','2026-01-01',NULL)").run("COLD","Cold Start","blr",'["grooming"]','["blr-east"]');
+  sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES (?,?,?,?,?,0,'active','2026-01-01',NULL)").run("OFF","Offline","blr",'["grooming"]','["blr-east"]');
   for(const id of["B","A","OFF"])sqlite.prepare("INSERT INTO provider_work_orders VALUES (?,?, 'completed', ?, 'grooming')").run(id,id,"2026-08-01T00:00:00.000Z");
   const result=await rankProvidersForBooking(db,{serviceCode:"grooming",cityId:"blr",zoneId:"blr-east",at});
   assert.equal(result.recommendationOnly,true);
   assert.equal(result.governedCandidateFilter,true);
   assert.equal(result.degraded,false);
-  assert.deepEqual(result.ranked.map(row=>row.providerId),["A","B"],"equal raw scores use provider id as canonical tie-break; offline providers are excluded");
+  assert.deepEqual(result.ranked.map(row=>row.providerId),["A","B","COLD"],"equal history scores tie-break canonically and cold-start governed providers remain rankable; offline providers are excluded");
+  assert.equal(result.ranked.find(row=>row.providerId==="COLD")?.providerName,"Cold Start");
 
   sqlite.exec("DROP TABLE booking_ratings");
   const degraded=await rankProvidersForBooking(db,{serviceCode:"grooming",cityId:"blr",zoneId:"blr-east",at});
@@ -46,14 +48,23 @@ test("provider ranking is deterministic, governed, advisory and fail-visible",as
   assert.ok(degraded.degradedSources.includes("booking_ratings"));
 });
 
-test("provider telemetry is transaction-coupled and retry idempotent",async()=>{
+test("demand forecast excludes draft and cancelled bookings",async()=>{
+  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite),at=Date.UTC(2026,8,8,6),created=at-86_400_000;
+  sqlite.exec("CREATE TABLE canonical_bookings(created_at INTEGER,service_code TEXT,city_id TEXT,status TEXT)");
+  for(const status of["confirmed","completed","draft","cancelled","canceled"])sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?,?,?)").run(created,"grooming","blr",status);
+  const result=await forecastDemand(db,{serviceCode:"grooming",cityId:"blr",basisDays:7,horizonDays:1,at});
+  assert.equal(result.dailyAverage,0.29,"only confirmed/completed rows should contribute to historical demand");
+});
+
+test("provider telemetry is transaction-coupled, retry idempotent and attempt-aware",async()=>{
   const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);
   await ensureProviderPerformanceTelemetry(db);
   sqlite.exec("CREATE TABLE state(id TEXT PRIMARY KEY,value TEXT)");
-  const input={providerId:"P1",groupId:"G1",bookingId:"B1",eventType:"assignment_decline",impactScore:-2,detail:{reason:"busy"},createdAt:1};
+  const input={providerId:"P1",groupId:"G1",bookingId:"B1",eventType:"assignment_decline",impactScore:-2,detail:{reason:"busy"},createdAt:1,attemptNo:1};
   await db.batch([db.prepare("INSERT INTO state VALUES ('G1','reassigned')"),providerPerformanceStatement(db,input)]);
   await providerPerformanceStatement(db,input).run();
-  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_performance_events").get().n,1,"retry must not duplicate telemetry");
+  await providerPerformanceStatement(db,{...input,createdAt:2,attemptNo:2}).run();
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_performance_events").get().n,2,"same attempt must dedupe while a later legitimate assignment attempt remains observable");
   assert.equal(sqlite.prepare("SELECT value FROM state WHERE id='G1'").get().value,"reassigned");
 });
 
