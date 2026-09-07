@@ -2,13 +2,13 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 
 const BASE = String(process.env.STAGING_URL || '').replace(/\/$/, '');
-const ACCESS = String(process.env.PAWSPACE_UAT_ACCESS_CODE || '');
+const UAT_SIGNING_KEY = String(process.env.PAWSPACE_UAT_SIGNING_KEY || '');
 const WEBHOOK_SECRET = String(process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX || '');
 const RUN_ID = String(process.env.PERF_RUN_ID || `perf-${Date.now()}-${randomUUID().slice(0,8)}`);
 const OUT = String(process.env.PERF_EVIDENCE_PATH || 'staging-performance.json');
 const REQUEST_TIMEOUT_MS = Math.max(5000, Math.min(60000, Number(process.env.PERF_REQUEST_TIMEOUT_MS || 30000)));
 if (process.env.PAWSPACE_PAYMENT_ENV !== 'sandbox' || process.env.FORBID_PRODUCTION !== 'true' || process.env.APP_ENV !== 'staging') throw new Error('Performance gate requires PAWSPACE_PAYMENT_ENV=sandbox, FORBID_PRODUCTION=true, APP_ENV=staging');
-if (!BASE || !ACCESS || !WEBHOOK_SECRET) throw new Error('STAGING_URL, PAWSPACE_UAT_ACCESS_CODE, and RAZORPAY_WEBHOOK_SECRET_SANDBOX are required');
+if (!BASE || UAT_SIGNING_KEY.length < 32 || !WEBHOOK_SECRET) throw new Error('STAGING_URL, PAWSPACE_UAT_SIGNING_KEY, and RAZORPAY_WEBHOOK_SECRET_SANDBOX are required');
 
 const latencies = [];
 const failures = [];
@@ -76,16 +76,14 @@ async function request(path, options = {}) {
   if (!response.ok) throw new Error(`${options.method || 'GET'} ${path} -> ${response.status}: ${payload?.error || text.slice(0,200)}`);
   return {response, payload};
 }
-async function transientSetupRequest(path, options = {}) {
-  const {response,payload,text} = await rawRequestWithTransientRetry(path, options);
-  if (!response.ok) throw new Error(`${options.method || 'GET'} ${path} -> ${response.status}: ${payload?.error || text.slice(0,200)}`);
-  return {response, payload};
-}
 
-const login = await transientSetupRequest('/api/staging-login', {method:'POST', body:{action:'login', code:ACCESS, email:'founder@pawspace.in'}});
-const setCookie = login.response.headers.get('set-cookie') || '';
-const cookie = setCookie.split(';')[0];
-if (!cookie) throw new Error('Founder staging login returned no session cookie');
+// The workflow seeds founder@pawspace.in before this gate. Mint the same staging-only UAT cookie
+// locally instead of calling /api/staging-login: that endpoint performs schema/setup writes that are
+// unrelated to the measured load and can fail during post-deploy D1 readiness. The signing algorithm
+// exactly matches lib/uat-staging-auth.ts; the secret exists only in the isolated staging environment.
+const uatPayload = Buffer.from(JSON.stringify({email:'founder@pawspace.in',exp:Date.now()+60*60*1000})).toString('base64url');
+const uatSignature = createHmac('sha256', UAT_SIGNING_KEY).update(uatPayload).digest('base64url');
+const cookie = `pawspace_uat=${encodeURIComponent(`${uatPayload}.${uatSignature}`)}`;
 
 // The scheduling GET day board is an operations view, not a capacity oracle: providers with no
 // reservation rows are absent, and expired failed-load reservations can remain visible until a write
