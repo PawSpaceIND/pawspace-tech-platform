@@ -1,0 +1,65 @@
+name: Harness Hook Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-22-register-hooks:
+    name: Node 22 registerHooks diagnostic
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Collect shared-hook suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          test "${#suites[@]}" -gt 0
+          printf '%s\n' "${suites[@]}" > harness-suites.txt
+      - name: Exercise registerHooks and capture TAP
+        id: hooktest
+        shell: bash
+        run: |
+          set +e
+          node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}" > hook-path.tap 2>&1
+          preflight=$?
+          if [ "$preflight" -eq 0 ]; then
+            mapfile -t suites < harness-suites.txt
+            node --experimental-strip-types --test "${suites[@]}" >> hook-path.tap 2>&1
+            status=$?
+          else
+            status=$preflight
+          fi
+          set -e
+          cat hook-path.tap
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Upload hook-path diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-hook-diagnostic
+          path: |
+            hook-path.tap
+            harness-suites.txt
+          if-no-files-found: error
+      - name: Fail on hook-path regression
+        if: steps.hooktest.outputs.status != '0'
+        run: exit 1
