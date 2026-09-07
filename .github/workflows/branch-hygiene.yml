@@ -1,0 +1,63 @@
+name: Branch Hygiene
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "41 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "Delete verified merged branches (type DELETE_MERGED_BRANCHES)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: branch-hygiene
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.execute != 'DELETE_MERGED_BRANCHES')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Audit safely deletable merged branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/maintenance/prune-merged-remote-branches.sh --dry-run
+
+  delete-after-merge:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Prune verified merged inactive branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/maintenance/prune-merged-remote-branches.sh --execute
+
+  explicit-delete:
+    if: github.event_name == 'workflow_dispatch' && inputs.execute == 'DELETE_MERGED_BRANCHES'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Prune verified merged inactive branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/maintenance/prune-merged-remote-branches.sh --execute
