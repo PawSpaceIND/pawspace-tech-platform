@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__OPS_INTELLIGENCE_DB__", "__OPS_INTELLIGENCE_ENV__");
 
 function makeD1(sqlite){
   function statement(sql,args=[]){return{
