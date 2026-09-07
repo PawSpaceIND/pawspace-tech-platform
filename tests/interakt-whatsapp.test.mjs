@@ -20,7 +20,10 @@ const { ensureCommunicationTables, seedCommunicationPolicy } = await import("../
 const { ensureWhatsAppTemplateLifecycle } = await import("../lib/whatsapp-template-lifecycle.ts");
 const { dispatchInteraktWhatsApp, recordInteraktWebhook, signInteraktWebhook } = await import("../lib/interakt-whatsapp.ts");
 
-const ENV = { PAWSPACE_DEPLOYMENT_ENV: "production", PAWSPACE_COMMUNICATION_ENV: "live", INTERAKT_API_KEY: "test-interakt-key", INTERAKT_WEBHOOK_SECRET: "test-webhook-secret" };
+// This suite never uses a real provider: every outbound call is supplied a fake fetcher. Both live
+// switches are nevertheless explicit so the test exercises the exact production gate rather than
+// weakening the newly fail-closed runtime contract.
+const ENV = { PAWSPACE_DEPLOYMENT_ENV: "production", PAWSPACE_COMMUNICATION_ENV: "live", PAWSPACE_PAYMENT_ENV: "live", INTERAKT_API_KEY: "test-interakt-key", INTERAKT_WEBHOOK_SECRET: "test-webhook-secret" };
 
 async function world() {
   const sqlite = new DatabaseSync(":memory:");
