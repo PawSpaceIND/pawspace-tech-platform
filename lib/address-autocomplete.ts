@@ -54,6 +54,28 @@ export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:
   }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to resolve place details"};}
 }
 
+/** Server-side forward geocoding for a customer-owned service address.
+ * The booking client may supply address text and a PIN, but it never supplies authoritative coordinates:
+ * matching coordinates are obtained with the server-held Maps credential and then persisted by the
+ * service-discovery authority before provider ranking begins. */
+export async function geocodeAddress(input:{address:string}):Promise<ResolvedAddress>{
+  const address=input.address.trim();
+  if(address.length<8)return{status:"provider_error",error:"A complete service address is required"};
+  const creds=await mapsCredentials();
+  if(!creds.ok)return{status:"configuration_required",error:creds.error};
+  try{
+    const url=new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address",address);
+    url.searchParams.set("region","in");
+    url.searchParams.set("key",creds.key);
+    const response=await fetch(url.toString());
+    const body=await response.json() as{results?:Array<{formatted_address?:string;geometry?:{location?:{lat?:number;lng?:number}}}>;status?:string;error_message?:string};
+    const result=body.results?.[0],latitude=Number(result?.geometry?.location?.lat),longitude=Number(result?.geometry?.location?.lng);
+    if(!response.ok||body.status!=="OK"||!result||!validCoordinates(latitude,longitude))return{status:"provider_error",error:body.error_message||body.status||"No geocoded service address found"};
+    return{status:"configured",address:result.formatted_address||address,latitude,longitude};
+  }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to geocode this service address"};}
+}
+
 export async function reverseGeocode(input:{latitude:number;longitude:number}):Promise<ResolvedAddress>{
   if(!validCoordinates(input.latitude,input.longitude))return{status:"provider_error",error:"Invalid coordinates"};
   const creds=await mapsCredentials();

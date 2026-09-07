@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
 type Db = Awaited<ReturnType<typeof database>>;
 type Row = Record<string, unknown>;
@@ -26,17 +27,20 @@ function parse(value: unknown) {
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "bookings.manage");
+    const actor=await authorize(request, "bookings.manage");
     const db = await database();
     await ensureTables(db);
-    const rows = await db.prepare(`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
+    const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);
+    const sql=`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
       w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,w.assignment_json,
       p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json
       FROM canonical_bookings b
       JOIN canonical_customers c ON c.id=b.customer_id
       JOIN provider_work_orders w ON w.booking_id=b.id
       JOIN booking_payments p ON p.booking_id=b.id
-      ORDER BY b.scheduled_start DESC LIMIT 150`).all<Row>();
+      ${scope?"WHERE lower(b.city_id)=?":""}
+      ORDER BY b.scheduled_start DESC LIMIT 150`;
+    const rows = scope?await db.prepare(sql).bind(scope.cityId).all<Row>():await db.prepare(sql).all<Row>();
 
     const bookings = [];
     for (const row of rows.results) {
@@ -65,7 +69,7 @@ export async function GET(request: Request) {
         adminActions: adminActions.results,
       });
     }
-    return Response.json({ source: "canonical UAT database", bookings });
+    return Response.json({ source: "canonical UAT database snapshot", bookings, organizationalScope:scope??"global" });
   } catch (error) {
     return authError(error, "Unable to load Booking Command Center");
   }
@@ -76,20 +80,22 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "bookings.manage");
     const db = await database();
     await ensureTables(db);
+    const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);
     const body = await request.json() as Row;
     const bookingId = String(body.bookingId || "");
     const action = String(body.action || "");
     const reason = String(body.reason || "").trim();
     if (!bookingId || !["call_customer", "whatsapp_customer", "open_tracking", "review_reassignment"].includes(action)) return Response.json({ error: "Valid booking and action are required" }, { status: 400 });
     if (reason.length < 5) return Response.json({ error: "A clear action reason is required" }, { status: 400 });
-    const booking = await db.prepare("SELECT customer_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
+    const booking = await db.prepare("SELECT customer_id,city_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
     if (!booking) return Response.json({ error: "Booking not found" }, { status: 404 });
+    if(scope&&String(booking.city_id).toLowerCase()!==scope.cityId)return Response.json({error:"Booking is outside the manager's city scope"},{status:403});
     const now = Date.now(), eventId = crypto.randomUUID();
     await db.prepare("INSERT INTO booking_admin_actions (id,booking_id,action,reason,detail_json,actor_email,created_at) VALUES (?,?,?,?,?,?,?)")
-      .bind(eventId, bookingId, action, reason, JSON.stringify({ uat: true }), actor.email, now).run();
+      .bind(eventId, bookingId, action, reason, JSON.stringify({ uat: true, organizationalScope:scope??"global" }), actor.email, now).run();
     if (action === "whatsapp_customer") await db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
       .bind(crypto.randomUUID(), bookingId, booking.customer_id, "whatsapp", "admin_booking_update", "PawSpace Admin opened a service update for this booking.", "uat_queued", eventId, now).run();
-    await securityAudit(db, actor, action, "booking", bookingId, "completed", { reason, uat: true });
+    await securityAudit(db, actor, action, "booking", bookingId, "completed", { reason, uat: true, organizationalScope:scope??"global" });
     return Response.json({ ok: true, id: eventId, deliveryStatus: action === "whatsapp_customer" ? "uat_queued" : "recorded" }, { status: 201 });
   } catch (error) {
     return authError(error, "Unable to record booking action");

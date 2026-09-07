@@ -98,7 +98,12 @@ test("correlated journey: customer reserves/books -> assigned provider completes
         longitude: 77.6412,
       },
     });
-    await expectOk(located, "customer service location");
+    const locationBody = await expectOk(located, "customer service location");
+    expect(locationBody?.data?.coordinateSource).toBe("server_geocode");
+    const serviceLatitude = Number(locationBody?.data?.latitude);
+    const serviceLongitude = Number(locationBody?.data?.longitude);
+    expect(Number.isFinite(serviceLatitude)).toBe(true);
+    expect(Number.isFinite(serviceLongitude)).toBe(true);
 
     const linked = await finance.post("/api/grooming-payment-sandbox", {
       data: { action: "link_order", bookingId, gatewayOrderId: `order_${suffix}` },
@@ -123,15 +128,15 @@ test("correlated journey: customer reserves/books -> assigned provider completes
       expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
     }
 
-    // ARRIVED is now fail-closed against fresh, trusted, server-bound GPS evidence. Feed the provider's
-    // foreground location through the governed telemetry route first; lifecycle coordinates are
-    // intentionally ignored by the production arrival gate.
+    // ARRIVED is fail-closed against fresh, trusted, server-bound GPS evidence. Use the canonical
+    // server-geocoded service location returned above; browser-supplied coordinates are intentionally
+    // ignored as authority by the production service-location route.
     const gps = await provider.post("/api/grooming-route", {
       data: {
         bookingId,
         providerId: PROVIDER_ID,
-        latitude: 12.9719,
-        longitude: 77.6412,
+        latitude: serviceLatitude,
+        longitude: serviceLongitude,
         accuracyMeters: 10,
         capturedAt: Date.now(),
         idempotencyKey: `gps_${suffix}`,
