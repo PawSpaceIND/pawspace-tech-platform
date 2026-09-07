@@ -2,6 +2,7 @@ import { hmac, bytesToBase64Url, type AssertionPayload } from "./verified-identi
 import { identifyInstall } from "./app-to-revenue-funnel";
 import { resolveOtpAssertionSecret } from "./otp-sandbox-runtime";
 import { ensureCustomerAccountTables } from "./customer-account";
+import {constantTimeEqual,randomVerifierSalt,secureSixDigitOtp} from "./security-crypto";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -9,26 +10,47 @@ type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const normalizePhone=(value:string)=>value.replace(/\D/g,"").slice(-10);
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+const HASHED_MARKER="[hashed]";
+const OTP_RETENTION_MS=60*60*1000;
 async function canonicalOtpCustomerId(phone:string){
  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`pawspace:customer-otp:${phone}`));
  const suffix=Array.from(new Uint8Array(digest)).slice(0,12).map(byte=>byte.toString(16).padStart(2,"0")).join("").toUpperCase();
  return `CUS-OTP-${suffix}`;
 }
 
+async function ensureVerifierColumns(db:Db){
+ const info=await db.prepare("PRAGMA table_info(customer_otp_challenges)").all<Row>();
+ const columns=new Set((info.results||[]).map(row=>String(row.name||"")));
+ if(!columns.has("verifier_salt"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_salt TEXT").run();
+ if(!columns.has("verifier_hash"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_hash TEXT").run();
+ // Pre-hardening challenges contained plaintext credentials. They are invalidated rather than migrated.
+ await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE verifier_hash IS NULL AND code<>?").bind(HASHED_MARKER).run();
+}
+
+export async function purgeCustomerOtpChallenges(db:Db,now=Date.now()){
+ await db.prepare("DELETE FROM customer_otp_challenges WHERE expires_at<? OR (consumed=1 AND created_at<?)").bind(now-OTP_RETENTION_MS,now-OTP_RETENTION_MS).run();
+}
+
+async function otpVerifier(challengeId:string,salt:string,code:string){
+ const secret=await getAssertionSecret();
+ return hmac(`customer-otp-v1:${challengeId}:${salt}:${code}`,secret);
+}
+
 /** The OTP identity adapter is sandbox-first in local development. Delivery policy belongs to the
  * route: sandbox authority may receive sandboxCode, while isolated staging live mode must send the
  * code out-of-band and strip it from the HTTP response. */
 export async function ensureCustomerOtpTables(db:Db){await db.batch([
- db.prepare("CREATE TABLE IF NOT EXISTS customer_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS customer_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,verifier_salt TEXT,verifier_hash TEXT)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_otp_phone ON customer_otp_challenges(phone,created_at)"),
-]);}
+]);await ensureVerifierColumns(db);}
 
 export async function requestCustomerOtp(db:Db,input:{phone:string}){
- await ensureCustomerOtpTables(db);
+ await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);
  const phone=normalizePhone(input.phone);
  if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");
- const now=Date.now(),code=String(Math.floor(100000+Math.random()*900000)),id=uid("OTP");
- await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)").bind(id,phone,code,now,now+5*60000).run();
+ const now=Date.now(),code=secureSixDigitOtp(),id=uid("OTP"),salt=randomVerifierSalt(),verifier=await otpVerifier(id,salt,code);
+ await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at,verifier_salt,verifier_hash) VALUES (?,?,?,0,0,?,?,?,?,?)")
+  .bind(id,phone,HASHED_MARKER,now,now+5*60000,salt,verifier).run();
  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
 }
 
@@ -39,14 +61,16 @@ export async function discardCustomerOtpChallenge(db:Db,challengeId:string){
 export async function resolveOtpCustomer(db:D1Database,phone:string){return db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? ORDER BY created_at ASC LIMIT 1").bind(phone).first<Row>();}
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
- await ensureCustomerOtpTables(db);
- await ensureCustomerAccountTables(db);
+ await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);await ensureCustomerAccountTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
  if(!row)throw new Error("OTP challenge not found");
  if(Number(row.consumed)===1)throw new Error("This OTP has already been used");
  if(Date.now()>Number(row.expires_at))throw new Error("OTP has expired - request a new one");
  if(Number(row.attempts)>=5)throw new Error("Too many incorrect attempts - request a new OTP");
- if(text(row.code)!==text(input.code)){await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5").bind(input.challengeId).run();throw new Error("Incorrect OTP code");}
+ const salt=text(row.verifier_salt),stored=text(row.verifier_hash);
+ if(!salt||!stored)throw new Error("OTP challenge is no longer valid - request a new one");
+ const candidate=await otpVerifier(input.challengeId,salt,text(input.code));
+ if(!constantTimeEqual(stored,candidate)){await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();throw new Error("Incorrect OTP code");}
  const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
  if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
  const phone=text(row.phone);
