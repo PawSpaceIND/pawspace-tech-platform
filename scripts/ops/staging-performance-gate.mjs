@@ -6,6 +6,8 @@ const ACCESS = String(process.env.PAWSPACE_UAT_ACCESS_CODE || '');
 const WEBHOOK_SECRET = String(process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX || '');
 const RUN_ID = String(process.env.PERF_RUN_ID || `perf-${Date.now()}-${randomUUID().slice(0,8)}`);
 const OUT = String(process.env.PERF_EVIDENCE_PATH || 'staging-performance.json');
+const REQUEST_TIMEOUT_MS = Math.max(5000, Math.min(60000, Number(process.env.PERF_REQUEST_TIMEOUT_MS || 30000)));
+if (process.env.PAWSPACE_PAYMENT_ENV !== 'sandbox' || process.env.FORBID_PRODUCTION !== 'true' || process.env.APP_ENV !== 'staging') throw new Error('Performance gate requires PAWSPACE_PAYMENT_ENV=sandbox, FORBID_PRODUCTION=true, APP_ENV=staging');
 if (!BASE || !ACCESS || !WEBHOOK_SECRET) throw new Error('STAGING_URL, PAWSPACE_UAT_ACCESS_CODE, and RAZORPAY_WEBHOOK_SECRET_SANDBOX are required');
 
 const latencies = [];
@@ -45,12 +47,30 @@ async function rawRequest(path, { method='GET', cookie='', body, headers={} } = 
       ...headers,
     },
     ...(body === undefined ? {} : {body: typeof body === 'string' ? body : JSON.stringify(body)}),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
   let payload; try { payload = text ? JSON.parse(text) : {}; } catch { payload = {raw:text.slice(0,500)}; }
   return {response, payload, text};
 }
+
+async function rawRequestWithTransientRetry(path, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const result = await rawRequest(path, options);
+      if (![429,500,502,503,504].includes(result.response.status)) return result;
+      lastError = new Error(`transient ${result.response.status} from ${path}`);
+    } catch (error) {
+      lastError = error;
+      const transient = error?.name === 'TimeoutError' || /timeout|ECONNRESET|fetch failed/i.test(String(error?.message || error));
+      if (!transient) throw error;
+    }
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250 * (2 ** attempt)));
+  }
+  throw lastError || new Error(`Transient request retries exhausted for ${path}`);
+}
+
 async function request(path, options = {}) {
   const {response,payload,text} = await rawRequest(path, options);
   if (!response.ok) throw new Error(`${options.method || 'GET'} ${path} -> ${response.status}: ${payload?.error || text.slice(0,200)}`);
@@ -69,7 +89,7 @@ if (!cookie) throw new Error('Founder staging login returned no session cookie')
 // provider eligibility, buffers, lease cleanup and atomic slot claiming.
 const GROOMING_DURATION_MS = 120 * 60 * 1000;
 const SLOT_HOURS_UTC = [5, 9];
-const ASSIGNMENT_CONCURRENCY = 10;
+const ASSIGNMENT_CONCURRENCY = Math.max(1, Math.min(10, Number(process.env.PERF_ASSIGNMENT_CONCURRENCY || 5)));
 function dayAtOffset(dayOffset) {
   const d = new Date(Date.now() + dayOffset * 86400000);
   d.setUTCHours(0, 0, 0, 0);
@@ -102,7 +122,7 @@ async function tryPrepareAssignment(window, candidateNumber) {
   };
   const startAt = performance.now();
   try {
-    const {response,payload,text} = await rawRequest('/api/uat-scheduling', {method:'POST', cookie, body:schedulingBody});
+    const {response,payload,text} = await rawRequestWithTransientRetry('/api/uat-scheduling', {method:'POST', cookie, body:schedulingBody});
     const elapsed = performance.now() - startAt;
     if (!response.ok) {
       const code = String(payload?.code || payload?.error || '');

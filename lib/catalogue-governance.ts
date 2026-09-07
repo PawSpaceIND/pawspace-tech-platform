@@ -52,8 +52,9 @@ export async function updateCataloguePackage(db: Db, input: { id: string; change
   const entries = Object.entries(input.changes || {}).filter(([k]) => EDITABLE.includes(k));
   if (!entries.length) throw new Error("No supported package fields supplied");
   if (entries.some(([k, v]) => k === "base_price" && (!Number.isFinite(Number(v)) || Number(v) < 0))) throw new Error("A valid base price is required");
-  const now = Date.now(), set = entries.map(([k]) => `${k}=?`).join(",");
-  await db.prepare(`UPDATE catalogue_packages SET ${set},version=version+1,updated_by=?,updated_at=? WHERE id=?`).bind(...entries.map(([k, v]) => k === "active" ? (v ? 1 : 0) : v as never), input.actorId, now, input.id).run();
+  const now = Date.now(), set = entries.map(([k]) => `${k}=?`).join(","), expectedVersion = Number(before.version || 0);
+  const updated = await db.prepare(`UPDATE catalogue_packages SET ${set},version=version+1,updated_by=?,updated_at=? WHERE id=? AND version=?`).bind(...entries.map(([k, v]) => k === "active" ? (v ? 1 : 0) : v as never), input.actorId, now, input.id, expectedVersion).run();
+  if (Number(updated.meta?.changes || 0) !== 1) throw new Error("CONCURRENT_MODIFICATION");
   const after = await db.prepare("SELECT * FROM catalogue_packages WHERE id=?").bind(input.id).first<Row>();
   await db.prepare("INSERT INTO catalogue_audit (id,package_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(uid("CAUD"), input.id, "updated", JSON.stringify(shape(before)), JSON.stringify(shape(after!)), input.actorId, text(input.reason), now).run();
   return shape(after!);

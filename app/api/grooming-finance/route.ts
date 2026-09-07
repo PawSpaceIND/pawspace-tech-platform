@@ -5,7 +5,7 @@ import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-inv
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
 
-const groomingFinanceSchemaObjects=["canonical_bookings","booking_payments","booking_invoices","booking_subscription_usage","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link"] as const;
+const groomingFinanceSchemaObjects=["canonical_bookings","booking_payments","booking_invoices","booking_subscription_usage","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link","idx_canonical_bookings_service_updated","idx_canonical_bookings_created","idx_payment_recon_status_payment","idx_payment_recon_status_created"] as const;
 const groomingFinanceTablesReady=new WeakSet<Db>();
 const groomingFinanceTablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function groomingFinanceSchemaReady(db:Db){
@@ -13,10 +13,12 @@ async function groomingFinanceSchemaReady(db:Db){
 }
 async function ensureTablesUncached(db:Db){if(await groomingFinanceSchemaReady(db))return;await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_bookings_service_updated ON canonical_bookings(service_code,updated_at DESC)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_bookings_created ON canonical_bookings(created_at DESC)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-]);await ensurePaymentReconciliationTables(db);}
+]);await ensurePaymentReconciliationTables(db);await db.batch([db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_recon_status_payment ON payment_reconciliation_exceptions(status,payment_id)"),db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_recon_status_created ON payment_reconciliation_exceptions(status,created_at DESC)")]);}
 async function ensureTables(db:Db){if(groomingFinanceTablesReady.has(db))return;const running=groomingFinanceTablesEnsuring.get(db);if(running)return running;const pending=ensureTablesUncached(db).then(()=>{groomingFinanceTablesReady.add(db);});groomingFinanceTablesEnsuring.set(db,pending);try{await pending;}finally{if(groomingFinanceTablesEnsuring.get(db)===pending)groomingFinanceTablesEnsuring.delete(db);}}
 
 

@@ -71,8 +71,9 @@ export async function updateSubscriptionPlan(db: Db, input: { id: string; change
     if (key === "active" || key === "family_wallet") { if (typeof value !== "boolean") throw new Error(`${key} must be a boolean`); return [key, value ? 1 : 0]; }
     return [key, value];
   });
-  const now = Date.now(), set = normalizedEntries.map(([k]) => `${k}=?`).join(",");
-  await db.prepare(`UPDATE subscription_plans SET ${set},version=version+1,updated_by=?,updated_at=? WHERE id=?`).bind(...normalizedEntries.map(([, v]) => v as never), input.actorId, now, input.id).run();
+  const now = Date.now(), set = normalizedEntries.map(([k]) => `${k}=?`).join(","), expectedVersion = Number(before.version || 0);
+  const updated = await db.prepare(`UPDATE subscription_plans SET ${set},version=version+1,updated_by=?,updated_at=? WHERE id=? AND version=?`).bind(...normalizedEntries.map(([, v]) => v as never), input.actorId, now, input.id, expectedVersion).run();
+  if (Number(updated.meta?.changes || 0) !== 1) throw new Error("CONCURRENT_MODIFICATION");
   const after = await db.prepare("SELECT * FROM subscription_plans WHERE id=?").bind(input.id).first<Row>();
   await db.prepare("INSERT INTO subscription_plan_audit (id,plan_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(uid("SPAUD"), input.id, "updated", JSON.stringify(shape(before)), JSON.stringify(shape(after!)), input.actorId, text(input.reason), now).run();
   return shape(after!);
