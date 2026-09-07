@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
+installWorkersHooks("__LEAD_INGESTION_DB__");
 const read=(path)=>fs.readFileSync(path,"utf8");
 
 test("lead lifecycle governance is persisted, normalized and compare-and-set",async()=>{

@@ -1,0 +1,50 @@
+name: Marketing Attribution Closure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/landing-pages/**"
+      - "app/contact/**"
+      - "app/api/public-contact/**"
+      - "lib/lead-intake-ad-attribution.ts"
+      - "lib/lead-conversion-attribution.ts"
+      - "lib/lead-lifecycle-governance.ts"
+      - "lib/marketing-ad-atomic-sync.ts"
+      - "lib/marketing-conversion-feedback.ts"
+      - "lib/google-ads-conversion-consent.ts"
+      - "db/schema-escrow-attribution.ts"
+      - "drizzle/0029_marketing_attribution_typed.sql"
+      - "tests/public-contact-ad-attribution.test.mjs"
+      - "tests/marketing-attribution-lifecycle.test.mjs"
+      - ".github/workflows/marketing-attribution-closure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  marketing-attribution:
+    name: Marketing attribution sandbox contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_MARKETING_ENV: sandbox
+      PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED: "false"
+      PAWSPACE_GOOGLE_DATA_MANAGER_UPLOAD_ENABLED: "false"
+      PAWSPACE_META_CAPI_UPLOAD_ENABLED: "false"
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - name: Execute attribution closure protocol
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/public-contact-ad-attribution.test.mjs tests/marketing-attribution-lifecycle.test.mjs
+      - name: TypeScript check
+        run: npm run typecheck
