@@ -17,7 +17,7 @@ env:
 
 jobs:
   diagnose:
-    if: "${{ github.event.head_commit.message == 'diag(perf): capture staging scheduler failure body' }}"
+    if: "${{ github.event.head_commit.message == 'diag(perf): isolate authenticated worker crash' }}"
     runs-on: ubuntu-latest
     environment: pawspace-staging
     steps:
@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Capture scheduler response
+      - name: Compare authenticated endpoints
         env:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
         run: |
@@ -36,12 +36,14 @@ jobs:
           const payload=Buffer.from(JSON.stringify({email:'founder@pawspace.in',exp:Date.now()+3600000})).toString('base64url');
           const sig=createHmac('sha256',secret).update(payload).digest('base64url');
           const cookie=`pawspace_uat=${encodeURIComponent(`${payload}.${sig}`)}`;
-          const d=new Date(Date.now()+14*86400000); d.setUTCHours(5,0,0,0);
-          const e=new Date(d.getTime()+2*3600000);
+          async function show(label,path,options={}){
+            const r=await fetch(process.env.STAGING_URL+path,{...options,headers:{origin:process.env.STAGING_URL,cookie,...(options.headers||{})},signal:AbortSignal.timeout(30000)});
+            const text=await r.text(); console.log(JSON.stringify({label,status:r.status,body:text.slice(0,1200)},null,2)); return r.status;
+          }
+          const me=await show('me','/api/me');
+          const d=new Date(Date.now()+14*86400000); d.setUTCHours(5,0,0,0); const e=new Date(d.getTime()+7200000);
           const id=`diag-${Date.now()}-${randomUUID().slice(0,8)}`;
           const body={clientRequestId:id,customerId:`${id}-cust`,petIds:[`${id}-pet`],serviceCode:'grooming',cityId:'blr',zoneId:'blr-east',scheduledStart:d.toISOString(),scheduledEnd:e.toISOString(),occurrences:1,assignmentStrategy:'auto'};
-          const r=await fetch(process.env.STAGING_URL+'/api/uat-scheduling',{method:'POST',headers:{'content-type':'application/json',origin:process.env.STAGING_URL,cookie},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
-          const text=await r.text();
-          console.log(JSON.stringify({status:r.status,body:text.slice(0,4000)},null,2));
-          if(r.status===500) process.exit(1);
+          const scheduler=await show('scheduler','/api/uat-scheduling',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+          if(me>=500||scheduler>=500) process.exit(1);
           NODE
