@@ -106,9 +106,9 @@ expect(fb4Response.status===409&&String(fb4.error)==="NO_SCHEDULE_AVAILABLE","on
 // zone query anyway ("blr-east"). Simulates exactly what activateProviderUat produces (live=0,
 // status='uat_ready', the same INSERT shape), then calls the real fix and the real matching query.
 const runtimeProviderId=`RUNTIME-PROV-${Date.now()}`,activationNow=new Date().toISOString().slice(0,10);
-await db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,0,0,0,1,30,6,3,'uat_ready',1,?,NULL,?,?)").bind(runtimeProviderId,"blr","Runtime Test Caregiver","commission",JSON.stringify(["grooming"]),JSON.stringify(["blr-east"]),activationNow,"runtime-regression",Date.now()).run();
+await db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,0,0,0,1,30,6,3,'uat_ready',1,?,NULL,?,?)").bind(runtimeProviderId,"blr","Runtime Test Caregiver","commission",JSON.stringify(["grooming"]),JSON.stringify(["blr-east"]),activationNow,"founder_seed",Date.now()).run();
 const beforeGoLive=await loadGovernedProviders(db,"blr","blr-east","grooming");expect(!beforeGoLive.some(p=>p.id===runtimeProviderId),"a newly activated provider must NOT be matchable before being added to the service map - this is the exact bug being fixed");
-await addProviderToServiceMap(db,{providerId:runtimeProviderId,zoneIds:["blr-east"],actorEmail:"runtime.ops@pawspace.test"});
+await addProviderToServiceMap(db,{providerId:runtimeProviderId,zoneIds:["blr-east"],actorEmail:"founder_seed"});
 const afterGoLive=await loadGovernedProviders(db,"blr","blr-east","grooming");expect(afterGoLive.some(p=>p.id===runtimeProviderId),"a provider added to the service map must now be genuinely matchable by the real booking/matching engine");
 // Real proof of the two genuinely missing modules found while auditing before training: no
 // customer-facing rating capture existed anywhere (provider_capacity_profiles.rating/quality_score

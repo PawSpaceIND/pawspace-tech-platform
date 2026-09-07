@@ -1,31 +1,7 @@
-/**
- * Whether a provider may receive NEW work right now, judged against their current verification state.
- * [PTJA-W1-F53 part 2]
- *
- * Part 1 made the approved requirements real at ACTIVATION. This is the half that keeps them true
- * afterwards. A document that was valid on the day someone was activated does not stay valid, and
- * nothing consulted verification state again after that moment: a walker whose police clearance lapsed
- * last month, or whose licence was revoked this morning, kept receiving assignments.
- *
- * THE GATE IS AT WRITE TIME. It runs inside the reservation INSERT and the offer INSERT, not only in the
- * matching read. A read-side filter alone loses the race: a request that reads a valid provider, decides,
- * and then commits after a revocation lands would still write the assignment. That race is a regression
- * case (F53X-13), and it is why removing the provider from matching is necessary but not sufficient.
- *
- * WHAT A REVOCATION DOES AND DOES NOT DO. It removes the provider from new matching immediately, and it
- * opens Operations recovery cases for the work they already hold. It does NOT cancel or alter a single
- * booking, payment, work order or piece of proof - a customer whose walk is happening right now keeps
- * their walk, and a customer with a job booked for Tuesday keeps their booking while Operations finds
- * them somebody else. Losing a customer's commitment because a document expired would be a second
- * failure on top of the first.
- *
- * COMING BACK IS GOVERNED. Renewing a document does not re-list anybody. The provider returns through the
- * same controlled remapping a human already performs (addProviderToServiceMap), so the decision to put
- * someone back in front of customers stays a decision.
- */
 import{INVALID_VERIFICATION_STATUSES,ensureVerificationMandateTables}from"./provider-verification-mandate";
 import{resolveProviderVerificationPolicy,seedApprovedVerificationPolicies}from"./provider-verification-policy";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
+import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -34,88 +10,96 @@ const text=(value:unknown)=>String(value??"").trim();
 export type AssignmentBlock={
   blocked:boolean;
   providerId:string;
-  /** Why the gate could not confirm eligibility, in the platform's own words. */
   reasons:string[];
-  /** Mandatory checks that are missing, unverified or lapsed. */
   outstanding:Array<{verificationType:string;state:string;expiresAt:number|null}>;
   policyVersion:string|null;
   evaluated:boolean;
 };
 
-const ok=(providerId:string,reason:string):AssignmentBlock=>({blocked:false,providerId,reasons:[reason],outstanding:[],policyVersion:null,evaluated:false});
+const allow=(providerId:string,reason:string,policyVersion:string|null=null):AssignmentBlock=>({blocked:false,providerId,reasons:[reason],outstanding:[],policyVersion,evaluated:true});
+const block=(providerId:string,reason:string,policyVersion:string|null=null,outstanding:AssignmentBlock["outstanding"]=[]):AssignmentBlock=>({blocked:true,providerId,reasons:[reason],outstanding,policyVersion,evaluated:true});
 
-/**
- * The current verification standing of one provider.
- *
- * A check counts only when its status is `verified` AND it has not lapsed. Anything else - pending,
- * failed, rejected, revoked, manual_review, expired, or simply never run - is outstanding.
- */
-export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.now()):Promise<AssignmentBlock>{
-  const id=text(providerId);
-  if(!id)return ok(id,"no_provider");
-  await ensureVerificationMandateTables(db);
-  const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>().catch(()=>null);
-  /*
-   * THE ONE PERMISSIVE ANSWER IN THIS MODULE, and it is deliberate and visible rather than silent.
-   *
-   * A provider with no onboarding application has no verification records to judge - the seeded UAT
-   * capacity profiles are exactly this, and they predate the onboarding pipeline entirely. Blocking them
-   * would take every seeded provider off the platform rather than close a hole. So the gate reports that
-   * it could not evaluate (`evaluated:false`) instead of pretending it passed, and the policy field
-   * `blockProvidersWithoutVerificationRecord` turns it into a block for a deployment whose providers have
-   * all been backfilled. That field is configuration in Control Center, per service and city.
-   */
-  if(!application){
-    const fallback=await resolveProviderVerificationPolicy(db,"*",null).catch(()=>null);
-    if(fallback?.config.blockProvidersWithoutVerificationRecord){
-      return{blocked:true,providerId:id,reasons:["no_onboarding_verification_record"],outstanding:[],policyVersion:fallback.policyVersion,evaluated:true};
-    }
-    return ok(id,"no_onboarding_verification_record");
-  }
-  const profile=await db.prepare("SELECT city_id FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>().catch(()=>null);
-  await seedApprovedVerificationPolicies(db);
-  const policy=await resolveProviderVerificationPolicy(db,text(application.vertical_key),text(profile?.city_id)||null).catch(()=>null);
-  if(!policy)return ok(id,"verification_policy_unavailable");
-  const required=policy.config.requiredTypes.map(String);
-  // Rule 8: only MANDATORY checks gate assignment. An advisory document lapsing must not stop work.
-  if(!required.length)return{blocked:false,providerId:id,reasons:["no_mandatory_verifications"],outstanding:[],policyVersion:policy.policyVersion,evaluated:true};
-  const rows=await db.prepare("SELECT verification_type,status,expires_at FROM provider_verifications WHERE application_id=?").bind(text(application.id)).all<Row>().catch(()=>({results:[] as Row[]}));
-  const byType=new Map(rows.results.map(row=>[text(row.verification_type),{status:text(row.status),expiresAt:row.expires_at===null||row.expires_at===undefined?null:Number(row.expires_at)}]));
-  const outstanding:AssignmentBlock["outstanding"]=[];
-  for(const type of required){
-    const record=byType.get(type);
-    if(!record){outstanding.push({verificationType:type,state:"not_started",expiresAt:null});continue;}
-    if(record.status!=="verified"){outstanding.push({verificationType:type,state:INVALID_VERIFICATION_STATUSES.includes(record.status)?record.status:"not_verified",expiresAt:record.expiresAt});continue;}
-    if(record.expiresAt!==null&&record.expiresAt<=at){outstanding.push({verificationType:type,state:"expired",expiresAt:record.expiresAt});continue;}
-  }
-  return{blocked:outstanding.length>0,providerId:id,
-    reasons:outstanding.length?["mandatory_verification_not_current"]:["all_mandatory_verifications_current"],
-    outstanding,policyVersion:policy.policyVersion,evaluated:true};
+async function runtimeEnv():Promise<Record<string,unknown>>{
+  try{const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}catch{return{};}
 }
 
-/** Refuses the write when the provider's mandatory verification is not currently valid. */
+/**
+ * The only missing-record exemption: a capacity row written by the repository's seed function AND an
+ * explicitly declared UAT scheduling runtime. Production configuration forbids PAWSPACE_SCHEDULING_ENV,
+ * so the seed provenance marker alone can never unlock this path in production.
+ */
+async function governedUatSeedFixture(db:Db,providerId:string){
+  const env=await runtimeEnv();
+  const explicitTest=typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&process.env?.PAWSPACE_LOCAL_PREVIEW==="on";
+  if(!uatRosterSeedingEnabled(env)&&!explicitTest)return false;
+  const profile=await db.prepare("SELECT updated_by FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
+  return text(profile?.updated_by)==="founder_seed";
+}
+
+/** A provider may receive NEW work only when current mandatory verification can be proved. */
+export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.now()):Promise<AssignmentBlock>{
+  const id=text(providerId);
+  if(!id)return block(id,"no_provider");
+  try{
+    await ensureVerificationMandateTables(db);
+    const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>()
+      .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
+    if(!application){
+      if(await governedUatSeedFixture(db,id))return allow(id,"uat_seed_fixture_exemption");
+      return block(id,"no_onboarding_verification_record");
+    }
+
+    const profile=await db.prepare("SELECT city_id FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>();
+    await seedApprovedVerificationPolicies(db);
+    const policy=await resolveProviderVerificationPolicy(db,text(application.vertical_key),text(profile?.city_id)||null);
+    if(!policy||policy.config.configured!==true)return block(id,"verification_policy_unavailable",policy?.policyVersion??null);
+
+    const required=policy.config.requiredTypes.map(String).map(text).filter(Boolean);
+    if(!required.length)return allow(id,"no_mandatory_verifications",policy.policyVersion);
+
+    const rows=await db.prepare("SELECT verification_type,status,expires_at FROM provider_verifications WHERE application_id=?").bind(text(application.id)).all<Row>();
+    const byType=new Map(rows.results.map(row=>[text(row.verification_type),{status:text(row.status),expiresAt:row.expires_at===null||row.expires_at===undefined?null:Number(row.expires_at)}]));
+    const outstanding:AssignmentBlock["outstanding"]=[];
+    for(const type of required){
+      const record=byType.get(type);
+      if(!record){outstanding.push({verificationType:type,state:"not_started",expiresAt:null});continue;}
+      if(record.status!=="verified"){
+        outstanding.push({verificationType:type,state:INVALID_VERIFICATION_STATUSES.includes(record.status)?record.status:"not_verified",expiresAt:record.expiresAt});
+        continue;
+      }
+      if(record.expiresAt!==null&&(!Number.isFinite(record.expiresAt)||record.expiresAt<=at)){
+        outstanding.push({verificationType:type,state:"expired",expiresAt:record.expiresAt});
+      }
+    }
+    return outstanding.length
+      ?block(id,"mandatory_verification_not_current",policy.policyVersion,outstanding)
+      :allow(id,"all_mandatory_verifications_current",policy.policyVersion);
+  }catch{
+    return block(id,"verification_evaluation_error");
+  }
+}
+
+/** Refuses the write when mandatory verification is missing, stale, unknown or could not be evaluated. */
 export async function assertProviderAssignable(db:Db,providerId:string,at=Date.now()){
   const verdict=await providerAssignmentBlock(db,providerId,at);
   if(verdict.blocked){
     throw Response.json({error:"This provider cannot take new work until their mandatory verification is current",
-      code:"provider_verification_not_current",providerId:verdict.providerId,
+      code:"provider_verification_not_current",providerId:verdict.providerId,reasons:verdict.reasons,
       outstanding:verdict.outstanding,policyVersion:verdict.policyVersion},{status:409});
   }
   return verdict;
 }
 
-/** Providers from a candidate list whose verification is currently valid. Used by the matching read. */
+/** Matching is fail-closed too: an evaluation exception never leaves a provider in the candidate set. */
 export async function filterAssignableProviders<T extends{id:string}>(db:Db,providers:T[],at=Date.now()){
-  const verdicts=await Promise.all(providers.map(provider=>providerAssignmentBlock(db,provider.id,at).catch(()=>null)));
-  return providers.filter((_,index)=>!verdicts[index]?.blocked);
+  const verdicts=await Promise.all(providers.map(async provider=>{
+    try{return await providerAssignmentBlock(db,provider.id,at);}catch{return block(text(provider.id),"verification_evaluation_error");}
+  }));
+  return providers.filter((_,index)=>verdicts[index]?.blocked===false);
 }
 
 export type RevocationOutcome={providerId:string;verificationType:string;removedFromMatching:boolean;recoveryCases:number;preserved:{bookings:number;reservations:number}};
 
-/**
- * Records a revocation and takes the provider out of new matching immediately, opening Operations
- * recovery for the work they already hold - without altering any of that work.
- */
 export async function revokeProviderVerification(db:Db,input:{providerId:string;verificationType:string;reason:string;actorId:string;now?:number}):Promise<RevocationOutcome>{
   const{recordVerificationValidity}=await import("./provider-verification-mandate");
   await ensureProviderCapacityTables(db);
@@ -123,16 +107,9 @@ export async function revokeProviderVerification(db:Db,input:{providerId:string;
   const application=await db.prepare("SELECT id FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(providerId).first<Row>().catch(()=>null);
   if(application)await recordVerificationValidity(db,{applicationId:text(application.id),verificationType:input.verificationType,status:"revoked",expiresAt:now,actorId:input.actorId,note:input.reason});
 
-  // Rule 5: out of new matching immediately, not at the next sweep. The profile row is the thing
-  // loadGovernedProviders reads, so this is what actually stops new work reaching them.
   await db.prepare("UPDATE provider_capacity_profiles SET live=0,status='verification_hold',version=version+1,updated_by=?,updated_at=? WHERE id=?")
     .bind(input.actorId,now,providerId).run().catch(()=>null);
 
-  /*
-   * Rules 6 and 7. Everything below OPENS A CASE and changes nothing else. No booking is cancelled, no
-   * payment moved, no work order touched, no proof deleted. A walk happening right now finishes; a job
-   * booked for Tuesday stays booked while Operations finds somebody else.
-   */
   const openCase=async(row:{groupId:string;bookingId:string|null;phase:string})=>{
     const existing=await db.prepare("SELECT id FROM provider_recovery_cases WHERE failed_provider_id=? AND group_id=? AND status='open'").bind(providerId,row.groupId).first<Row>().catch(()=>null);
     if(existing)return false;
@@ -157,14 +134,6 @@ export async function revokeProviderVerification(db:Db,input:{providerId:string;
   return{providerId,verificationType:input.verificationType,removedFromMatching:true,recoveryCases:cases,preserved:{bookings,reservations}};
 }
 
-/**
- * Clears a verification hold, which is the FIRST of the two governed steps back.
- *
- * Renewing a document does not re-list anybody. An Operations actor clears the hold - and may only do so
- * once every mandatory check is genuinely current again, which this refuses to take on trust - and the
- * provider then returns to customers through the same addProviderToServiceMap a human already performs.
- * Two deliberate steps, neither of them automatic. Rule 9.
- */
 export async function clearProviderVerificationHold(db:Db,input:{providerId:string;actorId:string;reason:string;now?:number}){
   await ensureProviderCapacityTables(db);
   const providerId=text(input.providerId),now=input.now??Date.now();
@@ -172,13 +141,11 @@ export async function clearProviderVerificationHold(db:Db,input:{providerId:stri
   const verdict=await providerAssignmentBlock(db,providerId,now);
   if(verdict.blocked){
     throw Response.json({error:"This provider's mandatory verification is still not current, so the hold cannot be lifted",
-      code:"provider_verification_not_current",providerId,outstanding:verdict.outstanding},{status:409});
+      code:"provider_verification_not_current",providerId,reasons:verdict.reasons,outstanding:verdict.outstanding},{status:409});
   }
   const profile=await db.prepare("SELECT status FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
   if(!profile)throw Response.json({error:"Provider capacity profile not found"},{status:404});
   if(text(profile.status)!=="verification_hold")throw Response.json({error:`This provider is not on a verification hold (status ${text(profile.status)})`},{status:409});
-  // live stays 0 on purpose: lifting the hold makes the provider ELIGIBLE to be re-listed, it does not
-  // re-list them. A human still decides to put them back in front of customers.
   await db.prepare("UPDATE provider_capacity_profiles SET status='uat_ready',version=version+1,updated_by=?,updated_at=? WHERE id=? AND status='verification_hold'")
     .bind(input.actorId,now,providerId).run();
   await db.prepare("UPDATE provider_recovery_cases SET status='resolved',resolved_at=?,updated_at=? WHERE failed_provider_id=? AND reason_code='provider_verification_revoked' AND status='open'")
@@ -188,41 +155,20 @@ export async function clearProviderVerificationHold(db:Db,input:{providerId:stri
 
 export type VerificationLaunchBlocker={providerId:string;providerName:string;cityId:string;services:string[];reason:string;outstanding:Array<{verificationType:string;state:string}>};
 
-/**
- * Every provider who is LIVE in front of customers but whose mandatory verification cannot be confirmed.
- *
- * This is how the last gap is closed, and it is deliberately NOT closed the way I first recommended.
- * The obvious move was to backfill onboarding applications for the seeded providers so the assignment
- * gate could be made total - but the only way to make those backfilled records satisfy the gate is to
- * write `verified` rows for checks nobody ever ran. That is minting compliance evidence, which is the
- * one thing this audit refuses to do, and a seeded fixture with a fabricated police clearance is worse
- * than one with none: the first lies, the second is merely unfinished.
- *
- * So the assignment gate stays total for every provider who came through real onboarding, and THIS is
- * what stops a provider with no verifiable record from ever reaching a real customer: launch readiness
- * refuses while any live provider is in that state, naming each one. The problem becomes visible and
- * blocking instead of silently permitted, and it is fixed by onboarding those providers properly - which
- * is the only fix that is actually true.
- */
 export async function providerVerificationLaunchBlockers(db:Db,at=Date.now()):Promise<VerificationLaunchBlocker[]>{
   await ensureProviderCapacityTables(db);
-  const rows=await db.prepare("SELECT id,name,city_id,services_json FROM provider_capacity_profiles WHERE live=1 AND status='active'").all<Row>().catch(()=>({results:[] as Row[]}));
+  const rows=await db.prepare("SELECT id,name,city_id,services_json FROM provider_capacity_profiles WHERE live=1 AND status='active'").all<Row>();
   const blockers:VerificationLaunchBlocker[]=[];
   for(const row of rows.results){
     const providerId=text(row.id);
-    const verdict=await providerAssignmentBlock(db,providerId,at).catch(()=>null);
-    if(!verdict)continue;
+    const verdict=await providerAssignmentBlock(db,providerId,at);
     let services:string[]=[];
     try{services=JSON.parse(text(row.services_json)||"[]") as string[];}catch{services=[];}
-    if(!verdict.evaluated){
-      blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
-        reason:"This provider is live to customers but has no onboarding verification record, so their mandatory checks cannot be confirmed. Onboard them through the real application path before launch.",
-        outstanding:[]});
-      continue;
-    }
     if(verdict.blocked){
       blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
-        reason:"This provider is live to customers with mandatory verification that is not current.",
+        reason:verdict.reasons.includes("no_onboarding_verification_record")
+          ?"This provider is live to customers but has no onboarding verification record. Onboard and verify them before launch."
+          :`This provider is live to customers but compliance cannot be confirmed: ${verdict.reasons.join(", ")}.`,
         outstanding:verdict.outstanding.map(item=>({verificationType:item.verificationType,state:item.state}))});
     }
   }
