@@ -23,7 +23,6 @@ async function ensureVerifierColumns(db:Db){
  const columns=new Set((info.results||[]).map(row=>String(row.name||"")));
  if(!columns.has("verifier_salt"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_salt TEXT").run();
  if(!columns.has("verifier_hash"))await db.prepare("ALTER TABLE customer_otp_challenges ADD COLUMN verifier_hash TEXT").run();
- // Pre-hardening challenges contained plaintext credentials. They are invalidated rather than migrated.
  await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE verifier_hash IS NULL AND code<>?").bind(HASHED_MARKER).run();
 }
 
@@ -36,9 +35,6 @@ async function otpVerifier(challengeId:string,salt:string,code:string){
  return hmac(`customer-otp-v1:${challengeId}:${salt}:${code}`,secret);
 }
 
-/** The OTP identity adapter is sandbox-first in local development. Delivery policy belongs to the
- * route: sandbox authority may receive sandboxCode, while isolated staging live mode must send the
- * code out-of-band and strip it from the HTTP response. */
 export async function ensureCustomerOtpTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS customer_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,verifier_salt TEXT,verifier_hash TEXT)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_otp_phone ON customer_otp_challenges(phone,created_at)"),
@@ -49,15 +45,12 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
  const phone=normalizePhone(input.phone);
  if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");
  const now=Date.now(),code=secureSixDigitOtp(),id=uid("OTP"),salt=randomVerifierSalt(),verifier=await otpVerifier(id,salt,code);
- await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at,verifier_salt,verifier_hash) VALUES (?,?,?,0,0,?,?,?,?,?)")
+ await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at,verifier_salt,verifier_hash) VALUES (?,?,?,0,0,?,?,?,?)")
   .bind(id,phone,HASHED_MARKER,now,now+5*60000,salt,verifier).run();
  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
 }
 
-export async function discardCustomerOtpChallenge(db:Db,challengeId:string){
- await db.prepare("DELETE FROM customer_otp_challenges WHERE id=?").bind(challengeId).run();
-}
-
+export async function discardCustomerOtpChallenge(db:Db,challengeId:string){await db.prepare("DELETE FROM customer_otp_challenges WHERE id=?").bind(challengeId).run();}
 export async function resolveOtpCustomer(db:D1Database,phone:string){return db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? ORDER BY created_at ASC LIMIT 1").bind(phone).first<Row>();}
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
