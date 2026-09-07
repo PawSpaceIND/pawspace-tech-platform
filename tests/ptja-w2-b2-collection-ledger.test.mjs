@@ -281,7 +281,7 @@ test("R04-14: a real booking with a captured payment now leaves a journal behind
    * answered closingCash 0 with reconciled TRUE.
    */
   const { setupJourney, runCompletedJourney } = await import("./helpers/grooming-journey-harness.mjs");
-  const ctx = await setupJourney();
+  const ctx = await setupJourney(await world());
   const journey = await runCompletedJourney(ctx, LEDGER_JOURNEY("CUS-LEDGER-1", "GROOM-LEDGER-1", "+919900000801"));
 
   const entries = ctx.sqlite.prepare("SELECT account_code,debit,credit,booking_id,payment_id,city_id,service_code FROM finance_journal_entries ORDER BY account_code").all();
@@ -299,7 +299,7 @@ test("R04-15: the same booking posted twice leaves one journal, not two", async 
   // Non-vacuity for the case above and a guard on the replay paths: canonical-bookings answers a replay
   // from the existing booking, and the ledger must not treat that as a second collection.
   const { setupJourney, runCompletedJourney } = await import("./helpers/grooming-journey-harness.mjs");
-  const ctx = await setupJourney();
+  const ctx = await setupJourney(await world());
   await runCompletedJourney(ctx, LEDGER_JOURNEY("CUS-LEDGER-2", "GROOM-LEDGER-2", "+919900000802"));
   const afterFirst = ctx.sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries").get().n;
   const postings = ctx.sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings").get().n;
