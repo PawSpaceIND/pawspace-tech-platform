@@ -788,12 +788,17 @@ npm run sweep -- --base=https://&lt;staging-host&gt; --cookie="&lt;session cooki
       — each finding carries what the page actually said.</p>
 
     <div class="note warn">
-      <span><strong>Do not read the test suite as verification.</strong> The ~690 tests in
-        <code>tests/*.test.mjs</code> are static regex checks against source text. They are genuinely useful for
-        catching accidental copy and markup regressions, but they do not execute application code — they will
-        not catch a runtime bug, a missing database table, a dead button or bad business logic. A green suite is
-        not evidence that a flow works. Real verification in this repo means a script that calls the production
-        functions against a real database, or the browser sweep above.</span>
+      <span><strong>A green test suite is not the same as a working app.</strong> Of the 541 files in
+        <code>tests/*.test.mjs</code>, <strong>172 are static regex checks against source text</strong> — useful
+        for catching accidental copy and markup regressions, but they do not execute application code and will
+        not catch a runtime bug, a missing database table or bad business logic. The remaining files
+        <strong>do</strong> execute production code against a real database, including the seven per-vertical
+        suites (<code>grooming-</code>, <code>boarding-</code>, <code>training-</code>, <code>sitting-</code>,
+        <code>walking-</code>, <code>taxi-</code> and <code>food-vertical-execution.test.mjs</code>) and the
+        partner journey suite, each of which prints a plain-English scope report naming what it proved. Read
+        those reports: they tell you what you do <em>not</em> need to re-test by hand, and what is still
+        unproven. None of it replaces using the app — no test here clicks a button, sees a blank screen, or
+        notices that a page is confusing.</span>
     </div>
 
     <h3>Where things live</h3>

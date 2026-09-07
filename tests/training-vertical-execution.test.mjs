@@ -190,6 +190,17 @@ async function programmeWorld(over = {}) {
     .bind(PROGRAMME, BOOKING, CUSTOMER, TRAINER, CITY, ZONE, PACKAGE, PACKAGE_NAME, over.totalSessions ?? 4, now, now).run();
   await w.db.prepare("INSERT OR REPLACE INTO training_sessions (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     .bind(SESSION, PROGRAMME, BOOKING, "TRN-RES-1", over.sequenceNo ?? 1, TRAINER, start, end, over.status ?? "scheduled", now, now).run();
+  /* Raised by CodeAnt review on PR #560: the programme declared four sessions but only one existed,
+   * so session locking, unlocking and multi-session aggregation were never exercised. The siblings
+   * are opt-in so the single-session tests above stay unchanged - a 4-session fixture would collide
+   * with TRN-10, which sets this session's sequence_no to 4 to reach the final-balance gate. */
+  if (over.siblings) {
+    for (let n = 2; n <= (over.totalSessions ?? 4); n += 1) {
+      await w.db.prepare("INSERT OR REPLACE INTO training_sessions (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'locked',?,?)")
+        .bind(`${SESSION}-${n}`, PROGRAMME, BOOKING, `TRN-RES-${n}`, n, TRAINER,
+              new Date(now + n * 7 * DAY).toISOString(), new Date(now + n * 7 * DAY + 3600000).toISOString(), now, now).run();
+    }
+  }
   return { ...w, start, end };
 }
 
@@ -649,6 +660,59 @@ test("TRN-15 payout: nothing is approved without a statement, a real reason, or 
   assert.equal(earnings.value.executionMode, "sandbox_not_connected",
     "the earnings view must say plainly that no payout rail is connected");
   stage("Trainer payout", "PASS", "malformed period, token reason, missing key and missing provider refused 400; no statement refused 404; no live payout rail claimed");
+});
+
+// --- 9. MULTI-SESSION PROGRAMME ----------------------------------------------
+test("TRN-16 programme: later sessions stay locked until the one before them is closed", async () => {
+  /* A four-session plan is sold as a sequence, not four independent visits: a trainer must not be
+   * able to run session 3 before session 2, and the customer's later slots must open one at a time
+   * as each is delivered. */
+  const w = await programmeWorld({ siblings: true, totalSessions: 4 });
+  const life = await import("../lib/training-session-lifecycle.ts");
+
+  const locked = w.sqlite.prepare("SELECT sequence_no,status FROM training_sessions WHERE programme_id=? ORDER BY sequence_no").all(PROGRAMME);
+  assert.equal(locked.length, 4, "a four-session programme must have four sessions");
+  assert.equal(locked[0].status, "scheduled", "only the first session starts open");
+  assert.deepEqual(locked.slice(1).map((r) => r.status), ["locked", "locked", "locked"],
+    "sessions 2 to 4 must start locked");
+
+  /* A locked session cannot be accepted, let alone run. */
+  const jumpAhead = await attempt(() => life.mutateTrainingSession(w.db, {
+    sessionId: `${SESSION}-3`, action: "accept", actorId: TRAINER, idempotencyKey: "trn-jump",
+  }));
+  assert.equal(jumpAhead.ok, false, "a trainer must not accept a session that is still locked");
+  assert.equal(jumpAhead.status, 409);
+  assert.match(String(jumpAhead.body ?? ""), /cannot accept from locked/i,
+    "the refusal must be the state machine, not an incidental lookup failure");
+
+  /* Close session 1 through the real chain. */
+  const act = (action, extra = {}) => life.mutateTrainingSession(w.db, {
+    sessionId: SESSION, action, actorId: TRAINER, idempotencyKey: `ms-${action}-${Math.random()}`, ...extra,
+  });
+  await act("accept");
+  await act("on_the_way");
+  await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng });
+  await act("start");
+  await act("owner_handover", { ownerHandoverMinutes: 20 });
+  const refs = [await evidence(w.db, "before_service", "TRN-MED-MS-B"), await evidence(w.db, "after_service", "TRN-MED-MS-A")];
+  const closed = await attempt(() => life.mutateTrainingSession(w.db, {
+    sessionId: SESSION, action: "complete", actorId: TRAINER, idempotencyKey: "ms-complete", report: GOOD_REPORT(refs),
+  }));
+  assert.equal(closed.ok, true, `session 1 of 4 must close: ${String(closed.body ?? "").slice(0, 220)}`);
+
+  /* Exactly ONE more session opens - not all of them. */
+  const after = w.sqlite.prepare("SELECT sequence_no,status FROM training_sessions WHERE programme_id=? ORDER BY sequence_no").all(PROGRAMME);
+  assert.equal(after[0].status, "completed");
+  assert.equal(after[1].status, "scheduled", "closing session 1 must open session 2");
+  assert.deepEqual(after.slice(2).map((r) => r.status), ["locked", "locked"],
+    "sessions 3 and 4 must stay locked - the programme opens one at a time, not all at once");
+
+  const programme = w.sqlite.prepare("SELECT completed_sessions,total_sessions,status FROM training_programmes WHERE id=?").get(PROGRAMME);
+  assert.equal(Number(programme.completed_sessions), 1, "the programme must count what has actually been delivered");
+  assert.equal(Number(programme.total_sessions), 4);
+  assert.ok(!life.isTerminalTrainingProgramme(programme.status),
+    "a programme with 3 sessions left must not be terminal");
+  stage("Multi-session programme", "PASS", "sessions 2-4 start locked; a locked session cannot be accepted; closing session 1 opens exactly session 2 and the programme counts 1 of 4");
 });
 
 // --- SCOPE REPORT ------------------------------------------------------------

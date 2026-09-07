@@ -810,6 +810,65 @@ test("BRD-17 filing: host settlements carry 194H TDS at the governed FY threshol
   stage("Filing (194H)", "PASS", `nil below Rs 20,000 FY, then Rs 500 on Rs 25,000 at 2% against ${HOST}`);
 });
 
+test("BRD-12 partial claim: if only one of the two status writes lands, neither is left standing", async () => {
+  /* Raised by CodeAnt review on PR #560, and correct: resolving finance first made a finance
+   * failure retryable, but left a narrower window of the SAME shape. If the stay claimed and the
+   * canonical booking did not - another actor moved the booking in between - the stay was already
+   * `completed` while the booking was not, and the retry answered "Only a checked-in active stay
+   * can be checked out". Sequential claims cannot express "both or neither".
+   *
+   * The concurrent mover is simulated by changing the booking's status after the stay row is read
+   * but before check_out claims it, which is exactly what the guard's `AND status=?` is for. */
+  const { db, sqlite, stayId, stayDay } = await checkedInWorld();
+  const life = await import("../lib/boarding-stay-lifecycle.ts");
+  const proof = await import("../lib/boarding-proof-governance.ts");
+  await seedCommercialTerm(db);
+  for (const [type, key] of [["meal", "brd-pc-meal"], ["play", "brd-pc-play"]]) {
+    await life.mutateBoardingStay(db, {
+      stayId, action: "care_event", actorId: HOST, idempotencyKey: key,
+      careEventType: type, detail: { stayDate: stayDay },
+    });
+  }
+  const media = await cleanMedia(db, stayId, proof);
+  await proof.mutateBoardingProof(db, {
+    stayId, action: "record_daily_update", actorId: HOST, idempotencyKey: "brd-pc-update",
+    mediaRef: media.mediaRef, note: "ready to close",
+  });
+
+  /* The concurrent mover has to strike BETWEEN the read and the write, or the claim simply follows
+   * the new status and nothing is partial. A trigger on the stay update does exactly that: when the
+   * batch's first statement lands, the booking's status changes, so the second statement's
+   * `AND status=?` matches nothing and only half the claim succeeds. */
+  sqlite.exec(`CREATE TRIGGER brd_pc_race AFTER UPDATE OF status ON boarding_stays
+    WHEN NEW.status='completed'
+    BEGIN UPDATE canonical_bookings SET status='reassignment_needed' WHERE id='${BOOKING}'; END;`);
+
+  const conflicted = await attempt(() => life.mutateBoardingStay(db, {
+    stayId, action: "check_out", actorId: HOST, idempotencyKey: "brd-pc-out",
+  }));
+  sqlite.exec("DROP TRIGGER brd_pc_race");
+  assert.equal(conflicted.ok, false, "a booking that moved underneath must not be checked out");
+
+  /* THE POINT: the stay must not be left completed on its own. */
+  const stay = sqlite.prepare("SELECT status,check_out_status FROM boarding_stays WHERE id=?").get(stayId);
+  assert.equal(stay.status, "in_progress", "a partial claim must be rolled back, not left half-closed");
+  assert.equal(stay.check_out_status, "pending");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_stay_events WHERE stay_id=? AND event_type='checked_out'").get(stayId).n, 0,
+    "no checkout event may be logged for a checkout that did not happen");
+
+  /* And once the booking is put back, the SAME stay checks out - one payout, not two. */
+  sqlite.prepare("UPDATE canonical_bookings SET status='in_progress' WHERE id=?").run(BOOKING);
+  const recovered = await attempt(() => life.mutateBoardingStay(db, {
+    stayId, action: "check_out", actorId: HOST, idempotencyKey: "brd-pc-out-2",
+  }));
+  assert.equal(recovered.ok, true, `the stay must still be checkable out after the conflict clears: ${String(recovered.body ?? "").slice(0, 220)}`);
+  assert.equal(sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(stayId).status, "completed");
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status, "completed");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations WHERE booking_id=?").get(BOOKING).n, 1,
+    "the recovered completion must accrue ONE host payout, never two");
+  stage("Partial-claim atomicity", "PASS", "a booking moved underneath rolls the stay back to in_progress; once the conflict clears the same stay completes with one payout");
+});
+
 // --- SCOPE REPORT -----------------------------------------------------------
 test("BRD-99 boarding vertical scope report", () => {
   const by = (s) => STAGES.filter((x) => x.status === s).length;

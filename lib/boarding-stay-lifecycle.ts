@@ -57,7 +57,31 @@ async function mutateBoardingStayCore(db:D1Database,input:BoardingStayMutation){
   * too, because both halves of the money work are idempotent on the booking: postJournal keys on
   * SERVICE-COMPLETION-<bookingId> and returns duplicatePrevented, and provider_payout_computations
   * is keyed by booking_id. The retry reuses them rather than paying the host twice. */
- const finance=await resolveServiceCompletionFinance(db,{bookingId,actorId:input.actorId,completedAt:now});const stayClaim=await db.prepare("UPDATE boarding_stays SET status='completed',check_out_status='complete',updated_at=? WHERE id=? AND status='in_progress' AND check_in_status='complete'").bind(now,stay.id).run();assertLifecycleClaim(stayClaim);const bookingClaim=await db.prepare("UPDATE canonical_bookings SET status='completed',updated_at=? WHERE id=? AND status=?").bind(now,bookingId,bookingStatus).run();assertLifecycleClaim(bookingClaim);await releaseCapacity(db,String(stay.id));await db.prepare("UPDATE scheduling_reservations SET status='completed' WHERE group_id=? AND service_code='boarding' AND status!='cancelled'").bind(groupId).run();const eventId=await event(db,stay,"checked_out",input.actorId,{milestones,payout:finance.payoutStatus,tax:finance.taxStatus,finance});await notify(db,stay,eventId,"Your PawSpace boarding stay is checked out and completed. Provider payout and tax accruals are resolved in the service ledger.");return remember(db,input,{stayId:stay.id,bookingId,status:"completed",milestones,payout:finance.payoutStatus,tax:finance.taxStatus,finance});}
+ const finance=await resolveServiceCompletionFinance(db,{bookingId,actorId:input.actorId,completedAt:now});/* The two status writes go together, and a partial claim is undone.
+  *
+  * Resolving finance first (above) made a finance failure retryable, but left a narrower window of
+  * the same shape: if the stay claimed and the canonical booking did not - another actor moved the
+  * booking in between - the stay was already `completed` while the booking was not, and the retry
+  * was refused with "Only a checked-in active stay can be checked out". Sequential claims cannot
+  * express "both or neither".
+  *
+  * Batched, following the same pattern lib/taxi-lifecycle.ts already uses for its two claims: a
+  * 0-row UPDATE is a successful statement, not a batch failure, so a partial claim is detected and
+  * the half that landed is restored before refusing. Finance stays posted and is idempotent on the
+  * booking, so the retry reuses it rather than paying the host twice. */
+ const claims=await db.batch([
+  db.prepare("UPDATE boarding_stays SET status='completed',check_out_status='complete',updated_at=? WHERE id=? AND status='in_progress' AND check_in_status='complete'").bind(now,stay.id),
+  db.prepare("UPDATE canonical_bookings SET status='completed',updated_at=? WHERE id=? AND status=?").bind(now,bookingId,bookingStatus),
+ ]);
+ const stayClaimed=Number((claims[0] as {meta?:{changes?:number}})?.meta?.changes||0)===1;
+ const bookingClaimed=Number((claims[1] as {meta?:{changes?:number}})?.meta?.changes||0)===1;
+ if(!stayClaimed||!bookingClaimed){
+  const rollbackAt=Date.now(),rollbacks=[];
+  if(stayClaimed)rollbacks.push(db.prepare("UPDATE boarding_stays SET status='in_progress',check_out_status='pending',updated_at=? WHERE id=? AND status='completed'").bind(rollbackAt,stay.id));
+  if(bookingClaimed)rollbacks.push(db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=? AND status='completed'").bind(bookingStatus,rollbackAt,bookingId));
+  if(rollbacks.length)await db.batch(rollbacks);
+  throw staleLifecycleConflict();
+ }await releaseCapacity(db,String(stay.id));await db.prepare("UPDATE scheduling_reservations SET status='completed' WHERE group_id=? AND service_code='boarding' AND status!='cancelled'").bind(groupId).run();const eventId=await event(db,stay,"checked_out",input.actorId,{milestones,payout:finance.payoutStatus,tax:finance.taxStatus,finance});await notify(db,stay,eventId,"Your PawSpace boarding stay is checked out and completed. Provider payout and tax accruals are resolved in the service ledger.");return remember(db,input,{stayId:stay.id,bookingId,status:"completed",milestones,payout:finance.payoutStatus,tax:finance.taxStatus,finance});}
  throw new Response("Unsupported Boarding stay action",{status:400});
 }
 

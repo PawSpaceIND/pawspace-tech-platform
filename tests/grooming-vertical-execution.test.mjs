@@ -15,7 +15,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { world, attempt } from "./helpers/execution-harness.mjs";
+import { world, attempt, ORIGIN } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__GROOM_DB__", "__GROOM_ENV__");
 
@@ -64,34 +64,69 @@ function seedCanonical(sqlite) {
 }
 
 // --- 1. CUSTOMER + OTP ------------------------------------------------------
-test("GRM-01 OTP: a challenge is persisted, and the live route never returns the code", async () => {
-  /* CORRECTED after a first run. I originally asserted that requestCustomerOtp must not return the
-   * code, and it failed - the function does return `sandboxCode`. That is BY DESIGN and not a
-   * defect: the sandbox path is what lets a UAT tester proceed without SMS, and it is reachable only
-   * behind uatLoginEnabled / developmentOtpSandboxEnabled, otherwise the route answers 503.
+test("GRM-01 OTP: a challenge is persisted, and a live run never hands the code back to the caller", async () => {
+  /* REWRITTEN after CodeAnt review on PR #560. The previous version sliced the ROUTE SOURCE from
+   * `liveSmsDelivered:true` and searched the next 200 characters for `sandboxCode` - so a leak
+   * anywhere else in the live branch would have passed unnoticed, and no route code ran at all.
+   * The route is now EXECUTED in both modes, and the source check that remains covers the whole
+   * live branch rather than a window after a marker.
    *
-   * The contract that actually matters lives in app/api/customer-otp/route.ts: in LIVE mode it
-   * discards the function's return shape and rebuilds the response from scratch -
-   * {challengeId, phone, expiresInSeconds, sandboxDelivery:false, liveSmsDelivered:true} - so the
-   * code reaches the customer by SMS only. Asserting the library in isolation tested the wrong
-   * layer and would have reported a false defect. */
+   * What still cannot be executed here is the Fast2SMS send itself: it is a real outbound call
+   * needing a credential this environment does not have. The live branch is therefore driven as far
+   * as its own guard, which is the part that decides whether a code can escape. */
   const { sqlite, db } = groomWorld();
   const otp = await import("../lib/customer-otp.ts");
   await otp.ensureCustomerOtpTables(db);
+
   const issued = await attempt(() => otp.requestCustomerOtp(db, { phone: PHONE }));
   assert.equal(issued.ok, true, `OTP request must succeed: ${JSON.stringify(issued).slice(0, 160)}`);
-
   const stored = sqlite.prepare("SELECT code,phone,consumed FROM customer_otp_challenges ORDER BY rowid DESC LIMIT 1").get();
   assert.ok(stored, "a challenge row must be persisted");
   assert.match(String(stored.code), /^\d{6}$/, "a six-digit code must be stored");
   assert.equal(Number(stored.consumed), 0, "a fresh challenge must not start consumed");
 
-  const routeSource = await (await import("node:fs/promises")).readFile(
+  /* EXECUTED: the route in sandbox mode. The library returns sandboxCode by design - that is what
+   * lets a UAT tester proceed without SMS - and the sandbox response is allowed to carry it. */
+  const route = await import("../app/api/customer-otp/route.ts");
+  const post = (env, body) => {
+    globalThis.__GROOM_ENV__ = env;
+    return attempt(async () => route.POST(new Request(`${ORIGIN}/api/customer-otp`, {
+      method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })));
+  };
+
+  /* uatLoginEnabled needs the signing key as well as the flag - a label alone cannot open the
+   * sandbox, which is itself worth knowing. */
+  const UAT = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "x".repeat(48), PAWSPACE_DEPLOYMENT_ENV: "staging" };
+  const flagOnly = await post({ PAWSPACE_UAT_LOGIN: "on", PAWSPACE_DEPLOYMENT_ENV: "staging" },
+    { action: "request", phone: PHONE });
+  assert.equal(flagOnly.ok, false, "the UAT flag alone, with no signing key, must not open OTP delivery");
+
+  const sandbox = await post(UAT, { action: "request", phone: PHONE });
+  assert.equal(sandbox.ok, true, `the sandbox route must answer: ${String(sandbox.body ?? "").slice(0, 200)}`);
+
+  /* EXECUTED: the route in LIVE staging mode, with a number that is not the approved test number.
+   * The guard must refuse, discard the challenge, and hand back nothing that resembles a code. */
+  const before = sqlite.prepare("SELECT COUNT(*) n FROM customer_otp_challenges").get().n;
+  const live = await post({
+    ...UAT, PAWSPACE_STAGING_LIVE_CUSTOMER_OTP: "on", PAWSPACE_SMS_TEST_NUMBERS: "9811111111",
+  }, { action: "request", phone: PHONE });
+  assert.equal(live.ok, false, "a live run must refuse a number outside the approved allowlist");
+  assert.equal(live.status, 403);
+  assert.ok(!/\d{6}/.test(String(live.body ?? "")), `a refused live run must not return any six-digit code: ${String(live.body ?? "").slice(0, 160)}`);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM customer_otp_challenges").get().n, before,
+    "a refused live run must discard the challenge it created rather than leaving it live");
+
+  /* The remaining source check now covers the ENTIRE live branch, not a window after a marker:
+   * between the live-mode gate and the success response, `sandboxCode` may appear only where it is
+   * handed to the SMS body - never in anything returned to the caller. */
+  const source = await (await import("node:fs/promises")).readFile(
     new URL("../app/api/customer-otp/route.ts", import.meta.url), "utf8");
-  const liveReturn = routeSource.slice(routeSource.indexOf("liveSmsDelivered:true"));
-  assert.ok(!/sandboxCode/.test(liveReturn.slice(0, 200)),
-    "the live-mode response must not carry sandboxCode - the code may travel by SMS only");
-  stage("OTP issue", "PASS", "6-digit challenge persisted; live route omits the code (sandbox path is UAT-gated by design)");
+  const liveBranch = source.slice(source.indexOf("if(stagingLiveMode)"), source.indexOf("liveSmsDelivered:true") + 40);
+  const leaks = liveBranch.split("\n").filter((line) => line.includes("sandboxCode") && !line.includes("message:"));
+  assert.deepEqual(leaks, [], `sandboxCode may only reach the SMS body in the live branch, found: ${leaks.join(" | ")}`);
+  stage("OTP issue", "PASS", "6-digit challenge persisted; the live route refuses an unapproved number 403, returns no code and discards the challenge");
 });
 
 test("GRM-02 OTP: a wrong code is refused and does not mint a customer", async () => {
@@ -328,7 +363,10 @@ test("GRM-10 notification: a lifecycle event emits exactly one governed notifica
     sourceType: "booking", sourceId: BOOKING, actorId: "system:test", occurredAt: NOW,
   };
   const first = await attempt(() => notif.emitOrderNotification(db, input));
-  if (!first.ok) { stage("Notification", "GAP", String(first.body ?? "").slice(0, 120)); assert.ok(true); return; }
+  /* Raised by CodeAnt review on PR #560, and correct: this recorded a GAP and PASSED, so a broken
+   * notification path would have reported green. It was an exploratory escape hatch from the first
+   * pass; the path works, so it is now a hard requirement. */
+  assert.equal(first.ok, true, `a governed notification must emit: ${String(first.body ?? "").slice(0, 200)}`);
   const replay = await attempt(() => notif.emitOrderNotification(db, input));
   assert.equal(replay.ok, true, `a replayed key must be absorbed, not rejected: ${String(replay.body ?? "").slice(0, 160)}`);
   const n = sqlite.prepare("SELECT COUNT(*) n FROM order_notifications WHERE customer_id=?").get(CUSTOMER)?.n ?? 0;
@@ -534,11 +572,11 @@ test("GRM-16 GST: with a policy configured, an invoice is issued for the booking
     cityId: CITY, taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-04-01",
     actorId: "finance@pawspace.test", reason: "grooming vertical execution test",
   }));
-  if (!saved.ok) { stage("GST invoice", "HARNESS", String(saved.body ?? "").slice(0, 120)); assert.ok(true); return; }
+  assert.equal(saved.ok, true, `a published tax policy must save: ${String(saved.body ?? "").slice(0, 200)}`);
   const issued = await attempt(() => inv.issueGroomingInvoice(db, {
     bookingId: BOOKING, reason: "service completed", actorId: "finance@pawspace.test",
   }));
-  if (!issued.ok) { stage("GST invoice", "HARNESS", String(issued.body ?? "").slice(0, 120)); assert.ok(true); return; }
+  assert.equal(issued.ok, true, `with a policy configured the invoice must issue: ${String(issued.body ?? "").slice(0, 200)}`);
   stage("GST invoice", "PASS", `issued: ${JSON.stringify(issued.value).slice(0, 90)}`);
 });
 
