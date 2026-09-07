@@ -1,6 +1,8 @@
 import{authError}from"../../../lib/server-auth";
 import{governedJsonError}from"../../../lib/governed-http-error";
 import{assignLeadOwner}from"../../../lib/lead-owner-identity";
+import{normalizeMarketingAttribution,hasMarketingAttribution,inferMarketingSourcePlatform}from"../../../lib/marketing-attribution";
+import{ensureFirstPartyMarketingAttribution,attributionInsertStatement}from"../../../lib/marketing-attribution-server";
 import{startWhatsAppAiLead}from"../../../lib/whatsapp-ai-lead-orchestration";
 // Public, unauthenticated lead-capture endpoint for the marketing site's contact form.
 // This intentionally does NOT reuse the staff-only /api/crm route directly - that route
@@ -18,6 +20,7 @@ async function ensureTables(db:D1Database){
     db.prepare("CREATE TABLE IF NOT EXISTS lead_work_items (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL, service TEXT NOT NULL, owner TEXT NOT NULL, manager TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'day_1', work_day INTEGER NOT NULL DEFAULT 1, assigned_at INTEGER NOT NULL, first_action_due_at INTEGER NOT NULL, manager_alert_at INTEGER NOT NULL, first_action_at INTEGER, call_attempts INTEGER NOT NULL DEFAULT 0, whatsapp_attempts INTEGER NOT NULL DEFAULT 0, last_outcome TEXT, next_action_at INTEGER, recycle_at INTEGER, recycle_cycle INTEGER NOT NULL DEFAULT 0, opt_out INTEGER NOT NULL DEFAULT 0, converted_booking_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS public_contact_rate_limits (fingerprint TEXT PRIMARY KEY, window_started_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)"),
   ]);
+  await ensureFirstPartyMarketingAttribution(db);
 }
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -48,24 +51,26 @@ export async function POST(request:Request){
     await enforceAbuseGate(db,request,now);
     const body=await request.json() as Record<string,unknown>;
     const name=clean(body.name,80),phone=clean(body.phone,20),email=clean(body.email,160),area=clean(body.area||"Bangalore",80),petNames=clean(body.petNames||"Not shared",160),service=clean(body.service||"General enquiry",120),message=clean(body.message||"No message left",500);
+    const attribution=normalizeMarketingAttribution(body.attribution&&typeof body.attribution==="object"&&!Array.isArray(body.attribution)?body.attribution as Record<string,unknown>:body);
     if(name.length<2)return json({error:"Please enter your name"},400);
     const phoneDigits=phone.replace(/\D/g,"");
     if(phoneDigits.length<10||phoneDigits.length>15||!/^[0-9+\s-]+$/.test(phone))return json({error:"Please enter a valid phone number"},400);
     if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json({error:"Please enter a valid email address"},400);
     const id=`CU-${crypto.randomUUID()}`,activityId=`ACT-${crypto.randomUUID()}`,taskId=`TASK-${crypto.randomUUID()}`,leadId=`LEAD-${crypto.randomUUID()}`;
-    // Ownership comes from lib/lead-owner-identity, not a list of first names. A website lead landing
-    // on "Neha" gave it an owner nobody could page; if no active member can take it the lead is
-    // Unassigned and the mapping exception is recorded for Operations. [PTJA-W3-CO]
     const ownership=await assignLeadOwner(db,{customerId:id,service});
-    const assignedOwner=ownership.owner;
-    await db.batch([
-      db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,name,phone,null,email||null,area,petNames,message,"New lead",assignedOwner,"Website contact form",0,"Call within 10 minutes",service,now,now),
-      db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(activityId,id,"lead_created","Contact form submission",`Service interest: ${service}`,now),
+    const assignedOwner=ownership.owner,sourcePlatform=inferMarketingSourcePlatform(attribution),source=hasMarketingAttribution(attribution)?`Website paid attribution · ${sourcePlatform}`:"Website contact form";
+    const leadStatements=[
+      db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,name,phone,null,email||null,area,petNames,message,"New lead",assignedOwner,source,0,"Call within 10 minutes",service,now,now),
+      db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(activityId,id,"lead_created","Contact form submission",`Service interest: ${service}${hasMarketingAttribution(attribution)?` · attributed ${sourcePlatform}`:""}`,now),
       db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(taskId,id,"First response to new website lead",assignedOwner,now+10*60*1000,"High","Open",now),
-      db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,0,0,?,0,0,?,?)").bind(leadId,id,"Website contact form",service,assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,now+10*60000,now,now),
-    ]);
+      db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,0,0,?,0,0,?,?)").bind(leadId,id,source,service,assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,now+10*60000,now,now),
+    ];
+    if(hasMarketingAttribution(attribution))leadStatements.push(attributionInsertStatement(db,{leadId,customerId:id,capture:attribution,landingUrl:clean(body.landingUrl||request.headers.get("referer"),500),referrerUrl:clean(body.referrerUrl,500),now}));
+    // D1 batch is the atomic lead-creation boundary: the contact, work item, CRM side effects and
+    // first-party attribution either commit together or fail together.
+    await db.batch(leadStatements);
     let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:"website_contact_checkbox",consentEvidenceRef:body.whatsappConsent===true?"public-contact-whatsapp-consent-v1":"",actorId:"public-contact",assignedTo:assignedOwner,cityId:"blr"});}catch{whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};}
-    return json({ok:true,leadId,whatsappAi:{status:whatsappAi.status,reason:whatsappAi.reason}},201);
+    return json({ok:true,leadId,attribution:{captured:hasMarketingAttribution(attribution),platform:sourcePlatform},whatsappAi:{status:whatsappAi.status,reason:whatsappAi.reason}},201);
   }catch(error){
     return authError(error,"Unable to submit your enquiry - please try again");
   }
