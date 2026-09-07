@@ -2,15 +2,15 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 import{DatabaseSync}from"node:sqlite";
-import{captureInboundWebhook,ensureGatewayInboundQueueTables,runInboundWebhookAttempt}from"../lib/gateway-inbound-queue.ts";
-import{assertActiveVerifiedPayoutBeneficiary,preauthorizeVerifiedPayoutBeneficiary}from"../lib/payout-beneficiary-verification.ts";
-import{eraseCustomerPersonalData}from"../lib/dpdp-erasure.ts";
+import{captureInboundWebhook,ensureGatewayInboundQueueTables,runInboundWebhookAttempt}from"../lib/gateway-inbound-queue";
+import{assertActiveVerifiedPayoutBeneficiary,preauthorizeVerifiedPayoutBeneficiary}from"../lib/payout-beneficiary-verification";
+import{eraseCustomerPersonalData}from"../lib/dpdp-erasure";
 
 assert.equal(process.env.PAWSPACE_PAYMENT_ENV,"sandbox","privacy/webhook/DLQ audit must run with PAWSPACE_PAYMENT_ENV=sandbox");
 assert.equal(process.env.FORBID_PRODUCTION,"true","privacy/webhook/DLQ audit must run with FORBID_PRODUCTION=true");
 assert.notEqual(process.env.PAWSPACE_PAYMENT_LIVE_APPROVED,"true","live payment approval must remain disabled during audit");
 
-type Args=unknown[];
+type Args=any[];
 function d1(sqlite:DatabaseSync){
  const statement=(sql:string,args:Args=[]):any=>({
   bind:(...values:Args)=>statement(sql,values),
@@ -54,8 +54,8 @@ test("DPDP erasure removes operational PII while preserving immutable double-ent
  sqlite.prepare("INSERT INTO canonical_customers VALUES (?,?,?,?,?,?,?,?,?,?)").run("CUS-1","blr","Jane Doe","9876543210","9123456780","jane@example.com","app",'{"whatsapp":true}',1,1);sqlite.prepare("INSERT INTO canonical_pets VALUES (?,?,?,?,?,?,?,?)").run("PET-1","CUS-1","Buddy","dog","Labrador",'{"photo":"secret"}',"source-pet",1);sqlite.prepare("INSERT INTO customer_addresses VALUES (?,?,?,?,?,?,?,?,?,?,?)").run("ADDR-1","CUS-1","Home","12 Secret St",null,"Indiranagar","Bengaluru","560001",1,1,1);sqlite.prepare("INSERT INTO crm_contacts VALUES (?,?,?,?,?,?,?,?,?,?)").run("CRM-1","CUS-1","Jane Doe","9876543210",null,"jane@example.com","Buddy","Labrador","Indiranagar",1);sqlite.prepare("INSERT INTO lead_work_items VALUES (?,?,?,?,?,?)").run("LEAD-1","CUS-1","Website","Called Jane",0,1);sqlite.prepare("INSERT INTO communication_messages VALUES (?,?,?,?,?,?)").run("MSG-1","CUS-1",'{"text":"call 9876543210"}','{"phone":"9876543210"}',"provider-secret",1);sqlite.prepare("INSERT INTO crm_email_events VALUES (?,?,?,?)").run("E-1","CUS-1",'{"from":"jane@example.com"}',"provider-message");sqlite.prepare("INSERT INTO customer_contact_preferences VALUES (?,?,?,?,?,?,?,?,?)").run("CUS-1",1,1,1,1,1,0,"signup",1);
  sqlite.prepare("INSERT INTO journal_transactions VALUES ('JT-1','POSTED')").run();sqlite.prepare("INSERT INTO journal_entries VALUES ('JE-D','JT-1','DEBIT',12500)").run();sqlite.prepare("INSERT INTO journal_entries VALUES ('JE-C','JT-1','CREDIT',12500)").run();
  const before=sqlite.prepare("SELECT COUNT(*) n,SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE 0 END) d,SUM(CASE WHEN direction='CREDIT' THEN amount_paise ELSE 0 END) c FROM journal_entries").get()as any;const result=await eraseCustomerPersonalData(db,{customerId:"CUS-1",idempotencyKey:"erase-1",requestedBy:"privacy@pawspace.in",reason:"data principal erasure"});assert.equal(result.ledgerPreserved,true);const after=sqlite.prepare("SELECT COUNT(*) n,SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE 0 END) d,SUM(CASE WHEN direction='CREDIT' THEN amount_paise ELSE 0 END) c FROM journal_entries").get()as any;assert.deepEqual(after,before);
- const customer=sqlite.prepare("SELECT name,primary_phone,secondary_phone,email,consent_json FROM canonical_customers WHERE id='CUS-1'").get()as any;assert.notEqual(customer.name,"Jane Doe");assert.notEqual(customer.primary_phone,"9876543210");assert.equal(customer.secondary_phone,null);assert.notEqual(customer.email,"jane@example.com");assert.equal(customer.consent_json,"{}");assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM customer_addresses WHERE customer_id='CUS-1'").get().n,0);assert.equal((sqlite.prepare("SELECT payload_json FROM communication_messages WHERE id='MSG-1'").get()as any).payload_json,"{}");assert.equal((sqlite.prepare("SELECT name,breed,profile_json FROM canonical_pets WHERE id='PET-1'").get()as any).breed,null);
- const repeat=await eraseCustomerPersonalData(db,{customerId:"CUS-1",idempotencyKey:"erase-1",requestedBy:"privacy@pawspace.in"});assert.equal(repeat.duplicatePrevented,true);assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM dpdp_erasure_requests").get().n,1);
+ const customer=sqlite.prepare("SELECT name,primary_phone,secondary_phone,email,consent_json FROM canonical_customers WHERE id='CUS-1'").get()as any;assert.notEqual(customer.name,"Jane Doe");assert.notEqual(customer.primary_phone,"9876543210");assert.equal(customer.secondary_phone,null);assert.notEqual(customer.email,"jane@example.com");assert.equal(customer.consent_json,"{}");const addressCount=sqlite.prepare("SELECT COUNT(*) n FROM customer_addresses WHERE customer_id='CUS-1'").get()as any;assert.equal(addressCount.n,0);assert.equal((sqlite.prepare("SELECT payload_json FROM communication_messages WHERE id='MSG-1'").get()as any).payload_json,"{}");assert.equal((sqlite.prepare("SELECT name,breed,profile_json FROM canonical_pets WHERE id='PET-1'").get()as any).breed,null);
+ const repeat=await eraseCustomerPersonalData(db,{customerId:"CUS-1",idempotencyKey:"erase-1",requestedBy:"privacy@pawspace.in"});assert.equal(repeat.duplicatePrevented,true);const erasureCount=sqlite.prepare("SELECT COUNT(*) n FROM dpdp_erasure_requests").get()as any;assert.equal(erasureCount.n,1);
 });
 
 async function beneficiaryWorld(){
