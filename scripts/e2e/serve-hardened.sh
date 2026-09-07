@@ -48,8 +48,13 @@ if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
 fi
 
 mkdir -p "$PERSIST_DIR"
-echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
-exec npx wrangler dev \
+# The repository lockfile still pins Wrangler 4.92.0 for normal development. The hardened built-worker
+# browser harness hit a reproducible ProxyController "Network connection lost" crash on that version.
+# Keep the remediation isolated to this certification harness and pin an exact newer CLI version so CI
+# is reproducible without changing application/runtime dependencies.
+E2E_WRANGLER_VERSION="${E2E_WRANGLER_VERSION:-4.129.0}"
+echo "[e2e] starting wrangler ${E2E_WRANGLER_VERSION} dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
+exec npx --yes "wrangler@${E2E_WRANGLER_VERSION}" dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
