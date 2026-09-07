@@ -41,6 +41,9 @@ jobs:
       NODE_ENV: test
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
@@ -74,9 +77,9 @@ jobs:
           test "${#certification_tests[@]}" -eq 2
           status=0
           set +e
-          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test --test-concurrency=1 "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
-          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test --test-concurrency=1 "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
           certification_status=${PIPESTATUS[0]}
           if [ "$certification_status" -ne 0 ]; then
             status="$certification_status"
@@ -317,6 +320,9 @@ jobs:
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
       PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -341,7 +347,7 @@ jobs:
           set -euo pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}"
       - name: Loader-hook fallback compatibility path
         shell: bash
         env:
@@ -349,7 +355,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}"
 
   backend:
     name: Backend
