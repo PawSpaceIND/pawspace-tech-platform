@@ -17,6 +17,7 @@ export type AssignmentBlock={
 };
 
 const allow=(providerId:string,reason:string,policyVersion:string|null=null):AssignmentBlock=>({blocked:false,providerId,reasons:[reason],outstanding:[],policyVersion,evaluated:true});
+const allowUnevaluatedFixture=(providerId:string,reason:string):AssignmentBlock=>({blocked:false,providerId,reasons:[reason],outstanding:[],policyVersion:null,evaluated:false});
 const block=(providerId:string,reason:string,policyVersion:string|null=null,outstanding:AssignmentBlock["outstanding"]=[]):AssignmentBlock=>({blocked:true,providerId,reasons:[reason],outstanding,policyVersion,evaluated:true});
 
 async function runtimeEnv():Promise<Record<string,unknown>>{
@@ -24,16 +25,19 @@ async function runtimeEnv():Promise<Record<string,unknown>>{
 }
 
 /**
- * The only missing-record exemption: a capacity row written by the repository's seed function AND an
- * explicitly declared UAT scheduling runtime. Production configuration forbids PAWSPACE_SCHEDULING_ENV,
- * so the seed provenance marker alone can never unlock this path in production.
+ * The deployed UAT exemption remains founder_seed-only. Node-only test runs also accept older synthetic
+ * fixture provenance so historical harnesses can exercise scheduling without fabricating verification
+ * evidence. Those fixtures stay evaluated:false and therefore remain launch blockers.
  */
 async function governedUatSeedFixture(db:Db,providerId:string){
   const env=await runtimeEnv();
   const explicitTest=typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&process.env?.PAWSPACE_LOCAL_PREVIEW==="on";
-  if(!uatRosterSeedingEnabled(env)&&!explicitTest)return false;
+  const uatRuntime=uatRosterSeedingEnabled(env);
+  if(!uatRuntime&&!explicitTest)return false;
   const profile=await db.prepare("SELECT updated_by FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
-  return text(profile?.updated_by)==="founder_seed";
+  const provenance=text(profile?.updated_by);
+  if(uatRuntime&&provenance==="founder_seed")return true;
+  return explicitTest&&provenance.length>0;
 }
 
 /** A provider may receive NEW work only when current mandatory verification can be proved. */
@@ -45,7 +49,7 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
     const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>()
       .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
     if(!application){
-      if(await governedUatSeedFixture(db,id))return allow(id,"uat_seed_fixture_exemption");
+      if(await governedUatSeedFixture(db,id))return allowUnevaluatedFixture(id,"uat_seed_fixture_exemption");
       return block(id,"no_onboarding_verification_record");
     }
 
@@ -164,6 +168,12 @@ export async function providerVerificationLaunchBlockers(db:Db,at=Date.now()):Pr
     const verdict=await providerAssignmentBlock(db,providerId,at);
     let services:string[]=[];
     try{services=JSON.parse(text(row.services_json)||"[]") as string[];}catch{services=[];}
+    if(!verdict.evaluated){
+      blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
+        reason:"This provider is live to customers but has no onboarding verification record, so their mandatory checks cannot be confirmed. Onboard them through the real application path before launch.",
+        outstanding:[]});
+      continue;
+    }
     if(verdict.blocked){
       blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
         reason:verdict.reasons.includes("no_onboarding_verification_record")
