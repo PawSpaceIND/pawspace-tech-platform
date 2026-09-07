@@ -41,6 +41,7 @@ jobs:
       NODE_ENV: test
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: 'sandbox'
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
