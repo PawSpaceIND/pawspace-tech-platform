@@ -6,6 +6,17 @@ const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 /** How long past the customer's requested time a rep has before it counts as genuinely missed - real phone calls don't land to the exact minute, but a callback the customer specifically asked for going untouched for longer than this is a real service failure worth surfacing. */
 const missedGraceMinutes=15;
 
+async function ensureLeadWorkItemIndexesIfPresent(db:Db){
+ const table=await db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='lead_work_items'").first<Row>();
+ if(!table)return;
+ await db.batch([
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_owner ON lead_work_items(owner)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_owner_converted ON lead_work_items(owner,converted_booking_id)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_recycle_due ON lead_work_items(status,opt_out,converted_booking_id,recycle_at,recycle_cycle)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_sla_due ON lead_work_items(status,first_action_at,manager_alert_at)"),
+ ]);
+}
+
 export async function ensureLeadCallbackTables(db:Db){await db.batch([
  // Explicit, governed record: every scheduled callback is a real, separate row - never just an
  // overwrite of a single "next action" field, so a lead's full callback history stays visible and
@@ -14,7 +25,7 @@ export async function ensureLeadCallbackTables(db:Db){await db.batch([
  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_callbacks_lead ON lead_callbacks(lead_id,status)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_callbacks_due ON lead_callbacks(status,requested_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_callback_events (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,callback_id TEXT NOT NULL,lead_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);await ensureLeadWorkItemIndexesIfPresent(db);}
 
 async function emit(db:Db,input:{callbackId:string;leadId:string;eventType:string;actorId:string;idempotencyKey:string;detail?:unknown}){
  const result=await db.prepare("INSERT OR IGNORE INTO lead_callback_events (id,idempotency_key,callback_id,lead_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")

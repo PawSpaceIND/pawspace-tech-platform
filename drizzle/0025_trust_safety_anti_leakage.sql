@@ -1,7 +1,10 @@
 -- PawSpace Trust & Safety: anti-leakage, provider strikes, global customer blocklist.
-ALTER TABLE provider_capacity_profiles ADD COLUMN trust_score INTEGER NOT NULL DEFAULT 100;
-ALTER TABLE provider_capacity_profiles ADD COLUMN trust_strike_count INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE provider_capacity_profiles ADD COLUMN suspended_until INTEGER;
+-- SQLite/D1 does not support ALTER TABLE ... ADD COLUMN IF NOT EXISTS. These governed
+-- directives are executed by scripts/schema/apply-idempotent-drizzle.mjs, which checks
+-- PRAGMA table_info before issuing each ALTER. Do not replace these with raw ALTERs.
+-- @add-column-if-missing provider_capacity_profiles|trust_score|INTEGER NOT NULL DEFAULT 100
+-- @add-column-if-missing provider_capacity_profiles|trust_strike_count|INTEGER NOT NULL DEFAULT 0
+-- @add-column-if-missing provider_capacity_profiles|suspended_until|INTEGER
 
 CREATE TABLE IF NOT EXISTS trust_safety_events (
   id TEXT PRIMARY KEY,event_type TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id TEXT,provider_id TEXT,customer_id TEXT,thread_id TEXT,message_id TEXT,channel TEXT NOT NULL,detection_types_json TEXT NOT NULL DEFAULT '[]',content_sha256 TEXT NOT NULL,source_reference TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',strike_applied INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(event_type, source_reference)
