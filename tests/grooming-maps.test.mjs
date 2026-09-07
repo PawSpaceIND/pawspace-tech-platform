@@ -20,7 +20,7 @@ assert.match(customer,/saveServiceLocation\(\{bookingId:canonical\.bookingId,cus
   assert.match(routeCard,/navigator\.geolocation\.getCurrentPosition/);
   assert.match(routeCard,/navigator\.geolocation\.watchPosition/);
   assert.match(routeCard,/foreground-only in UAT/);
-  assert.match(routeCard,/Background tracking is not enabled/);
+  assert.match(routeCard,/Stale, future-clock and low-accuracy fixes are stored as rejected evidence/);
   assert.match(partner,/GroomingRouteCard bookingId=\{selected\.bookingId\} providerId=\{selected\.providerId\}/);
   assert.match(gateway,/\/api\/grooming-service-location/);
   assert.match(gateway,/\/api\/grooming-route/);
