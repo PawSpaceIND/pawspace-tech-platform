@@ -18,7 +18,7 @@ async function ensureAddressTables(db:Db){
 function completeAddress(row:Row,pincode:string){return[String(row.line1||"").trim(),String(row.line2||"").trim(),String(row.area||"").trim(),String(row.city||"").trim(),pincode,"India"].filter(Boolean).join(", ");}
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
-async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;return truthy(runtime.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE)&&String(runtime.PAWSPACE_PAYMENT_ENV||"").toLowerCase()==="sandbox"&&(String(runtime.NODE_ENV||"").toLowerCase()==="test"||String(runtime.PAWSPACE_SCHEDULING_ENV||"").toLowerCase()==="uat");}
+async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
 function fixtureCoordinates(cityId:string){switch(cityId){case"maa":return{latitude:13.0827,longitude:80.2707};case"hyd":return{latitude:17.385,longitude:78.4867};case"bom":case"mum":return{latitude:19.076,longitude:72.8777};case"pnq":case"pune":return{latitude:18.5204,longitude:73.8567};default:return{latitude:12.9716,longitude:77.5946};}}
 async function ensureTestProviderHomeBases(db:Db){
   await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
@@ -38,10 +38,8 @@ async function ensureTestProviderHomeBases(db:Db){
  * only after strict PIN validation, coverage validation and server-side geocoding succeed.
  *
  * Legacy executable suites can opt into one explicit server-owned sandbox fixture with
- * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture must be bound to the Worker runtime itself;
- * process-wide CI environment variables are deliberately ignored so one suite cannot alter another
- * suite's address authority. The fixture is impossible to activate unless the runtime is sandbox plus
- * test/UAT, and it never trusts browser city/zone/coordinates. */
+ * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture is impossible to activate unless the runtime
+ * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
 export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
   const suppliedAddress=String(input.serviceAddress||"").trim(),suppliedPincode=String(input.servicePincode||"").trim();
