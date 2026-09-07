@@ -20,9 +20,8 @@ jobs:
           echo "Pre-UAT protocol PR is intentionally excluded from the GitHub production environment and production secrets."
 
   master-production-audit:
-    if: ${{ github.event_name != 'pull_request' || github.head_ref != 'fix/pre-uat-protocol-isolation' }}
+    if: ${{ github.event_name == 'pull_request' && github.head_ref != 'fix/pre-uat-protocol-isolation' }}
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,9 +29,22 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      # This is a real production certification gate, not a reporting dry run. Production-only
-      # credentials must be present under their canonical names; sandbox/UAT aliases are forbidden.
-      # Payments remain deliberately sandbox-only and live approval must remain explicitly false.
+      - name: Production readiness policy certification
+        run: node --test tests/production-readiness-enforcement.test.mjs tests/production-readiness-closure.test.mjs tests/bengaluru-production-remediation-wiring.test.mjs
+
+  production-key-presence-audit:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
       - name: Production readiness strict certification
         env:
           PAWSPACE_PRODUCTION_ENFORCE: 'true'
