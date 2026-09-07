@@ -85,14 +85,12 @@ const uatPayload = Buffer.from(JSON.stringify({email:'founder@pawspace.in',exp:D
 const uatSignature = createHmac('sha256', UAT_SIGNING_KEY).update(uatPayload).digest('base64url');
 const cookie = `pawspace_uat=${encodeURIComponent(`${uatPayload}.${uatSignature}`)}`;
 
-// The scheduling GET day board is an operations view, not a capacity oracle: providers with no
-// reservation rows are absent, and expired failed-load reservations can remain visible until a write
-// path performs lease cleanup. Discover capacity through the authoritative scheduling POST instead.
-// Every candidate is unique, remains inside the 180-day horizon, and the POST itself applies roster,
-// provider eligibility, buffers, lease cleanup and atomic slot claiming.
+// Assignment discovery is setup, not the measured burst. Keep it serial by default so schema/lease
+// maintenance on /api/uat-scheduling cannot contaminate the actual load gate with prerequisite DDL
+// contention. The real certification still starts with 100 simultaneous canonical booking writes.
 const GROOMING_DURATION_MS = 120 * 60 * 1000;
 const SLOT_HOURS_UTC = [5, 9];
-const ASSIGNMENT_CONCURRENCY = Math.max(1, Math.min(10, Number(process.env.PERF_ASSIGNMENT_CONCURRENCY || 5)));
+const ASSIGNMENT_CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.PERF_ASSIGNMENT_CONCURRENCY || 1)));
 function dayAtOffset(dayOffset) {
   const d = new Date(Date.now() + dayOffset * 86400000);
   d.setUTCHours(0, 0, 0, 0);
@@ -170,9 +168,6 @@ async function tryPrepareAssignment(window, candidateNumber) {
   }
 }
 
-// Provider assignment is a preparation dependency, not the 100-simultaneous-booking gate itself.
-// Exercise successful assignments concurrently in bounded groups. Capacity misses are discovery setup
-// and are not performance failures; every successful assignment is measured under the Track 3 gate.
 const prepared = [];
 while (prepared.length < 100 && candidateCursor < candidates.length) {
   const remaining = 100 - prepared.length;
@@ -205,9 +200,6 @@ const replayResults = await Promise.all(bookingResults.map(({item}) => measured(
   return payload.data;
 })));
 
-// Prime one real, fully processable Razorpay capture against the first canonical booking. The required
-// 500 calls below are then genuine byte-identical replays of an already accepted event, not 500 retries
-// of an intentionally unmatched/FAILED synthetic event.
 const webhookBookingId = bookingResults[0]?.bookingId;
 if (!webhookBookingId) throw new Error('Track 3 webhook seed requires at least one canonical booking');
 const rawWebhook = JSON.stringify({
