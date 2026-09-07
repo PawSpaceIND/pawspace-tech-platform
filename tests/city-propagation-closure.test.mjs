@@ -60,7 +60,7 @@ test("scheduler stores, filters and reassigns by request city", async () => {
     "the eligible-provider read must take the request's city and zone as parameters and may include appointment time",
   );
   assert.match(route, /city_id IS NULL OR city_id=\?/);
-  assert.match(route, /input\.serviceCode,cityIdFor\(input\),input\.zoneId/);
+  assert.match(route, /input\.serviceCode,cityIdFor\(input\),zoneIdFor\(input\)/);
   assert.match(route, /cityId:cityIdFor\(original\)/);
   assert.match(route, /requestInput:ScheduleRequest=\{[\s\S]*?cityId:cityIdFor\(input\)/);
 });
