@@ -19,3 +19,15 @@ CREATE TABLE IF NOT EXISTS partner_fund_custody (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_partner_fund_custody_state ON partner_fund_custody(state, updated_at);
+
+-- Payout maker/checker evidence is separate from the payout command so approvals remain explicit and
+-- auditable. The payout instruction itself remains sandbox-only and no row here dispatches money.
+CREATE TABLE IF NOT EXISTS partner_payout_instruction_approvals (
+  instruction_id TEXT PRIMARY KEY,
+  statement_approver TEXT,
+  level_1_by TEXT,
+  level_1_at INTEGER,
+  level_2_by TEXT,
+  level_2_at INTEGER,
+  updated_at INTEGER NOT NULL
+);
