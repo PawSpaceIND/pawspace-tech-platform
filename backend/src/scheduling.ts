@@ -51,6 +51,7 @@ export const scheduleRules = {
 
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
 const msMinute = 60_000;
+const SCORE_EPSILON=1e-9;
 const addDays = (value:string, days:number) => new Date(new Date(value).getTime()+days*24*60*msMinute).toISOString();
 export const SCHEDULING_CITY_UTC_OFFSETS:Readonly<Record<string,number>>=Object.freeze({
   blr:330,bengaluru:330,
@@ -87,8 +88,8 @@ function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Recurring weekdays must use values 0–6"),{statusCode:422});
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw Object.assign(new Error("Scheduled end must be after start"),{statusCode:422});
-  const hasAnyGeo=input.latitude!==undefined||input.longitude!==undefined||input.serviceRadiusKm!==undefined;
-  if(hasAnyGeo){if(!Number.isFinite(input.latitude)||Number(input.latitude)<-90||Number(input.latitude)>90||!Number.isFinite(input.longitude)||Number(input.longitude)<-180||Number(input.longitude)>180||!Number.isFinite(input.serviceRadiusKm)||Number(input.serviceRadiusKm)<=0)throw Object.assign(new Error("Scheduling geofence requires valid latitude, longitude and a positive serviceRadiusKm"),{statusCode:422});}
+  const geofenceRequested=input.serviceRadiusKm!==undefined;
+  if(geofenceRequested){if(!Number.isFinite(input.latitude)||Number(input.latitude)<-90||Number(input.latitude)>90||!Number.isFinite(input.longitude)||Number(input.longitude)<-180||Number(input.longitude)>180||!Number.isFinite(input.serviceRadiusKm)||Number(input.serviceRadiusKm)<=0)throw Object.assign(new Error("Scheduling geofence requires valid latitude, longitude and a positive serviceRadiusKm"),{statusCode:422});}
   if(input.serviceCode!=="boarding"&&!(input.serviceCode==="pet_sitting"&&input.careMode==="overnight")){
     const duration=(endMs-startMs)/msMinute;
     const required=input.serviceCode==="grooming"?(input.petIds.length>=4?240:input.petIds.length===3?150:120):input.serviceCode==="dog_training"?Math.max(60,input.petIds.length*60):rule.durationMinutes;
@@ -152,7 +153,7 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
 export async function schedule(repository:PlatformRepository,input:ScheduleRequest):Promise<ScheduleDecision>{
   const occurrences=buildOccurrences(input); const candidates=await repository.listEligibleProviders(input.cityId,input.zoneId,input.serviceCode); const pets=await petsFor(repository,input.petIds);
   const evaluations=await Promise.all(candidates.map(p=>evaluateProvider(repository as SchedulingRepository,p,input,occurrences,pets)));
-  const ranked=evaluations.filter(e=>e.eligible).sort((a,b)=>b.score-a.score||a.workload-b.workload||a.distanceKm-b.distanceKm||a.providerId.localeCompare(b.providerId)); const selectedEval=ranked[0]; const provider=selectedEval?candidates.find(p=>p.id===selectedEval.providerId)??null:null;
+  const ranked=evaluations.filter(e=>e.eligible).sort((a,b)=>{const scoreDelta=b.score-a.score;if(Math.abs(scoreDelta)>SCORE_EPSILON)return scoreDelta;return a.workload-b.workload||a.distanceKm-b.distanceKm||a.providerId.localeCompare(b.providerId);}); const selectedEval=ranked[0]; const provider=selectedEval?candidates.find(p=>p.id===selectedEval.providerId)??null:null;
   const shortlist=ranked.slice(0,3).map(item=>({provider:candidates.find(p=>p.id===item.providerId)!,score:item.score,reasons:item.reasons}));
   if(!provider)return {provider:null,mode:"manual_review",occurrences,evaluations,shortlist:[],explanation:["No provider passed every scheduling rule","Booking retained for Ops intervention"]};
   const override=Boolean(input.manualProviderId&&input.manualOverrideReason); const mode=override?"automatic":provider.model==="full_time"?"automatic":"offer";
