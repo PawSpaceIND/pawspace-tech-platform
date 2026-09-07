@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { applyIdempotentSqlMigration, normalizeReplaySafeDdl } from "../scripts/schema/apply-idempotent-drizzle.mjs";
+import { ensureTrustSafetyTables } from "../lib/trust-safety-governance.ts";
+import { d1 } from "./helpers/execution-harness.mjs";
 
 function assertLockedEnvironment() {
   assert.equal(process.env.PAWSPACE_PAYMENT_ENV, "sandbox");
@@ -18,7 +20,7 @@ function stripSqlComments(source) {
     .replace(/--[^\r\n]*/g, "");
 }
 
-test("0025 uses PRAGMA-governed add-column directives and replays safely", () => {
+test("0025 uses PRAGMA-governed add-column directives and replays safely", async () => {
   assertLockedEnvironment();
   const sql = readFileSync("drizzle/0025_trust_safety_anti_leakage.sql", "utf8");
   assert.doesNotMatch(stripSqlComments(sql), /^\s*ALTER\s+TABLE\s+provider_capacity_profiles\s+ADD\s+COLUMN/gmi);
@@ -32,6 +34,12 @@ test("0025 uses PRAGMA-governed add-column directives and replays safely", () =>
   `);
   applyIdempotentSqlMigration(sqlite, sql, "0025 first pass");
   applyIdempotentSqlMigration(sqlite, sql, "0025 replay");
+
+  // Exercise the real runtime schema bootstrap against an already-migrated database. This proves
+  // the governed migration and production trust/safety bootstrap agree on the same columns/tables
+  // instead of merely regex-matching the migration text.
+  await ensureTrustSafetyTables(d1(sqlite));
+  await ensureTrustSafetyTables(d1(sqlite));
 
   const columns = sqlite.prepare("PRAGMA table_info(provider_capacity_profiles)").all().map((row) => String(row.name));
   assert.equal(columns.filter((name) => name === "trust_score").length, 1);
