@@ -19,11 +19,16 @@ function completeAddress(row:Row,pincode:string){return[String(row.line1||"").tr
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
 async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
+function fixtureCoordinates(cityId:string){switch(cityId){case"maa":return{latitude:13.0827,longitude:80.2707};case"hyd":return{latitude:17.385,longitude:78.4867};case"bom":case"mum":return{latitude:19.076,longitude:72.8777};case"pnq":case"pune":return{latitude:18.5204,longitude:73.8567};default:return{latitude:12.9716,longitude:77.5946};}}
 async function ensureTestProviderHomeBases(db:Db){
   await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
-  const providers=["groom_arun","groom_kiran","groom_sanjay","train_kiran","train_ramesh","train_meera"],now=Date.now();
-  await db.batch(providers.map((providerId,index)=>db.prepare("INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT ?,?,?,?,?,0,NULL,'Explicit sandbox service-discovery fixture','test_fixture',? WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id=?)").bind(`TST-PHB-${providerId}`,providerId,"PawSpace sandbox provider base",12.9716+(index*0.002),77.5946+(index*0.002),now,providerId)));
+  const bases=[
+    {providerId:"groom_arun",...fixtureCoordinates("blr")},{providerId:"groom_kiran",latitude:12.9736,longitude:77.5966},{providerId:"groom_sanjay",latitude:12.9756,longitude:77.5986},
+    {providerId:"train_kiran",latitude:12.9776,longitude:77.6006},{providerId:"train_ramesh",latitude:12.9796,longitude:77.6026},{providerId:"train_meera",latitude:12.9816,longitude:77.6046},
+    {providerId:"groom_maa",...fixtureCoordinates("maa")},
+  ],now=Date.now();
+  await db.batch(bases.map(base=>db.prepare("INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT ?,?,?,?,?,0,NULL,'Explicit sandbox service-discovery fixture','test_fixture',? WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id=?)").bind(`TST-PHB-${base.providerId}`,base.providerId,"PawSpace sandbox provider base",base.latitude,base.longitude,now,base.providerId)));
 }
 
 /** Resolve the address authority used by scheduling.
@@ -54,7 +59,7 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const address=suppliedAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
-    const geocoded=fixture?{status:"configured"as const,address,latitude:12.9716,longitude:77.5946,error:undefined}:await geocodeAddress({address});
+    const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
     if(geocoded.status!=="configured"||!Number.isFinite(geocoded.latitude)||!Number.isFinite(geocoded.longitude))throw new Response(geocoded.error||"The service address could not be geocoded for provider matching",{status:409});
     const now=Date.now(),id=String(row.id);
     if(suppliedAddress){
