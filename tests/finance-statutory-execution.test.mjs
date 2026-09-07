@@ -387,7 +387,7 @@ test("invoice replay preserves immutable tax-ledger row identity and repeated se
   sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,'active',?,?,?,?)")
     .run(ENTITY, "PawSpace Test Entity", "IN", CHECKER, now, now, now);
   sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?,?,?)")
-    .run(REGISTRATION, ENTITY, "test", "test_registration", "TEST-REG", "2026-04-01", CHECKER, now, now, now);
+    .run(REGISTRATION, ENTITY, "test", "test_registration", "29AAAAA0000A1Z5", "2026-04-01", CHECKER, now, now, now);
   sqlite.prepare("INSERT INTO tax_policy_versions (id,entity_id,version,status,effective_from,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES ('policy_test',?,1,'active','2026-04-01','{}','TEST-POLICY',?,?,?,?)")
     .run(ENTITY, CHECKER, now, now, now);
   sqlite.prepare("INSERT INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES ('class_test','policy_test','grooming','TEST-CLASS','[{\"code\":\"test_tax\",\"rate\":10}]','configured_test_rule','configured_test_rule',?)")
