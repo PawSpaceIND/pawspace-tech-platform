@@ -29,9 +29,9 @@ export async function sessionCookie(db, subjectType, subjectId, principalKey) {
   return `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
 }
 
-export async function setupJourney() {
-  const sqlite = new DatabaseSync(":memory:");
-  const db = createD1(sqlite);
+export async function setupJourney(existing = null) {
+  const sqlite = existing?.sqlite ?? new DatabaseSync(":memory:");
+  const db = existing?.db ?? createD1(sqlite);
   state.db = db;
   state.env = {
     DB: db,
@@ -47,10 +47,6 @@ export async function setupJourney() {
   };
   globalThis[WORKERS_DB_GLOBAL] = db;
   globalThis[WORKERS_ENV_GLOBAL] = state.env;
-  // R04-14/15 execute this journey inside the collection-ledger test process, where server-auth may
-  // already have resolved cloudflare:workers through the ledger suite's cached shim. ALS remains the
-  // primary request scope; this test-only bridge makes that cached shim's DB fallback point at the same
-  // isolated journey D1, so real routes and the synchronous SQLite assertions cannot split databases.
   if (globalThis.__PTJA_LEDGER_DB__) globalThis.__PTJA_LEDGER_DB__ = db;
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
@@ -68,7 +64,7 @@ export async function setupJourney() {
     db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('groom_maa','maa','Meena R.','full_time','[\"grooming\"]','[\"chennai-core\"]',1,4.9,96,1,30,4,3,'active',1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
     db.prepare("INSERT INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_maa','grooming-default','maa',NULL,'enforce',0,100,100,0,1,2,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
   ]);
-  return { sqlite, db, close: () => sqlite.close() };
+  return { sqlite, db, close: existing?.close ?? (() => sqlite.close()) };
 }
 
 async function routeCall(modulePath, method, path, body, cookie = "", origin = "https://uat.pawspace.in") {
