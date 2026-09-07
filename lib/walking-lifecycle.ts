@@ -45,7 +45,17 @@ async function mutateWalkingBookingCore(db:D1Database,input:WalkingMutation){if(
   const bookingTarget=allComplete?"completed":"assigned";
   const bookingClaim=await db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=? AND status='in_progress'").bind(bookingTarget,now,booking.id).run();assertLifecycleClaim(bookingClaim);
   let sessionClaim;try{sessionClaim=await db.prepare("UPDATE walking_sessions SET status='completed',completion_status='complete',updated_at=? WHERE id=? AND status='in_progress'").bind(now,session.id).run();assertLifecycleClaim(sessionClaim);}catch(error){const rollback=await db.prepare("UPDATE canonical_bookings SET status='in_progress',updated_at=? WHERE id=? AND status=?").bind(Date.now(),booking.id,bookingTarget).run();assertLifecycleClaim(rollback);throw error;}
-  let finance=null;if(allComplete){try{finance=await resolveServiceCompletionFinance(db,{bookingId:String(booking.id),actorId:input.actorId,completedAt:now});}catch(error){const sessionRollback=await db.prepare("UPDATE walking_sessions SET status='in_progress',completion_status=NULL,updated_at=? WHERE id=? AND status='completed'").bind(Date.now(),session.id).run();assertLifecycleClaim(sessionRollback);const bookingRollback=await db.prepare("UPDATE canonical_bookings SET status='in_progress',updated_at=? WHERE id=? AND status='completed'").bind(Date.now(),booking.id).run();assertLifecycleClaim(bookingRollback);throw error;}}
+  let finance=null;if(allComplete){try{finance=await resolveServiceCompletionFinance(db,{bookingId:String(booking.id),actorId:input.actorId,completedAt:now});}catch(error){/* completion_status is restored to 'pending', NOT to NULL.
+   *
+   * walking_sessions.completion_status is TEXT NOT NULL DEFAULT 'pending' - in both of its
+   * creators, app/api/walking-bookings/route.ts and lib/walking-ops-governance.ts, byte-identically.
+   * Setting it to NULL made this rollback throw "NOT NULL constraint failed" from inside the catch,
+   * so the rollback could never run: it MASKED the real cause, and left the session and the
+   * canonical booking permanently 'completed' with no journal, no payout accrual and no way back,
+   * because complete_walk requires an in_progress session. The guard read correctly and did nothing.
+   *
+   * 'pending' is the value the row carries before completion, so this restores the true prior state. */
+  const sessionRollback=await db.prepare("UPDATE walking_sessions SET status='in_progress',completion_status='pending',updated_at=? WHERE id=? AND status='completed'").bind(Date.now(),session.id).run();assertLifecycleClaim(sessionRollback);const bookingRollback=await db.prepare("UPDATE canonical_bookings SET status='in_progress',updated_at=? WHERE id=? AND status='completed'").bind(Date.now(),booking.id).run();assertLifecycleClaim(bookingRollback);throw error;}}
   const paymentEventId=crypto.randomUUID(),eventId=crypto.randomUUID(),pushNotificationId=crypto.randomUUID(),whatsappNotificationId=crypto.randomUUID(),routeSampleCount=Number(routeSamples?.count||0);
   const message=allComplete?"Your PawSpace Walking programme is complete. Provider payout and tax accruals are resolved in the service ledger.":`Your PawSpace walk is complete. ${amount.toLocaleString("en-IN",{style:"currency",currency:"INR"})} is due in the UAT payment ledger; no live charge was made.`;
   const result={bookingId:String(booking.id),sessionId,status:"completed",paymentEventId,paymentStatus:"due",amount,allComplete,liveMoney:false,routeSamples:routeSampleCount,gpsConnected:true,payout:finance?.payoutStatus??"session_pending",tax:finance?.taxStatus??"session_pending",finance};
