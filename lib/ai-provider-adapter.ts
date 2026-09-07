@@ -119,7 +119,7 @@ async function governanceAllowsExternalAi(
   modelRef: string,
 ): Promise<boolean> {
   const db = env.DB as D1Database | undefined;
-  if (!db) return true;
+  if (!db) return str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() !== "production";
   try {
     const { resolveActiveAiBusinessConfig } = await import("./ai-business-configuration");
     const active = await resolveActiveAiBusinessConfig(db, {
@@ -130,9 +130,9 @@ async function governanceAllowsExternalAi(
     });
     return active.enabled !== false;
   } catch {
-    // Some non-runtime unit harnesses do not create the business-config tables. Explicit production
-    // runtime calls use DB-backed controls and the grounded provider additionally requires active config.
-    return true;
+    // Unit harnesses may omit the business-config schema; production must never turn a governance
+    // read failure into permission to contact the provider.
+    return str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() !== "production";
   }
 }
 
