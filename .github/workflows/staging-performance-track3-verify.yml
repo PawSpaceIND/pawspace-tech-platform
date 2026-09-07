@@ -113,7 +113,7 @@ jobs:
           git show "${GITHUB_SHA}:scripts/ops/staging-performance-gate.mjs" > scripts/ops/staging-performance-gate.mjs
       - name: Run hosted Track 3 workload
         env:
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
           PERF_RUN_ID: remediation-${{ github.run_id }}-${{ github.run_attempt }}
           PERFORMANCE_LOAD_HOSTED: 'true'
