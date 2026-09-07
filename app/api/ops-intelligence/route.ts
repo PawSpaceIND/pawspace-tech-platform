@@ -12,7 +12,9 @@ export async function GET(request:Request){
       const serviceCode=String(url.searchParams.get("serviceCode")||"").trim();
       if(!serviceCode)return json({error:"A service is required"},400);
       const providers=(url.searchParams.get("providers")||"").split(",").map(s=>s.trim()).filter(Boolean);
-      return json({data:await rankProvidersForBooking(db,{serviceCode,candidateProviderIds:providers.length?providers:undefined})});
+      const cityId=String(url.searchParams.get("cityId")||"").trim()||undefined;
+      const zoneId=String(url.searchParams.get("zoneId")||"").trim()||undefined;
+      return json({data:await rankProvidersForBooking(db,{serviceCode,candidateProviderIds:providers.length?providers:undefined,cityId,zoneId})});
     }
     return json({data:await forecastDemand(db,{serviceCode:url.searchParams.get("serviceCode")||undefined,cityId:url.searchParams.get("cityId")||undefined,horizonDays:Number(url.searchParams.get("horizonDays"))||undefined})});
   }catch(error){return authError(error,"Unable to load ops intelligence");}
