@@ -145,7 +145,7 @@ jobs:
       - name: Build (vinext)
         run: npm run build
 
-      - name: Configure production (name + D1 + explicit runtime modes)
+      - name: Configure production (name + D1 + explicit runtime modes + provider identifiers)
         env:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
@@ -158,6 +158,10 @@ jobs:
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
           PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
+          IDFY_URL: ${{ vars.IDFY_URL }}
+          PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: node scripts/prod-config.mjs
 
       # No continue-on-error. A production deploy with no recorded rollback reference is a
@@ -199,6 +203,14 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64 }}
+          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
           INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
           FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
@@ -214,11 +226,14 @@ jobs:
             const requiredNames = [
               "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
               "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
+              "IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_WEBHOOK_SECRET",
+              "PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64", "PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64",
+              "META_WHATSAPP_ACCESS_TOKEN", "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN",
               "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
               "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET"
             ];
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required production communication or identity secret is missing");
+            if (Object.values(values).some(value => !value)) throw new Error("a required production provider, communication or identity secret is missing");
             if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
             const pilotAllowlist = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
             if (pilotAllowlist) values.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS = pilotAllowlist;
@@ -231,6 +246,10 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
+          IDFY_URL: ${{ vars.IDFY_URL }}
+          PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: |
           set -euo pipefail
           node - <<'NODE'
@@ -249,7 +268,10 @@ jobs:
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
-          console.log("Deployed configuration certified: production worker, production database, payments sandbox-only, live payment approval false, governed voice mode.");
+          for (const name of ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"]) {
+            if ((cfg.vars || {})[name] !== process.env[name]) fail(`${name} differs from the production environment value certified before deploy`);
+          }
+          console.log("Deployed configuration certified: production worker, production database, canonical provider configuration, payments sandbox-only, live payment approval false, governed voice mode.");
           NODE
 
       - name: Where this went, and how to undo it
