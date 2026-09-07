@@ -346,18 +346,27 @@ jobs:
       - name: registerHooks path (Node >= 22.15)
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}" 2>&1 | tee register-hooks.tap
       - name: Loader-hook fallback compatibility path
         shell: bash
         env:
           PAWSPACE_FORCE_LOADER_HOOK: '1'
         run: |
-          set -euo pipefail
+          set -o pipefail
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}" 2>&1 | tee loader-hooks.tap
+      - name: Upload hook-path TAP diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook-path-tap
+          path: |
+            register-hooks.tap
+            loader-hooks.tap
+          if-no-files-found: warn
 
   backend:
     name: Backend
