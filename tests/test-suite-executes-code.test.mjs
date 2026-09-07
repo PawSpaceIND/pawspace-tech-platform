@@ -26,10 +26,14 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 
 /* The measured count at the time this ratchet was introduced. LOWER IT when you convert a file.
  * Never raise it: a new test that cannot fail is not coverage. */
-// Exact-head CI correction: the detector reports 172 after the executable GST, commission and RBAC
-// conversions in this PR. The earlier 170 figure was a baseline measurement error, not two further
-// conversions. Freeze the measured tree here; from this corrected baseline the number may only fall.
-const STATIC_FILE_BUDGET = 172;
+// Exact-head CI correction: the detector reported 172 after the executable GST, commission and RBAC
+// conversions. The earlier 170 figure was a baseline measurement error, not two further conversions.
+//
+// 172 -> 171: meta-whatsapp-webhook converted to execute verifyMetaWhatsAppSignature with real
+// HMACs. Sabotage-verified, and the measurement is the argument for the whole exercise: bypassing
+// the digest comparison entirely leaves all THREE of that file's original regexes satisfied, while
+// the executed version reports FORGERY ACCEPTED. See the file header.
+const STATIC_FILE_BUDGET = 171;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.

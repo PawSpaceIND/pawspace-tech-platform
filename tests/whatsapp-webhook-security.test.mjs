@@ -23,8 +23,15 @@ assert.equal(process.env.FORBID_PRODUCTION, "true", "webhook certification must 
 
 installAiHooks();
 
-// Preserve the existing source-level security contract under the exact certification filename.
-await import("./meta-whatsapp-webhook.test.mjs");
+/* meta-whatsapp-webhook.test.mjs used to be imported here so its source-level assertions ran under
+ * this certification filename. It is no longer source-level: it executes verifyMetaWhatsAppSignature
+ * against real HMACs and installs its own workers hooks to do so. Two harnesses in one process means
+ * two `cloudflare:workers` resolve hooks, the later one wins, and the route below then reads an empty
+ * env - which showed up as a missing-signature request returning 503 instead of 401.
+ *
+ * The import was always duplication: tests/*.test.mjs already runs that file in its own process.
+ * Dropped rather than worked around, because a test file importing another test file is what made a
+ * conversion in one file break an assertion in a different one. */
 
 const customer360 = await import("../lib/customer-360.ts");
 const adapter = await import("../lib/whatsapp-uat-adapter.ts");
