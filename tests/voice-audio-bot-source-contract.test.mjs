@@ -29,6 +29,9 @@ test("operator audit exposes governed transcript segments and voice events", () 
 test("voice staging overlay is explicit, isolated and keeps recipient/provider data secret", () => {
   assert.match(overlay, /cfg\.name !== "pawspace-staging"/);
   assert.match(overlay, /PAWSPACE_VOICE_ENV: "uat"/);
+  assert.match(overlay, /PAWSPACE_VOICE_UAT_AUTORUN: "false"/);
+  assert.match(overlay, /PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "false"/);
+  assert.doesNotMatch(overlay, /PAWSPACE_VOICE_UAT_RUN_AT/);
   assert.match(overlay, /cfg\.ai = \{ binding: "AI" \}/);
   assert.match(overlay, /PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT/);
   for (const name of ["PAWSPACE_VOICE_UAT_ALLOWLIST", "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"]) {
@@ -36,5 +39,7 @@ test("voice staging overlay is explicit, isolated and keeps recipient/provider d
     assert.match(workflow, new RegExp(`secrets\\.${name}`));
   }
   assert.doesNotMatch(workflow, /request_call|action:\s*["']request_call["']/);
+  assert.match(workflow, /automatic carrier dispatch: disabled/);
+  assert.match(workflow, /automatic consent creation: disabled/);
   assert.match(workflow, /real call placed by this workflow: no/);
 });
