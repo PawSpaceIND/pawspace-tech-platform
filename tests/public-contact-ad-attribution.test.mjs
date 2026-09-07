@@ -47,6 +47,6 @@ test("EXECUTED: normalization sanitizes length and chooses deterministic click p
  const normalized=attribution.normalizeLeadAdAttribution({gclid:" G-1 ",fbclid:" F-2 ",wbraid:" W-3 ",utmSource:" google "});assert.equal(normalized.sourcePlatform,"google");assert.equal(normalized.clickId,"G-1");assert.equal(normalized.fbclid,"F-2");assert.equal(normalized.wbraid,"W-3");assert.equal(normalized.utmSource,"google");
 });
 
-test("landing-page client forwards the full requested advertising parameter set",()=>{
- const source=readFileSync(new URL("../app/landing-pages/landing-lead-form.tsx",import.meta.url),"utf8");for(const token of["gclid","fbclid","wbraid","utm_source","utm_medium","utm_campaign","campaign_id","ad_id"])assert.match(source,new RegExp(`adParam\\(params,\\"${token}\\"`),`missing ${token}`);assert.match(source,/new URLSearchParams\(window\.location\.search\)/);assert.match(source,/landingUrl:window\.location\.href/);
+test("landing-page client forwards the full requested advertising parameter set without hydration-time query reads",()=>{
+ const source=readFileSync(new URL("../app/landing-pages/landing-lead-form.tsx",import.meta.url),"utf8");for(const token of["gclid","fbclid","wbraid","utm_source","utm_medium","utm_campaign","campaign_id","ad_id"])assert.ok(source.includes(`useQueryParameter("${token}")`),`missing ${token}`);assert.doesNotMatch(source,/window\.location\.search/);assert.match(source,/landingUrl:window\.location\.href/);
 });
