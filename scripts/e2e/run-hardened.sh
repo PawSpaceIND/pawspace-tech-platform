@@ -111,12 +111,14 @@ node scripts/e2e/seed-identities.mjs
 
 # Wrangler 4.92.0 can lose its local ProxyController connection during a long-lived built-worker run.
 # Keep the same persisted Miniflare D1 state, but give each real journey file a fresh server lifetime.
-# This does not retry failed tests or weaken assertions: any journey failure still fails the gate once.
+# The Playwright config executes every journey on both Desktop Chrome and Pixel 7. This does not retry
+# failed tests or weaken assertions: any journey/project failure still fails the gate once.
 journeys=(
   e2e/journeys/00-identity.spec.ts
   e2e/journeys/01-customer.spec.ts
   e2e/journeys/02-partner.spec.ts
   e2e/journeys/03-admin.spec.ts
+  e2e/journeys/04-multi-actor.spec.ts
 )
 
 for journey in "${journeys[@]}"; do

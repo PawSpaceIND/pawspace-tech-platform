@@ -1,0 +1,34 @@
+name: Provider Compliance Audit
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-compliance-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-compliance-audit:
+    name: Provider compliance audit
+    runs-on: ubuntu-latest
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Run exact provider compliance audit
+        run: PAWSPACE_PAYMENT_ENV=sandbox FORBID_PRODUCTION=true npm run test:provider-compliance-audit
