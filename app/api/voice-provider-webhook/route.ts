@@ -1,50 +1,34 @@
 import{authError,database}from"../../../lib/server-auth";
-import{recordVoiceProviderEventFromExotelReconciliation}from"../../../lib/exotel-call-reconciliation";
+import{extractExotelCallSid,recordVoiceProviderEventFromExotelReconciliation}from"../../../lib/exotel-call-reconciliation";
 import{selectTelephonyProvider}from"../../../lib/voice-telephony-provider";
 import{startInboundAiVoiceSession,runInboundAiVoiceTurn,endInboundAiVoiceSession}from"../../../lib/inbound-ai-telephony";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
+import{captureInboundWebhook,runInboundWebhookAttempt}from"../../../lib/gateway-inbound-queue";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const MAX_CALLBACK_BYTES=65_536;
 const text=(value:unknown)=>String(value??"").trim();
 function fields(raw:string){const value=raw.trim();if(value.startsWith("{")){try{return JSON.parse(value)as Record<string,unknown>}catch{return{}}}return Object.fromEntries(new URLSearchParams(value));}
+function voiceEnvironment(runtime:Record<string,unknown>){const value=text(runtime.PAWSPACE_VOICE_ENV).toLowerCase();return value==="live"?"live":value==="uat"?"uat":"sandbox";}
+function inboundEventId(action:string,payload:Record<string,unknown>){if(action==="inbound_ai_start")return`${action}:${text(payload.providerCallId||payload.CallSid||payload.callsid||payload.sid)}`;if(action==="inbound_ai_turn")return`${action}:${text(payload.sessionId)}:${text(payload.audioRef)}`;if(action==="inbound_ai_end")return`${action}:${text(payload.sessionId)}`;return"";}
+async function processInboundAi(db:D1Database,runtime:Record<string,unknown>,action:string,payload:Record<string,unknown>){
+ if(action==="inbound_ai_start"){const providerCallId=text(payload.providerCallId||payload.CallSid||payload.callsid||payload.sid),caller=text(payload.caller||payload.From||payload.from);if(!providerCallId||!caller)throw new Response("providerCallId and caller are required",{status:400});return{status:201,data:await startInboundAiVoiceSession(db,{providerCallId,caller,language:text(payload.language)||null})};}
+ if(action==="inbound_ai_turn"){const sessionId=text(payload.sessionId),audioRef=text(payload.audioRef);if(!sessionId||!audioRef)throw new Response("sessionId and audioRef are required",{status:400});const data=await runInboundAiVoiceTurn(db,runtime,{sessionId,audioRef,bargeIn:text(payload.bargeIn).toLowerCase()==="true"});return{status:data.status==="human_handoff"?202:200,data};}
+ if(action==="inbound_ai_end"){const sessionId=text(payload.sessionId);if(!sessionId)throw new Response("sessionId is required",{status:400});return{status:200,data:await endInboundAiVoiceSession(db,{sessionId,outcome:text(payload.outcome)||undefined})};}
+ throw new Response("Unsupported inbound AI voice action",{status:400});
+}
 
-/**
- * Single carrier boundary for outbound status callbacks and inbound AI voice sessions.
- *
- * Outbound Exotel callbacks are deliberately trigger-only. The unverified POST contributes only a
- * CallSid; PawSpace first proves that Sid belongs to an existing Exotel call in D1 and then retrieves
- * the current status from Exotel's authenticated Call Details API. Only that server-to-server response
- * can advance the lifecycle, so a forged CallStatus/CustomField in the public POST has no authority.
- *
- * Inbound AI start/turn/end actions are different: they carry live conversational input and therefore
- * still require the existing provider shared-secret verification before any AI session mutation.
- */
 export async function POST(request:Request){
  try{
-  const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
-  let raw:string;try{raw=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}catch(error){if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);throw error;}
-  const payload=fields(raw),action=text(payload.pawspace_action||payload.PawSpaceAction).toLowerCase();
-  const db=await database();
+  const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;let raw:string;try{raw=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}catch(error){if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);throw error;}
+  const payload=fields(raw),action=text(payload.pawspace_action||payload.PawSpaceAction).toLowerCase(),db=await database();
   if(action.startsWith("inbound_ai_")){
-   const provider=selectTelephonyProvider(runtime),verified=await provider.verifyWebhook({rawBody:raw,headers:request.headers});
-   if(!verified.verified)return json({error:verified.reason||"Inbound voice callback signature refused"},401);
-   if(action==="inbound_ai_start"){
-    const providerCallId=text(payload.providerCallId||payload.CallSid||payload.callsid||payload.sid),caller=text(payload.caller||payload.From||payload.from);
-    if(!providerCallId||!caller)return json({error:"providerCallId and caller are required"},400);
-    return json({ok:true,data:await startInboundAiVoiceSession(db,{providerCallId,caller,language:text(payload.language)||null})},201);
-   }
-   if(action==="inbound_ai_turn"){
-    const sessionId=text(payload.sessionId),audioRef=text(payload.audioRef);if(!sessionId||!audioRef)return json({error:"sessionId and audioRef are required"},400);
-    const data=await runInboundAiVoiceTurn(db,runtime,{sessionId,audioRef,bargeIn:String(payload.bargeIn||"").toLowerCase()==="true"});return json({ok:true,data},data.status==="human_handoff"?202:200);
-   }
-   if(action==="inbound_ai_end"){
-    const sessionId=text(payload.sessionId);if(!sessionId)return json({error:"sessionId is required"},400);return json({ok:true,data:await endInboundAiVoiceSession(db,{sessionId,outcome:text(payload.outcome)||undefined})});
-   }
-   return json({error:"Unsupported inbound AI voice action"},400);
+   const provider=selectTelephonyProvider(runtime),verified=await provider.verifyWebhook({rawBody:raw,headers:request.headers});if(!verified.verified)return json({error:verified.reason||"Inbound voice callback signature refused"},401);const eventId=inboundEventId(action,payload);if(!eventId||eventId.endsWith(":"))return json({error:"Inbound voice event identity is incomplete"},400);
+   const captured=await captureInboundWebhook(db,{provider:provider.provider,routeKey:"voice-provider-webhook",environment:voiceEnvironment(runtime),eventId,messageId:null,rawBody:raw,headers:request.headers});const status=text(captured.row.status);if(status==="PROCESSED")return json({ok:true,duplicatePrevented:true,status});if(status==="DEAD_LETTER")return json({ok:false,duplicatePrevented:true,status},503);
+   const attempt=await runInboundWebhookAttempt(db,{queueId:text(captured.row.id),workerId:`voice-inbound:${crypto.randomUUID()}`,handler:async({rawBody})=>processInboundAi(db,runtime,action,fields(rawBody))});if(!attempt.claimed)return json({ok:true,queued:true,duplicatePrevented:true,status},202);if(!attempt.ok){const code=attempt.error instanceof Response?attempt.error.status:503;return json({ok:false,queued:true,status:attempt.failure.status,error:attempt.error instanceof Response?await attempt.error.text():"Inbound voice processing failed"},code>=400&&code<500?code:503);}const result=attempt.result as{status:number;data:unknown};return json({ok:true,data:result.data,queued:true,duplicatePrevented:captured.duplicatePrevented},result.status);
   }
-  const result=await recordVoiceProviderEventFromExotelReconciliation(db,runtime,raw);
-  if(!result.accepted)return json({error:result.reason},result.status);
-  return json({ok:true,...result},result.status);
+  const callSid=extractExotelCallSid(raw);if(!callSid)return json({error:"Exotel callback trigger is missing a valid CallSid"},400);const owned=await db.prepare("SELECT id FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? LIMIT 1").bind(callSid).first<Record<string,unknown>>();if(!owned)return json({ok:true,accepted:true,applied:false,reason:"Unknown Exotel call trigger ignored",duplicate:false},202);
+  const captured=await captureInboundWebhook(db,{provider:"exotel",routeKey:"voice-provider-webhook",environment:voiceEnvironment(runtime),eventId:`exotel:${callSid}`,messageId:text(owned.id)||null,rawBody:raw,headers:request.headers});const status=text(captured.row.status);if(status==="PROCESSED")return json({ok:true,duplicatePrevented:true,status});if(status==="DEAD_LETTER")return json({ok:false,duplicatePrevented:true,status},503);
+  const attempt=await runInboundWebhookAttempt(db,{queueId:text(captured.row.id),workerId:`voice-exotel:${crypto.randomUUID()}`,handler:async({rawBody})=>{const result=await recordVoiceProviderEventFromExotelReconciliation(db,runtime,rawBody);if(!result.accepted)throw new Response(result.reason,{status:result.status});return result;}});if(!attempt.claimed)return json({ok:true,queued:true,duplicatePrevented:true,status},202);if(!attempt.ok){const code=attempt.error instanceof Response?attempt.error.status:503;return json({ok:false,queued:true,status:attempt.failure.status,error:attempt.error instanceof Response?await attempt.error.text():"Exotel reconciliation failed"},code>=400&&code<500?code:503);}const result=attempt.result as Record<string,unknown>;return json({ok:true,...result,queued:true,duplicatePrevented:captured.duplicatePrevented},Number(result.status||200));
  }catch(error){return authError(error,"Unable to process voice provider callback");}
 }

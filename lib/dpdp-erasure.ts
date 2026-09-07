@@ -1,0 +1,53 @@
+type Db=D1Database;
+type Row=Record<string,unknown>;
+const encoder=new TextEncoder();
+const text=(value:unknown)=>String(value??"").trim();
+const hex=(buffer:ArrayBuffer)=>Array.from(new Uint8Array(buffer)).map(value=>value.toString(16).padStart(2,"0")).join("");
+async function sha256(value:string){return hex(await crypto.subtle.digest("SHA-256",encoder.encode(value)));}
+async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
+async function columns(db:Db,name:string){if(!await tableExists(db,name))return new Set<string>();const result=await db.prepare(`PRAGMA table_info(${name})`).all<Row>();return new Set(result.results.map(row=>text(row.name)));}
+async function scalar(db:Db,sql:string,binds:unknown[]=[]){let statement=db.prepare(sql);if(binds.length)statement=statement.bind(...binds);return statement.first<Row>();}
+
+export async function ensureDpdpErasureTables(db:Db){await db.batch([
+ db.prepare(`CREATE TABLE IF NOT EXISTS dpdp_erasure_requests (
+  id TEXT PRIMARY KEY,customer_id_hash TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,
+  scope_json TEXT NOT NULL DEFAULT '{}',ledger_before_json TEXT NOT NULL DEFAULT '{}',ledger_after_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT NOT NULL DEFAULT '{}',requested_by TEXT NOT NULL,created_at INTEGER NOT NULL,completed_at INTEGER,updated_at INTEGER NOT NULL
+ )`),
+ db.prepare("CREATE INDEX IF NOT EXISTS idx_dpdp_erasure_status ON dpdp_erasure_requests(status,created_at)")
+]);}
+
+async function ledgerSnapshot(db:Db){
+ const snapshot:Record<string,unknown>={};
+ if(await tableExists(db,"journal_transactions")){const row=await scalar(db,"SELECT COUNT(*) transaction_count,SUM(CASE WHEN status='POSTED' THEN 1 ELSE 0 END) posted_count FROM journal_transactions");snapshot.transactions={count:Number(row?.transaction_count||0),posted:Number(row?.posted_count||0)};}
+ if(await tableExists(db,"journal_entries")){const row=await scalar(db,"SELECT COUNT(*) entry_count,COALESCE(SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE 0 END),0) debit_total,COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount_paise ELSE 0 END),0) credit_total FROM journal_entries");snapshot.entries={count:Number(row?.entry_count||0),debits:Number(row?.debit_total||0),credits:Number(row?.credit_total||0)};}
+ return snapshot;
+}
+function sameLedger(left:Record<string,unknown>,right:Record<string,unknown>){return JSON.stringify(left)===JSON.stringify(right);}
+function has(set:Set<string>,name:string){return set.has(name);}
+
+/**
+ * DPDP erasure keeps canonical IDs needed for referential/accounting continuity but replaces or deletes
+ * personal attributes. Posted journals and journal entries are never part of the mutation batch and are
+ * checked byte-for-byte at the aggregate invariant level before/after the batch.
+ */
+export async function eraseCustomerPersonalData(db:Db,input:{customerId:string;idempotencyKey:string;requestedBy:string;reason?:string;now?:number}){
+ await ensureDpdpErasureTables(db);const customerId=text(input.customerId),key=text(input.idempotencyKey),actor=text(input.requestedBy),now=input.now??Date.now();if(!customerId||!key||!actor)throw new Error("Customer, idempotency key and requester are required for DPDP erasure");
+ const prior=await db.prepare("SELECT * FROM dpdp_erasure_requests WHERE idempotency_key=?").bind(key).first<Row>();if(prior){if(text(prior.customer_id_hash)!==await sha256(customerId))throw new Error("DPDP erasure idempotency key belongs to another customer");return{...JSON.parse(text(prior.result_json)||"{}"),duplicatePrevented:true};}
+ const customerHash=await sha256(customerId),requestId=`DPDP-${crypto.randomUUID()}`,token=(await sha256(`erased:${customerId}`)).slice(0,16),anonymousName=`Erased Customer ${token.slice(0,8)}`,anonymousPhone=`ERASED-${token}`,anonymousEmail=`erased+${token}@invalid.pawspace`;
+ const before=await ledgerSnapshot(db);await db.prepare("INSERT INTO dpdp_erasure_requests (id,customer_id_hash,idempotency_key,status,scope_json,ledger_before_json,result_json,requested_by,created_at,updated_at) VALUES (?,?,?,'PROCESSING',?,?, '{}',?,?,?)").bind(requestId,customerHash,key,JSON.stringify({customer:true,pets:true,addresses:true,crm:true,communications:true,ledgerPreserved:true,reason:text(input.reason)||null}),JSON.stringify(before),actor,now,now).run();
+ const statements:ReturnType<Db["prepare"]>[]=[];
+ const customerCols=await columns(db,"canonical_customers");if(customerCols.size){const sets:string[]=[],values:unknown[]=[];if(has(customerCols,"name")){sets.push("name=?");values.push(anonymousName);}if(has(customerCols,"primary_phone")){sets.push("primary_phone=?");values.push(anonymousPhone);}if(has(customerCols,"secondary_phone")){sets.push("secondary_phone=NULL");}if(has(customerCols,"email")){sets.push("email=?");values.push(anonymousEmail);}if(has(customerCols,"consent_json")){sets.push("consent_json='{}'");}if(has(customerCols,"source")){sets.push("source='dpdp_erased'");}if(has(customerCols,"updated_at")){sets.push("updated_at=?");values.push(now);}if(sets.length)statements.push(db.prepare(`UPDATE canonical_customers SET ${sets.join(",")} WHERE id=?`).bind(...values,customerId));}
+ const petCols=await columns(db,"canonical_pets");if(petCols.size){const sets:string[]=["name='Erased Pet'"];if(has(petCols,"breed"))sets.push("breed=NULL");if(has(petCols,"profile_json"))sets.push("profile_json=NULL");if(has(petCols,"source_pet_id"))sets.push("source_pet_id=NULL");if(has(petCols,"updated_at"))sets.push(`updated_at=${now}`);statements.push(db.prepare(`UPDATE canonical_pets SET ${sets.join(",")} WHERE customer_id=?`).bind(customerId));}
+ if(await tableExists(db,"customer_addresses"))statements.push(db.prepare("DELETE FROM customer_addresses WHERE customer_id=?").bind(customerId));
+ const crmCols=await columns(db,"crm_contacts");if(crmCols.size){const idByCustomer=has(crmCols,"customer_id");const match=idByCustomer?"customer_id=?":has(crmCols,"id")?"id=?":null;if(match){const sets:string[]=[];if(has(crmCols,"name"))sets.push(`name='${anonymousName.replaceAll("'","''")}'`);if(has(crmCols,"primary_phone"))sets.push(`primary_phone='${anonymousPhone}'`);if(has(crmCols,"secondary_phone"))sets.push("secondary_phone=NULL");if(has(crmCols,"email"))sets.push(`email='${anonymousEmail}'`);if(has(crmCols,"pet_names"))sets.push("pet_names=NULL");if(has(crmCols,"pet_summary"))sets.push("pet_summary=NULL");if(has(crmCols,"area"))sets.push("area=NULL");if(has(crmCols,"updated_at"))sets.push(`updated_at=${now}`);if(sets.length)statements.push(db.prepare(`UPDATE crm_contacts SET ${sets.join(",")} WHERE ${match}`).bind(customerId));}}
+ if(await tableExists(db,"lead_work_items")){const c=await columns(db,"lead_work_items");const sets:string[]=[];if(has(c,"source"))sets.push("source='dpdp_erased'");if(has(c,"last_outcome"))sets.push("last_outcome='Personal data erased'");if(has(c,"opt_out"))sets.push("opt_out=1");if(has(c,"updated_at"))sets.push(`updated_at=${now}`);if(sets.length)statements.push(db.prepare(`UPDATE lead_work_items SET ${sets.join(",")} WHERE customer_id=?`).bind(customerId));}
+ if(await tableExists(db,"communication_messages")){const c=await columns(db,"communication_messages");const sets:string[]=[];if(has(c,"payload_json"))sets.push("payload_json='{}'");if(has(c,"policy_json"))sets.push("policy_json='{}'");if(has(c,"provider_reference"))sets.push("provider_reference=NULL");if(has(c,"updated_at"))sets.push(`updated_at=${now}`);if(sets.length)statements.push(db.prepare(`UPDATE communication_messages SET ${sets.join(",")} WHERE customer_id=?`).bind(customerId));}
+ if(await tableExists(db,"crm_email_events")){const c=await columns(db,"crm_email_events");const sets:string[]=[];if(has(c,"detail_json"))sets.push("detail_json='{}'");if(has(c,"provider_message_id"))sets.push("provider_message_id=NULL");if(sets.length)statements.push(db.prepare(`UPDATE crm_email_events SET ${sets.join(",")} WHERE customer_id=?`).bind(customerId));}
+ if(await tableExists(db,"whatsapp_uat_identity_reviews"))statements.push(db.prepare("DELETE FROM whatsapp_uat_identity_reviews WHERE provider_identity IN (SELECT primary_phone FROM canonical_customers WHERE id=?)").bind(customerId));
+ if(await tableExists(db,"customer_contact_preferences")){const c=await columns(db,"customer_contact_preferences");const sets=["marketing_consent=0","service_consent=0","whatsapp_consent=0","sms_consent=0","email_consent=0","opt_out=1"];if(has(c,"source"))sets.push("source='dpdp_erased'");if(has(c,"updated_at"))sets.push(`updated_at=${now}`);statements.push(db.prepare(`UPDATE customer_contact_preferences SET ${sets.join(",")} WHERE customer_id=?`).bind(customerId));}
+ if(statements.length)await db.batch(statements);
+ const after=await ledgerSnapshot(db);if(!sameLedger(before,after)){await db.prepare("UPDATE dpdp_erasure_requests SET status='FAILED',ledger_after_json=?,result_json=?,completed_at=?,updated_at=? WHERE id=?").bind(JSON.stringify(after),JSON.stringify({error:"ledger_invariant_changed"}),now,now,requestId).run();throw new Error("DPDP erasure aborted certification because immutable ledger invariants changed");}
+ const result={requestId,customerIdHash:customerHash,status:"COMPLETED",ledgerPreserved:true,ledger:after,scope:{customer:true,pets:true,addresses:true,crm:true,communications:true},duplicatePrevented:false};
+ await db.prepare("UPDATE dpdp_erasure_requests SET status='COMPLETED',ledger_after_json=?,result_json=?,completed_at=?,updated_at=? WHERE id=?").bind(JSON.stringify(after),JSON.stringify(result),now,now,requestId).run();return result;
+}
