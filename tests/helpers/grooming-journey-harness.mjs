@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 import { freshCountingD1 } from "./d1-harness.mjs";
+import { runWithWorkersDb } from "./module-hooks.mjs";
 
 const state = { db: null, env: null };
 const WORKERS_STUB = `export const env=new Proxy({}, {get:(_,key)=>globalThis.__GROOM_JOURNEY_STATE__.env?.[key]});`;
@@ -76,13 +77,16 @@ export async function setupJourney() {
 }
 
 async function routeCall(modulePath, method, path, body, cookie = "", origin = "https://uat.pawspace.in") {
-  const route = await import(modulePath);
-  const request = new Request(`${origin}${path}`, {
-    method, headers: { "x-pawspace-role": "admin", "x-internal-service": "true",  ...(body ? { "content-type": "application/json"  } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const response = await route[method](request);
-  return { status: response.status, body: await response.json() };
+  const execute = async () => {
+    const route = await import(modulePath);
+    const request = new Request(`${origin}${path}`, {
+      method, headers: { "x-pawspace-role": "admin", "x-internal-service": "true",  ...(body ? { "content-type": "application/json"  } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const response = await route[method](request);
+    return { status: response.status, body: await response.json() };
+  };
+  return state.db ? runWithWorkersDb(state.db, execute) : execute();
 }
 
 export async function runCompletedJourney(ctx, config) {
