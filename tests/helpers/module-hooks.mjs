@@ -17,12 +17,18 @@ import { fileURLToPath } from "node:url";
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
 // `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
 // AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
+// Reuse the process-global instance if this helper is evaluated through more than one module context:
+// every installed worker shim reads that global, so runWithWorkersDb must write to the same instance.
 export const WORKERS_DB_ALS_KEY = "__PAWSPACE_SCOPED_WORKERS_DB__";
-const workersDbAls = new AsyncLocalStorage();
-globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
+const existingWorkersDbAls = globalThis[WORKERS_DB_ALS_KEY];
+const workersDbAls = existingWorkersDbAls && typeof existingWorkersDbAls.run === "function" && typeof existingWorkersDbAls.getStore === "function"
+  ? existingWorkersDbAls
+  : new AsyncLocalStorage();
+if (!existingWorkersDbAls) globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
 
 export function runWithWorkersDb(db, callback) {
-  return workersDbAls.run(db, callback);
+  const als = globalThis[WORKERS_DB_ALS_KEY] ?? workersDbAls;
+  return als.run(db, callback);
 }
 
 // Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
