@@ -80,9 +80,19 @@ test("GRM-01 OTP: a challenge is persisted, and a live run never hands the code 
 
   const issued = await attempt(() => otp.requestCustomerOtp(db, { phone: PHONE }));
   assert.equal(issued.ok, true, `OTP request must succeed: ${JSON.stringify(issued).slice(0, 160)}`);
-  const stored = sqlite.prepare("SELECT code,phone,consumed FROM customer_otp_challenges ORDER BY rowid DESC LIMIT 1").get();
+  const stored = sqlite.prepare("SELECT code,phone,consumed,verifier_salt,verifier_hash FROM customer_otp_challenges ORDER BY rowid DESC LIMIT 1").get();
   assert.ok(stored, "a challenge row must be persisted");
-  assert.match(String(stored.code), /^\d{6}$/, "a six-digit code must be stored");
+  /* UPDATED after main hardened OTP storage. The `code` column used to hold the plain six digits;
+   * it now holds the literal marker and the secret lives as a salted HMAC. The assertion was
+   * rewritten to the STRONGER claim that follows: the digits a caller could replay must not be
+   * recoverable from the row at all. */
+  assert.equal(String(stored.code), "[hashed]", "the plain code must never be at rest in the challenge row");
+  assert.ok(String(stored.verifier_salt || "").length > 0, "a per-challenge salt must be stored");
+  assert.ok(String(stored.verifier_hash || "").length > 0, "a verifier hash must be stored");
+  const plain = String(issued.value?.sandboxCode ?? "");
+  assert.match(plain, /^\d{6}$/, "sandbox delivery must still hand the tester a six-digit code");
+  assert.ok(!JSON.stringify(stored).includes(plain), `the issued code must not appear anywhere in the row: ${JSON.stringify(stored)}`);
+  assert.notEqual(String(stored.verifier_hash), plain);
   assert.equal(Number(stored.consumed), 0, "a fresh challenge must not start consumed");
 
   /* EXECUTED: the route in sandbox mode. The library returns sandboxCode by design - that is what
@@ -151,14 +161,22 @@ test("GRM-03 OTP: the correct code verifies and resolves a customer", async () =
   await otp.ensureCustomerOtpTables(db);
   const issued = await otp.requestCustomerOtp(db, { phone: PHONE });
   const challengeId = String(issued?.challengeId ?? issued?.id ?? "");
-  const code = String(sqlite.prepare("SELECT code FROM customer_otp_challenges WHERE id=?").get(challengeId)?.code ?? "");
-  assert.match(code, /^\d{4,8}$/, "a numeric OTP must have been stored");
+  /* The code now comes from the SANDBOX DELIVERY rather than the row: main moved the challenge to a
+   * salted HMAC, so there is nothing in the table to read back. That is the point of the change, and
+   * it is asserted here rather than worked around - reading the row must NOT yield the code. */
+  const code = String(issued?.sandboxCode ?? "");
+  assert.match(code, /^\d{6}$/, "sandbox delivery must hand the tester the code");
+  assert.equal(String(sqlite.prepare("SELECT code FROM customer_otp_challenges WHERE id=?").get(challengeId)?.code ?? ""), "[hashed]",
+    "and the row must not hold it");
+
+  const wrong = await attempt(() => otp.verifyCustomerOtp(db, { challengeId, code: code === "000000" ? "111111" : "000000", name: "Grooming Customer", cityId: CITY }));
+  assert.equal(wrong.ok, false, "the opposite direction: a wrong code must still be refused against the hashed verifier");
 
   const good = await attempt(() => otp.verifyCustomerOtp(db, { challengeId, code, name: "Grooming Customer", cityId: CITY }));
   assert.equal(good.ok, true, `the correct code must verify: ${JSON.stringify(good).slice(0, 160)}`);
   const consumed = sqlite.prepare("SELECT consumed FROM customer_otp_challenges WHERE id=?").get(challengeId)?.consumed;
   assert.equal(Number(consumed), 1, "a successful verification must consume the challenge so it cannot be replayed");
-  stage("OTP verify", "PASS", "verified and challenge consumed (no replay)");
+  stage("OTP verify", "PASS", "verified from sandbox delivery against a salted HMAC; wrong code refused; challenge consumed (no replay)");
 });
 
 // --- 2. PACKAGE SELECTION + SUBSCRIPTION ------------------------------------

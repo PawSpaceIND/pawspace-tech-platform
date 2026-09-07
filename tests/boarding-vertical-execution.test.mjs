@@ -174,12 +174,16 @@ test("BRD-04 split payment: 50/50 takes half now and schedules the balance befor
   assert.equal(quote.ok, true, `a split quote must be priced: ${String(quote.body ?? "").slice(0, 160)}`);
   assert.equal(quote.value.amountDueNow, quote.value.totalAmount / 2, "the 50/50 split takes exactly half up front");
 
-  const plan = split.splitPaymentPlan({ totalAmount: 2796, scheduledStart: startAt() });
+  /* startAt() reads the wall clock, so it MUST be sampled once and reused. Calling it again for the
+   * assertion made this test fail whenever the millisecond ticked between the two calls - an
+   * intermittent 86400001 !== 86400000 that looked like a product bug and was mine. */
+  const checkIn = startAt();
+  const plan = split.splitPaymentPlan({ totalAmount: 2796, scheduledStart: checkIn });
   assert.equal(plan.dueNow + plan.balance, 2796, "the split must account for every rupee of the total");
   assert.equal(plan.dueNow, 1398);
-  assert.ok(plan.balanceDueAt < new Date(startAt()).getTime(),
+  assert.ok(plan.balanceDueAt < new Date(checkIn).getTime(),
     "the balance must fall due BEFORE check-in, never after the pet is already there");
-  assert.equal(new Date(startAt()).getTime() - plan.balanceDueAt, split.BALANCE_LEAD_MS);
+  assert.equal(new Date(checkIn).getTime() - plan.balanceDueAt, split.BALANCE_LEAD_MS);
 
   assert.ok(split.SPLIT_ELIGIBLE_SERVICES.has("boarding"), "boarding is a split-eligible service");
   assert.ok(!split.SPLIT_ELIGIBLE_SERVICES.has("grooming"), "grooming is not; a one-visit service is paid in full");
