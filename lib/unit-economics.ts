@@ -21,18 +21,6 @@ const pct=(part:number,whole:number)=>whole>0?Math.round((part/whole)*1000)/10:n
 
 async function tableExists(db:Db,name:string){const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();return Boolean(row);}
 
-/**
- * Table-existence guards are memoised for the life of one request.
- *
- * Each guard is its own sqlite_master read, and each of these reads is now wrapped in chunkedIn, so
- * an unmemoised guard costs one extra subrequest PER CHUNK: 7 guarded lookups over 5,000 bookings
- * spent 1,012 D1 subrequests where a Worker invocation is allowed about 1,000. The chunking fix would
- * then have re-broken the screen it was fixing, one order of magnitude further up.
- *
- * The memo is per call, not per module. A module-level cache would remember "table absent" after
- * another module ran CREATE TABLE IF NOT EXISTS, and go on reporting zeros for the rest of the
- * isolate's life - the same confident-zero failure this file exists to remove.
- */
 type Guards=Map<string,Promise<boolean>>;
 function guardCache():Guards{return new Map();}
 function knownTable(db:Db,guards:Guards,name:string){const hit=guards.get(name);if(hit)return hit;const probe=tableExists(db,name);guards.set(name,probe);return probe;}
@@ -53,23 +41,10 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const active=bookings.filter(row=>!["cancelled","draft"].includes(String(row.status)));
  const serviceOf=new Map(bookings.map(row=>[String(row.id),String(row.service_code)]));
 
- // Real per-booking money components (each guarded on its owning table)
  const coupons=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,chunk,guards));
  const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk,guards));
  const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk,guards));
  const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk,guards));
- // Refunds are counted in every state that means the money actually MOVED, not just the gateway's own.
- // This matched the literal 'processed', which is written ONLY by the Razorpay refund.processed webhook
- // path. The cross-vertical STAFF refund workflow in app/api/booking-operations declares its state
- // machine as {requested:[approved,rejected], approved:[processing], processing:[completed]} and
- // terminates at 'completed' - a value this never matched - so every refund settled by staff through the
- // ops console was invisible here. Measured: a fully refunded Rs 5,000 month reported refunds 0 and
- // grooming at 100% contribution margin, when its true known contribution was zero. A vertical with
- // heavy manual refunds looked like the most profitable one on the board.
- //
- // 'requested' and 'rejected' are deliberately excluded: an unapproved or refused request has moved no
- // money. This is the same set the refund ceiling in app/api/grooming-payment-sandbox already uses, so
- // the two agree on what "refunded" means.
  const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status IN ('processing','processed','completed') AND booking_id IN (${placeholders})`,chunk,guards));
  const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk,guards));
  const tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk,guards));
@@ -86,7 +61,6 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  addByBooking(payouts,row=>Number(row.amount||0),(ladder,value)=>{ladder.providerPayout+=value;});
  addByBooking(refunds,row=>Number(row.amount||0),(ladder,value)=>{ladder.refunds+=value;});
 
- // Monitors per service
  const starsByService=new Map<string,number[]>(),ticketsByService=new Map<string,number>();
  for(const row of reviews){const service=serviceOf.get(String(row.booking_id));if(!service)continue;const list=starsByService.get(service)??[];list.push(Number(row.stars||0));starsByService.set(service,list);}
  for(const row of tickets){const service=serviceOf.get(String(row.booking_id));if(!service)continue;ticketsByService.set(service,(ticketsByService.get(service)||0)+1);}
@@ -109,24 +83,58 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
   ladder.revenuePerProviderDay=providerDays&&providerDays.size>0?round2(ladder.gmv/providerDays.size):null;
  }
 
- // Company-level monitors
  const activeCustomers=[...new Set(active.map(row=>String(row.customer_id)))];
  let ltvPerActiveCustomer:number|null=null;
  if(activeCustomers.length){
   const lifetime=await chunkedIn(activeCustomers,(chunk,placeholders)=>safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${placeholders}) GROUP BY customer_id`,chunk,guards));
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
- // Roster utilisation: booked reservation hours / rostered window hours across the window
+
+ // Capacity-weighted utilisation using authored-wins availability. Legacy fixtures without a
+ // capacity-profile table (or without a row for a provider) retain unit-capacity arithmetic. A
+ // present but inactive/expired profile is never revived by the fallback.
  let utilisationPct:number|null=null;
- if(await tableExists(db,"scheduling_reservations")&&await tableExists(db,"scheduling_availability")){
-  const reservations=await safeAll(db,["scheduling_reservations"],"SELECT scheduled_start,scheduled_end FROM scheduling_reservations WHERE status!='cancelled' AND substr(scheduled_start,1,10)>=? AND substr(scheduled_start,1,10)<=?",[from,to],guards);
-  const bookedHours=reservations.reduce((sum,row)=>sum+Math.max(0,(new Date(String(row.scheduled_end)).getTime()-new Date(String(row.scheduled_start)).getTime())/3_600_000),0);
-  const roster=await safeAll(db,["scheduling_availability"],"SELECT windows_json FROM scheduling_availability WHERE date>=? AND date<=?",[from,to],guards);
-  let rosterHours=0;
-  for(const row of roster){let windows:string[]=[];try{windows=JSON.parse(String(row.windows_json||"[]"));}catch{windows=[];}for(const window of windows){const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(match)rosterHours+=Math.max(0,(Number(match[3])*60+Number(match[4])-Number(match[1])*60-Number(match[2]))/60);}}
-  utilisationPct=rosterHours>0?pct(bookedHours,rosterHours):null;
+ const hasReservations=await tableExists(db,"scheduling_reservations"),hasAvailability=await tableExists(db,"scheduling_availability");
+ if(hasReservations&&hasAvailability){
+  const city=String(input.cityId||"");
+  const hasCapacityProfiles=await tableExists(db,"provider_capacity_profiles");
+  const reservations=await safeAll(db,["scheduling_reservations"],"SELECT scheduled_start,scheduled_end,capacity_units FROM scheduling_reservations WHERE status!='cancelled' AND substr(scheduled_start,1,10)>=? AND substr(scheduled_start,1,10)<=? AND (?='' OR city_id=?)",[from,to,city,city],guards);
+  const bookedCapacityHours=reservations.reduce((sum,row)=>sum+Math.max(0,(new Date(String(row.scheduled_end)).getTime()-new Date(String(row.scheduled_start)).getTime())/3_600_000)*Math.max(1,Number(row.capacity_units||1)),0);
+  const roster=await safeAll(db,["scheduling_availability"],`SELECT a.provider_id,a.city_id,a.date,a.windows_json,a.source
+    FROM scheduling_availability a
+    WHERE a.date>=? AND a.date<=?
+      AND (?='' OR a.city_id=?)
+      AND (
+        a.source IN ('partner_app','operations','roster')
+        OR NOT EXISTS (
+          SELECT 1 FROM scheduling_availability authored
+          WHERE authored.provider_id=a.provider_id AND authored.date=a.date
+            AND authored.source IN ('partner_app','operations','roster')
+        )
+      )`,[from,to,city,city],guards);
+  const profiles=new Map<string,Row>();
+  if(hasCapacityProfiles){
+   const rows=await safeAll(db,["provider_capacity_profiles"],"SELECT id,city_id,live,status,capacity,effective_from,effective_to FROM provider_capacity_profiles",[],guards);
+   for(const row of rows)profiles.set(String(row.id),row);
+  }
+  let rosterCapacityHours=0;
+  for(const row of roster){
+   let capacity=1;
+   if(hasCapacityProfiles){
+    const profile=profiles.get(String(row.provider_id));
+    if(profile){
+     const date=String(row.date),effectiveFrom=String(profile.effective_from||""),effectiveTo=profile.effective_to==null?null:String(profile.effective_to);
+     if(!Boolean(profile.live)||String(profile.status)!=="active"||effectiveFrom>date||(effectiveTo!==null&&effectiveTo<date))continue;
+     if(city&&String(profile.city_id)!==city)continue;
+     capacity=Math.max(1,Number(profile.capacity||1));
+    }
+   }
+   let windows:string[]=[];try{windows=JSON.parse(String(row.windows_json||"[]"));}catch{windows=[];}
+   for(const window of windows){const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(match)rosterCapacityHours+=Math.max(0,(Number(match[3])*60+Number(match[4])-Number(match[1])*60-Number(match[2]))/60)*capacity;}
+  }
+  utilisationPct=rosterCapacityHours>0?pct(bookedCapacityHours,rosterCapacityHours):null;
  }
- // CAC: only when real marketing spend facts exist - never an invented number
+
  let cac:{status:string;spend:number|null;newCustomers:number|null;cacPerNewCustomer:number|null}={status:"configuration_required",spend:null,newCustomers:null,cacPerNewCustomer:null};
  if(await tableExists(db,"marketing_attribution_facts")){
   const spendRow=await db.prepare("SELECT COALESCE(SUM(spend_amount),0) spend,COUNT(*) rows FROM marketing_attribution_facts WHERE spend_amount IS NOT NULL").first<Row>();
@@ -153,7 +161,8 @@ function coverageNote(){return{
  gmv:"canonical_bookings (cancelled/draft excluded)",
  discounts:"coupon_redemptions + paw_points_ledger redemptions (Rs.0.50/point) + pawspace_wallet_ledger applied value",
  providerPayout:"provider_order_payouts (sandbox rail)",
- refunds:"booking_refund_cases status=processed",
+ refunds:"booking_refund_cases status=processing|processed|completed",
+ utilisation:"authoritative scheduling_availability capacity-hours; governed capacity when present, unit-capacity fallback only for missing legacy profile data; authored roster wins over uat_roster; city-scoped when requested",
  tax:"configuration_required - no published tax policy; excluded from contribution, never zeroed",
  paymentFee:"configuration_required - gateway fees are sandbox; excluded from contribution, never zeroed",
  variableCost:"configuration_required - COGS/variable cost rules not configured; excluded, never zeroed",

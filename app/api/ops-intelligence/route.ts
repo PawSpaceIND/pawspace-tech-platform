@@ -1,5 +1,6 @@
 import{authError,database,requirePermission,resolveActor}from"../../../lib/server-auth";
 import{rankProvidersForBooking,forecastDemand}from"../../../lib/ops-intelligence-governance";
+import{seedProviderCapacityDefaults}from"../../../lib/provider-capacity-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
@@ -11,8 +12,13 @@ export async function GET(request:Request){
     if(mode==="rank"){
       const serviceCode=String(url.searchParams.get("serviceCode")||"").trim();
       if(!serviceCode)return json({error:"A service is required"},400);
+      // Materialize the canonical governed provider profiles before ranking. INSERT OR IGNORE keeps
+      // operator-authored rows authoritative; ranking still rejects anything outside the governed table.
+      await seedProviderCapacityDefaults(db);
       const providers=(url.searchParams.get("providers")||"").split(",").map(s=>s.trim()).filter(Boolean);
-      return json({data:await rankProvidersForBooking(db,{serviceCode,candidateProviderIds:providers.length?providers:undefined})});
+      const cityId=String(url.searchParams.get("cityId")||"").trim()||undefined;
+      const zoneId=String(url.searchParams.get("zoneId")||"").trim()||undefined;
+      return json({data:await rankProvidersForBooking(db,{serviceCode,candidateProviderIds:providers.length?providers:undefined,cityId,zoneId})});
     }
     return json({data:await forecastDemand(db,{serviceCode:url.searchParams.get("serviceCode")||undefined,cityId:url.searchParams.get("cityId")||undefined,horizonDays:Number(url.searchParams.get("horizonDays"))||undefined})});
   }catch(error){return authError(error,"Unable to load ops intelligence");}
