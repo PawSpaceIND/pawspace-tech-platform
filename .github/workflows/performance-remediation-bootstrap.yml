@@ -17,7 +17,7 @@ env:
 
 jobs:
   remediate:
-    if: "${{ github.event.head_commit.message == 'chore(perf): execute remediation bootstrap' }}"
+    if: "${{ github.event.head_commit.message == 'chore(perf): persist remediation source' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -36,10 +36,11 @@ jobs:
         run: npm run test:performance-load
       - name: Typecheck affected TypeScript
         run: npm run typecheck
-      - name: Commit remediation
+      - name: Commit remediation source
         run: |
           git config user.name "PawSpace Performance Remediation"
           git config user.email "actions@users.noreply.github.com"
-          git add package.json app/api/provider-capacity-control/route.ts app/api/catalogue/route.ts app/api/subscription-plans/route.ts app/api/canonical-bookings/route.ts app/api/grooming-finance/route.ts lib/catalogue-governance.ts lib/subscription-plan-governance.ts scripts/ops/staging-performance-gate.mjs scripts/ops/performance-load-certification.mjs tests/performance-load-remediation.test.mjs .github/workflows/staging-performance-track3-verify.yml
+          git restore .github/workflows/staging-performance-track3-verify.yml
+          git add package.json app/api/provider-capacity-control/route.ts app/api/catalogue/route.ts app/api/subscription-plans/route.ts app/api/canonical-bookings/route.ts app/api/grooming-finance/route.ts lib/catalogue-governance.ts lib/subscription-plan-governance.ts scripts/ops/staging-performance-gate.mjs scripts/ops/performance-load-certification.mjs tests/performance-load-remediation.test.mjs
           git commit -m "fix(perf): enforce CAS, batch hot reads, and certify load"
           git push origin HEAD:fix/performance-concurrency-load-certification
