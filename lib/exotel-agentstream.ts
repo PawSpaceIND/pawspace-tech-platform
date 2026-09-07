@@ -3,6 +3,7 @@ import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider"
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { verifyAgentStreamStart } from "./voice-agentstream-auth";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
+import { createAdaptiveVoiceActivityDetector } from "./voice-adaptive-vad";
 import { DEFAULT_SPEECH_TIMEOUT_MS, withSpeechDeadline } from "./voice-speech-failures";
 import type { AuthenticatedActor } from "./server-auth";
 
@@ -15,7 +16,7 @@ export const MAX_AGENTSTREAM_TTS_BYTES = 2 * 1024 * 1024;
 const MAX_UTTERANCE_MS = 6_000;
 const END_SILENCE_MS = 350;
 const PRE_ROLL_MS = 250;
-const SPEECH_RMS_THRESHOLD = 420;
+const VAD_IDLE_TELEMETRY_MS = 5_000;
 const outboundFrameBytes = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
@@ -227,13 +228,15 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   let session: Session | null = null;
   let providerPromise: Promise<AiResponseProvider> | null = null;
   let speechParts: Uint8Array[] = [], preRoll: Uint8Array[] = [], speechStartedAt = 0, silenceMs = 0, assistantPlaying = false;
+  let lastVadIdleEventAt = 0;
+  const vad = createAdaptiveVoiceActivityDetector(env.VOICE_VAD_RMS_THRESHOLD);
   let chain = Promise.resolve();
 
   const processUtterance = async (pcm: Uint8Array, active: Session) => {
     const turnStarted = Date.now();
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) {
-      await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), active.aiCallId, "agentstream_no_speech", JSON.stringify({ bytes: pcm.byteLength, rmsThreshold: SPEECH_RMS_THRESHOLD }), Date.now()).run();
+      await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), active.aiCallId, "agentstream_no_speech", JSON.stringify({ bytes: pcm.byteLength, vad: vad.snapshot() }), Date.now()).run();
       return;
     }
     const llmStarted = Date.now();
@@ -248,7 +251,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     sendAudio(server, active, tts.audio, markName);
     await assistantSegment;
     await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(
-      crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify({ sttMs: stt.latencyMs, llmMs, ttsMs: tts.latencyMs, totalMs, latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS, targetMet: totalMs <= VOICE_TURN_LATENCY_TARGET_MS, outcome: generated.outcome }), Date.now(),
+      crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify({ sttMs: stt.latencyMs, llmMs, ttsMs: tts.latencyMs, totalMs, latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS, targetMet: totalMs <= VOICE_TURN_LATENCY_TARGET_MS, outcome: generated.outcome, vad: vad.snapshot() }), Date.now(),
     ).run();
   };
 
@@ -270,7 +273,12 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       let pcm: Uint8Array;
       try { pcm = base64ToBytes(payload); } catch { server.close(1007, "Invalid base64 media"); return; }
       if (!pcm.byteLength || pcm.byteLength % 2) { server.close(1007, "Invalid PCM media"); return; }
-      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / session.sampleRate) * 1000)), speech = pcmRms(pcm) >= SPEECH_RMS_THRESHOLD;
+      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / session.sampleRate) * 1000));
+      const vadDecision = vad.observe(pcmRms(pcm)), speech = vadDecision.speech;
+      if (!speech && !speechStartedAt && Date.now() - lastVadIdleEventAt >= VAD_IDLE_TELEMETRY_MS) {
+        lastVadIdleEventAt = Date.now();
+        await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(),session.aiCallId,"agentstream_vad_idle",JSON.stringify(vad.snapshot()),lastVadIdleEventAt).run();
+      }
       preRoll.push(pcm);
       while (preRoll.reduce((sum, item) => sum + item.byteLength, 0) > session.sampleRate * 2 * (PRE_ROLL_MS / 1000)) preRoll.shift();
       if (speech) {
