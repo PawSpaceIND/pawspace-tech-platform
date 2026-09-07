@@ -27,7 +27,7 @@ export interface ScheduleRequest {
 }
 
 export interface ScheduleOccurrence { start: string; end: string; occurrenceNumber: number; }
-export interface ProviderEvaluation { providerId: string; providerName: string; eligible: boolean; score: number; reasons: string[]; }
+export interface ProviderEvaluation { providerId: string; providerName: string; eligible: boolean; score: number; reasons: string[]; workload:number; distanceKm:number; residualCapacity:number; }
 export interface ScheduleDecision {
   provider: Provider | null;
   mode: "automatic" | "offer" | "manual_review";
@@ -37,6 +37,8 @@ export interface ScheduleDecision {
   explanation: string[];
   offerExpiresAt?: string;
 }
+
+type SchedulingRepository=PlatformRepository&{providerUnavailableForWindow?:(providerId:string,scheduledStart:string,scheduledEnd:string)=>Promise<boolean>};
 
 export const scheduleRules = {
   grooming: { label:"Grooming", durationMinutes:120, bufferMinutes:30, maxOccurrences:1, capacityMode:"appointment" },
@@ -50,15 +52,6 @@ export const scheduleRules = {
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
 const msMinute = 60_000;
 const addDays = (value:string, days:number) => new Date(new Date(value).getTime()+days*24*60*msMinute).toISOString();
-/**
- * Canonical scheduling UTC offsets for the currently operational PawSpace cities.
- *
- * The old implementation treated every city except Bengaluru as UTC, shifting roster windows,
- * recurring weekdays and daily-job limits by 5h30m for Mumbai, Pune, Hyderabad and Chennai. Keep the
- * operational city registry explicit and fail closed for an unknown city rather than silently inventing
- * UTC semantics. When an international city is launched, its governed offset must be added alongside
- * the launch configuration before scheduling can accept it.
- */
 export const SCHEDULING_CITY_UTC_OFFSETS:Readonly<Record<string,number>>=Object.freeze({
   blr:330,bengaluru:330,
   mum:330,mumbai:330,bom:330,
@@ -114,15 +107,17 @@ async function petsFor(repository:PlatformRepository,petIds:string[]):Promise<Pe
   return (await Promise.all(petIds.map(id=>repository.getPet(id)))).filter((pet):pet is Pet=>Boolean(pet));
 }
 
-async function evaluateProvider(repository:PlatformRepository,provider:Provider,input:ScheduleRequest,occurrences:ScheduleOccurrence[],pets:Pet[]):Promise<ProviderEvaluation>{
+async function evaluateProvider(repository:SchedulingRepository,provider:Provider,input:ScheduleRequest,occurrences:ScheduleOccurrence[],pets:Pet[]):Promise<ProviderEvaluation>{
   const reasons:string[]=[]; let eligible=true; const existing=(await repository.listBookings(input.cityId,provider.id)).filter(b=>activeStatuses.has(b.status));
   const overnight=input.serviceCode==="boarding"||(input.serviceCode==="pet_sitting"&&input.careMode==="overnight");
+  let distanceKm=Number.POSITIVE_INFINITY,workload=0,residualCapacity=0;
   if(input.excludeProviderIds?.includes(provider.id)){eligible=false;reasons.push("Provider excluded after decline or Ops action");}
   if(input.manualProviderId&&provider.id!==input.manualProviderId){eligible=false;reasons.push("Another provider selected by Ops override");}
-  if(input.serviceRadiusKm!==undefined){const located=provider as Provider&{latitude?:number;longitude?:number};const distance=haversineDistanceKm({latitude:Number(input.latitude),longitude:Number(input.longitude)},{latitude:Number(located.latitude),longitude:Number(located.longitude)});if(!Number.isFinite(distance)){eligible=false;reasons.push("Provider has no active geocoded home base for radius verification");}else if(distance>Number(input.serviceRadiusKm)){eligible=false;reasons.push(`Provider is ${distance.toFixed(2)} km from booking, outside ${Number(input.serviceRadiusKm).toFixed(2)} km service radius`);}else reasons.push(`Provider is ${distance.toFixed(2)} km from booking, inside service radius`);}
+  if(input.serviceRadiusKm!==undefined){const located=provider as Provider&{latitude?:number;longitude?:number};distanceKm=haversineDistanceKm({latitude:Number(input.latitude),longitude:Number(input.longitude)},{latitude:Number(located.latitude),longitude:Number(located.longitude)});if(!Number.isFinite(distanceKm)){eligible=false;reasons.push("Provider has no active geocoded home base for radius verification");}else if(distanceKm>Number(input.serviceRadiusKm)){eligible=false;reasons.push(`Provider is ${distanceKm.toFixed(2)} km from booking, outside ${Number(input.serviceRadiusKm).toFixed(2)} km service radius`);}else reasons.push(`Provider is ${distanceKm.toFixed(2)} km from booking, inside service radius`);}
   for(const rule of input.customRules??[]){const actual=rule.field==="zone"?input.zoneId:rule.field==="capacity"?(provider.capacity??1):rule.field==="providerId"?provider.id:provider[rule.field];const expected=rule.value;const values=Array.isArray(expected)?expected:[expected];const passed=rule.operator==="eq"?actual===expected:rule.operator==="neq"?actual!==expected:rule.operator==="gte"?Number(actual)>=Number(expected):rule.operator==="lte"?Number(actual)<=Number(expected):rule.operator==="in"?values.includes(String(actual)):!values.includes(String(actual));if(!passed){eligible=false;reasons.push(`Custom rule ${rule.code} rejected provider (${rule.field} ${rule.operator} ${String(expected)})`);}}
   if(input.serviceCode==="boarding"&&pets.some(p=>p.vaccinationStatus!=="verified")){eligible=false;reasons.push("Boarding requires verified vaccination");}
   for(const occurrence of occurrences){
+    if(repository.providerUnavailableForWindow&&await repository.providerUnavailableForWindow(provider.id,occurrence.start,occurrence.end)){eligible=false;reasons.push("Provider is unavailable during the requested interval");}
     const dates=datesTouched(occurrence.start,occurrence.end,input.cityId);
     for(const date of dates){
       const roster=await repository.listAvailability(provider.id,date);
@@ -135,28 +130,33 @@ async function evaluateProvider(repository:PlatformRepository,provider:Provider,
     }
     if(overnight){
       const used=existing.filter(b=>overlaps(new Date(occurrence.start).getTime(),new Date(occurrence.end).getTime(),new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())).reduce((sum,b)=>sum+(b.capacityUnits??b.petIds.length),0);
+      workload=Math.max(workload,used);residualCapacity=Math.max(0,(provider.capacity??1)-used-input.petIds.length);
       if(used+input.petIds.length>(provider.capacity??1)){eligible=false;reasons.push(`Capacity ${provider.capacity??1} exceeded for the stay range`);}
     } else {
       const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
       const conflict=existing.some(b=>overlaps(new Date(occurrence.start).getTime()-buffer,new Date(occurrence.end).getTime()+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime()));
       if(conflict){eligible=false;reasons.push("Existing booking conflicts with travel/service buffer");}
       const sameDay=existing.filter(b=>dateKey(b.scheduledStart,input.cityId)===dateKey(occurrence.start,input.cityId)).length;
+      workload=Math.max(workload,sameDay);residualCapacity=Math.max(residualCapacity,Math.max(0,(provider.maxDailyJobs??6)-sameDay-1));
       if(sameDay>=(provider.maxDailyJobs??6)){eligible=false;reasons.push(`Daily job limit ${provider.maxDailyJobs??6} reached`);}
     }
   }
-  if(eligible)reasons.push(overnight?"Availability and date-range capacity locked":"Roster, conflicts, travel buffer and daily limit passed");
-  const score=provider.qualityScore+(provider.model==="full_time"?5:0)+(provider.id===input.preferredProviderId?20:0)+(provider.id===input.repeatProviderId?12:0);
-  return {providerId:provider.id,providerName:provider.name,eligible,score,reasons};
+  if(eligible)reasons.push(overnight?"Availability and date-range capacity locked":"Roster, interval leave, conflicts, travel buffer and daily limit passed");
+  const distanceBonus=Number.isFinite(distanceKm)?Math.max(0,16-distanceKm)*0.5:0;
+  const residualBonus=Math.min(6,residualCapacity);
+  const workloadDecay=Math.min(12,workload*2);
+  const score=provider.qualityScore+(provider.model==="full_time"?5:0)+(provider.id===input.preferredProviderId?20:0)+(provider.id===input.repeatProviderId?12:0)+distanceBonus+residualBonus-workloadDecay;
+  return {providerId:provider.id,providerName:provider.name,eligible,score,reasons,workload,distanceKm,residualCapacity};
 }
 
 export async function schedule(repository:PlatformRepository,input:ScheduleRequest):Promise<ScheduleDecision>{
   const occurrences=buildOccurrences(input); const candidates=await repository.listEligibleProviders(input.cityId,input.zoneId,input.serviceCode); const pets=await petsFor(repository,input.petIds);
-  const evaluations=await Promise.all(candidates.map(p=>evaluateProvider(repository,p,input,occurrences,pets)));
-  const ranked=evaluations.filter(e=>e.eligible).sort((a,b)=>b.score-a.score); const selectedEval=ranked[0]; const provider=selectedEval?candidates.find(p=>p.id===selectedEval.providerId)??null:null;
+  const evaluations=await Promise.all(candidates.map(p=>evaluateProvider(repository as SchedulingRepository,p,input,occurrences,pets)));
+  const ranked=evaluations.filter(e=>e.eligible).sort((a,b)=>b.score-a.score||a.workload-b.workload||a.distanceKm-b.distanceKm||a.providerId.localeCompare(b.providerId)); const selectedEval=ranked[0]; const provider=selectedEval?candidates.find(p=>p.id===selectedEval.providerId)??null:null;
   const shortlist=ranked.slice(0,3).map(item=>({provider:candidates.find(p=>p.id===item.providerId)!,score:item.score,reasons:item.reasons}));
   if(!provider)return {provider:null,mode:"manual_review",occurrences,evaluations,shortlist:[],explanation:["No provider passed every scheduling rule","Booking retained for Ops intervention"]};
   const override=Boolean(input.manualProviderId&&input.manualOverrideReason); const mode=override?"automatic":provider.model==="full_time"?"automatic":"offer";
-  return {provider,mode,occurrences,evaluations,shortlist,offerExpiresAt:mode==="offer"?new Date(Date.now()+3*msMinute).toISOString():undefined,explanation:[`${scheduleRules[input.serviceCode].label} rule pack passed`,`${occurrences.length} occurrence${occurrences.length===1?"":"s"} reserved with one provider`,...selectedEval!.reasons,override?`Ops override: ${input.manualOverrideReason}`:provider.model==="full_time"?"Full-time provider auto-assigned":"Commission provider receives a 3-minute offer"]};
+  return {provider,mode,occurrences,evaluations,shortlist,offerExpiresAt:mode==="offer"?new Date(Date.now()+3*msMinute).toISOString():undefined,explanation:[`${scheduleRules[input.serviceCode].label} rule pack passed`,`${occurrences.length} occurrence${occurrences.length===1?"":"s"} reserved with one provider`,...selectedEval!.reasons,`Ranked workload ${selectedEval!.workload}, distance ${Number.isFinite(selectedEval!.distanceKm)?selectedEval!.distanceKm.toFixed(2)+" km":"n/a"}, residual capacity ${selectedEval!.residualCapacity}`,override?`Ops override: ${input.manualOverrideReason}`:provider.model==="full_time"?"Full-time provider auto-assigned":"Commission provider receives a 3-minute offer"]};
 }
 
 export async function listScheduleSlots(repository:PlatformRepository,input:Omit<ScheduleRequest,"petIds"|"scheduledStart"|"scheduledEnd">&{date:string;petIds?:string[]}):Promise<Array<{start:string;end:string;available:boolean;eligibleProviders:number;reason?:string}>>{
