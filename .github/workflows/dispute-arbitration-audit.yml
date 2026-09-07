@@ -1,0 +1,35 @@
+name: Dispute Arbitration Audit
+
+on:
+  pull_request:
+    paths:
+      - "lib/escrow-custody-*.ts"
+      - "lib/escrow-settlement-dispatcher.ts"
+      - "scripts/run-dispute-arbitration-audit.test.ts"
+      - "tests/escrow-custody-engine.test.mjs"
+      - "db/schema-escrow-attribution.ts"
+      - "drizzle/0028_escrow_dispute_settlement_remediation.sql"
+      - "package.json"
+  workflow_dispatch:
+
+jobs:
+  dispute-arbitration-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      FORBID_PRODUCTION: "true"
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: npm
+      - run: npm ci
+      - name: Install audit loader without mutating lockfile
+        run: npm install --no-save --package-lock=false tsx@4.21.0
+      - name: Execute exact dispute arbitration gate
+        run: npm run test:dispute-arbitration-audit
