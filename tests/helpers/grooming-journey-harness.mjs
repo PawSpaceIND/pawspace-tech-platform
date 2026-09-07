@@ -66,7 +66,7 @@ export async function setupJourney() {
    // PAWSPACE_MEDIA_ENV is declared because media release is now environment-aware: an absent value
   // reads as PRODUCTION, the strict default, where unscanned media stays quarantined. These are the UAT
   // journeys. [PTJA-W3-SC]
- globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
+ globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on" };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
@@ -110,6 +110,7 @@ export async function runCompletedJourney(ctx, config) {
   const schedulePayload = {
     clientRequestId: config.groupId, customerId: config.customerId, petIds: [config.petSourceId],
     serviceCode: "grooming", cityId: config.cityId, zoneId: config.zoneId,
+    serviceAddress: `${config.customerName} service address`, servicePincode: config.pincode,
     scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(),
     preferredProviderId: config.preferredProviderId,
   };
@@ -142,6 +143,10 @@ export async function runCompletedJourney(ctx, config) {
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
   const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
+  const serviceLatitude = Number(location.body.data?.latitude), serviceLongitude = Number(location.body.data?.longitude);
+  if (location.status !== 201 || !Number.isFinite(serviceLatitude) || !Number.isFinite(serviceLongitude)) {
+    throw new Error(`Governed service location setup failed: ${location.status} ${JSON.stringify(location.body)}`);
+  }
   // No booking_service_addresses fixture here on purpose. ARRIVED resolves the doorstep through
   // lib/booking-doorstep.ts, which reads booking_service_locations - the table the real
   // /api/grooming-service-location call above actually writes. Seeding the travel table instead was what
@@ -165,7 +170,7 @@ export async function runCompletedJourney(ctx, config) {
     if (action === "arrived") {
       const capturedAt = Date.now();
       const telemetry = await routeCall("../../app/api/grooming-route/route.ts", "POST", "/api/grooming-route", {
-        bookingId, providerId: provider.id, latitude: config.latitude, longitude: config.longitude,
+        bookingId, providerId: provider.id, latitude: serviceLatitude, longitude: serviceLongitude,
         accuracyMeters: 10, capturedAt, idempotencyKey: `golden:${bookingId}:${capturedAt}`,
       }, providerCookie);
       if (telemetry.status !== 201) throw new Error(`Trusted GPS setup failed: ${telemetry.status} ${JSON.stringify(telemetry.body)}`);
