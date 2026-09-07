@@ -213,7 +213,7 @@ test("Repeated invoice lines get distinct tax rows through line identity", async
   assert.equal(taxLedger(sqlite).length, 4, "a replayed invoice does not double the tax");
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) c FROM finance_invoices").get().c), 1);
   // And the authoritative FY/GSTIN-scoped document series did not burn a second number on the replay.
-  const series = sqlite.prepare("SELECT next_number FROM finance_document_series_v2 WHERE entity_id=? AND supplier_gstin=? AND document_type=? AND financial_year=?")
+  const series = sqlite.prepare("SELECT next_number FROM finance_document_series_v2 WHERE entity_id=? AND gstin=? AND document_type=? AND financial_year=?")
     .get(ENTITY, "29AABCP0000A1Z5", "invoice", "2026-27");
   assert.equal(Number(series?.next_number), 2);
 
