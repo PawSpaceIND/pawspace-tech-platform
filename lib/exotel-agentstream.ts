@@ -1,16 +1,14 @@
-import { aiProviderConnection, requestAiDraft } from "./ai-provider-adapter";
-import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from "./ai-conversation-orchestrator";
+import { orchestrateAiTurn, type AiResponseProvider } from "./ai-conversation-orchestrator";
+import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
+import { DEFAULT_SPEECH_TIMEOUT_MS, withSpeechDeadline } from "./voice-speech-failures";
 import type { AuthenticatedActor } from "./server-auth";
 
-// Exotel AgentStream is raw signed little-endian PCM over JSON/WebSocket. This module is deliberately
-// outside /api/* so the carrier socket does not pass through the browser/session gateway. The start
-// event is still authenticated against an already-created Exotel call ledger row and the configured
-// account SID before any audio is accepted.
 export const EXOTEL_AGENTSTREAM_PATH = "/voice/exotel/agentstream";
 export const EXOTEL_AGENTSTREAM_TTS_MODEL = "@cf/deepgram/aura-2-en";
 export const EXOTEL_AGENTSTREAM_STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 export const VOICE_TURN_LATENCY_TARGET_MS = 1_500;
+export const MAX_AGENTSTREAM_TTS_BYTES = 2 * 1024 * 1024;
 
 const MAX_UTTERANCE_MS = 6_000;
 const END_SILENCE_MS = 350;
@@ -20,50 +18,28 @@ const outboundFrameBytes = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
-type AiBinding = {
-  run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
-};
+type AiBinding = { run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown> };
 type AgentStart = {
-  stream_sid?: unknown;
-  call_sid?: unknown;
-  account_sid?: unknown;
-  from?: unknown;
-  to?: unknown;
+  stream_sid?: unknown; call_sid?: unknown; account_sid?: unknown; from?: unknown; to?: unknown;
   custom_parameters?: Record<string, unknown>;
   media_format?: { encoding?: unknown; sample_rate?: unknown; bit_rate?: unknown };
 };
 type AgentEvent = {
-  event?: unknown;
-  stream_sid?: unknown;
-  start?: AgentStart;
+  event?: unknown; stream_sid?: unknown; start?: AgentStart;
   media?: { payload?: unknown; chunk?: unknown; timestamp?: unknown };
-  mark?: { name?: unknown };
-  stop?: { reason?: unknown; call_sid?: unknown };
+  mark?: { name?: unknown }; stop?: { reason?: unknown; call_sid?: unknown };
 };
-
 type Session = {
-  streamSid: string;
-  providerCallId: string;
-  ledgerCallId: string;
-  aiCallId: string;
-  threadId: string;
-  customerId: string;
-  sampleRate: number;
-  language: string;
-  segmentIndex: number;
+  streamSid: string; providerCallId: string; ledgerCallId: string; aiCallId: string; threadId: string;
+  customerId: string; sampleRate: number; language: string; segmentIndex: number;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 const serviceActor: AuthenticatedActor = {
-  email: "exotel-agentstream@system.pawspace",
-  name: "Exotel AgentStream voice service",
-  roleCode: "service_exotel_agentstream",
-  permissions: ["communications.manage", "customers.manage", "bookings.manage"],
-  developmentPreview: false,
-  identitySource: "workspace",
-  principalType: "identity_subject",
-  principalKey: "service:exotel-agentstream",
+  email: "exotel-agentstream@system.pawspace", name: "Exotel AgentStream voice service", roleCode: "service_exotel_agentstream",
+  permissions: ["communications.manage", "customers.manage", "bookings.manage"], developmentPreview: false,
+  identitySource: "workspace", principalType: "identity_subject", principalKey: "service:exotel-agentstream",
 };
 
 function ai(env: Env): AiBinding {
@@ -71,7 +47,11 @@ function ai(env: Env): AiBinding {
   if (!binding || typeof binding.run !== "function") throw new Error("Workers AI binding is unavailable");
   return binding;
 }
-
+function speechTimeoutMs(env: Env) {
+  const raw = Number(text(env.VOICE_SPEECH_TIMEOUT_MS));
+  if (!Number.isFinite(raw) || raw < 1_000) return DEFAULT_SPEECH_TIMEOUT_MS;
+  return Math.min(60_000, Math.floor(raw));
+}
 function bytesToBase64(bytes: Uint8Array) {
   let out = "";
   for (let offset = 0; offset < bytes.length; offset += 0x6000) {
@@ -80,38 +60,27 @@ function bytesToBase64(bytes: Uint8Array) {
   }
   return btoa(out);
 }
-
 function base64ToBytes(value: string) {
-  const binary = atob(value);
-  const out = new Uint8Array(binary.length);
+  const binary = atob(value), out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
   return out;
 }
-
 function concat(parts: Uint8Array[]) {
-  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
-  const out = new Uint8Array(total);
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0), out = new Uint8Array(total);
   let offset = 0;
   for (const part of parts) { out.set(part, offset); offset += part.byteLength; }
   return out;
 }
-
 function pcmRms(pcm: Uint8Array) {
   const usable = pcm.byteLength - (pcm.byteLength % 2);
   if (!usable) return 0;
-  const view = new DataView(pcm.buffer, pcm.byteOffset, usable);
+  const view = new DataView(pcm.buffer, pcm.byteOffset, usable), samples = usable / 2;
   let sum = 0;
-  const samples = usable / 2;
-  for (let i = 0; i < usable; i += 2) {
-    const value = view.getInt16(i, true);
-    sum += value * value;
-  }
+  for (let i = 0; i < usable; i += 2) { const value = view.getInt16(i, true); sum += value * value; }
   return Math.sqrt(sum / samples);
 }
-
 function wavFromPcm16le(pcm: Uint8Array, sampleRate: number) {
-  const header = new ArrayBuffer(44);
-  const view = new DataView(header);
+  const header = new ArrayBuffer(44), view = new DataView(header);
   const write = (offset: number, value: string) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
   write(0, "RIFF"); view.setUint32(4, 36 + pcm.byteLength, true); write(8, "WAVE");
   write(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
@@ -119,37 +88,40 @@ function wavFromPcm16le(pcm: Uint8Array, sampleRate: number) {
   write(36, "data"); view.setUint32(40, pcm.byteLength, true);
   return concat([new Uint8Array(header), pcm]);
 }
-
-async function responseBytes(result: unknown): Promise<Uint8Array> {
-  if (result instanceof Response) return new Uint8Array(await result.arrayBuffer());
-  if (result instanceof Uint8Array) return result;
-  if (result instanceof ArrayBuffer) return new Uint8Array(result);
-  if (result instanceof ReadableStream) return new Uint8Array(await new Response(result).arrayBuffer());
-  if (result && typeof result === "object") {
-    const audio = text((result as Record<string, unknown>).audio);
-    if (audio) return base64ToBytes(audio);
+async function boundedResponseBytes(response: Response, maxBytes: number) {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) { await response.body?.cancel().catch(() => {}); throw new Error("TTS audio exceeded the carrier size limit"); }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new Error("TTS audio exceeded the carrier size limit");
+    return bytes;
   }
-  throw new Error("TTS model returned no audio bytes");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new Error("TTS audio exceeded the carrier size limit"); }
+    chunks.push(value);
+  }
+  return concat(chunks);
 }
-
-async function runtimeProvider(): Promise<AiResponseProvider> {
-  const connection = await aiProviderConnection();
-  const systemPrompt = "Reply as PawSpace's voice assistant. Keep the answer short enough to speak naturally, use only the supplied canonical context, never invent availability, pricing, discounts, payment/refund outcomes or completed actions, and allow the existing handoff policy to take over for risky or unsupported requests.";
-  return {
-    status: connection.connected ? "connected" : "not_connected",
-    provider: connection.providerRef || "not_connected",
-    modelRef: connection.modelRef,
-    deadlineMs: connection.timeoutMs,
-    async generate(input: AiProviderInput) {
-      const result = await requestAiDraft({
-        systemPrompt,
-        userPrompt: JSON.stringify({ channel: "voice", customerMessage: input.inputText, intent: input.intent, canonicalContext: input.context }),
-        maxTokens: 280,
-      });
-      if (!result.connected) return { text: "", provider: connection.providerRef || "not_connected", modelRef: connection.modelRef, latencyMs: 0, unsupported: true };
-      return { text: result.text, provider: result.providerRef, modelRef: result.modelRef, latencyMs: result.latencyMs, referencedCustomerIds: [input.customerId], highImpactAction: false };
-    },
-  };
+async function responseBytes(result: unknown): Promise<Uint8Array> {
+  let bytes: Uint8Array;
+  if (result instanceof Response) bytes = await boundedResponseBytes(result, MAX_AGENTSTREAM_TTS_BYTES);
+  else if (result instanceof Uint8Array) bytes = result;
+  else if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
+  else if (result instanceof ReadableStream) bytes = await boundedResponseBytes(new Response(result), MAX_AGENTSTREAM_TTS_BYTES);
+  else if (result && typeof result === "object") {
+    const audio = text((result as Record<string, unknown>).audio);
+    if (!audio) throw new Error("TTS model returned no audio bytes");
+    bytes = base64ToBytes(audio);
+  } else throw new Error("TTS model returned no audio bytes");
+  if (bytes.byteLength > MAX_AGENTSTREAM_TTS_BYTES) throw new Error("TTS audio exceeded the carrier size limit");
+  return bytes;
 }
 
 async function openThread(db: D1Database, customerId: string) {
@@ -174,7 +146,6 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
   if (["blocked_disabled", "blocked_permission", "blocked_use_case", "blocked_not_allowlisted", "blocked_consent", "blocked_opt_out", "blocked_quiet_hours", "blocked_frequency_cap", "provider_unavailable", "ended", "cancelled"].includes(text(order.state))) throw new Error("AgentStream call is not in an active carrier state");
   if (text(env.PAWSPACE_VOICE_ENV) === "uat" && text(order.mode) !== "uat") throw new Error("AgentStream UAT cannot bind a non-UAT call");
-
   const customerId = text(order.customer_id), threadId = await openThread(env.DB, customerId), aiCallId = uid("AIVCALL"), now = Date.now();
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
@@ -203,28 +174,19 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
 
 async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, language: string) {
   const started = Date.now();
-  const result = await ai(env).run(text(env.VOICE_STT_MODEL) || EXOTEL_AGENTSTREAM_STT_MODEL, { audio: Array.from(wavFromPcm16le(pcm, sampleRate)), language, vad_filter: true });
+  const result = await withSpeechDeadline("stt", ai(env).run(text(env.VOICE_STT_MODEL) || EXOTEL_AGENTSTREAM_STT_MODEL, { audio: Array.from(wavFromPcm16le(pcm, sampleRate)), language, vad_filter: true }), speechTimeoutMs(env));
   if (!result || typeof result !== "object") throw new Error("Whisper returned no result object");
-  const record = result as Record<string, unknown>;
-  const transcript = text(record.text ?? record.transcription);
-  const raw = Number(record.confidence);
+  const record = result as Record<string, unknown>, transcript = text(record.text ?? record.transcription), raw = Number(record.confidence);
   return { text: transcript, confidence: Number.isFinite(raw) ? raw : (transcript ? 0.9 : 0), latencyMs: Date.now() - started };
 }
-
 async function synthesizeLinear16(env: Env, output: string, sampleRate: number) {
-  const started = Date.now();
-  // MeloTTS remains the in-app/default TTS. Its documented output is MP3, which cannot be placed on
-  // AgentStream as raw linear16. The carrier bridge therefore uses a Workers-AI TTS model that exposes
-  // linear16 directly, avoiding a lossy/slow MP3 decode+resample step inside the live socket.
-  const model = text(env.VOICE_CARRIER_TTS_MODEL) || EXOTEL_AGENTSTREAM_TTS_MODEL;
-  const result = await ai(env).run(model, { text: output, encoding: "linear16", container: "none", sample_rate: sampleRate, speaker: text(env.VOICE_CARRIER_TTS_SPEAKER) || "luna" }, { returnRawResponse: true });
+  const started = Date.now(), model = text(env.VOICE_CARRIER_TTS_MODEL) || EXOTEL_AGENTSTREAM_TTS_MODEL;
+  const result = await withSpeechDeadline("tts", ai(env).run(model, { text: output, encoding: "linear16", container: "none", sample_rate: sampleRate, speaker: text(env.VOICE_CARRIER_TTS_SPEAKER) || "luna" }, { returnRawResponse: true }), speechTimeoutMs(env));
   let audio = await responseBytes(result);
   if (audio.byteLength % 2) audio = audio.subarray(0, audio.byteLength - 1);
   return { audio, latencyMs: Date.now() - started };
 }
-
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
-  // Exotel documents chunks as multiples of 320 bytes. Pad only the terminal chunk with digital silence.
   for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
     const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
     const paddedLength = Math.ceil(raw.byteLength / 320) * 320;
@@ -233,7 +195,6 @@ function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markN
   }
   socket.send(JSON.stringify({ event: "mark", stream_sid: session.streamSid, mark: { name: markName } }));
 }
-
 async function closeSession(env: Env, session: Session | null, reason: string) {
   if (!session) return;
   const now = Date.now();
@@ -261,16 +222,18 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   const processUtterance = async (pcm: Uint8Array, active: Session) => {
     const turnStarted = Date.now();
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
-    if (!stt.text) return;
+    if (!stt.text) {
+      await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), active.aiCallId, "agentstream_no_speech", JSON.stringify({ bytes: pcm.byteLength, rmsThreshold: SPEECH_RMS_THRESHOLD }), Date.now()).run();
+      return;
+    }
     const llmStarted = Date.now();
-    providerPromise ||= runtimeProvider();
+    providerPromise ||= createGroundedAiRuntimeProvider(env.DB, serviceActor, "voice");
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
     const tts = await synthesizeLinear16(env, generated.output, active.sampleRate);
     const assistantSegment = recordSegment(env, active, "assistant", generated.output, null, null);
-    const totalMs = Date.now() - turnStarted;
-    const markName = `turn-${active.segmentIndex}-end`;
+    const totalMs = Date.now() - turnStarted, markName = `turn-${active.segmentIndex}-end`;
     assistantPlaying = true;
     sendAudio(server, active, tts.audio, markName);
     await assistantSegment;
@@ -287,8 +250,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "connected") return;
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
-        session = await establishSession(env, incoming.start || {});
-        return;
+        session = await establishSession(env, incoming.start || {}); return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
       if (kind === "stop") { const active = session; await closeSession(env, active, text(incoming.stop?.reason) || "callended"); session = null; server.close(1000, "Call ended"); return; }
@@ -298,20 +260,16 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       let pcm: Uint8Array;
       try { pcm = base64ToBytes(payload); } catch { server.close(1007, "Invalid base64 media"); return; }
       if (!pcm.byteLength || pcm.byteLength % 2) { server.close(1007, "Invalid PCM media"); return; }
-      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / session.sampleRate) * 1000));
-      const speech = pcmRms(pcm) >= SPEECH_RMS_THRESHOLD;
+      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / session.sampleRate) * 1000)), speech = pcmRms(pcm) >= SPEECH_RMS_THRESHOLD;
       preRoll.push(pcm);
       while (preRoll.reduce((sum, item) => sum + item.byteLength, 0) > session.sampleRate * 2 * (PRE_ROLL_MS / 1000)) preRoll.shift();
       if (speech) {
         if (!speechStartedAt) {
-          speechStartedAt = Date.now();
-          speechParts = [...preRoll];
+          speechStartedAt = Date.now(); speechParts = [...preRoll];
           if (assistantPlaying) { server.send(JSON.stringify({ event: "clear", stream_sid: session.streamSid })); assistantPlaying = false; }
         } else speechParts.push(pcm);
         silenceMs = 0;
-      } else if (speechStartedAt) {
-        speechParts.push(pcm); silenceMs += frameMs;
-      }
+      } else if (speechStartedAt) { speechParts.push(pcm); silenceMs += frameMs; }
       const elapsed = speechStartedAt ? Date.now() - speechStartedAt : 0;
       if (speechStartedAt && (silenceMs >= END_SILENCE_MS || elapsed >= MAX_UTTERANCE_MS)) {
         const utterance = concat(speechParts), active = session;
@@ -326,6 +284,5 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   });
   server.addEventListener("close", () => { ctx.waitUntil(closeSession(env, session, "socket_closed")); session = null; });
   server.addEventListener("error", () => { ctx.waitUntil(closeSession(env, session, "socket_error")); });
-
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket });
 }
