@@ -2,10 +2,14 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 import{DatabaseSync}from"node:sqlite";
-import{haversineDistanceKm,schedule}from"../backend/src/scheduling.ts";
-import{validateIndianPincode}from"../lib/pincode-validation.ts";
-import{currentHomeBase,saveProviderHomeBase}from"../lib/provider-home-base.ts";
-import{SERVICE_DISCOVERY_RADIUS_KM}from"../lib/service-discovery-address.ts";
+import{installWorkersHooks}from"./helpers/module-hooks.mjs";
+
+installWorkersHooks("__SERVICE_DISCOVERY_DB__","__SERVICE_DISCOVERY_ENV__");
+globalThis.__SERVICE_DISCOVERY_ENV__={PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",PAWSPACE_SCHEDULING_ENV:"uat",PAWSPACE_MAPS_ENV:"sandbox"};
+const{haversineDistanceKm,schedule}=await import("../backend/src/scheduling.ts");
+const{validateIndianPincode}=await import("../lib/pincode-validation.ts");
+const{currentHomeBase,saveProviderHomeBase}=await import("../lib/provider-home-base.ts");
+const{SERVICE_DISCOVERY_RADIUS_KM}=await import("../lib/service-discovery-address.ts");
 
 function d1(sqlite){function statement(sql,args=[]){return{bind:(...bound)=>statement(sql,bound),first:async()=>sqlite.prepare(sql).get(...args)??null,all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>{const info=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(info.changes)}};}}}return{prepare:(sql)=>statement(sql),batch:async(statements)=>{const results=[];for(const statement of statements)results.push(await statement.run());return results;}};}
 const provider=(id,quality,latitude,longitude,extra={})=>({id,cityId:"blr",name:id,model:"commission",services:["grooming"],zones:["blr-east"],live:true,rating:4.8,qualityScore:quality,capacity:1,travelBufferMinutes:30,maxDailyJobs:4,latitude,longitude,...extra});
