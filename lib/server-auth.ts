@@ -4,20 +4,13 @@ import {resolvePlatformSession} from "./platform-session";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
+import {resolveTrustedWorkspaceIdentity} from "./trusted-workspace-identity";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string; subjectType?:IdentitySubjectType };
 export type SecurityAuditOutcome="allowed"|"denied"|"completed"|"rejected"|"blocked";
 
 export async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
-
-function forwardedIdentity(request:Request){
-  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();
-  const encoded=request.headers.get("oai-authenticated-user-full-name")||"";
-  let name=email.split("@")[0]||"Workspace user";
-  if(request.headers.get("oai-authenticated-user-full-name-encoding")==="percent-encoded-utf-8"&&encoded){try{name=decodeURIComponent(encoded)}catch{}}
-  return {email,name};
-}
 
 const isDevelopmentPreview=(request:Request)=>isDevelopmentPreviewRequest(request);
 const securityTablesEnsured=new WeakSet<Db>();
@@ -46,16 +39,15 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
   const {env:uatEnv}=await import("cloudflare:workers");
-  const uatActor=await resolveUatStaffActor(db,request,uatEnv as Record<string,unknown>);
+  const runtime=uatEnv as unknown as Record<string,unknown>;
+  const uatActor=await resolveUatStaffActor(db,request,runtime);
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
-  const identity=forwardedIdentity(request);
-  if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
+  // Legacy FOUNDER_EMAIL configuration is never authentication or authorization authority; workspace identity must come from the governed ingress resolver below.
+  const identity=resolveTrustedWorkspaceIdentity(request,runtime);
+  if(!identity)throw markGovernedHttpError(signInRequiredResponse(runtime));
   const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
-  // FOUNDER_EMAIL is intentionally not consulted here. A configured email or forwarded identity header
-  // is identity evidence only; it is never authorization to auto-create an app_users row. The first
-  // founder/admin must be provisioned through the governed D1 bootstrap process.
   if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
@@ -103,11 +95,6 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
   await securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,detail).run();
 }
 
-/**
- * Reserve a durable audit operation BEFORE calling a helper that encapsulates its own D1 writes.
- * If the Worker dies after the state change but before completion, the reserved outbox row remains as
- * evidence of an in-flight privileged operation instead of leaving an unaudited transition.
- */
 export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,detail:unknown={}){
   const id=crypto.randomUUID(),now=Date.now();
   await db.batch([
@@ -118,7 +105,6 @@ export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action
   return id;
 }
 
-/** Complete the reserved operation atomically with its final central audit event. */
 export async function completeReservedSecurityAudit(db:Db,actor:AuthenticatedActor,operationId:string,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
   const now=Date.now();
   await db.batch([
