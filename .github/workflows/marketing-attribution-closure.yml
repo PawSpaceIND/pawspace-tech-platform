@@ -1,0 +1,36 @@
+name: Marketing Attribution Closure
+
+on:
+  pull_request:
+    paths:
+      - "app/landing-pages/**"
+      - "app/contact/**"
+      - "app/api/public-contact/**"
+      - "lib/marketing-attribution*"
+      - "lib/marketing-ad-*"
+      - "lib/lead-conversion-attribution.ts"
+      - "lib/lead-lifecycle-governance.ts"
+      - "tests/marketing-attribution-lifecycle.test.mjs"
+      - "tests/marketing-ad-connectors.test.mjs"
+      - "tests/google-ads-conversion-consent.test.mjs"
+      - "package.json"
+      - ".github/workflows/marketing-attribution-closure.yml"
+  workflow_dispatch:
+
+jobs:
+  marketing-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - name: Marketing attribution sandbox contract
+        run: PAWSPACE_PAYMENT_ENV="sandbox" PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED="false" npm run test:marketing-attribution
+      - name: TypeScript check
+        run: npm run typecheck
