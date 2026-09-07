@@ -61,6 +61,10 @@ export function seed(dbPath = locateDb()) {
   const out = [];
 
   db.exec("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  // The hardened multi-actor journey exercises the real server-bound ARRIVED gate. That gate must
+  // fail closed unless an approved punctuality/tracking policy exists, so seed the same local-only UAT
+  // policy shape used by the executable grooming journey harness rather than bypassing the guard.
+  db.exec("CREATE TABLE IF NOT EXISTS booking_punctuality_policies (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,city_id TEXT,provider_model TEXT,tracking_enabled INTEGER NOT NULL DEFAULT 0,eta_freshness_seconds INTEGER,allowed_accuracy_meters REAL,grace_minutes INTEGER,customer_alert_minutes INTEGER,ops_escalation_minutes INTEGER,reassignment_minutes INTEGER,evidence_requirements_json TEXT NOT NULL DEFAULT '[]',excluded_reasons_json TEXT NOT NULL DEFAULT '[]',raw_gps_retention_days INTEGER,approval_state TEXT NOT NULL DEFAULT 'draft',effective_from TEXT NOT NULL,effective_to TEXT,approved_by TEXT,updated_at INTEGER NOT NULL)");
 
   for (const who of Object.values(IDENTITIES)) {
     out.push(upsert(db, "app_users", {
@@ -95,6 +99,14 @@ export function seed(dbPath = locateDb()) {
     rating: 4.9, quality_score: 95, capacity: 1, travel_buffer_minutes: 30,
     max_daily_jobs: 6, acceptance_timeout_minutes: 3, status: "active", version: 1,
     effective_from: "2026-08-01", effective_to: null, updated_by: "e2e:seed", updated_at: now,
+  }));
+  out.push(upsert(db, "booking_punctuality_policies", {
+    id: "GPS-GROOM-E2E", service_code: "grooming", city_id: null, provider_model: null,
+    tracking_enabled: 1, eta_freshness_seconds: 300, allowed_accuracy_meters: 50,
+    grace_minutes: 10, customer_alert_minutes: 15, ops_escalation_minutes: 20,
+    reassignment_minutes: 30, evidence_requirements_json: '["foreground_gps"]',
+    excluded_reasons_json: '[]', raw_gps_retention_days: 30, approval_state: "approved",
+    effective_from: "2020-01-01", effective_to: null, approved_by: "e2e:seed", updated_at: now,
   }));
 
   const start = new Date(now + 3 * 86400000).toISOString();
