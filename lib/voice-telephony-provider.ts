@@ -5,6 +5,7 @@
 
 import { callRecordingApproved, statusCallbackUrl, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 import { ProviderResponseTooLarge, readBoundedText as readBoundedResponseText } from "./provider-response-bounds";
+import { signedAgentStreamUrl } from "./voice-agentstream-auth";
 
 type Env = Record<string, unknown>;
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
@@ -138,10 +139,15 @@ export function exotelTelephony(env: Env): TelephonyProvider {
       if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
       if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
       const streamUrl = approvedStreamUrl(env);
-      const body = streamUrl
-        ? new URLSearchParams({ from: intent.toNumber, callerid: callerId, streamurl: streamUrl, streamtype: "bidirectional", statuscallback: intent.statusCallbackUrl, customfield: intent.callRef, record: intent.recordingAllowed ? "true" : "false", timelimit: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))) })
+      let authenticatedStreamUrl: string | null = null;
+      if (streamUrl) {
+        try { authenticatedStreamUrl = await signedAgentStreamUrl(env, streamUrl, intent.callRef); }
+        catch (error) { throw new TelephonyProviderUnavailable(String((error as Error)?.message || error)); }
+      }
+      const body = authenticatedStreamUrl
+        ? new URLSearchParams({ from: intent.toNumber, callerid: callerId, streamurl: authenticatedStreamUrl, streamtype: "bidirectional", statuscallback: intent.statusCallbackUrl, customfield: intent.callRef, record: intent.recordingAllowed ? "true" : "false", timelimit: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))) })
         : new URLSearchParams({ From: intent.toNumber, CallerId: callerId, Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`, CallType: "trans", StatusCallback: intent.statusCallbackUrl, CustomField: intent.callRef, TimeOut: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))), Record: intent.recordingAllowed ? "true" : "false" });
-      const endpoint = streamUrl ? `https://${subdomain}/v1/accounts/${encodeURIComponent(sid)}/calls/connect` : `https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`;
+      const endpoint = authenticatedStreamUrl ? `https://${subdomain}/v1/accounts/${encodeURIComponent(sid)}/calls/connect` : `https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`;
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
       try {
         let response: Response, responseText: string;
@@ -182,5 +188,5 @@ export function selectTelephonyProvider(env: Env): TelephonyProvider {
 
 export function telephonyProviderStatus(env: Env) {
   const provider = selectTelephonyProvider(env);
-  return { provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
+  return { provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), streamAuthentication: val(env,"PAWSPACE_VOICE_STREAM_URL") ? "hmac_per_call" : "not_applicable", truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
 }
