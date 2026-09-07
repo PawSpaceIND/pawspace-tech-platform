@@ -11,6 +11,7 @@ const atomic=await import("../lib/marketing-ad-atomic-sync.ts");
 const connectors=await import("../lib/marketing-ad-connectors.ts");
 
 function fresh(){const sqlite=new DatabaseSync(":memory:");return{sqlite,db:makeD1(sqlite)};}
+function grantGoogleConsent(sqlite,customerId){sqlite.exec("CREATE TABLE IF NOT EXISTS google_ads_conversion_consent (customer_id TEXT PRIMARY KEY,ad_user_data TEXT NOT NULL,ad_personalization TEXT NOT NULL)");sqlite.prepare("INSERT OR REPLACE INTO google_ads_conversion_consent VALUES (?,?,?)").run(customerId,"Granted","Granted");}
 
 if(process.env.PAWSPACE_PAYMENT_ENV!=="sandbox")throw new Error("marketing attribution tests require PAWSPACE_PAYMENT_ENV=sandbox");
 if(String(process.env.PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED).toLowerCase()!=="false")throw new Error("marketing attribution tests require external marketing writes disabled");
@@ -51,8 +52,14 @@ test("canonical booking and payment transitions emit booking_created and payment
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_conversion_facts WHERE event_type='payment_captured'").get().n,1);
 });
 
-test("sandbox dispatch holds Meta and sends Google only as Data Manager validateOnly with the typed identifier",async()=>{
- const{sqlite,db}=fresh();await server.persistLeadMarketingAttribution(db,{leadId:"L3",customerId:"C3",capture:{gbraid:"GB-3",fbclid:"FB-3"}});await server.recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:"P3",leadId:"L3",customerId:"C3",bookingId:"B3",paymentId:"P3",valueMinor:9900});
+test("Google first-party outbox remains blocked without explicit Granted/Granted consent",async()=>{
+ const{db}=fresh();await server.persistLeadMarketingAttribution(db,{leadId:"LC",customerId:"CC",capture:{gclid:"G-CONSENT"}});await server.recordMarketingConversionFact(db,{eventType:"lead_qualified",businessReference:"LC",leadId:"LC",customerId:"CC"});let called=false;
+ const runtime={PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED:"false",GOOGLE_DATA_MANAGER_OAUTH_ACCESS_TOKEN:"token",GOOGLE_ADS_CUSTOMER_ID:"1234567890",GOOGLE_ADS_CONVERSION_ACTION_LEAD_QUALIFIED:"11"};
+ const out=await server.dispatchMarketingConversionOutbox(db,runtime,{fetchImpl:async()=>{called=true;return new Response("{}")}});assert.equal(called,false);assert.ok(out.results.some(r=>r.platform==="google"&&r.status==="consent_blocked"));
+});
+
+test("sandbox dispatch holds Meta and sends consented Google only as Data Manager validateOnly with the typed identifier",async()=>{
+ const{sqlite,db}=fresh();grantGoogleConsent(sqlite,"C3");await server.persistLeadMarketingAttribution(db,{leadId:"L3",customerId:"C3",capture:{gbraid:"GB-3",fbclid:"FB-3"}});await server.recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:"P3",leadId:"L3",customerId:"C3",bookingId:"B3",paymentId:"P3",valueMinor:9900});
  const calls=[];const runtime={PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED:"false",PAWSPACE_GOOGLE_DATA_MANAGER_UPLOAD_ENABLED:"true",PAWSPACE_META_CAPI_UPLOAD_ENABLED:"true",GOOGLE_DATA_MANAGER_OAUTH_ACCESS_TOKEN:"token",GOOGLE_ADS_CUSTOMER_ID:"1234567890",GOOGLE_ADS_LOGIN_CUSTOMER_ID:"1234567890",GOOGLE_ADS_CONVERSION_ACTION_LEAD_QUALIFIED:"11",GOOGLE_ADS_CONVERSION_ACTION_BOOKING_CREATED:"12",GOOGLE_ADS_CONVERSION_ACTION_PAYMENT_CAPTURED:"13",META_PIXEL_ID:"pixel",META_CAPI_ACCESS_TOKEN:"meta",META_ADS_API_VERSION:"v24.0"};
  const out=await server.dispatchMarketingConversionOutbox(db,runtime,{fetchImpl:async(url,init)=>{calls.push({url:String(url),body:JSON.parse(init.body)});return new Response(JSON.stringify({requestId:"REQ-3"}),{status:200});}});
  assert.equal(calls.length,1);assert.equal(calls[0].url,"https://datamanager.googleapis.com/v1/events:ingest");assert.equal(calls[0].body.validateOnly,true);assert.equal(calls[0].body.events[0].adIdentifiers.gbraid,"GB-3");
