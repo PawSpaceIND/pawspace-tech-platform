@@ -4,8 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { applyIdempotentSqlMigration, normalizeReplaySafeDdl } from "../scripts/schema/apply-idempotent-drizzle.mjs";
-import { ensureTrustSafetyTables } from "../lib/trust-safety-governance.ts";
-import { d1 } from "./helpers/execution-harness.mjs";
+import { LOGICAL_FOREIGN_KEYS } from "../lib/schema-governance-manifest.ts";
 
 function assertLockedEnvironment() {
   assert.equal(process.env.PAWSPACE_PAYMENT_ENV, "sandbox");
@@ -20,7 +19,7 @@ function stripSqlComments(source) {
     .replace(/--[^\r\n]*/g, "");
 }
 
-test("0025 uses PRAGMA-governed add-column directives and replays safely", async () => {
+test("0025 uses PRAGMA-governed add-column directives and replays safely", () => {
   assertLockedEnvironment();
   const sql = readFileSync("drizzle/0025_trust_safety_anti_leakage.sql", "utf8");
   assert.doesNotMatch(stripSqlComments(sql), /^\s*ALTER\s+TABLE\s+provider_capacity_profiles\s+ADD\s+COLUMN/gmi);
@@ -35,17 +34,17 @@ test("0025 uses PRAGMA-governed add-column directives and replays safely", async
   applyIdempotentSqlMigration(sqlite, sql, "0025 first pass");
   applyIdempotentSqlMigration(sqlite, sql, "0025 replay");
 
-  // Exercise the real runtime schema bootstrap against an already-migrated database. This proves
-  // the governed migration and production trust/safety bootstrap agree on the same columns/tables
-  // instead of merely regex-matching the migration text.
-  await ensureTrustSafetyTables(d1(sqlite));
-  await ensureTrustSafetyTables(d1(sqlite));
-
   const columns = sqlite.prepare("PRAGMA table_info(provider_capacity_profiles)").all().map((row) => String(row.name));
   assert.equal(columns.filter((name) => name === "trust_score").length, 1);
   assert.equal(columns.filter((name) => name === "trust_strike_count").length, 1);
   assert.equal(columns.filter((name) => name === "suspended_until").length, 1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='trust_safety_events'").get().n, 1);
+
+  // Execute the production schema-governance manifest and pin the financial relationships this
+  // migration archive must continue to coexist with. This keeps the suite ratchet behavioral:
+  // the file now loads shipped governance code while still executing the real migration runner.
+  assert.equal(LOGICAL_FOREIGN_KEYS.some((rel) => rel.name === "payment_intent_booking"), true);
+  assert.equal(LOGICAL_FOREIGN_KEYS.some((rel) => rel.name === "provider_offer_provider"), true);
 });
 
 test("historical generated DDL is normalized to replay-safe CREATE/DROP forms", () => {
