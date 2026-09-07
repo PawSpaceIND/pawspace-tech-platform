@@ -23,6 +23,8 @@ import {runTrustSafetySweep} from "../lib/trust-safety-governance";
 import {handleAiVoiceSelfTestNegotiate,handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-harness";
 import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
+import{secureApiResponse}from"../lib/api-security-headers";
+import{requestForAuthorization}from"../lib/trusted-workspace-identity";
 
 interface Env {
   ASSETS: Fetcher;
@@ -50,8 +52,6 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
-function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
-
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -75,14 +75,14 @@ const worker = {
       // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
       const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
-      const inspectionRequest=request.clone();
+      const inspectionRequest=requestForAuthorization(request,env as unknown as Record<string,unknown>);
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
-      if(sessionAccess instanceof Response)return sessionAccess;
+      if(sessionAccess instanceof Response)return secureApiResponse(sessionAccess);
       const providerEmail=isMetaWebhook?"meta-webhook@provider":isEmailWebhook?"email-webhook@provider":"dialler-webhook@provider";
       const access=isProviderWebhook
         ?{actor:{email:providerEmail,roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
         :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
-      if (access instanceof Response) return access;
+      if (access instanceof Response) return secureApiResponse(access);
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
 

@@ -23,9 +23,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PERSIST_DIR="$ROOT/dist/server/.wrangler/state"
 cd "$ROOT"
 
-# This harness is never allowed to inherit a live-money posture from the caller. Refuse first so an
-# accidental live shell is visible rather than silently rewritten, then pass the canonical sandbox
-# values into the Worker explicitly (process env alone is not a Worker binding).
 if [ "${PAWSPACE_PAYMENT_ENV:-sandbox}" != "sandbox" ]; then
   echo "[e2e] refusing to start: PAWSPACE_PAYMENT_ENV must be sandbox" >&2
   exit 1
@@ -36,10 +33,6 @@ if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
 fi
 export PAWSPACE_PAYMENT_ENV="sandbox"
 export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
-
-# Wrangler's terminal output can collapse a fatal Miniflare/workerd exception to a bare [ERROR] and
-# write the useful detail only to its own log. Pin that log to an artifact-friendly location so a
-# transient server death has a root-cause trace instead of fifteen follow-on ECONNREFUSED failures.
 export WRANGLER_LOG_PATH="${WRANGLER_LOG_PATH:-/tmp/wrangler-e2e.log}"
 
 if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
@@ -48,16 +41,19 @@ if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
 fi
 
 mkdir -p "$PERSIST_DIR"
-# The repository lockfile still pins Wrangler 4.92.0 for normal development. The hardened built-worker
-# browser harness hit a reproducible ProxyController "Network connection lost" crash on that version.
-# Keep the remediation isolated to this certification harness and pin an exact newer CLI version so CI
-# is reproducible without changing application/runtime dependencies.
+# Wrangler 4.92.0 reproducibly terminated its local ProxyController during this hardened built-worker
+# journey with "Network connection lost". Keep the remediation isolated to this certification harness
+# and pin an exact newer CLI without changing application/runtime dependencies.
 E2E_WRANGLER_VERSION="${E2E_WRANGLER_VERSION:-4.129.0}"
 echo "[e2e] starting wrangler ${E2E_WRANGLER_VERSION} dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
+# The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
+# OpenAI Sites dispatch layer. This explicit trust marker is LOCAL E2E simulation only; the standalone
+# staging worker intentionally does not set it, so raw external identity headers fail closed there.
 exec npx --yes "wrangler@${E2E_WRANGLER_VERSION}" dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
   --var PAWSPACE_LOCAL_PREVIEW:off \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
-  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false
+  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
+  --var PAWSPACE_WORKSPACE_IDENTITY_TRUST:openai-dispatch

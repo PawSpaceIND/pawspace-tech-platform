@@ -25,10 +25,12 @@ class Db {
   close() { this.sqlite.close(); }
 }
 
+const trustedDispatchEnv={FOUNDER_EMAIL:"founder@pawspace.test",PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_WORKSPACE_IDENTITY_TRUST:"openai-dispatch"};
+
 test("matching FOUNDER_EMAIL header cannot create or authenticate an unprovisioned founder", async () => {
   const db = new Db();
   globalThis.__FOUNDER_AUTH_DB__ = db;
-  globalThis.__FOUNDER_AUTH_ENV__ = { FOUNDER_EMAIL: "founder@pawspace.test", PAWSPACE_DEPLOYMENT_ENV: "staging" };
+  globalThis.__FOUNDER_AUTH_ENV__ = trustedDispatchEnv;
   try {
     const auth = await import("../lib/server-auth.ts");
     await auth.ensureSecurityTables(db);
@@ -55,7 +57,7 @@ test("matching FOUNDER_EMAIL header cannot create or authenticate an unprovision
 test("a pre-provisioned founder still authenticates normally", async () => {
   const db = new Db();
   globalThis.__FOUNDER_AUTH_DB__ = db;
-  globalThis.__FOUNDER_AUTH_ENV__ = { FOUNDER_EMAIL: "founder@pawspace.test", PAWSPACE_DEPLOYMENT_ENV: "staging" };
+  globalThis.__FOUNDER_AUTH_ENV__ = trustedDispatchEnv;
   try {
     const auth = await import("../lib/server-auth.ts");
     await auth.ensureSecurityTables(db);

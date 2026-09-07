@@ -1,0 +1,35 @@
+name: Auth Security Audit
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auth-security-audit:
+    name: Auth security sandbox gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Run auth and API security closure audit
+        run: PAWSPACE_PAYMENT_ENV="sandbox" FORBID_PRODUCTION="true" npm run test:auth-security-audit
