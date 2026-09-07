@@ -2,6 +2,8 @@
 import{useState}from"react";
 import styles from"./landing-pages.module.css";
 
+const adParam=(params:URLSearchParams,key:string,max=180)=>String(params.get(key)||"").trim().slice(0,max);
+
 export default function LandingLeadForm({service,pet,formTitle,formCta}:{service:string;pet:string;formTitle:string;formCta:string}){
   const[status,setStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
   const[error,setError]=useState("");
@@ -9,7 +11,7 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
   async function onSubmit(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();
     setStatus("sending");setError("");
-    const form=event.currentTarget,data=new FormData(form);
+    const form=event.currentTarget,data=new FormData(form),params=new URLSearchParams(window.location.search);
     const body={
       name:String(data.get("name")||""),
       phone:String(data.get("phone")||""),
@@ -17,6 +19,15 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
       petNames:pet,
       service,
       whatsappConsent:data.get("whatsappConsent")==="yes",
+      gclid:adParam(params,"gclid"),
+      fbclid:adParam(params,"fbclid"),
+      wbraid:adParam(params,"wbraid"),
+      utmSource:adParam(params,"utm_source",120),
+      utmMedium:adParam(params,"utm_medium",120),
+      utmCampaign:adParam(params,"utm_campaign"),
+      campaignId:adParam(params,"campaign_id"),
+      adId:adParam(params,"ad_id"),
+      landingUrl:window.location.href.slice(0,500),
     };
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
