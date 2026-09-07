@@ -111,7 +111,7 @@ const approvedMonthlyPackage = (sqlite, period) =>
 const groomingInvoice = (overrides = {}) => ({
   action: "issue_invoice", entityId: ENTITY, customerId: "CUST-CLOSE-1",
   sourceType: "booking", sourceId: "BKG-CLOSE-1", sourceEventKey: "booking:BKG-CLOSE-1:invoice",
-  issueDate: "2026-08-12", currency: "INR", reason: "service completed",
+  issueDate: "2026-08-12", currency: "INR", reason: "service completed", serviceState: "29",
   lines: [
     { lineKey: "session-1", description: "Grooming session", serviceCode: "grooming", taxableAmount: 1000 },
     { lineKey: "session-2", description: "Grooming session", serviceCode: "grooming", taxableAmount: 1000 },
@@ -212,8 +212,10 @@ test("Repeated invoice lines get distinct tax rows through line identity", async
   assert.equal(String(replay.id), String(invoice.id));
   assert.equal(taxLedger(sqlite).length, 4, "a replayed invoice does not double the tax");
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) c FROM finance_invoices").get().c), 1);
-  // And the document series did not burn a second number on the replay.
-  assert.equal(Number(sqlite.prepare("SELECT next_number FROM finance_document_series WHERE id='series_invoice'").get().next_number), 2);
+  // And the authoritative FY/GSTIN-scoped document series did not burn a second number on the replay.
+  const series = sqlite.prepare("SELECT next_number FROM finance_document_series_v2 WHERE entity_id=? AND gstin=? AND document_type=? AND financial_year=?")
+    .get(ENTITY, "29AABCP0000A1Z5", "invoice", "2026-27");
+  assert.equal(Number(series?.next_number), 2);
 
   // A LOCKED period refuses the invoice outright — filing-sensitive writes never land in a closed month.
   sqlite.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,updated_at) VALUES ('2026-09','locked','[]',?)").run(Date.now());
@@ -477,7 +479,6 @@ test("A locked period refuses finance writes and approvals atomically", async ()
   const locked = await patch(CHECKER, { entity: "period", id: "2026-07", action: "lock", reason: "July close signed off" });
   assert.equal(locked.status, 200);
   assert.equal(String(sqlite.prepare("SELECT status,locked_by FROM finance_close_periods WHERE period_code='2026-07'").get().locked_by), CHECKER);
-
   // A NEW bill dated into the locked month is refused 409 and written nowhere.
   const intoLocked = await post(MAKER, { entity: "bill", vendorId: "ven_food", billNumber: "HTF-883", billDate: "2026-07-29", dueDate: "2026-08-12", taxableAmount: 1000, gstAmount: 180, totalAmount: 1180 });
   assert.equal(intoLocked.status, 409);

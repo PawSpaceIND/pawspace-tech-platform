@@ -2,14 +2,18 @@ import{authError,database,requirePermission,resolveActor,securityAudit}from"../.
 import{acknowledgeAccountingExport,approveStatutoryPackage,ConfigurationRequired,getGstAccountingSnapshot,issueAdjustment,recordCloseEvidence,reviewVendorTax,saveConfiguration}from"../../../lib/gst-accounting";
 import{approveAnnualReturnSafe,generateAccountingExportSafe,generateAnnualReturnSafe,generateStatutoryPackageSafe,issueInvoiceSafe}from"../../../lib/finance-filing-closeout";
 import{approveGstReturn,generateGstr1,generateGstr3b,generateGstr9c,getGstReturnsSnapshot}from"../../../lib/gst-returns";
+import{saveStatutorySeries,voidInvoiceSerial}from"../../../lib/statutory-invoicing";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+const text=(value:unknown)=>String(value??"").trim();
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();const url=new URL(request.url);const returnsFilter={returnType:url.searchParams.get("returnType")||undefined,period:url.searchParams.get("period")||undefined};return json({data:await getGstAccountingSnapshot(db),returns:await getGstReturnsSnapshot(db,returnsFilter),actor:{email:actor.email,roleCode:actor.roleCode},productionReady:false});}catch(error){return authError(error,"Unable to load GST/accounting control");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database(),body=await request.json() as Record<string,unknown>,action=String(body.action||"");let data:unknown;
  if(action==="issue_invoice")data=await issueInvoiceSafe(db,body,actor.email);
+ else if(action==="save_statutory_series")data=await saveStatutorySeries(db,{entityId:text(body.entityId),gstin:text(body.gstin),documentType:text(body.documentType),financialYear:text(body.financialYear),prefix:text(body.prefix),padding:Number(body.padding),policyId:text(body.policyId),nextNumber:body.nextNumber==null?undefined:Number(body.nextNumber)},actor.email);
+ else if(action==="void_invoice_serial")data=await voidInvoiceSerial(db,{entityId:text(body.entityId),gstin:text(body.gstin),documentType:text(body.documentType),financialYear:text(body.financialYear),invoiceNumber:text(body.invoiceNumber),serialNumber:Number(body.serialNumber),reason:text(body.reason),sourceReference:text(body.sourceReference)||undefined},actor.email);
  else if(action==="issue_adjustment")data=await issueAdjustment(db,body,actor.email);
  else if(action==="review_vendor_tax")data=await reviewVendorTax(db,body,actor.email);
  else if(action==="generate_statutory_package")data=await generateStatutoryPackageSafe(db,body,actor.email);
