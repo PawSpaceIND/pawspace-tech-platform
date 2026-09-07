@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 /*
  * Precondition for every journey below: the development-preview superuser must be OFF.
@@ -7,11 +7,21 @@ import { test, expect } from "@playwright/test";
  * declares PAWSPACE_DEPLOYMENT_ENV, which is that module's first gate, so preview refuses outright.
  * If this test fails, every journey after it is meaningless - they would all pass as a superuser.
  */
-test("preview superuser is disabled: privileged APIs refuse an unauthenticated caller", async ({ request }) => {
-  for (const path of ["/api/customer-360?customerId=E2E-CUS-UI-001", "/api/crm", "/api/pricing-control"]) {
-    const res = await request.get(path);
-    expect(res.status(), `${path} must not be readable without authentication`).toBeGreaterThanOrEqual(401);
-    expect(res.status(), `${path} must not be readable without authentication`).toBeLessThan(500);
+test("preview superuser is disabled: privileged APIs refuse an unauthenticated caller", async () => {
+  // Authentication is a server/API invariant, not a browser-device behavior. Build a standalone
+  // request context so the Pixel 7 project's mobile user-agent/network context cannot affect this
+  // precondition check. The context intentionally carries no authentication headers.
+  const api = await playwrightRequest.newContext({
+    baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:8788",
+  });
+  try {
+    for (const path of ["/api/customer-360?customerId=E2E-CUS-UI-001", "/api/crm", "/api/pricing-control"]) {
+      const res = await api.get(path);
+      expect(res.status(), `${path} must not be readable without authentication`).toBeGreaterThanOrEqual(401);
+      expect(res.status(), `${path} must not be readable without authentication`).toBeLessThan(500);
+    }
+  } finally {
+    await api.dispose();
   }
 });
 

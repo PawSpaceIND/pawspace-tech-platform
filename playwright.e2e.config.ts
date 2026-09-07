@@ -1,11 +1,13 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 import { existsSync } from "node:fs";
 
 const LOCAL_CHROMIUM = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 
 /*
  * Browser E2E against a locally served build (vinext build -> wrangler dev --local, Miniflare D1).
- * Separate from playwright.config.ts, which targets the vite dev server on :5173.
+ * The suite is serialized because it mutates shared finance/lifecycle state, but every journey is
+ * executed once as Desktop Chrome and once as Pixel 7. The correlated journey uses different future
+ * slots per project so provider-capacity state cannot collide across the two passes.
  */
 export default defineConfig({
   testDir: "./e2e/journeys",
@@ -19,8 +21,10 @@ export default defineConfig({
     headless: true,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
-    /* Only pin a binary when this sandbox's prebuilt Chromium is present. In CI, `playwright
-     * install chromium` provides its own and Playwright must be left to find it. */
-    ...(existsSync(LOCAL_CHROMIUM) ? { launchOptions: { executablePath: LOCAL_CHROMIUM } } : {}),
+    launchOptions: existsSync(LOCAL_CHROMIUM) ? { executablePath: LOCAL_CHROMIUM } : undefined,
   },
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile-chromium", use: { ...devices["Pixel 7"] } },
+  ],
 });

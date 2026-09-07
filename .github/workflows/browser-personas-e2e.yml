@@ -1,4 +1,4 @@
-name: Browser E2E (personas, vite dev server)
+name: Browser E2E (personas, sandbox locked)
 
 on:
   pull_request:
@@ -10,20 +10,24 @@ permissions:
   contents: read
 
 concurrency:
-  group: browser-e2e-${{ github.ref }}
+  group: browser-personas-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   playwright-personas:
-    name: Playwright customer partner admin
+    name: Browser E2E personas
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       NODE_ENV: test
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
       PAWSPACE_LOCAL_PREVIEW: 'on'
       PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+      PAWSPACE_SCHEDULING_ENV: uat
+      PAWSPACE_MEDIA_ENV: uat
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,16 +37,17 @@ jobs:
       - run: npm ci
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Run real browser personas against local Miniflare/Vite
-        run: npx playwright test e2e/customer-booking.spec.ts e2e/partner-journey.spec.ts e2e/admin-operations.spec.ts --project=chromium
+      - name: Run sandbox-locked desktop and Pixel 7 persona certification
+        run: npm run test:e2e-personas
       - name: Upload Playwright evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-e2e-evidence
+          name: playwright-persona-e2e-evidence
           path: |
             playwright-report/
             test-results/
+            /tmp/wrangler-e2e.log
           if-no-files-found: warn
 
   razorpay-sandbox:
