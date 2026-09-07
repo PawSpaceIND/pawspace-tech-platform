@@ -1,8 +1,9 @@
 name: Deploy production
 
 # Manual-only production deployment for the Bengaluru pilot. The exact SHA must already carry a green
-# Release CI run. Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live
-# voice is deliberately not offered by this workflow.
+# Release CI run. Payments remain sandbox-only until a separately authorized live pilot activation.
+# Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live voice is deliberately
+# not offered by this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -15,10 +16,11 @@ on:
         required: true
         default: ''
       payment_env:
-        description: 'live or sandbox — decides whether cards are actually charged'
+        description: 'Sandbox only. Live payment activation remains a separate explicitly authorized gate.'
         required: true
         type: choice
-        options: [sandbox, live]
+        default: sandbox
+        options: [sandbox]
       communication_env:
         description: 'live or sandbox — decides whether real people receive real messages'
         required: true
@@ -43,7 +45,75 @@ on:
         options: ['false', 'true']
 
 jobs:
+  # ------------------------------------------------------------------------------------
+  # Nothing reaches production without passing this first.
+  #
+  # scripts/assert-production-readiness.mjs is fail-closed and has always existed - but it
+  # lived ONLY in production-signoff.yml, a SEPARATE workflow that this deploy did not
+  # depend on. The entire gate on a real production deploy was therefore one free-text
+  # confirmation string, typed by one person, unreviewed. The 18 outstanding credential
+  # gaps tracked in #542 could not have stopped a deploy, because nothing on this path
+  # ever asked.
+  #
+  # STRICT is 'true' here, unlike the reporting-only dry run in production-signoff.yml:
+  # on this path a configuration gap MUST fail the job. The approved release-phase test-API
+  # policy override is carried over unchanged, so this is not stricter than the standing
+  # policy - it simply enforces that policy where it was previously unenforced. Changing
+  # the posture now requires editing this file under review, not typing into a dispatch box.
+  # ------------------------------------------------------------------------------------
+  readiness-gate:
+    if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Production readiness must certify before anything deploys
+        env:
+          PAWSPACE_PRODUCTION_ENFORCE: 'false'
+          # A gap fails this job. This is the difference between reporting and gating.
+          PAWSPACE_READINESS_DRY_RUN_STRICT: 'true'
+          # Approved release-phase policy, identical to production-signoff.yml.
+          PAWSPACE_TEST_API_POLICY_OVERRIDE: 'true'
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          IDFY_URL: ${{ vars.IDFY_URL }}
+          IDFY_API_KEY_SANDBOX: ${{ secrets.IDFY_API_KEY_SANDBOX }}
+          IDFY_ACCOUNT_ID_SANDBOX: ${{ secrets.IDFY_ACCOUNT_ID_SANDBOX }}
+          IDFY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.IDFY_WEBHOOK_SECRET_SANDBOX }}
+          IDFY_URL_SANDBOX: ${{ vars.IDFY_URL_SANDBOX }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
+          PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64: ${{ secrets.PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64 }}
+          PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
+          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
+          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET_UAT: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT }}
+          META_WHATSAPP_VERIFY_TOKEN_UAT: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN_UAT }}
+          META_WHATSAPP_WABA_ID_UAT: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
+          META_WHATSAPP_PHONE_NUMBER_ID_UAT: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
+          INTERAKT_API_KEY_SANDBOX: ${{ secrets.INTERAKT_API_KEY_SANDBOX }}
+          INTERAKT_WEBHOOK_SECRET_SANDBOX: ${{ secrets.INTERAKT_WEBHOOK_SECRET_SANDBOX }}
+        run: node scripts/assert-production-readiness.mjs
+
   deploy:
+    needs: readiness-gate
+    environment: production
     if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
     runs-on: ubuntu-latest
     concurrency: pawspace-production-deploy
@@ -104,26 +174,40 @@ jobs:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
           PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
           PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
           PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: node scripts/prod-config.mjs
 
+      # No continue-on-error. A production deploy with no recorded rollback reference is a
+      # deploy that cannot be rolled back, and a failure here means the Cloudflare API is
+      # unreachable or the token is wrong - which is itself a reason not to ship. The
+      # first-ever deploy is still allowed through explicitly below.
       - name: Record the currently deployed production version (rollback reference)
         id: rollback
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
-            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
-          else
-            REFERENCE=""
+          if ! npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
+            echo "Could not reach Cloudflare to record a rollback reference - refusing to deploy." >&2
+            sed -e 's/[A-Za-z0-9_-]\{24,\}/[redacted]/g' rollback-reference.txt >&2 || true
+            exit 1
           fi
-          if [ -z "$REFERENCE" ]; then REFERENCE="first-production-deploy"; fi
+          REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
+          if [ -z "$REFERENCE" ]; then
+            # A reachable API that lists no deployment means this really is the first one.
+            if grep -qiE 'no deployments|not found' rollback-reference.txt; then
+              REFERENCE="first-production-deploy"
+            else
+              echo "Cloudflare responded but no deployment id could be parsed - refusing to deploy blind." >&2
+              exit 1
+            fi
+          fi
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production
@@ -141,6 +225,7 @@ jobs:
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
           FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET }}
+          PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
@@ -157,6 +242,8 @@ jobs:
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
             if (Object.values(values).some(value => !value)) throw new Error("a required production communication or identity secret is missing");
             if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
+            const pilotAllowlist = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
+            if (pilotAllowlist) values.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS = pilotAllowlist;
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
@@ -178,10 +265,13 @@ jobs:
             if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
           }
           if ((cfg.vars || {}).PAWSPACE_DEPLOYMENT_ENV !== "production") fail("PAWSPACE_DEPLOYMENT_ENV is not production");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_ENV !== "sandbox") fail("payments are not locked to sandbox");
+          if ((cfg.vars || {}).PAWSPACE_PAYMENT_LIVE_APPROVED !== "false") fail("live payment approval is not locked false");
+          if ("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS" in (cfg.vars || {})) fail("payment pilot booking IDs must be a Worker secret, never a plaintext wrangler var");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
-          console.log("Deployed configuration certified: production worker, production database, governed voice mode.");
+          console.log("Deployed configuration certified: production worker, production database, payments sandbox-only, live payment approval false, governed voice mode.");
           NODE
 
       - name: Where this went, and how to undo it

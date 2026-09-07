@@ -1,9 +1,10 @@
 import{authError,database}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables,processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
+import{enforcePilotBooking}from"../../../lib/payment-pilot-guard";
 import{acceptRazorpayWebhook,advancePaymentState,type PaymentState}from"../../../lib/financial-lifecycle";
 import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayCapturePostCommit,RazorpayCaptureAmountMismatchError}from"../../../lib/razorpay-capture-atomic";
-import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
+import{ensureSubscriptionBillingTables,isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
 import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
 
@@ -12,6 +13,7 @@ type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{enti
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 const rank:Record<PaymentState,number>={CREATED:0,AUTHORIZED:1,CAPTURED:2,SETTLED:3,FAILED:90,CANCELLED:91};
+const text=(value:unknown)=>String(value??"").trim();
 
 function entity(payload:RazorPayload,key:string){return payload.payload?.[key]?.entity||{};}
 function extract(payload:RazorPayload,eventId:string,payloadHash:string,environment:"sandbox"|"live"):GatewayEvent{
@@ -58,6 +60,26 @@ async function linkedPayment(db:D1Database,event:GatewayEvent){
   return null;
 }
 
+async function knownNonBookingSubscriptionEvent(db:D1Database,payload:RazorPayload,eventType:string){
+  try{
+    await ensureSubscriptionBillingTables(db);
+    const payment=entity(payload,"payment"),refund=entity(payload,"refund"),subscription=entity(payload,"subscription");
+    const notes=(payment.notes&&typeof payment.notes==="object"?payment.notes:subscription.notes&&typeof subscription.notes==="object"?subscription.notes:{}) as Row;
+    if(eventType==="refund.processed"){
+      const refundId=text(refund.id),paymentId=text(refund.payment_id)||text(payment.id);
+      if(refundId){const refundCase=await db.prepare("SELECT id FROM subscription_refund_cases WHERE gateway_refund_id=?").bind(refundId).first<Row>();if(refundCase)return true;}
+      if(paymentId){const cycle=await db.prepare("SELECT id FROM subscription_billing_cycles WHERE provider_payment_id=?").bind(paymentId).first<Row>();if(cycle)return true;}
+    }
+    if(eventType.startsWith("subscription.")||isPawSpaceSubscriptionPayload(payload as unknown as Row)){
+      const billingId=text(notes.pawspace_billing_subscription_id);
+      if(billingId){const contract=await db.prepare("SELECT id FROM subscription_billing_contracts WHERE id=?").bind(billingId).first<Row>();if(contract)return true;}
+      const providerSubscriptionId=text(subscription.id)||text(payment.subscription_id)||text(notes.razorpay_subscription_id);
+      if(providerSubscriptionId){const contract=await db.prepare("SELECT id FROM subscription_billing_contracts WHERE provider_subscription_id=?").bind(providerSubscriptionId).first<Row>();if(contract)return true;}
+    }
+    return false;
+  }catch{return false;}
+}
+
 function transitionWouldDefer(intent:Row,target:PaymentState){
   const current=String(intent.state||"") as PaymentState;
   if(!(current in rank))throw new Error("Payment intent contains an unknown state");
@@ -91,6 +113,10 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    if(gate.environment==="live"){
+      const verifiedNonBooking=await knownNonBookingSubscriptionEvent(db,payload,eventType);
+      if(!verifiedNonBooking){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await markInbox(db,accepted.row,"REJECTED",eventType,"outside_payment_pilot");return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
+    }
     /*
      * NO TIMESTAMP CHECK HERE. Replay is bounded by IDENTITY, not by age: acceptRazorpayWebhook
      * recognises a body it has already accepted by the digest of the signature-verified payload, so a
@@ -144,12 +170,6 @@ export async function POST(request:Request){
             amountPaise,currency:event.currency||String(intent?.currency||"INR"),payloadHash:String(accepted.row.payload_sha256),detail:event.detail,
           });
         }catch(error){
-          // A capture amount that does not match what the order was opened for is a governed refusal,
-          // and processGatewayEvent owns it: it writes the ("captured","amount_mismatch") record with
-          // the variance, raises the capture_amount_mismatch exception the finance console triages,
-          // and answers {status:"exception",reason:"capture_amount_mismatch"}. The atomic committer
-          // signals the mismatch before it writes anything, so this hands over a clean slate. Anything
-          // else is a real fault and still propagates.
           if(!(error instanceof RazorpayCaptureAmountMismatchError))throw error;
           const governed=await processGatewayEvent(db,event);
           await markInbox(db,accepted.row,"FAILED",eventType,String(governed.reason||"capture_amount_mismatch"));

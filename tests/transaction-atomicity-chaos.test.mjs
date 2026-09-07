@@ -126,7 +126,7 @@ test("chaos: partner payable release and source earning state rollback as one un
 });
 
 test("chaos: sensitive service-control mutation cannot commit without its audit event", async () => {
-  const h = createTransactionalChaosD1({ failBatch: 3, failAfterStatement: 1 });
+  const h = createTransactionalChaosD1({ failBatch: 2, failAfterStatement: 1 });
   globalThis.__CHAOS_DB__ = h.db;
   globalThis.__CHAOS_ENV__ = {};
   try {

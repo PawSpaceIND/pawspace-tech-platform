@@ -52,13 +52,10 @@ export async function resolveEngagementForWorker(db:Db,input:{employeeId?:string
   if(v)return normaliseEngagement(v.employment_type);
  }
  if(text(input.providerId)){
-  const p=await db.prepare("SELECT engagement_type FROM service_providers WHERE id=?").bind(input.providerId).first<Row>().catch(()=>null);
-  if(p)return normaliseEngagement(p.engagement_type);
-  // service_providers is not populated on this platform - the real provider registries are
-  // provider_capacity_profiles (provider_model: full_time | commission) and
-  // provider_compensation_profiles (engagement_model: full_time | commission). A provider found
-  // there is never an office 'direct' employee: commission stays commission (no payslip/earnings
-  // surfaces), anything else is a contract-engaged partner.
+  // The old implementation first queried a `service_providers` table that is not created anywhere in
+  // the platform, swallowed `no such table`, then fell through to the real registries. That was dead
+  // legacy SQL and made fresh-schema auditing noisy. Provider classification now reads only the actual
+  // canonical capacity/compensation registries.
   const providerModel=(kind:unknown):EngagementKind=>text(kind).toLowerCase().startsWith("commission")?"commission":"contract";
   const capacity=await db.prepare("SELECT provider_model FROM provider_capacity_profiles WHERE id=?").bind(input.providerId).first<Row>().catch(()=>null);
   if(capacity)return providerModel(capacity.provider_model);

@@ -1,0 +1,38 @@
+name: Production certification blockers
+
+on:
+  push:
+    branches:
+      - fix/production-certification-blockers
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+      - name: Block high or critical backend advisories
+        working-directory: backend
+        run: npm audit --audit-level=high
+      - name: Backend clean install, typecheck and tests
+        working-directory: backend
+        run: npm ci && npm run typecheck && npm test
+      - name: Root clean install and typecheck
+        run: npm ci && npm run typecheck
+      - name: Run pilot, 520x10 scale and dry-close certification
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/payment-pilot-guard.test.mjs tests/production-certification-scale.test.mjs tests/production-certification-dry-close.test.mjs
+      - name: Verify report hashes
+        working-directory: artifacts/production-certification
+        run: sha256sum -c scale-report.sha256 && sha256sum -c financial-dry-close-report.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-certification-reports-${{ github.sha }}
+          path: artifacts/production-certification/*
+          if-no-files-found: error

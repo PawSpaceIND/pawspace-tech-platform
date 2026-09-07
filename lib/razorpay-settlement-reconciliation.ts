@@ -1,4 +1,5 @@
 import { advancePaymentState } from "./financial-lifecycle";
+import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { paymentEnvironment, type PaymentEnvironment } from "./razorpay-client";
 
 type Db = D1Database;
@@ -133,6 +134,7 @@ export async function applyRazorpaySettlementReconItems(db: Db, input: {
   reconDate: string;
   items: ReconItem[];
 }) {
+  await ensureFinancialRuntimeTables(db);
   let settled = 0, evidenceInserted = 0, alreadySettled = 0, deferred = 0, unmatched = 0, ignoredNonPayment = 0, ignoredUnsettled = 0;
   for (const item of input.items) {
     if (text(item.type) !== "payment") { ignoredNonPayment += 1; continue; }
@@ -149,13 +151,9 @@ export async function applyRazorpaySettlementReconItems(db: Db, input: {
     const state = text(intent.state);
     if (state !== "CAPTURED" && state !== "SETTLED") { deferred += 1; continue; }
     const amountPaise = nonNegativeInteger(item.amount, "amount", false) as number;
-    if (amountPaise !== Number(intent.amount_paise)) {
-      throw new Error(`Razorpay settlement amount mismatch for ${paymentId}`);
-    }
+    if (amountPaise !== Number(intent.amount_paise)) throw new Error(`Razorpay settlement amount mismatch for ${paymentId}`);
     const currency = text(item.currency);
-    if (!currency || currency !== text(intent.currency)) {
-      throw new Error(`Razorpay settlement currency mismatch for ${paymentId}`);
-    }
+    if (!currency || currency !== text(intent.currency)) throw new Error(`Razorpay settlement currency mismatch for ${paymentId}`);
     const priorEvidence = await db.prepare("SELECT gateway_settlement_id FROM payment_settlement_reconciliations WHERE provider='razorpay' AND environment=? AND gateway_payment_id=?")
       .bind(input.environment, paymentId).first<Row>();
     if (priorEvidence && text(priorEvidence.gateway_settlement_id) !== settlementId) {
@@ -197,6 +195,7 @@ function lookbackDates(asOf: number, days = 3) {
 }
 
 export async function runRazorpaySettlementReconciliationSweep(db: Db, env: Env, input: { asOf?: number } = {}) {
+  await ensureFinancialRuntimeTables(db);
   if (!isTrue(env.PAWSPACE_RAZORPAY_SETTLEMENT_RECON_ENABLED)) {
     return { configured: false, skipped: true, reason: "PAWSPACE_RAZORPAY_SETTLEMENT_RECON_ENABLED is not true" };
   }
@@ -220,9 +219,7 @@ export async function runRazorpaySettlementReconciliationSweep(db: Db, env: Env,
       SET status='RUNNING',attempts=attempts+1,last_error=NULL,started_at=?,finished_at=NULL,updated_at=?
       WHERE run_key=? AND (status='FAILED' OR (status='RUNNING' AND started_at<?))`)
       .bind(now, now, runKey, now - RUN_LEASE_MS).run();
-    if (Number(reclaimed.meta?.changes || 0) !== 1) {
-      return { configured: true, environment, skipped: true, inProgress: true };
-    }
+    if (Number(reclaimed.meta?.changes || 0) !== 1) return { configured: true, environment, skipped: true, inProgress: true };
   }
   try {
     const aggregate = { settled: 0, evidenceInserted: 0, alreadySettled: 0, deferred: 0, unmatched: 0, ignoredNonPayment: 0, ignoredUnsettled: 0 };

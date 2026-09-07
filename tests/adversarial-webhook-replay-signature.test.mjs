@@ -323,7 +323,12 @@ test("WH-16b: a body already seen in SANDBOX does not suppress the same body in 
   assert.equal(sandbox.body?.environment, "sandbox", "stamped sandbox");
 
   // Same database, same bytes, live mode — double-gated exactly as production requires.
-  globalThis.__ADV_WH_ENV__ = { PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", RAZORPAY_WEBHOOK_SECRET_LIVE: LIVE_SECRET };
+  globalThis.__ADV_WH_ENV__ = {
+    PAWSPACE_PAYMENT_ENV: "live",
+    PAWSPACE_PAYMENT_LIVE_APPROVED: "true",
+    PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: "bkg_adv_env,bkg_adv_pilot_2,bkg_adv_pilot_3,bkg_adv_pilot_4,bkg_adv_pilot_5",
+    RAZORPAY_WEBHOOK_SECRET_LIVE: LIVE_SECRET,
+  };
   const live = await post(raw, { signature: await sign(LIVE_SECRET, raw), eventId: "evt_env_live" });
   assert.equal(live.status, 200, `the live delivery must be processed on its own merits: ${JSON.stringify(live).slice(0, 300)}`);
   assert.equal(live.body?.environment, "live", "and stamped live");

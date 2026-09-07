@@ -40,6 +40,11 @@ export function createTransactionalChaosD1(options = {}) {
     return true;
   }
 
+  function isRuntimeSchemaBatch(statements) {
+    if (!Array.isArray(statements) || statements.length === 0) return false;
+    return statements.every((statement) => /^\s*CREATE\s+(?:TABLE|INDEX|TRIGGER)\s+IF\s+NOT\s+EXISTS\b/i.test(String(statement.sql || "")));
+  }
+
   function boundStatement(sql, args = []) {
     return {
       sql,
@@ -62,6 +67,26 @@ export function createTransactionalChaosD1(options = {}) {
   const db = {
     prepare: (sql) => boundStatement(sql),
     batch: async (statements) => {
+      // Runtime schema bootstrap is setup, not the transactional fault surface under test.
+      // Let the shared schema materialize completely before arming/counting chaos batches.
+      if (isRuntimeSchemaBatch(statements)) {
+        trace.push({ kind: "schema-begin", size: statements.length });
+        sqlite.exec("BEGIN IMMEDIATE");
+        try {
+          const results = statements.map((statement) => {
+            const info = sqlite.prepare(statement.sql).run(...(statement.args ?? []));
+            return { success: true, meta: { changes: Number(info.changes || 0) } };
+          });
+          sqlite.exec("COMMIT");
+          trace.push({ kind: "schema-commit", size: statements.length });
+          return results;
+        } catch (error) {
+          sqlite.exec("ROLLBACK");
+          trace.push({ kind: "schema-rollback", error: error instanceof Error ? error.message : String(error) });
+          throw error;
+        }
+      }
+
       const currentBatch = ++batchNumber;
       trace.push({ kind: "begin", batch: currentBatch, size: statements.length });
       sqlite.exec("BEGIN IMMEDIATE");

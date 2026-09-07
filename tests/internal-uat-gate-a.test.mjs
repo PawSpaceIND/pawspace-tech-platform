@@ -65,28 +65,31 @@ test("the notifications FAB does not cover the booking call to action", () => {
 
 test("payment tables that only migrations declare are created at runtime", () => {
   const lifecycle = read("lib/financial-lifecycle.ts");
+  const runtimeSchema = read("lib/financial-runtime-schema.ts");
   // wrangler applies ./migrations; this repo keeps them in drizzle/ with no migrations_dir set, so
-  // no deploy path applies them. These two tables had no other creator and did not exist in staging.
+  // no deploy path applies them. The lifecycle must invoke the shared runtime schema floor and that
+  // shared source must contain the final table/index shape used by runtime paths.
   assert.match(lifecycle, /ensureFinancialLifecycleTables/);
+  assert.match(lifecycle, /ensureFinancialRuntimeTables/);
   for (const table of ["payment_intents", "financial_outbox"]) {
     assert.match(
-      lifecycle,
+      runtimeSchema,
       new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`),
       `${table} must have a runtime creator`,
     );
   }
   // The runtime shape must keep the migration's money constraints, or the two diverge silently.
-  assert.match(lifecycle, /amount_paise INTEGER NOT NULL CHECK \(amount_paise > 0\)/);
-  assert.match(lifecycle, /dedupe_key TEXT NOT NULL UNIQUE/);
-  assert.match(lifecycle, /UNIQUE\(customer_id, booking_id, idempotency_key\)/);
+  assert.match(runtimeSchema, /amount_paise INTEGER NOT NULL CHECK \(amount_paise > 0\)/);
+  assert.match(runtimeSchema, /dedupe_key TEXT NOT NULL UNIQUE/);
+  assert.match(runtimeSchema, /UNIQUE\(customer_id, booking_id, idempotency_key\)/);
 
   // A fallback table without the migration's indexes makes every reconciliation and payment lookup a
   // full scan. Both must be NON-unique: 0017 created payment_id UNIQUE, 0018 dropped and recreated it
   // plain for split intents, so the final replayed state is what a runtime creator has to match.
-  assert.match(lifecycle, /CREATE INDEX IF NOT EXISTS idx_payment_intents_payment_id/);
-  assert.match(lifecycle, /CREATE INDEX IF NOT EXISTS idx_payment_intents_booking/);
+  assert.match(runtimeSchema, /CREATE INDEX IF NOT EXISTS idx_payment_intents_payment_id/);
+  assert.match(runtimeSchema, /CREATE INDEX IF NOT EXISTS idx_payment_intents_booking/);
   assert.doesNotMatch(
-    lifecycle,
+    runtimeSchema,
     /CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_intents_payment_id/,
     "0018 removed that uniqueness on purpose; re-imposing it would reject legitimate split intents",
   );

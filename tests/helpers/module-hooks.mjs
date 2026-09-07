@@ -11,6 +11,7 @@
 import * as nodeModule from "node:module";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
@@ -24,7 +25,7 @@ export function runWithWorkersDb(db, callback) {
   return workersDbAls.run(db, callback);
 }
 
-// Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
+// Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
 let cachedTs = null;
 function typescript() {
   if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
@@ -75,6 +76,29 @@ function splitSpecifierSuffix(specifier) {
   };
 }
 
+function isRegisterHooksTypeScriptSpecifier(specifier) {
+  const { pathname } = splitSpecifierSuffix(specifier);
+  const lowerPathname = pathname.toLowerCase();
+  return lowerPathname.endsWith(".ts") || lowerPathname.endsWith(".tsx");
+}
+
+function extensionlessTypeScriptCandidates(specifier) {
+  const { pathname, suffix } = splitSpecifierSuffix(specifier);
+  if (pathname.startsWith("file:")) {
+    const parsed = new URL(pathname);
+    if (/\.[^/]+$/.test(parsed.pathname)) return [];
+    return [".ts", ".tsx"].map((extension) => {
+      const candidate = new URL(parsed);
+      candidate.pathname = `${candidate.pathname}${extension}`;
+      return `${candidate.href}${suffix}`;
+    });
+  }
+  if ((pathname.startsWith(".") || isAbsolute(pathname)) && !/\.[^/]+$/.test(pathname)) {
+    return [`.ts`, `.tsx`].map((extension) => `${pathname}${extension}${suffix}`);
+  }
+  return [];
+}
+
 function installLoaderFallback(workersUrl, registerHooksError = null) {
   if (typeof nodeModule.register !== "function") {
     if (registerHooksError) throw registerHooksError;
@@ -120,25 +144,25 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
           try {
             return nextResolve(specifier, context);
           } catch (error) {
-            const { pathname, suffix } = splitSpecifierSuffix(specifier);
-            // .ts first, because that is what every lib module means by an extensionless import; .tsx only
-            // when .ts is not there either, so a component's sibling import resolves too. Keep any query/hash
-            // suffix after the extension so Node receives ./module.ts?register rather than ./module?register.ts.
-            if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
-              try { return nextResolve(`${pathname}.ts${suffix}`, context); }
-              catch { return nextResolve(`${pathname}.tsx${suffix}`, context); }
+            const candidates = extensionlessTypeScriptCandidates(specifier);
+            if (candidates.length) {
+              try { return nextResolve(candidates[0], context); }
+              catch { return nextResolve(candidates[1], context); }
             }
+            const { pathname, suffix } = splitSpecifierSuffix(specifier);
             // A bare specifier into a package with no exports map - `next/link` is the one that matters -
             // resolves only with its extension. Reached ONLY after the real resolution has already failed,
-            // so it can never change an import that works.
-            if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return nextResolve(`${pathname}.js${suffix}`, context);
+            // so it can never change an import that works. Absolute paths and file: URLs are handled above.
+            if (!pathname.startsWith(".") && !isAbsolute(pathname) && !pathname.startsWith("file:") && !pathname.endsWith(".js")) {
+              return nextResolve(`${pathname}.js${suffix}`, context);
+            }
             throw error;
           }
         },
         load(url, context, nextLoad) {
           const { pathname, parsed } = normalizedFileUrl(url);
           if (pathname.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-          if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
+          if (!isRegisterHooksTypeScriptSpecifier(pathname)) return nextLoad(url, context);
           const path = fileURLToPath(parsed);
           return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
         },

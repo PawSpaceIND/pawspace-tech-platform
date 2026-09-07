@@ -40,6 +40,6 @@ test("one-shot carrier UAT remains consent, allowlist, idempotency and time gate
   assert.match(scheduler, /2026-09-06T02:30:00\.000Z/);
   assert.match(scheduler, /recordVoiceConsent/);
   assert.match(scheduler, /unique\.length !== 1/);
-  assert.match(scheduler, /voice-carrier-uat:2026-09-06:0800-ist/);
-  assert.match(scheduler, /requestOutboundVoiceCall/);
+  assert.match(scheduler, /voice-carrier-uat:2026-09-06:controlled-retry-1/);
+  assert.match(scheduler, /requestControlledCarrierUatCall/);
 });
