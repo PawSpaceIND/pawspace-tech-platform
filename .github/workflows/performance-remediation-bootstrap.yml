@@ -17,7 +17,7 @@ env:
 
 jobs:
   remediate:
-    if: github.event.head_commit.message == 'chore(perf): repair remediation bootstrap workflow'
+    if: "${{ github.event.head_commit.message == 'chore(perf): execute remediation bootstrap' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
