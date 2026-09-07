@@ -138,7 +138,8 @@ test("correlated journey: customer reserves/books -> assigned provider completes
       },
     });
     const gpsBody = await expectOk(gps, "provider trusted GPS telemetry");
-    expect(gpsBody?.data?.trustState).toBe("accepted");
+    expect(gpsBody?.data?.providerLocation?.trustState).toBe("accepted");
+    expect(gpsBody?.data?.telemetryAccepted).toBe(true);
 
     for (const action of ["arrived", "start_service"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
