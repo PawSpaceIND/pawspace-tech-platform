@@ -1,5 +1,25 @@
 import { expect, test } from "@playwright/test";
 
+test("internal photo review blocks approval until the private image loads", async ({ page }) => {
+  const submitted: Record<string, unknown>[] = [];
+  await page.route("**/api/service-media?*", route => route.fulfill({ json: { assets: [{ id: "photo-a", purpose: "grooming_before", access_status: "quarantined", proofReady: false }] } }));
+  await page.route("**/api/internal-service-media**", route => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      submitted.push(request.postDataJSON());
+      return route.fulfill({ json: { internalTest: true } });
+    }
+    if (request.url().includes("mediaId=")) return route.fulfill({ status: 404 });
+    return route.fulfill({ json: { internalTest: true, privateStorage: true } });
+  });
+  await page.goto("/team/operations/media-review?bookingId=internal-booking");
+  await page.getByLabel("Review reason").fill("Photo did not load for review");
+  await expect(page.getByRole("button", { name: "Approve for UAT" })).toBeDisabled();
+  await page.getByRole("button", { name: "Reject photo" }).click();
+  await expect.poll(() => submitted.length).toBe(1);
+  expect(submitted[0]).toMatchObject({ mediaId: "photo-a", decision: "rejected" });
+});
+
 test("internal walk uses the selected active session and sends no sample IDs", async ({ page }) => {
   const submitted: Record<string, unknown>[] = [];
   await page.route("**/api/walking-lifecycle?*", route => route.fulfill({ json: { data: [{ id: "internal-booking", provider_id: "assigned-partner", sessions: [{ id: "active-session", status: "in_progress" }] }] } }));

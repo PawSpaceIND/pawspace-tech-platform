@@ -48,3 +48,24 @@ test("walk controls require the matching active sandbox session and provider", (
     assert.throws(() => resolveActiveWalkContext("b", "s", [{ ...bookings[0], sessions: [{ id: "s", status }] }], proof));
   }
 });
+
+test("internal photo wiring uploads bytes with its grant and waits for review", async () => {
+  const previous = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return url === "/api/service-media"
+      ? Response.json({ data: { id: "m", ref: "media://asset/m", bookingId: "b", upload: { token: "private-grant" } } }, { status: 201 })
+      : Response.json({ data: { id: "m", stage: "pending_review" } });
+  };
+  try {
+    const result = await prepareGroomingPhoto({ bookingId: "b", purpose: "before_service", dataUrl: "data:image/jpeg;base64,AQID", uploadToInternalStorage: true });
+    assert.equal(calls[1].url, "/api/internal-service-media");
+    assert.equal(calls[1].options.method, "PUT");
+    assert.equal(calls[1].options.headers["x-media-upload-token"], "private-grant");
+    assert.deepEqual(calls[1].options.body, new Uint8Array([1, 2, 3]));
+    assert.equal(result.stage, "pending_review");
+    assert.equal(result.proofReady, false);
+    assert.equal(JSON.stringify(result).includes("private-grant"), false);
+  } finally { globalThis.fetch = previous; }
+});

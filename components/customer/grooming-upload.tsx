@@ -118,11 +118,14 @@ export default function GroomingUpload({
         bookingId,
         purpose: type === "checkin" ? "before_service" : "after_service",
         dataUrl: photo.dataUrl,
+        uploadToInternalStorage: true,
       });
       if (!isMountedRef.current) return;
       if (type === "checkin") setCheckInPhoto(photo);
       else setCompletionPhoto(photo);
-      setSuccessMessage(`Photo registered (${prepared.mediaRef}). Internal test: file upload and independent review are still pending. Keep the original photo; this preview is not saved as approved service proof.`);
+      setSuccessMessage(prepared.stage === "pending_review"
+        ? `Photo stored privately (${prepared.mediaRef}). Internal test: waiting for a separate reviewer. This is not approved service proof yet.`
+        : `Photo registered (${prepared.mediaRef}); file upload and independent review are still pending.`);
     } catch {
       if (isMountedRef.current) {
         setError("We couldn't save this photo yet. Please check camera access and your connection, then try again.");
