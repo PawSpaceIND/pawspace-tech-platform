@@ -199,6 +199,11 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       transactionAt: now,
       actorId: "razorpay_capture_saga",
     });
+    // The notification sweep and booking/admin history consume this canonical event.
+    // Its identity belongs to the durable capture outbox, so recovery cannot emit two receipts.
+    await db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)").run();
+    await db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'payment_captured','payment',?,'razorpay_webhook',?,?)")
+      .bind(`capture-event:${input.outboxId}`, bookingId, paymentId, JSON.stringify({ gateway: "razorpay", gatewayPaymentId: text(payload.gatewayPaymentId), gatewayOrderId: text(payload.gatewayOrderId), eventId, amount: Number(payload.amountPaise || 0) / 100, collectedInFull: payload.collectedInFull === true }), now).run();
     if (payload.collectedInFull === true) {
       await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?")
         .bind(now, bookingId).run().catch(() => null);
