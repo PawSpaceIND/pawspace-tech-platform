@@ -19,6 +19,12 @@ export const REQUIRED_EXPLICIT = [
   ["PAWSPACE_COMMUNICATION_ENV", ["live", "sandbox"], "Decides whether a real SMS or WhatsApp message reaches a real person."],
   ["PAWSPACE_MAPS_ENV", ["live", "sandbox"], "Decides whether provider location and ETA are real."],
 ];
+export const REQUIRED_PRODUCTION_CONFIG = [
+  "IDFY_URL",
+  "PROVIDER_AGREEMENT_ESIGN_KEY_ID",
+  "META_WHATSAPP_WABA_ID",
+  "META_WHATSAPP_PHONE_NUMBER_ID",
+];
 
 const problems = [];
 const d1Id = String(process.env.PRODUCTION_D1_ID || "").trim();
@@ -34,6 +40,13 @@ for (const [name, allowed, why] of REQUIRED_EXPLICIT) {
   if (!value) problems.push(`${name} is not set. ${why} State it explicitly; it is not inferred from the environment.`);
   else if (!allowed.includes(value)) problems.push(`${name} is "${value}", which is not one of: ${allowed.join(", ")}. ${why}`);
   else explicit[name] = value;
+}
+
+const productionConfig = {};
+for (const name of REQUIRED_PRODUCTION_CONFIG) {
+  const value = String(process.env[name] || "").trim();
+  if (!value) problems.push(`${name} is not set. Production provider configuration must be explicit before the Worker artifact is built.`);
+  else productionConfig[name] = value;
 }
 
 const paymentLiveApproved = String(process.env.PAWSPACE_PAYMENT_LIVE_APPROVED || "false").trim().toLowerCase();
@@ -78,6 +91,7 @@ cfg.vars = {
   PAWSPACE_MAPS_ENV: explicit.PAWSPACE_MAPS_ENV,
   PAWSPACE_VOICE_ENV: voiceEnv,
   PAWSPACE_VOICE_UAT_APPROVED: voiceUatApproved,
+  ...productionConfig,
 };
 
 if (String(process.env.PRODUCTION_R2_BUCKET_NAME || "").trim()) cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: String(process.env.PRODUCTION_R2_BUCKET_NAME).trim() }];
@@ -91,4 +105,4 @@ console.log(`Production config written → name=${PRODUCTION_WORKER_NAME}`);
 console.log(`  payment=${explicit.PAWSPACE_PAYMENT_ENV} liveApproved=false communication=${explicit.PAWSPACE_COMMUNICATION_ENV} maps=${explicit.PAWSPACE_MAPS_ENV}`);
 console.log(`  voice=${voiceEnv} voiceUatApproved=${voiceUatApproved}`);
 console.log(`  paymentPilotAllowlist=${pilotBookingIdsRaw ? `provided(${pilotBookingIdCount})` : "not-provided"} (value is handled as a Worker secret and is not written to wrangler vars)`);
-console.log("Database id and credentials are NOT logged. Credentials are uploaded as Worker secrets.");
+console.log("Production provider identifiers are written as non-secret Worker vars; credentials are uploaded only as Worker secrets.");
