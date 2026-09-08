@@ -71,7 +71,7 @@ test("Track 3 certification removes only staging cron triggers for the load wind
   const source=readFileSync(".github/workflows/track3-finance-closure-certification.yml","utf8");
   assert.match(source,/PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'/);
   assert.match(source,/configuredCrons/);
-  assert.match(source,/delete triggers\.crons/);
+  assert.match(source,/delete config\.triggers\.crons/);
   assert.match(source,/cronIsolation:'disabled_for_track3_benchmark'/);
   assert.match(source,/Drain pre-isolation scheduled invocations/);
   assert.match(source,/sleep 660/);
