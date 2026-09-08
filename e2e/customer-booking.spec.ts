@@ -291,6 +291,10 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-accepted.png"),fullPage:true});
+   await partner.evaluate(()=>Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition(_success:unknown,failure:(error:{code:number})=>void){failure({code:1});}}}));
+   let checkInRequests=0;partner.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith("/api/sitting-lifecycle")&&request.postDataJSON()?.action==="check_in")checkInRequests++;});
+   await partner.getByRole("button",{name:"Check in with my location",exact:true}).click();await expect(partner.getByRole("alert")).toContainText("Allow location access");expect(checkInRequests).toBe(0);await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
+
   }finally{await partner.close();}
 
  }
