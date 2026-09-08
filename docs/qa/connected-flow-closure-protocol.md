@@ -110,3 +110,11 @@ Ordinary order updates previously queued `chat` messages that the dispatcher rej
 The worker also reconciles order-notification delivery status from canonical communication status, including external receipt transitions. A queued snapshot no longer persists indefinitely after delivery/retry/suppression. Booking creation wording now says recorded, rather than incorrectly claiming confirmation regardless of booking/payment state.
 
 39 selected tests passed after restoring the loopback permission needed by the provider contract harness. The connected journey injects a notification-projection write failure, verifies rollback/no delivery event, retries once, verifies replay prevention, tests post-enqueue opt-out and simulated external receipt reconciliation, and asserts no payment writes. Build/artifact validation and typecheck passed. The external receipt is simulated and the provider contract uses a loopback server; no real recipient or live payment was contacted. Previous dead letters, general customer/provider chat, deployed transport, and complete all-service event coverage remain open.
+
+## Provider-chat replay authorization
+
+The provider send path returned earlier message content for an idempotency key before checking current assignment or Trust & Safety status. Retries now pass the same current assignment and suspension checks as new sends, and the stored key must belong to that provider's chat activity and conversation. A reassigned provider cannot recover prior content through a replay; a new provider cannot reuse another sender's key.
+
+Provider send/read assignment lookups also distinguish a genuinely absent legacy table from database errors. Store failures stop access instead of falling back to potentially stale canonical booking ownership.
+
+11 focused tests passed, covering valid replay without duplicate activity, reassignment, suspension, another sender's key, assignment-store failure and existing provider communication boundaries. Build/artifact validation and typecheck passed. This is service/route-source evidence, not a complete customer-provider browser journey. Booking-created conversation wiring, provider chat UI, offline routing, staff takeover, payload visibility and measured real-time behavior remain open. No payment or external communication was performed.

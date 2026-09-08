@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     const db = await database(); await requireProviderOwnership(db, actor, providerId);
     const thread = await db.prepare("SELECT customer_id,booking_id,status FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
     if (!thread || text(thread.status) !== "open" || !text(thread.booking_id)) return json({ error: "Open booked conversation not found" }, 404);
-    let assignment = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
+    let assignment = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(error => { if (/no such table: provider_work_orders/i.test(error instanceof Error ? error.message : String(error))) return null; throw error; });
     if (!assignment) assignment = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
     if (!assignment || text(assignment.provider_id) !== providerId) return json({ error: "Provider is not assigned to this conversation" }, 403);
     const messages = await db.prepare("SELECT id,direction,channel,payload_json,status,created_at FROM communication_messages WHERE thread_id=? AND channel IN ('chat','whatsapp') ORDER BY created_at ASC LIMIT 250").bind(threadId).all<Row>();

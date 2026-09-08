@@ -100,3 +100,7 @@ Order notifications now have deterministic cursor pagination, UI newer/older nav
 Connected ordinary order chat messages to internal delivery after validating their persisted notification/customer/order linkage and current consent. Message, event, outbox and notification delivery state commit atomically. Delivery projections reconcile from canonical communication status. Creation notices now say recorded instead of claiming every booking is confirmed.
 
 39 selected regressions passed, including injected rollback/retry, duplicate prevention, opt-out after enqueue, simulated receipt reconciliation and no payment writes. Build/artifact validation and typecheck passed. This is internal delivery and local contract evidence; external deployed delivery and generic chat remain open.
+
+### Provider chat authorization
+
+Fixed idempotency replay returning message content before current provider assignment/suspension checks. Keys now remain bound to the provider's chat activity and conversation. Assignment-store failures fail closed in send/read paths rather than silently trusting fallback ownership. Eleven focused tests passed with build/artifact validation and typecheck; complete provider/customer chat UI and takeover journeys remain open.
