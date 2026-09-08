@@ -1,5 +1,6 @@
 "use client";
 import{useEffect,useState}from"react";
+import{staffWorkspace}from"../../lib/staff-workspace";
 
 const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",line:"var(--paw-line)",orange:"var(--paw-gold)",gold:"var(--paw-primary)",green:"#207545"};
 // Seeded identities a tester can jump in as. Sign-in resolves the role from the staff directory, so
@@ -14,8 +15,9 @@ const QUICK=[
 
 export default function StagingLoginPage(){
   const[enabled,setEnabled]=useState<boolean|null>(null),[signedIn,setSignedIn]=useState<string|null>(null);
+  const[workspace,setWorkspace]=useState("/team");
   const[code,setCode]=useState(""),[email,setEmail]=useState(""),[busy,setBusy]=useState(false),[msg,setMsg]=useState("");
-  useEffect(()=>{let a=true;void fetch("/api/staging-login",{cache:"no-store"}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!a)return;setEnabled(ok&&j.enabled);setSignedIn(j?.signedInAs?.email||null);}).catch(()=>{if(a)setEnabled(false);});return()=>{a=false;};},[]);
+  useEffect(()=>{let a=true;void fetch("/api/staging-login",{cache:"no-store"}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!a)return;setEnabled(ok&&j.enabled);setSignedIn(j?.signedInAs?.email||null);setWorkspace(staffWorkspace(j?.signedInAs?.role));}).catch(()=>{if(a)setEnabled(false);});return()=>{a=false;};},[]);
 
   async function login(useEmail:string){
     if(!code.trim()){setMsg("Enter the access code first.");return;}
@@ -24,7 +26,10 @@ export default function StagingLoginPage(){
     try{const r=await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:code.trim(),email:useEmail.trim()})});
       const j=await r.json() as{error?:string;email?:string};
       if(!r.ok)throw new Error(j.error||"Sign-in failed");
-      window.location.assign("/me");
+      const session=await fetch("/api/staging-login",{cache:"no-store"});
+      const identity=await session.json();
+      if(!session.ok||!identity.signedInAs)throw new Error("We couldn't confirm your sign-in. Please try again.");
+      window.location.assign(staffWorkspace(identity.signedInAs.role));
     }catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
   async function logout(){setBusy(true);try{await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"logout"})});setSignedIn(null);setMsg("Signed out.");}finally{setBusy(false);}}
@@ -42,7 +47,7 @@ export default function StagingLoginPage(){
         {enabled===false?<p style={{color:"var(--paw-danger)",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
         {enabled===null?<p style={{color:C.dim,margin:0}}>Checking…</p>:null}
         {enabled?<>
-          {signedIn?<p style={{color:C.green}}>Signed in as <b>{signedIn}</b>. <a href="/me" style={{color:C.gold}}>Go to my workspace →</a> · <button onClick={()=>void logout()} disabled={busy} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",textDecoration:"underline"}}>sign out</button></p>:null}
+          {signedIn?<p style={{color:C.green}}>Signed in as <b>{signedIn}</b>. <a href={workspace} style={{color:C.gold}}>Go to my workspace →</a> · <button onClick={()=>void logout()} disabled={busy} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",textDecoration:"underline"}}>sign out</button></p>:null}
           <label style={{fontSize:13,color:C.dim}}>Access code<input style={inp} value={code} type="password" placeholder="shared UAT access code" onChange={e=>setCode(e.target.value)}/></label>
           <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>Jump in as a seeded identity:</p>
           <div style={{display:"grid",gap:8}}>{QUICK.map(q=><button key={q.email} disabled={busy} onClick={()=>void login(q.email)} style={{...btn,background:"transparent",color:C.ink,border:`1px solid ${C.line}`,textAlign:"left"}}><b>{q.label}</b><br/><small style={{color:C.dim}}>{q.email}</small></button>)}</div>
