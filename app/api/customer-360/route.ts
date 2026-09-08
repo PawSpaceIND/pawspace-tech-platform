@@ -1,10 +1,12 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import{buildCustomer360,ensureCustomer360Tables}from"../../../lib/customer-360";
+import{isDevelopmentPreviewRequest}from"../../../lib/development-preview";
 
 type Body={action?:string;customerId?:string;duplicateCustomerId?:string;matchReason?:string;marketing?:boolean;service?:boolean;whatsapp?:boolean;sms?:boolean;email?:boolean;reviewId?:string;status?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Customer 360 write blocked",{status:403});}
+function hasAuthenticationMaterial(request:Request){if(isDevelopmentPreviewRequest(request))return true;if(String(request.headers.get("oai-authenticated-user-email")||"").trim())return true;const cookie=request.headers.get("cookie")||"";return/(?:^|;\s*)(?:pawspace_identity_session|pawspace_uat)=/.test(cookie);}
 
 /*
  * Purpose-based access, applied through lib/purpose-based-access.ts. [PTJA-W2-B2-R01]
@@ -24,7 +26,7 @@ function sameOrigin(request:Request){const origin=request.headers.get("origin");
  * customer_data_reveals row. The area survives here so an associate arranging a home visit can still
  * recognise where they are going.
  */
-export async function GET(request:Request){try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const built=await buildCustomer360(db,id);
+export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const built=await buildCustomer360(db,id);
   const access=await customerDataAccessResolver(db);
   const records=built.map(record=>{
     const primary=record.addresses.find(entry=>entry.isDefault)??record.addresses[0]??null;
