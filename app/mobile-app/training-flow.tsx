@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import baseStyles from "./training.module.css";
 import extraStyles from "./training-extra.module.css";
 import planStyles from "./training-plans.module.css";
+import meetStyles from "./training-meeting.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
@@ -359,17 +360,20 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
           <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>{recommendedPlan.name}</h4><p>Age-appropriate starting point. Your selected goals: {selectedGoals.slice(0, 2).join(" + ")}.</p></div><b>{recommendedPlan.sessionLabel}</b></article>
           <p className={styles.policy}>Puppy programmes are for dogs under six months; other programmes are for six months and older. For unknown or mixed ages, start with an assessment or book each age group separately. A valid date of birth takes priority over a saved age band.</p><button className={styles.back} onClick={()=>{setShowPetManager(true);setStage(1);}}>Review pet ages</button>
           <div className={styles.goalSummary}><b>Selected requirements</b>{selectedGoals.map((goal) => <span key={goal}><i>✓</i> {goal}</span>)}</div>
-          <section className={styles.meetTrainer}>
-            <div className={styles.meetPitch}><span>MEET A TRAINER FIRST</span><h4>Prefer to meet a trainer before choosing a programme?</h4><p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p></div>
-            <label className={styles.consent}>Service PIN code<input value={pincode} inputMode="numeric" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Enter six-digit PIN code" /></label>
+          <details className={meetStyles.meeting}>
+            <summary><span><strong>Meet a trainer first</strong><small>A home visit before you choose a programme</small></span><b>{meetPackage?money(Number(meetPackage.base_price)):"…"}</b></summary>
+            <div className={meetStyles.content}>
+            <p>Talk through your dog’s routine and goals. Training programmes are booked separately.</p>
+            <label className={meetStyles.field}>Service PIN code<input value={pincode} inputMode="numeric" autoComplete="postal-code" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Six-digit PIN code" /></label>
             <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
-            <div className={styles.meetSlots}>{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Requested":"Check availability"}</small></button>;})}</div>
-            <p>Trainer availability is checked in the governed city and zone before booking. This creates one standalone canonical Meet &amp; Greet with payment awaiting a verified event.</p>
-            <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Reserving Meet & Greet…":"Book Meet & Greet only"}</button>
+            <div className={meetStyles.slots} aria-label="Preferred meeting time">{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button type="button" key={slot} aria-pressed={meetSlot===slot} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Preferred time":"Choose time"}</small></button>;})}</div>
+            <p className={meetStyles.note}>We’ll check trainer availability before booking. Payment stays pending until confirmed.</p>
+            <button className={meetStyles.book} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Checking availability…":"Book Meet & Greet only"}</button>
             {meetLinked&&<article className={styles.meetConfirmed}><b>✓ Meet &amp; Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||"Assigned trainer"} · {meetBookingId}</span><small>You can continue to a programme now or return after the meeting.</small></article>}
             {meetBookingId&&!meetLinked&&<article className={styles.meetConfirmed}><b>Meet &amp; Greet belongs to another dog selection</b><span>Select the original dogs to link that meeting, or book another Meet &amp; Greet for the current selection.</span></article>}
             {scheduleError&&<p role="alert">{scheduleError}</p>}
-          </section>
+            </div>
+          </details>
           <div className={styles.planGuide}><span><i>1</i><b>Pick by goal</b><small>Puppy, obedience, leash or advanced</small></span><span><i>2</i><b>Compare effort</b><small>Sessions, validity and price together</small></span><span><i>3</i><b>See outcomes</b><small>Tap a plan to expand inclusions</small></span></div>
           <div className={styles.planListHead}><b>Programmes for your selected dogs</b><span>{eligiblePlans.length} options · select to compare</span></div>
           <div className={planStyles.grid} data-testid="training-plan-grid">
