@@ -158,11 +158,11 @@ for(const outcome of ["full_time","commission","cancel","conflict","incomplete"]
  if(outcome==="cancel")await form.getByRole("combobox",{name:"Action",exact:true}).selectOption("cancel");
  else await form.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption("WAITING-PROVIDER");
  const submit=form.getByRole("button",{name:outcome==="cancel"?"Cancel request":"Assign provider",exact:true});await expect(submit).toBeDisabled();
- await form.getByLabel("Reason",{exact:true}).fill("Reviewed the customer request");
+ await form.getByRole("textbox",{name:"Reason",exact:true}).fill("Reviewed the customer request");
  if(outcome==="full_time")await page.screenshot({path:test.info().outputPath("employee-assignment-form.png"),fullPage:true});
  await submit.click();
  expect(submitted).toEqual({groupId:"WAITING-GROUP",expectedRevision:revision,action:outcome==="cancel"?"cancel":"assign",...(outcome==="cancel"?{}:{providerId:"WAITING-PROVIDER"}),reason:"Reviewed the customer request"});
  if(outcome==="conflict"||outcome==="incomplete"){
-  await expect(form.getByLabel("Reason",{exact:true})).toHaveValue("Reviewed the customer request");await expect(submit).toBeDisabled();await expect(page.getByRole("alert")).toBeVisible();await expect(page.getByRole("status")).toHaveCount(0);await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Manage request",exact:true})).toBeVisible();
+  await expect(form.getByRole("textbox",{name:"Reason",exact:true})).toHaveValue("Reviewed the customer request");await expect(submit).toBeDisabled();await expect(page.getByRole("alert")).toBeVisible();await expect(page.getByRole("status")).toHaveCount(0);await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Manage request",exact:true})).toBeVisible();
  }else await expect(page.getByRole("status")).toContainText(outcome==="cancel"?"Request WAITING-GROUP cancelled.":outcome==="commission"?"Partner acceptance and customer booking confirmation are still pending.":"Customer booking confirmation is still pending.");
 });
