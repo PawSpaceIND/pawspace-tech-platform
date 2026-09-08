@@ -120,7 +120,7 @@ const toBoardingCaregiver = (host: BoardingHost): Caregiver => ({
 });
 
 import type { LoggedInCustomer } from "./customer-login";
-export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; customer: LoggedInCustomer }) {
+export default function StayFlow({ mode: initialMode, customer, onModeChange }: { mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
  const [careDraft,setCareDraft]=useState<SittingCarePlan>({}),[confirmedCarePlan,setConfirmedCarePlan]=useState<SittingCarePlan|undefined>(),[careSaveError,setCareSaveError]=useState("");
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
@@ -255,6 +255,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     );
   const switchMode = (next: Mode) => {
     setMode(next);
+    onModeChange?.(next);
     setCaregiver(next === "boarding" ? boardingPlaceholder : sitterPlaceholder);
     if(next==="boarding"&&careWindow==="12 hours")setCareWindow("10 hours");
     if(next==="sitting"&&careWindow==="10 hours")setCareWindow("12 hours");
