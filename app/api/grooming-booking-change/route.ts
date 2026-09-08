@@ -31,8 +31,9 @@ const minutesOfLocalDay=(value:string,offsetMinutes:number)=>{const local=new Da
 const rosterWindowCovers=(window:string,startMinutes:number,endMinutes:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]),to=Number(match[3])*60+Number(match[4]);return startMinutes>=from&&endMinutes<=to;};
 
 export async function GET(request:Request){try{
+ const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
  const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);
- const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const db=await database();
+ const db=await database();
  const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);
  await requireCustomerOwnership(db,actor,String(booking.customer_id));
  const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>(),payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>();
