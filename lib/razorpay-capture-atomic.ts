@@ -232,3 +232,31 @@ export async function captureEffectsOutboxForEvent(db: Db, eventId: string) {
   return db.prepare("SELECT id,status,last_error FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND json_extract(payload_json,'$.eventId')=? ORDER BY created_at DESC LIMIT 1")
     .bind(eventId).first<Row>();
 }
+
+/** Recover committed captures even when the provider sends no further webhook. */
+export async function runRazorpayCaptureOutboxSweep(db: Db, input: { asOf?: number; limit?: number; workerId?: string } = {}) {
+  const table = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='financial_outbox'").first<Row>();
+  if (!table) return { processed: 0, succeeded: 0, failed: 0, results: [] };
+  const asOf = Math.min(input.asOf ?? Date.now(), Date.now());
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.min(100, Math.trunc(input.limit!))) : 25;
+  const rows = await db.prepare(`SELECT id FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'
+    AND ((status IN ('PENDING','RETRY') AND next_attempt_at<=?)
+      OR (status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?))
+    ORDER BY next_attempt_at ASC,created_at ASC LIMIT ?`).bind(asOf, asOf, limit).all<Row>();
+  const prefix = `${text(input.workerId) || "scheduled-capture"}:${crypto.randomUUID()}`;
+  const results: Array<Record<string, unknown>> = [];
+  let succeeded = 0, failed = 0;
+  for (const row of rows.results) {
+    const outboxId = text(row.id);
+    try {
+      const result = await executeRazorpayCapturePostCommit(db, { outboxId, workerId: `${prefix}:${outboxId}` });
+      results.push({ outboxId, ...result });
+      if (result.claimed && result.completed) succeeded++;
+      else if (result.claimed) failed++;
+    } catch (error) {
+      failed++;
+      results.push({ outboxId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { processed: rows.results.length, succeeded, failed, results };
+}

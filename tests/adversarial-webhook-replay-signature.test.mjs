@@ -533,7 +533,7 @@ test("WH-18: a signed capture claiming a booking that does not own the gateway o
 });
 
 
-test("capture-first delivery with a durable CREATED checkout intent records money without awaiting authorization", async () => {
+for (const recovery of ["webhook", "scheduled_retry", "expired_lease"]) test(`capture-first delivery records money and recovers downstream via ${recovery}`, async () => {
   freshDb();
   const { makeD1: transactionalD1 } = await import("./helpers/taxi-harness.mjs");
   db = transactionalD1(sqlite);
@@ -557,9 +557,24 @@ test("capture-first delivery with a durable CREATED checkout intent records mone
   assert.equal(sqlite.prepare("SELECT status FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").get().status, "RETRY");
   // Advance retry eligibility without issuing a new checkout or recapturing money.
   sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=0 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
-  const recovered = await postSigned(capture, { eventId: "evt_capture_recovery_header" });
-  assert.equal(recovered.status, 200, JSON.stringify(recovered));
-  assert.equal(recovered.body.captureEffectsRecovered, true);
+  if (recovery === "webhook") {
+    const recovered = await postSigned(capture, { eventId: "evt_capture_recovery_header" });
+    assert.equal(recovered.status, 200, JSON.stringify(recovered));
+    assert.equal(recovered.body.captureEffectsRecovered, true);
+  } else {
+    const { runRazorpayCaptureOutboxSweep } = await import("../lib/razorpay-capture-atomic.ts");
+    if (recovery === "expired_lease") {
+      sqlite.prepare("UPDATE financial_outbox SET status='PROCESSING',lease_owner='dead-worker',lease_expires_at=1 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+    } else {
+      sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=? WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run(Date.now() + 60000);
+      assert.equal((await runRazorpayCaptureOutboxSweep(db)).processed, 0, "backoff must be respected");
+      sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=0 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+    }
+    const concurrent = await Promise.all([runRazorpayCaptureOutboxSweep(db), runRazorpayCaptureOutboxSweep(db)]);
+    assert.equal(concurrent.reduce((n, result) => n + result.succeeded, 0), 1, "only one worker may execute recovery");
+    assert.equal(concurrent.reduce((n, result) => n + result.failed, 0), 0);
+    assert.equal((await runRazorpayCaptureOutboxSweep(db)).processed, 0, "completed work must not rerun");
+  }
   const { runOrderNotificationSweep, listOrderNotifications } = await import("../lib/order-notification-governance.ts");
   await runOrderNotificationSweep(db);
   const receipt = (await listOrderNotifications(db, "cus_adv")).filter(row => row.booking_id === bookingId && row.event_type === "payment_captured");
