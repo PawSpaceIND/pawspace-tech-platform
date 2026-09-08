@@ -220,7 +220,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await page.unroute("**/api/booking-rating");
     const savedRating=page.waitForResponse(response=>response.url().endsWith("/api/booking-rating")&&response.request().method()==="POST");
     await ratingCard.getByRole("button",{name:"4 stars",exact:true}).click();
-    const ratingResponse=await savedRating;expect(ratingResponse.status()).toBe(201);const ratingBody=await ratingResponse.json();expect(ratingBody.data.bookingId).toBe(bookingId);expect(ratingBody.data.stars).toBe(4);
+    const ratingResponse=await savedRating;expect(ratingResponse.status()).toBe(201);const ratingRequest=ratingResponse.request().postDataJSON();expect(ratingRequest.bookingId).toBe(bookingId);expect(ratingRequest.stars).toBe(4);
     await expect(ratingCard).toHaveCount(0);
     await page.reload();await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();await page.getByRole("button",{name:"History",exact:true}).click();
     const persistedRating=await page.evaluate(async()=>{const response=await fetch("/api/booking-rating",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(persistedRating.status).toBe(200);expect(persistedRating.body.data.ratableBookings.some((item:{bookingId:string})=>item.bookingId===bookingId)).toBe(false);
