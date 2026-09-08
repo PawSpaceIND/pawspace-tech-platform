@@ -113,10 +113,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const refreshFromEvent = () => { void refresh(); };
+    window.addEventListener("pawspace:conversation-refresh", refreshFromEvent);
+    const timer = window.setInterval(refreshFromEvent, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:conversation-refresh", refreshFromEvent);
     };
   }, [loadThreads]);
 
@@ -137,10 +140,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const refreshFromEvent = () => { void refresh(); };
+    window.addEventListener("pawspace:conversation-refresh", refreshFromEvent);
+    const timer = window.setInterval(refreshFromEvent, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:conversation-refresh", refreshFromEvent);
     };
   }, [selected, loadConversation, loadControl]);
 
