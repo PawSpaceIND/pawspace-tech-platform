@@ -189,11 +189,12 @@ export default function PartnerMobileApp() {
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+        <div className={styles.identityPill}><i>{identity?.subjectId ? "✓" : "○"}</i><span>{identity?.subjectId ? "Verified" : error ? "Sign in required" : "Checking"}</span></div>
       </header>
 
       <section className={styles.content}>
         {error && <div className={styles.error} role="alert">{error}</div>}
+        {!identity?.subjectId && error && <p><Link href="/partner/onboarding">Sign in to your partner account →</Link></p>}
         {PHOTO_UPLOADS_DEFERRED && <section className={styles.notice}><b>Internal human test · photos deferred</b><p>{PHOTO_UAT_NOTICE}</p></section>}
 
         {tab === "home" && <>
