@@ -8,14 +8,14 @@ async function fixture(t){
  const read=(cookie=result.customerCookie)=>routeCall("../../app/api/grooming-booking-change/route.ts","GET",path,null,cookie);
  return{...ctx,result,path,read};
 }
-test("owned preview uses frozen fees and captured payment without business mutations",async t=>{
+test("owned preview overrides legacy fees and captured payment without business mutations",async t=>{
  const f=await fixture(t);const row=f.sqlite.prepare("SELECT pricing_json FROM canonical_bookings WHERE id=?").get(f.result.bookingId),pricing=JSON.parse(row.pricing_json);
  pricing.commercialPolicy.enforcementMode="enforce";pricing.commercialPolicy.rescheduleFeeType="flat";pricing.commercialPolicy.rescheduleFeeValue=75;
  f.sqlite.prepare("UPDATE canonical_bookings SET pricing_json=? WHERE id=?").run(JSON.stringify(pricing),f.result.bookingId);
  f.sqlite.prepare("UPDATE grooming_commercial_policies SET reschedule_fee_type='flat',reschedule_fee_value=999").run();
  const tables=['canonical_bookings','provider_work_orders','booking_payments','scheduling_reservations','booking_lifecycle_events'];const snapshot=()=>tables.map(table=>f.sqlite.prepare(`SELECT * FROM ${table}`).all());const before=snapshot();
  const preview=await f.read();assert.equal(preview.status,200,JSON.stringify(preview.body));const data=preview.body.data;
- assert.equal(data.reschedule.feeAmount,75);assert.equal(data.durationMinutes,120);assert.equal(data.cancellation.mode,"cancel");assert.equal(data.cancellation.refundAmount,1899);assert.deepEqual(snapshot(),before);
+ assert.equal(data.reschedule.feeAmount,0);assert.equal(data.durationMinutes,120);assert.equal(data.cancellation.mode,"cancel");assert.equal(data.cancellation.refundAmount,1899);assert.deepEqual(snapshot(),before);
 });
 test("unpaid bookings do not show an invented refund",async t=>{const f=await fixture(t);f.sqlite.prepare("UPDATE booking_payments SET status='pending' WHERE booking_id=?").run(f.result.bookingId);const p=await f.read();assert.equal(p.status,200);assert.equal(p.body.data.cancellation.refundAmount,0);});
 test("started care previews review without opening a cancellation case",async t=>{

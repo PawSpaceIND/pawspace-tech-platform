@@ -105,15 +105,15 @@ async function evaluate(db, input, scope = {}) {
   return evaluateCancellationRefund(await policyFor(db, scope), { now: NOW, amountPaid: 2000, cancelledBy: "customer", ...input });
 }
 
-test("F24: the approved notice ladder - 100% beyond 24h, 50% from 6-24h, 0% inside 6h", async () => {
+test("F24: no cancellation fee overrides legacy notice deductions before service starts", async () => {
   const { db } = await world();
   const bands = [
     { hours: 48, percent: 100, amount: 2000, compensation: "none" },
     { hours: 24, percent: 100, amount: 2000, compensation: "none" },
-    { hours: 23.9, percent: 50, amount: 1000, compensation: "cancellation_may_apply" },
-    { hours: 6, percent: 50, amount: 1000, compensation: "cancellation_may_apply" },
-    { hours: 5.9, percent: 0, amount: 0, compensation: "cancellation_applies" },
-    { hours: 0.25, percent: 0, amount: 0, compensation: "cancellation_applies" },
+    { hours: 23.9, percent: 100, amount: 2000, compensation: "cancellation_may_apply" },
+    { hours: 6, percent: 100, amount: 2000, compensation: "cancellation_may_apply" },
+    { hours: 5.9, percent: 100, amount: 2000, compensation: "cancellation_applies" },
+    { hours: 0.25, percent: 100, amount: 2000, compensation: "cancellation_applies" },
   ];
   for (const band of bands) {
     const result = await evaluate(db, { scheduledStart: startIn(band.hours), bookingStatus: "confirmed" });
@@ -203,7 +203,7 @@ test("F24: policy resolution prefers this service and city over the platform def
   const boardingMaa = await evaluate(db, { scheduledStart: startIn(48), bookingStatus: "confirmed" }, { serviceCode: "boarding", cityId: "maa" });
   const groomingBlr = await evaluate(db, { scheduledStart: startIn(48), bookingStatus: "confirmed" }, { serviceCode: "grooming", cityId: "blr" });
 
-  assert.equal(boardingBlr.refundPercent, 0, "48h notice is inside the stricter Bengaluru Boarding window");
+  assert.equal(boardingBlr.refundPercent, 100, "No cancellation fee overrides the legacy city notice deduction");
   assert.equal(boardingMaa.refundPercent, 100, "another city's Boarding still inherits the platform default");
   assert.equal(groomingBlr.refundPercent, 100, "another service in the same city is untouched");
   assert.equal(boardingBlr.matchedBy, "service_and_city");
@@ -421,25 +421,24 @@ test("F24 route: a cancellation with more than 24 hours' notice still refunds in
   assert.equal(sqlite.prepare("SELECT status FROM booking_refund_cases WHERE booking_id='BK-F24-EARLY'").get().status, "requested");
 });
 
-test("F24 route: a cancellation between 6 and 24 hours refunds half", async () => {
+test("F24 route: a cancellation between 6 and 24 hours refunds captured funds without a fee", async () => {
   const { sqlite, cancel } = await cancellationSetup();
   seedCancellable(sqlite, { bookingId: "BK-F24-HALF", status: "confirmed", start: new Date(Date.now() + 12 * HOUR).toISOString() });
 
   const result = await cancel("BK-F24-HALF");
 
   assert.equal(result.status, 200, JSON.stringify(result.body).slice(0, 300));
-  assert.equal(result.body.data.refundAmount, 1000, "50% of the Rs 2,000 actually paid");
+  assert.equal(result.body.data.refundAmount, 2000, "No cancellation fee: return the Rs 2,000 actually paid");
 });
 
-test("F24 route: a cancellation inside 6 hours refunds nothing and routes to review", async () => {
+test("F24 route: a cancellation inside 6 hours returns captured funds without a fee", async () => {
   const { sqlite, cancel } = await cancellationSetup();
   seedCancellable(sqlite, { bookingId: "BK-F24-LATE", status: "confirmed", start: new Date(Date.now() + 2 * HOUR).toISOString() });
 
   const result = await cancel("BK-F24-LATE");
 
-  assert.equal(result.status, 409, `no refund is due, so it becomes a reviewable request: ${JSON.stringify(result.body).slice(0, 300)}`);
-  assert.equal(result.body?.refundPolicy?.refundPercent, 0);
-  assert.equal(result.body?.disputeAllowed, true);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.data.refundAmount, 2000);
 });
 
 test("F24 route: the refund case carries the policy version that produced it", async () => {
