@@ -195,6 +195,18 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(adminBody?.data?.payoutReadiness?.status).toBe("accrued");
     expect(String(adminBody?.data?.payoutReadiness?.reason || "")).toMatch(/ledger balanced/i);
 
+    // Exchange a real local sandbox OTP for a customer session; provider/admin headers are removed.
+    await page.setExtraHTTPHeaders({});await page.context().clearCookies();await page.goto("/mobile-app");
+    await page.locator("nav").getByRole("button",{name:/account/i}).last().click();await page.getByPlaceholder("10-digit phone number").fill("9800000111");await page.getByRole("button",{name:"Send OTP",exact:true}).click();
+    const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await page.getByPlaceholder("6-digit code").fill(code!);
+    const name=page.getByPlaceholder("Your name (first time only)");if(await name.isVisible().catch(()=>false))await name.fill("E2E UI Customer");
+    await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
+    const ownAccount=await expectOk(await page.context().request.get("/api/customer-account"),"completed booking customer identity");expect(ownAccount.data.customerId).toBe(CUSTOMER_ID);
+    await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
+    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoice_number));
+    const summary=await expectOk(await page.context().request.get(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}`),"customer persisted completion summary");expect(summary.data.invoice.total).toBe(adminBody.data.invoice.gross_amount);expect(summary.data.invoice.tax).toBe(adminBody.data.invoice.tax_amount);expect(summary.data).not.toHaveProperty("payoutReadiness");
+    await page.reload();await expect(care).toContainText("Persona E2E completed safely");await page.screenshot({path:test.info().outputPath(`customer-completed-care-${assignmentMode}.png`),fullPage:true});
+    await page.context().clearCookies();
     await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL });
     const adminUi = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
     expect(adminUi?.status() ?? 500).toBeLessThan(500);
