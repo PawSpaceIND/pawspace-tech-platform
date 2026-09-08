@@ -17,3 +17,5 @@
 .content button:focus-visible,.content a:focus-visible{outline:3px solid #c88b19;outline-offset:4px}
 
 .cancelForm{display:grid;gap:16px;border-top:1px solid #d4e3db;padding-top:20px}.cancelForm label{display:grid;gap:8px;line-height:1.5}.cancelForm textarea{font:inherit;min-height:100px;padding:12px;border:1px solid #80978d;border-radius:8px;resize:vertical;box-sizing:border-box;width:100%}.cancelForm .consent{display:flex;align-items:flex-start;gap:12px}.consent input{margin-top:4px;min-width:22px;min-height:22px}.content button:disabled{opacity:.55;cursor:default}.cancelForm textarea:focus-visible,.consent input:focus-visible{outline:3px solid #c88b19;outline-offset:3px}
+
+.cancelForm input[type=date],.cancelForm input[type=time]{font:inherit;min-height:48px;padding:10px;border:1px solid #80978d;border-radius:8px;box-sizing:border-box;max-width:100%;min-width:0}
