@@ -94,3 +94,9 @@ Fixed the customer gateway 403 on the independent order inbox, removed the globa
 Order notifications now have deterministic cursor pagination, UI newer/older navigation, input validation and a matching index. The widget rechecks verified identity after customer OTP and on focus/periodic checks, clears stale customer data, and times out stalled requests. The current page survives acknowledgement refresh.
 
 18 selected tests, build/artifact validation and typecheck passed. Local browser evidence covers 32 fixture notices across two pages, a persisted acknowledgement/count change, return navigation, and sandbox sign-in restoring the widget without page reload after simulated local session expiry. The connected protocol distinguishes these executed paths from unexecuted adversarial races and deployed checks. Module-wide readiness remains open.
+
+### Order communication delivery
+
+Connected ordinary order chat messages to internal delivery after validating their persisted notification/customer/order linkage and current consent. Message, event, outbox and notification delivery state commit atomically. Delivery projections reconcile from canonical communication status. Creation notices now say recorded instead of claiming every booking is confirmed.
+
+39 selected regressions passed, including injected rollback/retry, duplicate prevention, opt-out after enqueue, simulated receipt reconciliation and no payment writes. Build/artifact validation and typecheck passed. This is internal delivery and local contract evidence; external deployed delivery and generic chat remain open.

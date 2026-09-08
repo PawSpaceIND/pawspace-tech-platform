@@ -619,5 +619,36 @@ test('order notification journey: gateway ownership, customer read, repeat ackno
   assert.equal(new Set([...page1.items,...page2.items].map(item=>item.id)).size,2);
   assert.equal(page2.nextCursor,null);
 
+  const dispatcher=await import('../lib/communication-outbox-dispatcher.ts');
+  const engine=await import('../lib/communication-engine.ts');
+  const internal=await notifications.emitOrderNotification(db,{...event,key:'internal-completed',severity:'info',eventType:'service_completed'});
+  const message=sqlite.prepare("SELECT id FROM communication_messages WHERE idempotency_key='internal-completed:customer'").get();
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{throw new Error('Internal inbox must not send externally');};
+  try{
+    sqlite.exec("CREATE TRIGGER fail_order_delivery BEFORE UPDATE OF delivery_status ON order_notifications WHEN NEW.delivery_status='delivered' BEGIN SELECT RAISE(ABORT,'injected notification delivery failure'); END");
+    const failed=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.ok(failed.errors.some(error=>error.includes('injected notification delivery failure')));
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?').get(message.id).n,0);
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(internal.notificationId).delivery_status,'retry_pending');
+    sqlite.exec('DROP TRIGGER fail_order_delivery');
+    sqlite.prepare('UPDATE communication_outbox SET next_attempt_at=0 WHERE message_id=?').run(message.id);
+    const done=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(done.internalDelivered,1);assert.equal(done.externalDelivery,false);
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(internal.notificationId).delivery_status,'delivered');
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?').get(message.id).n,1);
+    const revoke=await notifications.emitOrderNotification(db,{...event,key:'internal-revoked',severity:'info',eventType:'service_completed'});
+    await engine.setCommunicationPreference(db,{customerId:'C-ORDER-NOTICE',serviceUpdates:false,source:'customer'});
+    await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(revoke.notificationId).delivery_status,'suppressed');
+    // Simulated external receipt updates must reach the order status projection too.
+    const external=sqlite.prepare("SELECT id FROM communication_messages WHERE idempotency_key='cancel-order-notice:customer'").get();
+    await engine.recordDeliveryEvent(db,{messageId:external.id,provider:'test_receipt',eventId:'order-delivered',eventType:'delivered'});
+    await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(created.notificationId).delivery_status,'delivered');
+  }finally{globalThis.fetch=originalFetch;}
+  await notifications.runOrderNotificationSweep(db,{actorId:OPS});
+  const creation=sqlite.prepare("SELECT body FROM order_notifications WHERE idempotency_key='booking:B-ORDER-NOTICE:created'").get();
+  assert.match(creation.body,/recorded/);assert.doesNotMatch(creation.body,/confirmed/, 'a creation record must not claim confirmation for a cancelled or unpaid booking');
   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,0,'notification acknowledgement never moves money');
 });
