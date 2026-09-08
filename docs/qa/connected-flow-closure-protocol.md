@@ -66,3 +66,23 @@ The customer Activity star control calls `/api/booking-rating`; configured servi
 | Analytics | Company CX open count reflects both ticket stores and reaches zero after case closure. Closed cases are no longer counted as open in Operations, customer counts or CX analytics. |
 
 Validation: 117 selected tests passed; build/artifact validation and typecheck passed. The added customer-to-Operations authorization assertion is included in the final connected-flow rerun. This increment does not close the flow while browser, notification and deployed checks remain open.
+
+## Support-notification increment — 9 September 2026
+
+A connected failure was found after the review-to-case fix: the staff alert sweep enqueued `chat` notices, but the generic dispatcher dead-lettered that channel. The customer menu and header bell also displayed placeholder notifications. The two overdue-case templates now have an internal inbox delivery path; other unsupported transports retain their existing fail-closed behavior.
+
+- The sweep links each notice to its case and booking. The dispatcher claims due work, rechecks policy, current service-update consent, case ownership/context and whether the breach remains actionable. Resolved, responded or otherwise stale notices are suppressed.
+- Inbox availability, delivery event and outbox completion commit atomically. An injected delivery-event write failure rolls back availability; a retry delivers once. Internal delivery is reported separately and never claims an external send or customer read.
+- The authenticated customer route exposes only delivered support notices and a safe field projection, with deterministic pagination. Queued, scheduled, suppressed and other customers' notices are excluded. The gateway routes to customer ownership checks.
+- The account menu and header bell open the inbox. Fake counts were removed. The dialog has loading, empty, error, retry, pagination, request timeout and native modal focus handling.
+
+| Stage | Evidence |
+|---|---|
+| Frontend → API → DB → case | Executed in the local app browser: sandbox OTP sign-in, Completed activity, one-star rating, visible success. The completed booking was directly seeded; no payment capture was attempted. |
+| Case → notification → customer UI | The same local DB case was given a fixture overdue timestamp. Real staff-alert sweep and dispatcher functions were invoked locally: one queued notice, one internal delivery, zero external sends/errors. Reopening the real inbox rendered the notice for `B-QA-INBOX`. |
+| Auth, gateway and recovery | The connected route suite executes real route and gateway policy code on transactional SQLite. It verifies wrong-owner/anonymous rejection, invalid cursor, rollback/retry, replay, opt-out after enqueue, stale resolved-case suppression, future scheduling and 52 same-timestamp records across two pages. |
+| Browser failure | Stopping the local preview produced an error with a Retry control. Restarting Vite reloaded the page; successful retry without reload is not claimed. A standalone Playwright regression was added but could not launch because macOS denied the Chromium Mach port. Browser evidence above used the Codex app browser. |
+| Admin, finance, analytics | The existing connected test continues through Operations case visibility, customer 360, case escalation/closure and CX counters. Payment rows and money totals remain unchanged. |
+| Hosted execution | Open. No deployed scheduler cadence, external notification provider, load/reconnect or hosted payment-lock evidence. |
+
+Validation: 62 selected tests passed with no failures or skips. Build/artifact validation and typecheck were rerun for the final source. These overlap previous selections and are not additive unique test counts. Previously dead-lettered notices are not automatically replayed by this change. General customer/provider chat, other notification types, real-time inbox refresh and external delivery remain open. A separate local request to `/api/order-notifications` returned 403 for the demo customer; that independent notification surface remains to be investigated.

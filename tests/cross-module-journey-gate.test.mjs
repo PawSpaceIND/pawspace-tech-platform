@@ -494,8 +494,73 @@ for (const surface of ["service-review", "booking-rating"]) test(`connected ${su
   const breach=await cases.runUnifiedCaseEscalations(db,{actorId:OPS,asOf:ticket.created_at+31*60000});
   assert.equal(breach.managerEscalations,1);
   assert.equal((await cases.runUnifiedCaseEscalations(db,{actorId:OPS,asOf:ticket.created_at+31*60000})).managerEscalations,0);
+  // Execute the real overdue-case sweep, outbox worker, and authenticated customer inbox.
+  const alerts=await import('../lib/staff-alert-center.ts');
+  const dispatcher=await import('../lib/communication-outbox-dispatcher.ts');
+  const inbox=await import('../app/api/customer-notifications/route.ts');
+  const gateway=await import('../lib/api-gateway.ts');
+  const readInbox=async request=>{const access=await gateway.authorizeApiRequest(request,{DB:db});assert.ok(!(access instanceof Response),'gateway must reach the route-owned customer authorization');return inbox.GET(request);};
+  const engine=await import('../lib/communication-engine.ts');
+  sqlite.prepare("UPDATE unified_cases SET first_response_due_at=?,resolution_due_at=? WHERE id=?").run(Date.now()-10000,Date.now()+3600000,ticket.id);
+  const swept=await alerts.runStaffAlertSweep(db,{actorId:OPS});
+  assert.equal(swept.customerNotifications.enqueued,1,JSON.stringify(swept));
+  const notice=sqlite.prepare("SELECT * FROM communication_messages WHERE template_key='case_first_response_overdue'").get();
+  assert.equal(notice.ticket_id,ticket.id);
+  const inboxRequest=(extra='')=>new Request('https://app.pawspace.in/api/customer-notifications'+extra,{headers:{cookie:`${session.PLATFORM_SESSION_COOKIE}=${issued.token}`}});
+  assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,0,'queued notices are not delivered');
+  assert.equal((await readInbox(inboxRequest('?customerId=someone-else'))).status,403);
+  assert.equal((await readInbox(inboxRequest('?cursor=bad'))).status,400);
+  assert.ok((await inbox.GET(new Request('https://app.pawspace.in/api/customer-notifications'))).status>=400);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error('Internal delivery must never call an external provider');};
+  try {
+    // An event-write failure rolls back inbox delivery and can be retried safely.
+    sqlite.exec("CREATE TRIGGER fail_inbox_event BEFORE INSERT ON communication_message_delivery_events BEGIN SELECT RAISE(ABORT,'injected inbox event failure'); END");
+    const failedDispatch=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.ok(failedDispatch.errors.some(value=>value.includes('injected inbox event failure')));
+    assert.equal(sqlite.prepare("SELECT status FROM communication_messages WHERE id=?").get(notice.id).status,'retry_pending');
+    assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,0);
+    sqlite.exec('DROP TRIGGER fail_inbox_event');
+    sqlite.prepare("UPDATE communication_outbox SET next_attempt_at=0 WHERE message_id=?").run(notice.id);
+    const delivered=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(delivered.internalDelivered,1,JSON.stringify(delivered));
+    assert.equal(delivered.externalDelivery,false);
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+  } finally { globalThis.fetch=originalFetch; }
+  const notices=(await (await readInbox(inboxRequest())).json()).data.items;
+  assert.equal(notices.length,1);
+  assert.equal(notices[0].bookingId,'B-REVIEW-FLOW');
+  assert.equal(notices[0].caseId,ticket.id);
+  assert.equal(notices[0].payload,undefined,'raw internal payload is never exposed');
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?").get(notice.id).n,1);
+  assert.equal((await alerts.runStaffAlertSweep(db,{actorId:OPS})).customerNotifications.duplicatePrevented,1);
+  // Revoking service updates between enqueue and delivery suppresses the pending notice.
+  const pending=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',ticketId:ticket.id,channel:'chat',purpose:'service_recovery',templateKey:'case_resolution_overdue',idempotencyKey:'revoked-notice',payload:{caseId:ticket.id},createdBy:OPS});
+  await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:false,source:'customer'});
+  await dispatcher.runCommunicationOutboxDispatcher(db,{});
+  assert.equal(sqlite.prepare("SELECT status FROM communication_messages WHERE id=?").get(pending.messageId).status,'suppressed');
+  assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,1);
+  if (surface === 'booking-rating') {
+    await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:true,source:'customer'});
+    const future=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',channel:'chat',purpose:'service_recovery',templateKey:'case_resolution_overdue',idempotencyKey:'future-notice',payload:{},scheduledAt:Date.now()+3600000,createdBy:OPS});
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+    assert.equal(sqlite.prepare("SELECT status FROM communication_outbox WHERE message_id=?").get(future.messageId).status,'scheduled');
+    // More than one page, with identical timestamps, must neither omit nor duplicate notices.
+    for (let i=0;i<51;i++) sqlite.prepare("INSERT INTO communication_messages SELECT ?,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,?,policy_json,created_by,created_at,updated_at FROM communication_messages WHERE id=?").run(`PAGE-${i.toString().padStart(3,'0')}`,`page-${i}`,notice.id);
+    const firstPage=(await (await readInbox(inboxRequest())).json()).data;
+    assert.equal(firstPage.items.length,50);
+    assert.ok(firstPage.nextCursor);
+    const nextPage=(await (await readInbox(inboxRequest('?cursor='+encodeURIComponent(JSON.stringify(firstPage.nextCursor))))).json()).data;
+    assert.equal(nextPage.items.length,2);
+    assert.equal(new Set([...firstPage.items,...nextPage.items].map(row=>row.id)).size,52);
+    assert.equal(nextPage.nextCursor,null);
+  }
   await cases.updateUnifiedCase(db,{caseId:ticket.id,action:'resolve',resolutionCode:'callback_completed',note:'Customer contacted; no refund requested.',actorId:OPS});
   await cases.updateUnifiedCase(db,{caseId:ticket.id,action:'close',actorId:OPS});
+  await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:true,source:'customer'});
+  const late=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',ticketId:ticket.id,channel:'chat',purpose:'service_recovery',templateKey:'case_first_response_overdue',idempotencyKey:'resolved-late-notice',payload:{caseId:ticket.id},createdBy:OPS});
+  await dispatcher.runCommunicationOutboxDispatcher(db,{});
+  assert.equal(sqlite.prepare("SELECT status,last_error FROM communication_outbox WHERE message_id=?").get(late.messageId).last_error,'case_notice_no_longer_actionable');
   assert.equal((await analytics.buildCompanyAnalytics(db)).cx.open,0);
   assert.equal((await customer360.buildCustomer360(db,'C-REVIEW-FLOW'))[0].openTicketCount,0);
   assert.deepEqual(sqlite.prepare('SELECT * FROM booking_payments').all(),paymentBefore);

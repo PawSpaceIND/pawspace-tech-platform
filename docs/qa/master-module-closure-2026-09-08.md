@@ -72,3 +72,13 @@ The task's initial shell had all three variables unset. Explicitly setting them 
 3. Completion of the remaining implementation and verification work explicitly listed in the module matrix, particularly churn telemetry and the Operations live feed.
 
 The stabilization changes are reviewable fixes, not a declaration that all 13 modules meet the requested readiness standard.
+
+## Subsequent connected support-notification increment — 9 September 2026
+
+The earlier statement that no new browser UAT occurred is historical. A local demo now executes sandbox customer sign-in → Activity one-star rating → recovery case → overdue SLA sweep → internal outbox delivery → authenticated customer inbox. The booking and overdue timestamp were fixtures; the customer actions, route handlers, case transaction and notification functions were real. No payment or external send was made.
+
+The fix spans communications, customer inbox, ratings and complaints: overdue-case chat notices no longer enter the unsupported-channel dead-letter path. Delivery is transactional, checks current consent and case state, and appears through an ownership-checked paginated API. The customer menu/header placeholders now open a modal inbox with error/retry/timeout states. Scheduled notices remain hidden; resolved cases suppress pending notices. Native modal focus and the delivered layout were inspected in the local app browser.
+
+62 focused regressions passed. The selected tests include rollback/retry, duplicate prevention, authorization, deterministic pagination, scheduling, opt-out and stale-case suppression while preserving payment/analytics invariants. Build and typecheck were rerun. The standalone Playwright test could not launch under macOS sandbox restrictions; its browser execution remains open. The local app browser supplied the UI evidence described above, including an offline error/Retry state.
+
+See the connected-flow protocol for stage-by-stage evidence and limitations. This increment does not close general chat, all notifications, the full CX inbox, or any module at 95%. Existing dead letters are not automatically replayed. Hosted environment, external delivery, Operations live updates and churn telemetry remain open.
