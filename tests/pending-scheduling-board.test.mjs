@@ -89,3 +89,42 @@ test('unavailable recommended provider leaves the request waiting and does not c
  ctx.sqlite.prepare("UPDATE provider_capacity_profiles SET status='inactive'").run();
  const response=await operation(groupId,'assign',provider);assert.equal(response.status,409);assert.match(response.body.error,/still needs admin assignment/);assert.equal(response.body.restored,false);assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);assert.equal((await board(input.scheduledStart.slice(0,10))).body.data.pendingRequests.length,1);
 });
+
+for(const action of ['assign','manual','reassign'])for(const timing of ['past','short_notice'])test(`${action} refuses a saved request whose appointment is ${timing}`,async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId,saved=decision(ctx,groupId),provider=JSON.parse(saved.shortlist_json).choices[0].provider.id;
+ const now=Date.now;Date.now=()=>Date.parse(input.scheduledStart)+(timing==='past'?7200000:-60000);
+ let response;try{response=await operation(groupId,action,provider);}finally{Date.now=now;}
+ assert.equal(response.status,400,JSON.stringify(response.body));assert.equal(response.body.code,timing==='past'?'start_in_past':'below_minimum_lead_time');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);
+ assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) AS n FROM provider_assignment_offers WHERE group_id=?').get(groupId).n,0);
+});
+
+test('a tightened booking horizon is applied to the saved shortlist',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId,saved=decision(ctx,groupId),provider=JSON.parse(saved.shortlist_json).choices[0].provider.id;
+ const updated=ctx.sqlite.prepare("UPDATE service_policy_configs SET config_json=json_set(config_json,'$.maximumHorizonDays',1),version=version+1 WHERE policy_domain='booking_time_policy' AND service_code='grooming'").run();assert.ok(updated.changes>0);
+ const response=await operation(groupId,'assign',provider);assert.equal(response.status,400,JSON.stringify(response.body));assert.equal(response.body.code,'beyond_booking_horizon');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);
+});
+
+test('lead time is checked again after the scheduling evaluation begins',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId,saved=decision(ctx,groupId),provider=JSON.parse(saved.shortlist_json).choices[0].provider.id;
+ const now=Date.now;let advanced=false;
+ ctx.db.beforeBatch=async statements=>{if(!advanced&&statements.some(s=>s._sql?.startsWith("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id="))){advanced=true;Date.now=()=>Date.parse(input.scheduledStart)-60000;}};
+ let response;try{response=await operation(groupId,'assign',provider);}finally{Date.now=now;}
+ assert.equal(advanced,true);assert.equal(response.status,400,JSON.stringify(response.body));assert.equal(response.body.code,'below_minimum_lead_time');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);
+});
+
+test('an expired waiting request can still be cancelled',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const now=Date.now;Date.now=()=>Date.parse(input.scheduledEnd)+86400000;
+ let response;try{response=await operation(groupId,'cancel');}finally{Date.now=now;}
+ assert.equal(response.status,200,JSON.stringify(response.body));assert.equal(decision(ctx,groupId).status,'cancelled');assert.deepEqual(active(ctx,groupId),[]);
+});
+
+test('a reassign refused after evaluation restores the original reservation',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const choices=JSON.parse(decision(ctx,groupId).shortlist_json).choices.map(choice=>choice.provider.id);
+ assert.equal((await operation(groupId,'assign',choices[0])).status,200);
+ const saved=decision(ctx,groupId),rows=active(ctx,groupId),now=Date.now;let advanced=false;
+ ctx.db.beforeBatch=async statements=>{if(!advanced&&statements.some(s=>s._sql?.startsWith("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id="))){advanced=true;Date.now=()=>Date.parse(input.scheduledStart)-60000;}};
+ let response;try{response=await operation(groupId,'reassign',choices[1]);}finally{Date.now=now;}
+ assert.equal(advanced,true);assert.equal(response.status,400,JSON.stringify(response.body));assert.equal(response.body.code,'below_minimum_lead_time');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),rows);
+});
