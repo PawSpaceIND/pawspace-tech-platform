@@ -112,6 +112,9 @@ test("CRM Live-Chat API handles thread queries and enforces sandbox security loc
   const conversationControl = await import("../lib/whatsapp-conversation-control.ts");
 
   const { sqlite, db } = freshAiDb({
+    PAWSPACE_DEPLOYMENT_ENV: "staging",
+    PAWSPACE_PAYMENT_ENV: "sandbox",
+    PAWSPACE_COMMUNICATION_ENV: "uat",
     META_WHATSAPP_APP_SECRET: "staging_secret_safe",
     META_WHATSAPP_ACCESS_TOKEN: "staging_token_safe",
   });
@@ -155,8 +158,7 @@ test("CRM Live-Chat API handles thread queries and enforces sandbox security loc
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.ok(Array.isArray(body.data.threads));
-  assert.equal(body.data.sandboxLocks.paymentEnv, "sandbox");
-  assert.equal(body.data.sandboxLocks.forbidProduction, true);
+  assert.equal(body.data.simulationAllowed, true);
 
   // Ensure NO credentials leaked in response body
   const rawJson = JSON.stringify(body);
@@ -188,6 +190,7 @@ test("CRM Live-Chat API handles thread queries and enforces sandbox security loc
     },
     body: JSON.stringify({
       action: "send_message",
+      clientRequestId: "native-ecosystem-chat-send-1",
       threadId: inbound.threadId,
       customerId,
       text: "We have an opening tomorrow at 10 AM! Would that work?",

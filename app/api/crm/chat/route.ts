@@ -125,11 +125,7 @@ export async function GET(request: Request) {
       data: {
         threads: enriched,
         total: enriched.length,
-        sandboxLocks: {
-          paymentEnv: "sandbox",
-          forbidProduction: true,
-          liveDelivery: false,
-        },
+        simulationAllowed: await crmSimulationAllowed(),
       },
     });
   } catch (error) {
