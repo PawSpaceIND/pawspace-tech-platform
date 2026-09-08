@@ -24,13 +24,14 @@ async function sandboxLogin(page: import("@playwright/test").Page, loginPhone=ph
 async function ensureCustomerPet(page: import("@playwright/test").Page) {
   const accountResponse = await page.context().request.get("/api/customer-account");
   expect(accountResponse.ok(), `customer account must resolve after sandbox OTP (${accountResponse.status()})`).toBeTruthy();
-  const account = await accountResponse.json().catch(() => ({})) as { data?: { pets?: Array<{ name?: string }> } };
+  const account = await accountResponse.json().catch(() => ({})) as { data?: { customerId?: string; pets?: Array<{ name?: string }> } };
   if (account.data?.pets?.length) return;
+  expect(account.data?.customerId).toBeTruthy();
 
   const create = await page.context().request.post("/api/customer-account", {
     data: {
       action: "upsert_pet",
-      idempotencyKey: `browser-e2e:customer-pet:${phone}`,
+      idempotencyKey: `browser-e2e:customer-pet:${account.data!.customerId}`,
       pet: {
         name: "Buddy",
         species: "dog",
@@ -44,7 +45,7 @@ async function ensureCustomerPet(page: import("@playwright/test").Page) {
   await expect.poll(async () => {
     const response = await page.context().request.get("/api/customer-account");
     if (!response.ok()) return false;
-    const body = await response.json().catch(() => ({})) as { data?: { pets?: Array<{ name?: string }> } };
+    const body = await response.json().catch(() => ({})) as { data?: { customerId?: string; pets?: Array<{ name?: string }> } };
     return Boolean(body.data?.pets?.some(pet => pet.name === "Buddy"));
   }).toBe(true);
 }
