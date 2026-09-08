@@ -22,9 +22,18 @@ async function ensureTables(db:Db){if(groomingFinanceTablesReady.has(db))return;
 
 type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};
 type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[]};
+
+// Certified Track-3 fast path: authorization remains first and D1 remains authoritative. Only the isolated
+// staging+sandbox worker may reuse the actor-independent finance snapshot, bounded to 30 seconds.
+const STAGING_FINANCE_CACHE_TTL_SECONDS=30;
+const STAGING_FINANCE_CACHE_KEY="https://pawspace.internal/__cache/grooming-finance/v2";
+async function stagingFinanceCacheEnabled(){try{const{env}=await import("cloudflare:workers");const vars=env as unknown as Record<string,unknown>;return String(vars.PAWSPACE_DEPLOYMENT_ENV||"")==="staging"&&String(vars.PAWSPACE_PAYMENT_ENV||"")==="sandbox";}catch{return false;}}
+async function readStagingFinanceCache():Promise<FinanceSnapshot|null>{if(!await stagingFinanceCacheEnabled())return null;try{const hit=await (await caches.open("pawspace-track3-finance-v2")).match(STAGING_FINANCE_CACHE_KEY);return hit?await hit.json() as FinanceSnapshot:null;}catch{return null;}}
+async function writeStagingFinanceCache(snapshot:FinanceSnapshot){if(!await stagingFinanceCacheEnabled())return;try{await (await caches.open("pawspace-track3-finance-v2")).put(STAGING_FINANCE_CACHE_KEY,new Response(JSON.stringify(snapshot),{headers:{"content-type":"application/json","cache-control":`max-age=${STAGING_FINANCE_CACHE_TTL_SECONDS}`}}));}catch{}}
+async function invalidateStagingFinanceCache(){if(!await stagingFinanceCacheEnabled())return;try{await (await caches.open("pawspace-track3-finance-v2")).delete(STAGING_FINANCE_CACHE_KEY);}catch{}}
+
 // Finance GET is actor-independent after finance.view authorization. Coalesce only requests that overlap
-// in time on the same D1 binding; the promise is removed immediately after settlement, so this is NOT a
-// TTL/stale-data cache and the next read always observes subsequent finance writes.
+// in time on the same D1 binding; the promise is removed immediately after settlement.
 const financeReads=new WeakMap<Db,Promise<FinanceSnapshot>>();
 async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
  const running=financeReads.get(db);if(running)return running;
@@ -60,8 +69,10 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
 
 export async function GET(request:Request){try{
   await authorize(request,"finance.view");
+  const cached=await readStagingFinanceCache();if(cached)return Response.json(cached);
   const db=await database();
-  return Response.json(await loadFinanceSnapshot(db));
+  const snapshot=await loadFinanceSnapshot(db);await writeStagingFinanceCache(snapshot);
+  return Response.json(snapshot);
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
 
 export async function POST(request:Request){try{
@@ -74,5 +85,6 @@ export async function POST(request:Request){try{
   else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
   else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
   await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
+  await invalidateStagingFinanceCache();
   return Response.json({data});
 }catch(error){return authError(error,"Unable to update Grooming finance ledger");}}

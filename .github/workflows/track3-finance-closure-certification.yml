@@ -1,0 +1,303 @@
+name: Track 3 finance closure certification
+
+on:
+  push:
+    branches:
+      - fix/performance-concurrency-load-certification
+
+permissions:
+  contents: read
+
+concurrency:
+  group: track3-finance-closure-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SHA: ${{ github.sha }}
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  NODE_ENV: test
+  APP_ENV: staging
+  PAWSPACE_PAYMENT_ENV: sandbox
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+  FORBID_PRODUCTION: 'true'
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 0
+      - name: Verify exact authoritative SHA
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm run install:ci
+      - name: Verify absolute safety locks
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = "staging"
+          test "$PAWSPACE_PAYMENT_ENV" = "sandbox"
+          test "$FORBID_PRODUCTION" = "true"
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = "false"
+          printf 'APP_ENV=%s\nPAWSPACE_PAYMENT_ENV=%s\nFORBID_PRODUCTION=%s\n' "$APP_ENV" "$PAWSPACE_PAYMENT_ENV" "$FORBID_PRODUCTION"
+      - name: Run pre-deploy Track 3 guards
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/track3-finance-fast-path-restoration.test.mjs tests/schema-query-plan.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Configure isolated staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Enable Track 3 sandbox fixture and isolate cron
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path='dist/server/wrangler.json';
+          const config=JSON.parse(fs.readFileSync(path,'utf8'));
+          const vars=config.vars||{};
+          if(config.name!=='pawspace-staging'||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox') throw new Error('refusing Track 3 fixture/cron isolation outside isolated staging sandbox/UAT');
+          const configuredCrons=[...(config.triggers?.crons||[])];
+          if(configuredCrons.length!==1||configuredCrons[0]!=='*/5 * * * *') throw new Error(`unexpected staging cron configuration: ${JSON.stringify(configuredCrons)}`);
+          vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE='on';
+          config.vars=vars;
+          config.triggers=config.triggers||{};
+          delete config.triggers.crons;
+          const evidence={targetSha:process.env.EXPECTED_SHA,name:config.name,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,configuredCrons,cronIsolation:'disabled_for_track3_benchmark'};
+          fs.writeFileSync('track3-cron-isolation.json',JSON.stringify(evidence,null,2));
+          fs.writeFileSync(path,JSON.stringify(config,null,2));
+          NODE
+      - name: Verify generated staging binding before remote writes
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+          const cronEvidence=JSON.parse(fs.readFileSync('track3-cron-isolation.json','utf8'));
+          const binding=(config.d1_databases||[]).find(x=>x.binding==='DB');
+          const vars=config.vars||{};
+          const evidence={name:config.name,databaseId:binding?.database_id,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,communicationEnv:vars.PAWSPACE_COMMUNICATION_ENV,serviceDiscoveryFixture:vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE,cronIsolation:cronEvidence.cronIsolation,activeCrons:config.triggers?.crons||[],targetSha:process.env.EXPECTED_SHA};
+          console.log(JSON.stringify(evidence,null,2));
+          if(config.name!=='pawspace-staging'||binding?.database_id!==process.env.STAGING_D1_ID||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_COMMUNICATION_ENV!=='uat'||vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE!=='on'||cronEvidence.cronIsolation!=='disabled_for_track3_benchmark'||(config.triggers?.crons||[]).length!==0) process.exit(1);
+          fs.writeFileSync('staging-isolation-preflight.json',JSON.stringify(evidence,null,2));
+          NODE
+      - name: Deploy exact SHA to staging only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          SECRETS_FILE="$RUNNER_TEMP/staging-track3-secrets.json"; export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX'];
+          const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));
+          if(Object.values(values).some(v=>!v)) throw new Error('required Track 3 staging secret missing');
+          for(const n of optional) if(process.env[n]) values[n]=process.env[n];
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $EXPECTED_SHA track3-cron-isolated" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+      - name: Drain pre-isolation scheduled invocations
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          sleep 660
+      - name: Certify staging isolation and exact SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Prepare certified Track 3 finance indexes on staging D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          SQL="CREATE INDEX IF NOT EXISTS idx_grooming_finance_bookings_service_updated ON canonical_bookings(service_code,updated_at DESC); CREATE INDEX IF NOT EXISTS idx_payment_reconciliation_exceptions_status_payment ON payment_reconciliation_exceptions(status,payment_id); CREATE INDEX IF NOT EXISTS idx_payment_reconciliation_exceptions_status_created ON payment_reconciliation_exceptions(status,created_at DESC); SELECT name,tbl_name FROM sqlite_master WHERE type='index' AND name IN ('idx_grooming_finance_bookings_service_updated','idx_payment_reconciliation_exceptions_status_payment','idx_payment_reconciliation_exceptions_status_created') ORDER BY name;"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --json --command "$SQL" > staging-track3-finance-indexes.json
+          cat staging-track3-finance-indexes.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-track3-finance-indexes.json','utf8'));
+          const batches=Array.isArray(raw)?raw:[raw];const rows=batches.flatMap(x=>x.results||[]).filter(x=>x?.name);const names=new Set(rows.map(x=>x.name));
+          for(const name of ['idx_grooming_finance_bookings_service_updated','idx_payment_reconciliation_exceptions_status_payment','idx_payment_reconciliation_exceptions_status_created']) if(!names.has(name)) throw new Error(`missing index ${name}`);
+          NODE
+      - name: Seed deterministic staging identities
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Reset synthetic Track 3 scheduler state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          CLEAN_SQL="DELETE FROM provider_assignment_offers WHERE group_id LIKE 'perf-%' OR group_id LIKE 'perf3-%' OR group_id LIKE 'remediation-%'; DELETE FROM scheduling_assignment_decisions WHERE group_id LIKE 'perf-%' OR group_id LIKE 'perf3-%' OR group_id LIKE 'remediation-%'; DELETE FROM scheduling_reservation_lease_cleanup WHERE group_id LIKE 'perf-%' OR group_id LIKE 'perf3-%' OR group_id LIKE 'remediation-%'; DELETE FROM scheduling_reservations WHERE group_id LIKE 'perf-%' OR group_id LIKE 'perf3-%' OR group_id LIKE 'remediation-%';"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --command "$CLEAN_SQL"
+          DUP_SQL="SELECT provider_id,scheduled_start,scheduled_end,COUNT(*) n FROM scheduling_reservations WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight' GROUP BY provider_id,scheduled_start,scheduled_end HAVING COUNT(*)>1 LIMIT 20;"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "$DUP_SQL" > staging-scheduler-duplicates.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const raw=JSON.parse(fs.readFileSync('staging-scheduler-duplicates.json','utf8'));const rows=(Array.isArray(raw)?raw[0]:raw)?.results||[];console.log(JSON.stringify({activeProviderWindowDuplicates:rows},null,2));if(rows.length)process.exit(1);
+          NODE
+      - name: Pre-materialize scheduler lease governance
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SQL="CREATE TABLE IF NOT EXISTS platform_identity_sessions (id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,binding_id TEXT NOT NULL,identity_source TEXT NOT NULL,principal_type TEXT NOT NULL,principal_key TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',issued_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,last_seen_at INTEGER NOT NULL,revoked_at INTEGER,metadata_json TEXT NOT NULL DEFAULT '{}'); CREATE INDEX IF NOT EXISTS idx_platform_identity_sessions_subject ON platform_identity_sessions(subject_type,subject_id,status,expires_at); CREATE TABLE IF NOT EXISTS scheduling_reservation_lease_cleanup (group_id TEXT PRIMARY KEY,reason TEXT NOT NULL,released_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS booking_reservation_confirmation_guards (group_id TEXT PRIMARY KEY,checked_at INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduling_reservations_active_provider_window ON scheduling_reservations(provider_id,scheduled_start,scheduled_end) WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight'; CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_lease ON scheduling_reservations(status,lease_expires_at,customer_session_id); CREATE TRIGGER IF NOT EXISTS block_expired_reservation_booking BEFORE INSERT ON booking_reservation_confirmation_guards WHEN NOT EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled') OR EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled' AND ((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=NEW.checked_at) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>NEW.checked_at)))) BEGIN SELECT RAISE(ABORT,'reservation_lease_expired_before_booking'); END;"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --command "$SQL"
+      - name: Verify healthz
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const response=await fetch(process.env.STAGING_URL+'/healthz',{signal:AbortSignal.timeout(15000)});const text=await response.text();let body=null;try{body=JSON.parse(text)}catch{}const evidence={url:process.env.STAGING_URL+'/healthz',status:response.status,ok:response.ok,body};fs.writeFileSync('healthz-evidence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));if(response.status!==200||body?.status!=='ok')process.exit(1);
+          NODE
+      - name: Run authoritative 10,801-request Track 3 workload
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PERF_RUN_ID: remediation-${{ github.run_id }}-${{ github.run_attempt }}
+          PERF_ASSIGNMENT_CONCURRENCY: '3'
+          PERF_WEBHOOK_REPLAY_CONCURRENCY: '3'
+          PERF_LEDGER_QUERY_CONCURRENCY: '2'
+        run: |
+          set -uo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          VERSION_ID="$(sed -n 's/^Current Version ID: //p' deployment.txt | tail -1)"
+          test -n "$VERSION_ID"
+          npx wrangler tail pawspace-staging --format=json --status=error --version-id="$VERSION_ID" > worker-tail.log 2>&1 &
+          TAIL_PID=$!
+          sleep 4
+          node scripts/ops/staging-performance-gate-closure.mjs
+          WORKLOAD_STATUS=$?
+          sleep 2
+          kill "$TAIL_PID" 2>/dev/null || true
+          wait "$TAIL_PID" 2>/dev/null || true
+          echo '--- staging worker error tail ---'
+          cat worker-tail.log || true
+          exit "$WORKLOAD_STATUS"
+      - name: Restore staging cron trigger
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path='dist/server/wrangler.json';
+          const config=JSON.parse(fs.readFileSync(path,'utf8'));
+          const evidence=JSON.parse(fs.readFileSync('track3-cron-isolation.json','utf8'));
+          const vars=config.vars||{};
+          if(config.name!=='pawspace-staging'||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||evidence.cronIsolation!=='disabled_for_track3_benchmark') throw new Error('refusing cron restore outside isolated staging sandbox/UAT');
+          config.triggers=config.triggers||{};
+          config.triggers.crons=evidence.configuredCrons;
+          if(config.triggers.crons.length!==1||config.triggers.crons[0]!=='*/5 * * * *') throw new Error('cron restore evidence invalid');
+          fs.writeFileSync(path,JSON.stringify(config,null,2));
+          NODE
+          SECRETS_FILE="$RUNNER_TEMP/staging-track3-restore-secrets.json"; export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX'];
+          const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));
+          if(Object.values(values).some(v=>!v)) throw new Error('required Track 3 staging restore secret missing');
+          for(const n of optional) if(process.env[n]) values[n]=process.env[n];
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $EXPECTED_SHA cron-restored" --secrets-file "$SECRETS_FILE" 2>&1 | tee cron-restore-deployment.txt
+      - name: Verify D1 Track 3 invariants
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
+          SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --json --command "$SQL" > staging-performance-d1.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};const n=k=>Number(row[k]??NaN);console.log(JSON.stringify(row,null,2));if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001)process.exit(1);
+          NODE
+      - name: Enforce closure thresholds
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));const failures=p.failures||[];const p95=Number(p.metrics?.p95Ms??NaN);const financeP95=Number(p.metrics?.byOperation?.['ledger-query']?.p95Ms??NaN);const errorRate=Number(p.metrics?.errorRate??NaN);const counts=p.counts||{};const evidence={totalRequests:p.metrics?.totalRequests,p95Ms:p95,groomingFinanceP95Ms:financeP95,errorRate,failureCount:failures.length,counts,thresholds:p.thresholds};fs.writeFileSync('track3-finance-closure-evidence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));if(p.metrics?.totalRequests!==10801||counts.assignments!==100||counts.bookings!==100||counts.duplicatePaymentAttempts!==100||counts.webhookReplays!==500||counts.ledgerQueries!==10000||!Number.isFinite(p95)||p95>=750||!Number.isFinite(financeP95)||financeP95>=750||errorRate!==0||failures.length)process.exit(1);
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: track3-finance-closure-${{ env.EXPECTED_SHA }}
+          path: |
+            deployment.txt
+            cron-restore-deployment.txt
+            track3-cron-isolation.json
+            staging-isolation-preflight.json
+            staging-track3-finance-indexes.json
+            staging-scheduler-duplicates.json
+            healthz-evidence.json
+            worker-tail.log
+            staging-performance.json
+            staging-performance-d1.json
+            track3-finance-closure-evidence.json
+          if-no-files-found: warn

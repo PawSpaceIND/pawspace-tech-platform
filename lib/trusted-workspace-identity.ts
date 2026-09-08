@@ -30,10 +30,11 @@ export function resolveTrustedWorkspaceIdentity(request:Request,runtime:Record<s
 
 /** Remove spoofable workspace identity headers before central gateway inspection on untrusted ingress. */
 export function requestForAuthorization(request:Request,runtime:Record<string,unknown>={}){
- // Keep the original request on trusted ingress. requiredPermission() clones only when it needs to inspect
- // a request body; cloning every request here needlessly tees POST streams and destabilizes local workerd.
+ // Keep the original request on trusted ingress. On direct/untrusted ingress the authorization gateway may
+ // inspect a POST body, so build its stripped-header request from a clone. Constructing it from the original
+ // stream transfers/disturbs that body in Workers and leaves the framework unable to route the same request.
  if(trustedWorkspaceHeaderIngress(request,runtime))return request;
  const headers=new Headers(request.headers);
  for(const name of WORKSPACE_IDENTITY_HEADERS)headers.delete(name);
- return new Request(request,{headers});
+ return new Request(request.clone(),{headers});
 }
