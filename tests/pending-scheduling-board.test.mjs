@@ -128,3 +128,13 @@ test('a reassign refused after evaluation restores the original reservation',asy
  let response;try{response=await operation(groupId,'reassign',choices[1]);}finally{Date.now=now;}
  assert.equal(advanced,true);assert.equal(response.status,400,JSON.stringify(response.body));assert.equal(response.body.code,'below_minimum_lead_time');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),rows);
 });
+
+for(const action of ['assign','cancel'])test(`a stale day-board revision cannot ${action} changed appointment details`,async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const old=(await board(input.scheduledStart.slice(0,10))).body.data.pendingRequests[0];assert.match(old.revision,/^[a-f0-9]{64}$/);assert.ok(old.candidates.length);assert.equal(old.candidates[0].providerName,JSON.parse(decision(ctx,groupId).shortlist_json).choices[0].provider.name);
+ const payload=JSON.parse(decision(ctx,groupId).shortlist_json);payload.request.serviceAddress='Updated doorstep address';ctx.sqlite.prepare('UPDATE scheduling_assignment_decisions SET shortlist_json=? WHERE group_id=?').run(JSON.stringify(payload),groupId);
+ const saved=decision(ctx,groupId),current=(await board(input.scheduledStart.slice(0,10))).body.data.pendingRequests[0];assert.notEqual(current.revision,old.revision);assert.equal(current.updatedAt,old.updatedAt);
+ const response=await routeCall('../../app/api/uat-scheduling/route.ts','POST','/api/uat-scheduling',{action,groupId,providerId:old.candidates[0].providerId,expectedRevision:old.revision,reason:'Reviewed the saved request'});
+ assert.equal(response.status,409,JSON.stringify(response.body));assert.equal(response.body.code,'SCHEDULING_DECISION_CHANGED');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);
+ const accepted=await routeCall('../../app/api/uat-scheduling/route.ts','POST','/api/uat-scheduling',{action,groupId,providerId:current.candidates[0].providerId,expectedRevision:current.revision,reason:'Reviewed the updated request'});assert.equal(accepted.status,200,JSON.stringify(accepted.body));
+});
