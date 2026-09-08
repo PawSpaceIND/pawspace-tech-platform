@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { provisionInternalMedia, INTERNAL_BUCKET } from "../scripts/provision-internal-media.mjs";
+import { assertInternalMediaEnvironment } from "../lib/internal-media-upload.ts";
 const env = { APP_ENV: "staging", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", CLOUDFLARE_ACCOUNT_ID: "a".repeat(32), CLOUDFLARE_API_TOKEN: "test-only-not-a-credential" };
 function world({ exists = false, managed = false, domains = [], denied = false } = {}) {
   const calls = [];
@@ -16,6 +17,9 @@ function world({ exists = false, managed = false, domains = [], denied = false }
 test("internal provisioning creates only the dedicated bucket and verifies private access", async () => {
   const state = world();
   assert.deepEqual(await provisionInternalMedia({ env, ...state }), { bucketName: INTERNAL_BUCKET, created: true, private: true });
+  // A provisioned bucket is usable only with the app's own internal runtime gate.
+  assert.doesNotThrow(() => assertInternalMediaEnvironment({ ...env, PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_INTERNAL_MEDIA_ENABLED: "true" }));
+  assert.throws(() => assertInternalMediaEnvironment({ ...env, APP_ENV: "production", PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_INTERNAL_MEDIA_ENABLED: "true" }));
   assert.equal(state.calls.filter(call => call.method === "POST").length, 1);
   assert.deepEqual(JSON.parse(state.calls.find(call => call.method === "POST").body), { name: INTERNAL_BUCKET });
   assert.ok(state.calls.every(call => call.url.startsWith(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/r2/buckets`)));

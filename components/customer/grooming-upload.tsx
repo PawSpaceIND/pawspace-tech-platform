@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
 import { prepareGroomingPhoto } from "../../lib/mobile/grooming-photo-client";
+import { PHOTO_UAT_NOTICE } from "../../lib/mobile/human-uat-scope";
 
 export interface GroomingPhoto {
   dataUrl: string;
@@ -14,6 +15,7 @@ export interface GroomingPhoto {
 
 export interface GroomingUploadProps {
   bookingId: string;
+  deferred?: boolean;
   onCheckInPhotoUploaded?: (photo: GroomingPhoto) => void;
   onCompletionPhotoUploaded?: (photo: GroomingPhoto) => void;
   className?: string;
@@ -21,6 +23,7 @@ export interface GroomingUploadProps {
 
 export default function GroomingUpload({
   bookingId,
+  deferred = false,
   className = "",
 }: GroomingUploadProps) {
   const isMountedRef = useRef(true);
@@ -146,6 +149,8 @@ export default function GroomingUpload({
     }
     setSuccessMessage(null);
   };
+
+  if (deferred) return <section aria-label="Photo testing deferred" style={{ padding: 16, borderRadius: 16, background: "#f5edff", color: "#35204f", fontSize: "1rem", lineHeight: 1.6 }}><h3 style={{ marginTop: 0 }}>Photos · final test round</h3><p>{PHOTO_UAT_NOTICE}</p></section>;
 
   return (
     <div

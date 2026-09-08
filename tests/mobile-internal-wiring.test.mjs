@@ -2,6 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { prepareGroomingPhoto } from "../lib/mobile/grooming-photo-client.ts";
 import { resolveActiveWalkContext } from "../lib/mobile/walk-context.ts";
+import { isDeferredPhotoAction } from "../lib/mobile/human-uat-scope.ts";
+
+test("human UAT defers missing photo proof without blocking normal lifecycle steps", () => {
+  for (const action of ["accept", "on_the_way", "arrived", "start_service", null]) assert.equal(isDeferredPhotoAction(action), false);
+  assert.equal(isDeferredPhotoAction("add_proof"), true);
+  assert.equal(isDeferredPhotoAction("complete", { beforePhotoRef: "before" }), true);
+  assert.equal(isDeferredPhotoAction("complete", { beforePhotoRef: "before", afterPhotoRef: "after" }), false);
+});
 
 test("grooming capture registers metadata without claiming upload or approving proof", async () => {
   const previous = globalThis.fetch;
