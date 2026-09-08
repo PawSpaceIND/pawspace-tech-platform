@@ -33,8 +33,10 @@ const PACKAGE_NAME = "Luxury Stay";
 
 /* Boarding quotes demand a future check-in, so the window is anchored to the real clock. */
 const DAY = 86400000;
-const startAt = () => new Date(Date.now() + 7 * DAY).toISOString();
-const endAt = () => new Date(Date.now() + 9 * DAY).toISOString();
+// One anchor prevents a millisecond tick between calls turning 48h into 48h+1ms.
+const windowAnchor = Date.now();
+const startAt = () => new Date(windowAnchor + 7 * DAY).toISOString();
+const endAt = () => new Date(windowAnchor + 9 * DAY).toISOString();
 
 const STAGES = [];
 const stage = (name, status, detail) => STAGES.push({ name, status, detail });

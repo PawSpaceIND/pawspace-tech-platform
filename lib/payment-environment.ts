@@ -9,6 +9,8 @@ export class PaymentEnvironmentConfigurationError extends Error{
 /** The only payment-environment parser. No defaults, aliases, trimming, or case folding. */
 export function parsePaymentEnvironment(env:PaymentEnv):PaymentEnvironment{
  const value=env?.PAWSPACE_PAYMENT_ENV;
+ if(value==="live"&&(env?.FORBID_PRODUCTION==="true"||env?.FORBID_PRODUCTION===true))throw new Error("FORBID_PRODUCTION blocks live payments");
+ if(value==="sandbox"&&String(env?.RAZORPAY_KEY_ID_SANDBOX??"").trim().startsWith("rzp_live_"))throw new Error("Live Razorpay credentials are forbidden in sandbox");
  if(value==="sandbox"||value==="live")return value;
  throw new PaymentEnvironmentConfigurationError(value);
 }
