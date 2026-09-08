@@ -149,7 +149,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     [meetFormat, setMeetFormat] = useState<"visit" | "call">("visit"),
     [taxi, setTaxi] = useState(false),
     [confirmed, setConfirmed] = useState(false),
-    [agreed, setAgreed] = useState(true),
+    [agreed, setAgreed] = useState(false),
     [start, setStart] = useState(() => dateOffset(3)),
     [end, setEnd] = useState(() => dateOffset(10)),
     [bookingId, setBookingId] = useState(""),
