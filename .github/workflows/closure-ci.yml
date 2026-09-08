@@ -56,6 +56,8 @@ jobs:
       - run: npm ci
       - name: Materialize server build for rendered-route tests
         run: npm run build
+      - name: Assert human beta sandbox lock
+        run: node --input-type=module -e 'import { assertHumanBetaSandbox } from "./scripts/assert-human-beta-sandbox.mjs"; assertHumanBetaSandbox(process.env)'
       - name: Run tracked Web tests
         shell: bash
         run: |

@@ -1,3 +1,4 @@
+import { assertRazorpayKeyEnvironment } from "./payment-environment";
 import { advancePaymentState } from "./financial-lifecycle";
 import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { paymentEnvironment, type PaymentEnvironment } from "./razorpay-client";
@@ -19,6 +20,7 @@ const isTrue = (value: unknown) => text(value).toLowerCase() === "true";
 function credentials(env: Env, environment: PaymentEnvironment) {
   const keyId = text(environment === "sandbox" ? env.RAZORPAY_KEY_ID_SANDBOX : env.RAZORPAY_KEY_ID);
   const keySecret = text(environment === "sandbox" ? env.RAZORPAY_KEY_SECRET_SANDBOX : env.RAZORPAY_KEY_SECRET);
+  assertRazorpayKeyEnvironment(environment, keyId);
   return { keyId, keySecret };
 }
 
