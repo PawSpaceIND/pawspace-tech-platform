@@ -141,6 +141,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/ops-work-queue")return "bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
   if(url.pathname==="/api/service-media")return "bookings.view";
+  if(url.pathname==="/api/customer-grooming-summary")return "scheduling.book";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
   if(url.pathname==="/api/grooming-finance")return "finance.view";
   if(url.pathname==="/api/grooming-payment-sandbox")return "payments.manage";
