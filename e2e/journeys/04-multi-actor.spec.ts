@@ -70,7 +70,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
       await expect(waiting).toBeVisible();await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
       await waiting.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption(PROVIDER_ID);
-      await waiting.getByLabel("Reason",{exact:true}).fill("Customer requested this verified provider");
+      await waiting.getByRole("textbox",{name:"Reason",exact:true}).fill("Customer requested this verified provider");
       await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
       await waiting.getByRole("button",{name:"Assign provider",exact:true}).click();
       await expect(page.getByRole("status")).toContainText("Partner acceptance and customer booking confirmation are still pending.");
