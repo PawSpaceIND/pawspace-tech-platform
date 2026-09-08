@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
+installWorkersHooks("__WALKING_PRICE_DB__", "__WALKING_PRICE_ENV__");
+const { walkingPerSessionAmount } = await import("../lib/walking-lifecycle.ts");
 const walkingSource = await readFile(new URL("../lib/walking-lifecycle.ts", import.meta.url), "utf8");
 const clientSource = await readFile(new URL("../lib/walking-lifecycle-client.ts", import.meta.url), "utf8");
+
+test("Walking per-session pricing executes the production calculator", () => {
+  assert.equal(walkingPerSessionAmount({ perWalkAmount: 123.45 }, 999, 9), 123.45);
+  assert.equal(walkingPerSessionAmount({ demoSeed: true }, 1000, 4), 250);
+  assert.equal(walkingPerSessionAmount({ demoSeed: true }, 1000.01, 4), 0, "demo totals must divide exactly in paise");
+  assert.equal(walkingPerSessionAmount(null, 1000, 4), 0, "non-demo pricing cannot infer a per-walk amount");
+});
 
 test("Walking completion accepts only paise-safe configured pricing", () => {
   assert.match(walkingSource, /pricing\?\.perWalkAmount/);
@@ -40,12 +50,6 @@ test("Walking completion delegates the guarded durable transaction to the canoni
   assert.match(block, /Your PawSpace Walking programme is complete/);
   assert.match(block, /Your PawSpace walk is complete/);
   assert.match(block, /walking_action_keys/);
-  /*
-   * The shared lifecycle lease owns the compare-and-set claim. finalizeProviderLifecycleLease builds one
-   * D1 batch containing the guarded session/booking writes plus payment, event, notifications and replay
-   * key, then advances the canonical lifecycle version in that same batch. The dedicated lifecycle D1
-   * suite proves rollback when a dependent CAS fails; this test pins Walking's delegation and payload.
-   */
   assert.match(block, /UPDATE walking_sessions SET status='completed',completion_status='complete'/);
   assert.match(block, /UPDATE canonical_bookings SET status=\?,updated_at=\?/);
   assert.match(block, /AND \$\{ctx\.guardSql\}/);
