@@ -127,3 +127,10 @@ Handoff requests, staff takeover and explicit AI resume now commit handoff state
 29 selected tests passed, including six new executed transaction tests using a serialized, rollback-capable SQLite D1 adapter. Faults injected at the final session update leave the entire prior ownership state intact; removing the fault permits retry. Concurrent request/takeover/resume tests verify one active handoff/assignment, one transition event and conflict responses for losing transitions. The orchestrator remains blocked while queued or staff-owned and can reply after explicit successful resume. Build/artifact validation and typecheck passed.
 
 This provides service/database/orchestrator evidence. Staff browser controls, deployed D1 races, messages already in flight at takeover, provider presence routing, customer-provider UI and complete module readiness remain open. No external message or finance transaction was performed.
+
+
+### Broader regression follow-through
+
+The broader run found that booking complaint projections sorted only inside each D1 chunk. The projection now sorts the combined result by creation time descending and ID, preserving deterministic ordering across large booking lists. A new executed regression spans more than two chunks and compares with a single SQL ordering. Two AI assertions were updated for the deliberate HTTP 400 validation response and removal of the non-atomic assignment helper. The gateway audit now separately recognizes the two route-authenticated customer inboxes; their ownership protection remains exercised by the connected suite.
+
+50 selected checks passed (33 AI/chunk semantics, 7 gateway reachability, 10 connected journeys), with build/artifact validation and typecheck successful. The broader suite is still in progress; no full-suite or 95% readiness claim is made.

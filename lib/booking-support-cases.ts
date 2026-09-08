@@ -2,9 +2,14 @@ import { chunkedIn } from "./d1-chunked-in";
 
 type Row = Record<string, unknown>;
 
+function newestCases(rows: Row[]): Row[] {
+  return rows.sort((left, right) => Number(right.created_at) - Number(left.created_at)
+    || (String(left.id) < String(right.id) ? -1 : String(left.id) > String(right.id) ? 1 : 0));
+}
+
 /** Read customer complaints in the legacy ticket shape without copying their state. */
 export async function bookingSupportCases(db: D1Database, bookingIds: string[]): Promise<Row[]> {
-  return chunkedIn([...new Set(bookingIds)], async (ids, placeholders) => {
+  const rows = newestCases(await chunkedIn([...new Set(bookingIds)], async (ids, placeholders) => {
     try {
       const result = await db.prepare(`SELECT id,booking_id,customer_id,case_type AS category,
         severity AS priority,status,title AS subject,description AS detail,
@@ -20,5 +25,6 @@ export async function bookingSupportCases(db: D1Database, bookingIds: string[]):
       if (/no such table: (?:main\.)?unified_cases\b/i.test(error instanceof Error ? error.message : String(error))) return [];
       throw error;
     }
-  });
+  }));
+  return rows;
 }

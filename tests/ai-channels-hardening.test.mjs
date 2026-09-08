@@ -242,7 +242,7 @@ test("staff takeover pauses the AI: further turns are refused until an explicit 
   await handoffModule.manageAiHumanHandoff(db, { actor: staffActor, threadId: "THREAD-KS", customerId: "CUS-KS", action: "take_over", reason: "Handling the refund myself" });
   await assert.rejects(
     () => handoffModule.manageAiHumanHandoff(db, { actor: staffActor, threadId: "THREAD-KS", customerId: "CUS-KS", action: "resume_ai" }),
-    /Resume reason is required/,
+    (error) => error instanceof Response && error.status === 400,
   );
   const resumed = await handoffModule.manageAiHumanHandoff(db, { actor: staffActor, threadId: "THREAD-KS", customerId: "CUS-KS", action: "resume_ai", reason: "Refund settled, safe for AI to continue" });
   assert.equal(resumed.aiPaused, false);

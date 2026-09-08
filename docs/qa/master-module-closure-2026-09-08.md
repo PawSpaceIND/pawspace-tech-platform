@@ -109,3 +109,10 @@ Fixed idempotency replay returning message content before current provider assig
 ### Atomic staff takeover and AI resume
 
 Handoff lifecycle transitions now atomically update ownership, SLA, assignment/audit history and AI session state. Concurrent transitions have a single winner; failures roll back and remain retryable. Wrong-customer duplicate requests are rejected. Twenty-nine selected tests passed, including six new rollback/concurrency regressions, with build/artifact validation and typecheck successful. Full connected browser/deployed handoff readiness is still open; see the protocol for evidence limits.
+
+
+### Broader regression follow-through
+
+The broader run found that booking complaint projections sorted only inside each D1 chunk. The projection now sorts the combined result by creation time descending and ID, preserving deterministic ordering across large booking lists. A new executed regression spans more than two chunks and compares with a single SQL ordering. Two AI assertions were updated for the deliberate HTTP 400 validation response and removal of the non-atomic assignment helper. The gateway audit now separately recognizes the two route-authenticated customer inboxes; their ownership protection remains exercised by the connected suite.
+
+50 selected checks passed (33 AI/chunk semantics, 7 gateway reachability, 10 connected journeys), with build/artifact validation and typecheck successful. The broader suite is still in progress; no full-suite or 95% readiness claim is made.
