@@ -12,6 +12,8 @@ import { DatabaseSync } from "node:sqlite";
 
 /** Adapter from the D1 interface onto node:sqlite. Real SQL, real engine, no stubbed behaviour. */
 export function d1(sqlite) {
+  let batchSeq = 0;
+  let batchTail = Promise.resolve();
   const statement = (sql, args) => ({
     sql,
     bind: (...bound) => statement(sql, bound),
@@ -29,7 +31,27 @@ export function d1(sqlite) {
   });
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const s of list) out.push(await s.run()); return out; },
+    batch: (list) => {
+      // A real D1 batch is atomic. Serialize batches on this connection so awaits
+      // cannot interleave savepoints from separate concurrent requests.
+      const execute = async () => {
+        const savepoint = `d1_batch_${++batchSeq}`;
+        sqlite.exec(`SAVEPOINT ${savepoint}`);
+        try {
+          const out = [];
+          for (const s of list) out.push(await s.run());
+          sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          return out;
+        } catch (error) {
+          sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          throw error;
+        }
+      };
+      const pending = batchTail.then(execute);
+      batchTail = pending.then(() => {}, () => {});
+      return pending;
+    },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
 }
