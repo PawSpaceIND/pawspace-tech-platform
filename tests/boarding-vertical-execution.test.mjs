@@ -33,8 +33,10 @@ const PACKAGE_NAME = "Luxury Stay";
 
 /* Boarding quotes demand a future check-in, so the window is anchored to the real clock. */
 const DAY = 86400000;
-const startAt = () => new Date(Date.now() + 7 * DAY).toISOString();
-const endAt = () => new Date(Date.now() + 9 * DAY).toISOString();
+// One anchor keeps the fixture exactly 48 hours, even if separate calls cross a millisecond.
+const fixtureNow = Date.now();
+const startAt = () => new Date(fixtureNow + 7 * DAY).toISOString();
+const endAt = () => new Date(fixtureNow + 9 * DAY).toISOString();
 
 const STAGES = [];
 const stage = (name, status, detail) => STAGES.push({ name, status, detail });
@@ -141,6 +143,7 @@ test("BRD-03 quote: the catalogue prices the stay and the window rules are enfor
   const good = await quote();
   assert.equal(good.ok, true, `a valid Boarding quote must be priced: ${String(good.body ?? "").slice(0, 160)}`);
   assert.equal(good.value.packageCode, PACKAGE);
+  assert.equal(Date.parse(good.value.scheduledEnd) - Date.parse(good.value.scheduledStart), 2 * DAY, "fixture must represent exactly 48 hours");
   assert.equal(good.value.stayUnits, 2, "a 48-hour overnight stay is 2 billed units");
   assert.equal(good.value.totalAmount, 699 * 2 * 2, "2 pets x 2 units at the catalogue's Rs 699");
   assert.equal(good.value.amountDueNow, good.value.totalAmount, "prepaid takes the whole amount now");
@@ -174,9 +177,7 @@ test("BRD-04 split payment: 50/50 takes half now and schedules the balance befor
   assert.equal(quote.ok, true, `a split quote must be priced: ${String(quote.body ?? "").slice(0, 160)}`);
   assert.equal(quote.value.amountDueNow, quote.value.totalAmount / 2, "the 50/50 split takes exactly half up front");
 
-  /* startAt() reads the wall clock, so it MUST be sampled once and reused. Calling it again for the
-   * assertion made this test fail whenever the millisecond ticked between the two calls - an
-   * intermittent 86400001 !== 86400000 that looked like a product bug and was mine. */
+  // Reuse the exact check-in value supplied to the payment plan.
   const checkIn = startAt();
   const plan = split.splitPaymentPlan({ totalAmount: 2796, scheduledStart: checkIn });
   assert.equal(plan.dueNow + plan.balance, 2796, "the split must account for every rupee of the total");
