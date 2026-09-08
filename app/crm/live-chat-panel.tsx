@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, FormEvent } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, FormEvent } from "react";
 
 interface ThreadItem {
   id: string;
@@ -39,6 +39,7 @@ interface ThreadDetail {
     sessionExpiresAt: number | null;
   };
   routingMode: string;
+  simulationAllowed?: boolean;
   quickReplies: Array<{ code: string; label: string; body: string }>;
 }
 
@@ -51,6 +52,8 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sending, setSending] = useState(false);
+  const pendingSend = useRef<{ fingerprint: string; clientRequestId: string } | null>(null);
+  const sendInFlight = useRef(false);
   const [simulating, setSimulating] = useState(false);
   const [simulateText, setSimulateText] = useState("Hi PawSpace, I'd like to check my pet grooming booking details");
 
@@ -156,8 +159,11 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   // Send message
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim() || !threadDetail) return;
-
+    if (!messageText.trim() || !threadDetail || sendInFlight.current) return;
+    const fingerprint = JSON.stringify([threadDetail.thread.id, threadDetail.thread.customer_id, messageText.trim()]);
+    if (pendingSend.current?.fingerprint !== fingerprint) pendingSend.current = { fingerprint, clientRequestId: crypto.randomUUID() };
+    const clientRequestId = pendingSend.current.clientRequestId;
+    sendInFlight.current = true;
     setSending(true);
     try {
       const res = await fetch("/api/crm/chat", {
@@ -165,6 +171,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "send_message",
+          clientRequestId,
           threadId: threadDetail.thread.id,
           customerId: threadDetail.thread.customer_id,
           text: messageText.trim(),
@@ -178,7 +185,8 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       };
 
       if (res.ok && data.ok) {
-        notify("WhatsApp message queued via Meta Cloud sandbox");
+        pendingSend.current = null;
+        notify("WhatsApp message queued");
         setMessageText("");
         // Refresh detail
         const refRes = await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`);
@@ -190,6 +198,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
     } catch {
       notify("Network error while sending message");
     } finally {
+      sendInFlight.current = false;
       setSending(false);
     }
   };
@@ -257,17 +266,12 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 170px)", background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #e2d9ec" }}>
-      {/* Sandbox Lock Header Bar */}
+      {/* Conversation header */}
       <div style={{ background: "#24133f", color: "#fff", padding: "10px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ background: "#4cd964", color: "#000", fontWeight: 800, padding: "2px 8px", borderRadius: 4 }}>SANDBOX ACTIVE</span>
-          <span>Meta WhatsApp Cloud API Webhook Integration</span>
+          <span>WhatsApp Conversations</span>
         </div>
-        <div style={{ display: "flex", gap: 14, color: "#d8caea", fontFamily: "monospace" }}>
-          <span>PAWSPACE_PAYMENT_ENV=sandbox</span>
-          <span>FORBID_PRODUCTION=true</span>
-          <span>LIVE_DELIVERY=LOCKED</span>
-        </div>
+        <span>Delivery status is shown on each message</span>
       </div>
 
       {/* Main Split Content */}
@@ -436,7 +440,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
               </form>
 
               {/* Sandbox Inbound Simulator Toolbar */}
-              <div style={{ padding: "8px 18px", background: "#f8f6fb", borderTop: "1px dashed #dcd3e7", display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+              {threadDetail.simulationAllowed && <div style={{ padding: "8px 18px", background: "#f8f6fb", borderTop: "1px dashed #dcd3e7", display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
                 <span style={{ color: "#746b7d", fontWeight: 700 }}>Sandbox Test:</span>
                 <input
                   type="text"
@@ -453,7 +457,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                 >
                   {simulating ? "Simulating…" : "⚡ Simulate Customer Inbound"}
                 </button>
-              </div>
+              </div>}
             </>
           )}
         </main>
