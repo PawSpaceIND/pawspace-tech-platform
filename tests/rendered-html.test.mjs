@@ -281,8 +281,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, tracking, grooming, stays] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx"].map((path) =>
+  const [training, trainer, tracking, grooming, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -296,7 +296,9 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(grooming, /role="Groomer"/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);
-  assert.match(stays, /role="Sitter"/);
+  assert.match(stays, /<SittingCustomerPanel/);
+  assert.match(sittingCare, /Live location and sitter messaging are currently unavailable/);
+  assert.match(sittingCare, /loadSittingCustomerView/);
 });
 
 test("keeps coupon and referral management as separate full control modules", async () => {
