@@ -4,12 +4,9 @@ export type ThemeOption={id:ThemeId;label:string;tagline:string;swatches:[string
 export const THEME_STORAGE_KEY="pawspace.customer.theme";
 export const APPEARANCE_STORAGE_KEY="pawspace.customer.appearance";
 export const themes:ThemeOption[]=[
-{id:"emerald",label:"PawSpace Emerald",tagline:"Deep emerald, gold and ivory",swatches:["#01261F","#E6B34E","#f2f7f5"]},
-{id:"signature",label:"PawSpace Signature",tagline:"Iconic purple, saffron and ivory",swatches:["#5d22a8","#ffb128","#f7f5fa"]},
-{id:"midnight",label:"Midnight Luxe",tagline:"Deep plum, violet and champagne",swatches:["#25103f","#9b6de3","#e8c985"]},
-{id:"sage",label:"Sage Serenity",tagline:"Calm sage, forest and warm cream",swatches:["#295f4e","#7fa58c","#f4efe5"]},
-{id:"rose",label:"Rose Gold",tagline:"Burgundy, blush and rose gold",swatches:["#7c2946","#c98983","#f8ece9"]},
-{id:"ocean",label:"Ocean Premium",tagline:"Deep teal, aqua and pearl",swatches:["#07566b","#35a9b8","#eef8f9"]},
+{id:"signature",label:"PawSpace Brand",tagline:"Joyful purple, saffron and warm ivory",swatches:["#6730b9","#ffaf00","#fffcf1"]},
+{id:"emerald",label:"Emerald & Gold",tagline:"Forest greens and warm golden details",swatches:["#164a3c","#eac36c","#f4f8f3"]},
+{id:"rose",label:"Berry & Sunshine",tagline:"Rich berry, blush and sunny yellow",swatches:["#72284b","#ffd16b","#fff3f6"]},
 ];
 const themeIds=new Set(themes.map(theme=>theme.id));
 const appearanceModes=new Set<AppearanceMode>(["system","light","dark"]);
@@ -17,5 +14,5 @@ export function isThemeId(value:string|null|undefined):value is ThemeId{return B
 export function isAppearanceMode(value:string|null|undefined):value is AppearanceMode{return Boolean(value&&appearanceModes.has(value as AppearanceMode));}
 const configuredTheme=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_THEME:undefined;
 const configuredAppearance=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_APPEARANCE:undefined;
-export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?configuredTheme:"emerald";
-export const DEFAULT_APPEARANCE:AppearanceMode=isAppearanceMode(configuredAppearance)?configuredAppearance:"system";
+export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?configuredTheme:"signature";
+export const DEFAULT_APPEARANCE:AppearanceMode=isAppearanceMode(configuredAppearance)?configuredAppearance:"light";

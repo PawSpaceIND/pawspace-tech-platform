@@ -8,11 +8,11 @@ type HeroSpec = { photo: string; alt: string; badge: string; promise: string; pr
 
 const HERO: Record<string, HeroSpec> = {
   Grooming: {
-    photo: "/assets/banners/grooming-groomer-action.jpg", alt: "PawSpace groomer bathing a dog", badge: "✁",
+    photo: "/assets/pawspace-doorstep.png", alt: "PawSpace grooming care in a pet family's home", badge: "✁",
     promise: "Salon-grade grooming at home", proofs: ["Verified groomers", "Own equipment", "Stress-free"],
   },
   Training: {
-    photo: "/assets/banners/training-handshake.jpg", alt: "Trainer teaching a dog to shake hands", badge: "◎",
+    photo: "/assets/pawspace-home.png", alt: "Pet parent and Golden Retriever at home", badge: "◎",
     promise: "Certified trainers, real progress", proofs: ["Positive methods", "Structured", "Report card"],
   },
   Boarding: {

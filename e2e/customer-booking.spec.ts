@@ -2,6 +2,24 @@ import { expect, test } from "@playwright/test";
 
 const phone = process.env.PW_CUSTOMER_PHONE || "9000000911";
 
+test("shared appearance: three collections persist across customer and partner entry", async ({ page }) => {
+  await page.goto("/mobile-app");
+  await expect(page.getByRole("heading", {name: "Happy pets. Happier homes."})).toBeVisible();
+  await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('input[name="paw-theme"]')).toHaveCount(3);
+  await dialog.getByLabel(/Berry & Sunshine/).check();
+  await dialog.getByRole("button", {name:"Done",exact:true}).click();
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","rose");
+  await page.goto("/partner-app");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","rose");
+  await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
+  await page.getByRole("dialog").getByLabel(/PawSpace Brand/).check();
+  await page.getByRole("dialog").getByRole("button", {name:"Done",exact:true}).click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","signature");
+});
+
 async function sandboxLogin(page: import("@playwright/test").Page) {
   await page.goto("/mobile-app");
   const account = page.locator("nav").getByRole("button", { name: /account/i }).last();
@@ -60,7 +78,7 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
   await home.click();
-  await expect(page.getByText("Everything they need", { exact: true })).toBeVisible();
+  await expect(page.getByText("What do they need today?", { exact: true })).toBeVisible();
 
   const grooming = serviceCard(page, "Grooming");
   const training = serviceCard(page, "Training");

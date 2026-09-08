@@ -17,8 +17,6 @@ const requiredClasses = [
   "heroCopy",
   "offers",
   "media",
-  "quickSection",
-  "quickGrid",
   "upcoming",
   "care",
   "sectionHead",
@@ -36,17 +34,17 @@ const requiredClasses = [
   "locationNote",
 ];
 
-test("premium discovery stays on the globally assigned Option 5 Premium & Visual contract", () => {
+test("premium discovery stays on the globally assigned prototype-converged contract", () => {
   for (const className of requiredClasses) {
     assert.match(component, new RegExp(`styles\\.${className}\\b`), `component should use styles.${className}`);
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);
   }
-  assert.match(component, /data-home-design="option-5-premium-visual"/);
-  assert.match(component, />Premium care for your loved ones</);
-  assert.match(component, />Everything they need</);
+  assert.match(component, /data-home-design="pawspace-prototype-converged"/);
+  assert.match(component, />Happy pets./);
+  assert.match(component, />What do they need today\?</);
   assert.match(component, /aria-label="Care services"/);
-  assert.match(component, /aria-label="Quick service guides"/);
-  assert.match(component, /PawSpace Media slot · service education and clearly labelled approved campaigns/);
+  assert.match(component, /aria-label="Care services"/);
+  assert.match(component, /Care guide · PawSpace/);
   assert.doesNotMatch(component, /Care for every kind of day/);
   assert.doesNotMatch(component, /sponsoredOffers/);
   assert.doesNotMatch(component, /Offers carousel|carouselSlots|goToAd|adSlots/);

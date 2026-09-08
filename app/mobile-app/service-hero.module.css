@@ -13,3 +13,4 @@
 .copy li::before { content: "✓ "; color: var(--ps-accent, #b8860b); font-weight: 700; }
 @media (max-height: 720px) { .photo { height: 152px; } }
 @media (max-width: 360px) { .copy h2 { font-size: 17px; } .copy li { padding: 3px 8px; font-size: 9.5px; } }
+.hero{margin:0 0 20px}.photo{height:150px;border-radius:20px}.card{box-shadow:none;border-radius:18px;background:var(--paw-surface);color:var(--paw-text)}.copy p{font-size:14px}.copy li{font-size:12px}.copy li:before{color:var(--paw-primary)}

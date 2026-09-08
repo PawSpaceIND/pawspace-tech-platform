@@ -16,11 +16,9 @@ type CustomerPet = { name: string; profile?: { photo?: string } };
 type CustomerBooking = { id: string; serviceCode: string; packageName: string; scheduledStart: string; status: string };
 type CustomerOffer = { code: string; description: string; autoApply: boolean };
 
-const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
-
 const PHOTO: Record<string, string> = {
-  grooming: "/assets/banners/grooming-groomer-action.jpg",
-  dog_training: "/assets/banners/training-handshake.jpg",
+  grooming: "/assets/pawspace-doorstep.png",
+  dog_training: "/assets/pawspace-home.png",
   boarding: "/assets/banners/boarding-puppy-hug.jpg",
   pet_sitting: "/assets/banners/sitting-woman-cat.jpg",
   pet_taxi: "/assets/banners/taxi-car-window.jpg",
@@ -115,7 +113,6 @@ export default function PremiumDiscoveryHome({
     [query, services],
   );
   const careServices = visible;
-  const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const campaign = CAMPAIGNS[campaignIndex];
   const customerInitial = customerName?.trim().slice(0, 1).toUpperCase() || "P";
 
@@ -141,8 +138,9 @@ export default function PremiumDiscoveryHome({
     );
   };
 
-  return <div className={styles.home} data-discovery data-home-design="option-5-premium-visual">
+  return <div className={styles.home} data-discovery data-home-design="pawspace-prototype-converged">
     <header className={styles.top}>
+      <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><b>PawSpace</b><small>Your Petter half</small></a>
       <div className={styles.topRow}>
         <button className={styles.location} onClick={() => setLocationOpen(true)} aria-label="Choose your service location">
           <i aria-hidden="true">●</i>
@@ -160,20 +158,40 @@ export default function PremiumDiscoveryHome({
     </header>
 
     <section className={styles.hero}>
-      <img src="/assets/banners/sitter-hug-golden.jpg" alt="PawSpace caregiver with a Golden Retriever" />
       <div className={styles.heroCopy}>
-        <small>PREMIUM CARE</small>
-        <h1>Premium care for your loved ones</h1>
-        <p>Book trusted, background-verified services across Bengaluru.</p>
-        <button onClick={() => onOpen("grooming")}>Book now</button>
+        <small>CARE, RIGHT AT HOME</small>
+        <h1>Happy pets.<br /><em>Happier homes.</em></h1>
+        <p>A little care. A lot of tail wags.</p>
       </div>
     </section>
+    <button className={styles.petSwitcher} onClick={onShowPets}>
+      {pet?.profile?.photo ? <img src={pet.profile.photo} alt="" /> : <span aria-hidden="true">🐾</span>}
+      <span><b>{pet ? `${pet.name}'s care starts here` : "My pets"}</b><small>{pet ? "View your pet family" : "Add your pet once. Make every visit personal."}</small></span><span aria-hidden="true">＋</span>
+    </button>
 
-    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
-      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
-        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
-      </article>)}
+    {nextBooking && <section className={styles.upcoming} aria-label="Upcoming booking">
+      <div><small>UPCOMING BOOKING</small><b>{nextBooking.packageName || nextBooking.serviceCode.replaceAll("_", " ")}</b><span>{when(nextBooking.scheduledStart)} · {nextBooking.status.replaceAll("_", " ")}</span></div>
+      <button onClick={onShowBookings}>View all</button>
     </section>}
+
+    <section className={styles.care} aria-label="Care services">
+      <div className={styles.sectionHead}><h2>What do they need today?</h2><small>Care from your doorstep</small></div>
+      <div className={styles.cards}>
+        {careServices.map((service) => {
+          const paused = disabledServices.has(service.serviceCode);
+          const featured = ["grooming", "dog_training"].includes(service.serviceCode);
+          const symbols: Record<string, string> = { boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
+          return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
+            <div className={styles.cardPhoto}>
+              {featured ? <img src={PHOTO[service.serviceCode] || service.image} alt={`PawSpace ${service.name} at home`} /> : <span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>}
+              <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
+            </div>
+            <button aria-label={`${cta(service.serviceCode)} · ${service.name}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : <><span className={styles.ctaLabel}>{cta(service.serviceCode)}</span><span aria-hidden="true">↗</span></>}</button>
+          </article>;
+        })}
+      </div>
+      {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
+    </section>
 
     <section className={styles.media} aria-label="Featured promotion">
       <div><span>{campaign.eyebrow}</span><em>{campaignIndex + 1}/{CAMPAIGNS.length}</em></div>
@@ -183,39 +201,14 @@ export default function PremiumDiscoveryHome({
       <nav aria-label="Choose featured promotion">
         {CAMPAIGNS.map((item, index) => <button key={item.title} aria-label={`Show campaign ${index + 1}`} aria-current={index === campaignIndex} className={index === campaignIndex ? styles.dotOn : ""} onClick={() => setCampaignIndex(index)} />)}
       </nav>
-      <small>PawSpace Media slot · service education and clearly labelled approved campaigns</small>
+      <small>Care guide · PawSpace</small>
     </section>
 
-    <section className={styles.quickSection} aria-label="Quick service guides">
-      <h2>Explore quickly</h2>
-      <div className={styles.quickGrid}>
-        {videoServices.map((service) => <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={disabledServices.has(service.serviceCode)}>
-          <span><img src={PHOTO[service.serviceCode] || service.image} alt="" /></span><b>{service.name}</b>
-        </button>)}
-      </div>
-    </section>
-
-    {nextBooking && <section className={styles.upcoming} aria-label="Upcoming booking">
-      <div><small>UPCOMING BOOKING</small><b>{nextBooking.packageName || nextBooking.serviceCode.replaceAll("_", " ")}</b><span>{when(nextBooking.scheduledStart)} · {nextBooking.status.replaceAll("_", " ")}</span></div>
-      <button onClick={onShowBookings}>View all</button>
+    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
+      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
+        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
+      </article>)}
     </section>}
-
-    <section className={styles.care} aria-label="Care services">
-      <div className={styles.sectionHead}><small>ALL 8 SERVICES</small><h2>Everything they need</h2></div>
-      <div className={styles.cards}>
-        {careServices.map((service) => {
-          const paused = disabledServices.has(service.serviceCode);
-          return <article className={styles.card} key={service.serviceCode}>
-            <div className={styles.cardPhoto}>
-              <img src={PHOTO[service.serviceCode] || service.image} alt={`PawSpace ${service.name}`} />
-              <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
-            </div>
-            <button onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : cta(service.serviceCode)}</button>
-          </article>;
-        })}
-      </div>
-      {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
-    </section>
 
     <section className={styles.assurance} aria-label="PawSpace trust standards">
       <article><b>Verified & trusted</b><small>Background-checked professionals</small></article>

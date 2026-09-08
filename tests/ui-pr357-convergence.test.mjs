@@ -19,7 +19,7 @@ test("PR357 convergence: modern discovery home keeps current data surfaces and a
   assert.match(home, /\/api\/customer-offers\?customerId=/, "customer offers must remain connected");
   assert.match(home, /Upcoming booking|UPCOMING BOOKING/, "current upcoming-booking surface must remain present");
   assert.match(home, /CAMPAIGNS/, "current campaign surface must remain present");
-  assert.match(home, /VIDEO_SERVICE_CODES/, "six-service guide contract must remain present");
+  assert.match(home, /careServices\.map/, "all service actions remain in the compact, non-duplicated grid");
   for (const code of ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi", "food", "relocation"]) {
     assert.match(home, new RegExp(`(?:${code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`), `${code} must remain represented in the discovery contract`);
   }
@@ -41,8 +41,8 @@ test("PR357 convergence: premium visual system remains additive and presentation
 
 test("PR357 convergence: acceptance harness targets modern home and preserves six-guide/8-service coverage", async () => {
   const harness = await read("scripts/customer-ui-acceptance-v2.mjs");
-  assert.match(harness, /Everything they need/);
-  assert.match(harness, /Quick service guides/);
+  assert.match(harness, /What do they need today\?/);
+  assert.match(harness, /Care services/);
   assert.match(harness, /guide slots=.*expected 6/);
   for (const label of ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"]) {
     assert.match(harness, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
