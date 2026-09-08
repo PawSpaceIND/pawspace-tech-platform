@@ -144,6 +144,11 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await expect(policy.getByRole("heading",{name:"Cancellation eligible",exact:true})).toBeVisible();
   await expect(policy).toContainText("Estimated refund: ₹0.00");
   await page.screenshot({path:test.info().outputPath("customer-grooming-persisted.png"),fullPage:true});
+  const rescheduleForm=page.getByRole("form",{name:"Reschedule booking",exact:true});
+  await expect(rescheduleForm.getByRole("button",{name:"Confirm new appointment",exact:true})).toBeDisabled();
+  await rescheduleForm.getByLabel("New appointment date",{exact:true}).fill(newStart.slice(0,10));await rescheduleForm.getByLabel("New appointment time (IST)",{exact:true}).fill("11:00");await rescheduleForm.getByLabel("Reason for changing the appointment",{exact:true}).fill("Please move our appointment back to late morning.");await rescheduleForm.getByRole("checkbox").check();
+  const movedResponse=page.waitForResponse(response=>response.url().endsWith("/api/grooming-booking-change")&&response.request().method()==="POST");await rescheduleForm.getByRole("button",{name:"Confirm new appointment",exact:true}).click();const moved=await movedResponse;expect(moved.status()).toBe(200);const movedBody=await moved.json();expect(movedBody.data.rescheduleFeeAmount).toBe(0);expect(movedBody.data.scheduledStart).toBe(new Date(`${newStart.slice(0,10)}T11:00:00+05:30`).toISOString());expect(Date.parse(movedBody.data.scheduledEnd)-Date.parse(movedBody.data.scheduledStart)).toBe(120*60000);
+  await expect(page.getByRole("status").filter({hasText:"Booking rescheduled"})).toBeVisible();await page.reload();await expect(page.getByRole("region",{name:"Booking details",exact:true})).toContainText("11:00");
   const cancelForm=page.getByRole("form",{name:"Cancel or review booking",exact:true});
   const confirm=cancelForm.getByRole("button",{name:"Confirm cancellation",exact:true});
   await expect(confirm).toBeDisabled();await cancelForm.getByLabel("Reason for your request",{exact:true}).fill("Our plans changed; please cancel this appointment.");await expect(confirm).toBeDisabled();await cancelForm.getByRole("checkbox").check();
