@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, FormEvent } from "react";
 
+import { startLiveRefresh } from "../../lib/live-refresh";
+
 interface ThreadItem {
   id: string;
   customer_id: string;
@@ -49,7 +51,13 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   const [threadDetail, setThreadDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [messageText, setMessageText] = useState("");
+  const [drafts, setDrafts] = useState<Record<string,string>>({});
+  const messageText = drafts[selectedThreadId] || "";
+  const setMessageText = (value:string) => setDrafts(current => ({...current,[selectedThreadId]:value}));
+  const [listError,setListError] = useState(false);
+  const [detailError,setDetailError] = useState(false);
+  const listRefresh=useRef<ReturnType<typeof startLiveRefresh>|null>(null);
+  const detailRefresh=useRef<ReturnType<typeof startLiveRefresh>|null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sending, setSending] = useState(false);
   const pendingSend = useRef<{ fingerprint: string; clientRequestId: string } | null>(null);
@@ -57,92 +65,46 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   const [simulating, setSimulating] = useState(false);
   const [simulateText, setSimulateText] = useState("Hi PawSpace, I'd like to check my pet grooming booking details");
 
-  // Load threads
-  const loadThreads = useCallback(async () => {
-    try {
-      const res = await fetch("/api/crm/chat", { cache: "no-store" });
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        data?: { threads?: ThreadItem[] };
-        error?: string;
-      };
-      if (res.ok && body.data?.threads) {
-        setThreads(body.data.threads);
-        setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
+  const loadThreads=useCallback(()=>{listRefresh.current?.refresh();detailRefresh.current?.refresh();},[]);
+
+  useEffect(()=>{
+    let active=true;
+    const sync=startLiveRefresh(async signal=>{
+      const response=await fetch("/api/crm/chat",{cache:"no-store",signal});
+      if(!active||signal.aborted)return;
+      if(response.status===401||response.status===403){
+        setThreads([]);setSelectedThreadId("");setThreadDetail(null);setDrafts({});
       }
-    } catch {
-      notify("Failed to load chat threads");
-    } finally {
-      setLoading(false);
-    }
-  }, [notify]);
+      if(!response.ok)throw new Error("Conversation list unavailable");
+      const body=await response.json() as {data?:{threads?:ThreadItem[]}};
+      if(!active||signal.aborted)return;
+      if(!Array.isArray(body.data?.threads))throw new Error("Invalid conversation list");
+      setThreads(body.data.threads);setListError(false);setLoading(false);
+      setSelectedThreadId(current=>current||body.data?.threads?.[0]?.id||"");
+    },{onError:()=>{if(active){setListError(true);setLoading(false);}}});
+    listRefresh.current=sync;
+    window.addEventListener("online",sync.refresh);
+    return()=>{active=false;sync.stop();window.removeEventListener("online",sync.refresh);listRefresh.current=null;};
+  },[]);
 
-  useEffect(() => {
-    let active = true;
-    void fetch("/api/crm/chat", { cache: "no-store" })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          data?: { threads?: ThreadItem[] };
-          error?: string;
-        };
-        if (!active) return;
-        if (res.ok && body.data?.threads) {
-          setThreads(body.data.threads);
-          setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
-        }
-      })
-      .catch(() => {
-        if (active) notify("Failed to load chat threads");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [notify]);
-
-  // Load thread detail when selected
-  useEffect(() => {
-    if (!selectedThreadId) {
-      queueMicrotask(() => {
-        setThreadDetail(null);
-      });
-      return;
-    }
-
-    let active = true;
-    queueMicrotask(() => {
-      if (active) setDetailLoading(true);
-    });
-
-    void fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`, { cache: "no-store" })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          data?: ThreadDetail;
-          error?: string;
-        };
-        if (!active) return;
-        if (res.ok && body.data) {
-          setThreadDetail(body.data);
-        } else {
-          notify(body.error || "Failed to load conversation messages");
-        }
-      })
-      .catch(() => {
-        if (active) notify("Connection error loading conversation");
-      })
-      .finally(() => {
-        if (active) setDetailLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [selectedThreadId, notify]);
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active){setThreadDetail(null);setDetailError(false);setDetailLoading(Boolean(selectedThreadId));}});
+    if(!selectedThreadId)return()=>{active=false;};
+    const sync=startLiveRefresh(async signal=>{
+      const response=await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`,{cache:"no-store",signal});
+      if(!active||signal.aborted)return;
+      if([401,403,404].includes(response.status))setThreadDetail(null);
+      if(!response.ok)throw new Error("Conversation unavailable");
+      const body=await response.json() as {data?:ThreadDetail};
+      if(!active||signal.aborted)return;
+      if(!body.data||body.data.thread.id!==selectedThreadId)throw new Error("Conversation response mismatch");
+      setThreadDetail(body.data);setDetailError(false);setDetailLoading(false);
+    },{onError:()=>{if(active){setDetailError(true);setDetailLoading(false);}}});
+    detailRefresh.current=sync;
+    window.addEventListener("online",sync.refresh);
+    return()=>{active=false;sync.stop();window.removeEventListener("online",sync.refresh);detailRefresh.current=null;};
+  },[selectedThreadId]);
 
   // Filter threads
   const filteredThreads = useMemo(() => {
@@ -189,9 +151,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
         notify("WhatsApp message queued");
         setMessageText("");
         // Refresh detail
-        const refRes = await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`);
-        const refBody = (await refRes.json().catch(() => ({}))) as { data?: ThreadDetail };
-        if (refBody.data) setThreadDetail(refBody.data);
+        loadThreads();
       } else {
         notify(data.error || data.data?.reason || "Failed to send WhatsApp message");
       }
@@ -223,9 +183,6 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       if (res.ok && data.ok) {
         notify("Simulated inbound customer WhatsApp message received");
         // Reload detail and threads
-        const refRes = await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`);
-        const refBody = (await refRes.json().catch(() => ({}))) as { data?: ThreadDetail };
-        if (refBody.data) setThreadDetail(refBody.data);
         loadThreads();
       } else {
         notify(data.error || "Failed to simulate inbound message");
@@ -273,6 +230,8 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
         </div>
         <span>Delivery status is shown on each message</span>
       </div>
+
+      {(listError||detailError)&&<div role="alert" style={{padding:"8px 18px",background:"#fff3cd"}}>Conversation updates unavailable. Retrying automatically.</div>}
 
       {/* Main Split Content */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

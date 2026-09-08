@@ -7,9 +7,10 @@ import { chromium } from 'playwright';
 import { installAiHooks, freshAiDb, seedCustomer, inboundMessage } from '../tests/helpers/ai-harness.mjs';
 import { makeD1 } from '../tests/helpers/taxi-harness.mjs';
 installAiHooks();
+process.env.PAWSPACE_LOCAL_PREVIEW="off";
 const { sqlite } = freshAiDb();
 const db=makeD1(sqlite);globalThis.__AI_DB__=db;
-const { ensureSecurityTables }=await import('../lib/server-auth.ts');
+const { ensureSecurityTables, resolveActor }=await import('../lib/server-auth.ts');
 const { ensureWhatsAppUatTables }=await import('../lib/whatsapp-uat-adapter.ts');
 const { ensureCustomer360Tables }=await import('../lib/customer-360.ts');
 const route=await import('../app/api/crm/chat/route.ts');
@@ -20,18 +21,38 @@ sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at
 await inboundMessage(sqlite,db,{threadId:'THREAD-BROWSER',customerId:'CUS-BROWSER',text:'Booking question',channel:'whatsapp',idempotencyKey:'browser-inbound'});
 sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,whatsapp_consent,updated_by,updated_at) VALUES ('CUS-BROWSER',1,'test',?)").run(now);
 sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at) VALUES ('CUS-BROWSER','meta_whatsapp',?)").run(now);
+const verifiedActor=await resolveActor(new Request('http://127.0.0.1/api/crm/chat',{headers:{'oai-authenticated-user-email':actor}}));
+assert.equal(verifiedActor.email,actor);
+assert.equal(verifiedActor.developmentPreview,false,'browser proof must exercise provisioned staff access');
 const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import LiveChatPanel from './app/crm/live-chat-panel.tsx';createRoot(document.getElementById('root')).render(<LiveChatPanel notify={message=>{document.getElementById('notice').textContent=message;}}/>);`,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',define:{'process.env.NODE_ENV':'"development"'}});
 const sends=[];
+let failReads=false;let getRequests=0;let inboundSequence=0;
 const server=http.createServer(async(req,res)=>{
  try{
+  if(req.url==='/audit-control'&&req.method==='POST'){
+   const chunks=[];for await(const chunk of req)chunks.push(chunk);const action=JSON.parse(Buffer.concat(chunks).toString()).action;
+   if(action==='incoming'){
+    const {recordInboundMessage}=await import('../lib/conversation-governance.ts');
+    await recordInboundMessage(db,{threadId:'THREAD-BROWSER',customerId:'CUS-BROWSER',channel:'whatsapp',payload:{text:`Incoming live audit ${++inboundSequence}`},provider:'sandbox_simulator',providerReference:`live-inbound-${inboundSequence}`,eventId:`live-inbound-${inboundSequence}`,createdBy:'audit-fixture'});
+   }else if(action==='fail')failReads=true;
+   else if(action==='recover')failReads=false;
+   else if(action==='revoke')sqlite.prepare("UPDATE app_users SET status='disabled' WHERE id='USR-BROWSER'").run();
+   else if(action==='restore')sqlite.prepare("UPDATE app_users SET status='active' WHERE id='USR-BROWSER'").run();
+   else if(action==='read'){
+    const row=sqlite.prepare("SELECT id FROM communication_messages WHERE direction='outbound' ORDER BY created_at DESC LIMIT 1").get();
+    if(row){const {recordDeliveryEvent}=await import('../lib/communication-engine.ts');await recordDeliveryEvent(db,{messageId:row.id,provider:'meta_whatsapp',eventId:`live-read-${row.id}`,eventType:'read'});}
+   }
+   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true,action}));return;
+  }
   if(req.url==='/audit-result'){
    const outboundMessages=sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n;
    const outboxRows=sqlite.prepare('SELECT COUNT(*) n FROM communication_outbox').get().n;
-   const result={attempts:sends.length,outboundMessages,outboxRows,frontendRetryKeyStable:sends.length===2&&Boolean(sends[0].clientRequestId)&&sends[0].clientRequestId===sends[1].clientRequestId,externalDelivery:false};
+   const result={getRequests,attempts:sends.length,outboundMessages,outboxRows,frontendRetryKeyStable:sends.length===2&&Boolean(sends[0].clientRequestId)&&sends[0].clientRequestId===sends[1].clientRequestId,externalDelivery:false};
    console.log(JSON.stringify(result));res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(result));return;
   }
   if(req.url==='/bundle.js'){res.writeHead(200,{'content-type':'text/javascript'});res.end(bundle.outputFiles[0].text);return;}
   if(!req.url.startsWith('/api/')){res.writeHead(200,{'content-type':'text/html'});res.end('<div id="notice" role="status"></div><div id="root"></div><script src="/bundle.js"></script>');return;}
+  if(req.method==='GET'){getRequests++;if(failReads){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Audit read outage'}));return;}}
   const chunks=[];for await(const chunk of req)chunks.push(chunk);
   const body=Buffer.concat(chunks).toString(),url=`http://127.0.0.1:${server.address().port}${req.url}`;
   const request=new Request(url,{method:req.method,headers:{...req.headers,'oai-authenticated-user-email':actor},...(body?{body}:{})});
@@ -43,7 +64,7 @@ let browser;
 try{
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  if(process.argv.includes('--serve')){
-  db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit fails after committed outbound');});
+  if(!process.argv.includes('--live'))db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit fails after committed outbound');});
   console.log(`CRM_AUDIT_URL=http://127.0.0.1:${server.address().port}`);
   await new Promise(()=>{});
  }
