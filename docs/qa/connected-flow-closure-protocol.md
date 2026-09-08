@@ -141,3 +141,10 @@ The broader run found that booking complaint projections sorted only inside each
 Provider GET now applies the Trust & Safety suspension/ban check used by sending, excludes queued/suppressed/failed messages and returns an explicit text projection rather than arbitrary stored payload fields. Text contact details are masked by the existing pure redactor. Private notes, nested finance/identity metadata and raw media URLs are not returned. This projection does not implement governed provider media delivery; that remains open along with audience-specific customer/staff threads, older-history pagination and browser chat wiring.
 
 The new route regression failed before the fix because queued content was visible, then passed after it. Twelve focused provider/trust checks pass, with build/artifact validation and typecheck successful. The broader earlier run completed with 4,678/4,682 passing; all four failures were addressed with focused tests in the preceding increment. A fresh full-suite run is still required. No real communications or financial transactions were performed.
+
+
+### Full regression baseline and AI replay access
+
+Commit `1233a544` passed all 4,684 tests in the full local suite, with no failures or skips. This is automated local evidence and does not establish deployed or human-test readiness. The exact run is exported as `stabilization-full-suite-1233a544.log`.
+
+Subsequent inspection reproduced a completed AI-turn replay returning another customer's record before authorization. Replays now validate the canonical input and current customer ownership, and the stored key must match customer, thread, message and channel. Retryable reservation claims also match those fields so a conflicting request cannot seize another turn's reservation. Valid replay remains idempotent. Forty-two selected executed AI/handoff checks pass, including wrong-customer/revoked access, changed-message/key conflicts and unchanged conflicting retry reservations; build/artifact validation and typecheck pass. These later changes have focused evidence, not a new full-suite run. Takeover during an in-flight model call remains under investigation.
