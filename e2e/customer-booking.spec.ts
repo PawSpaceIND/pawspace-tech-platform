@@ -290,6 +290,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
+   await expect(partner.locator("main")).toContainText("1:00 pm IST");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-accepted.png"),fullPage:true});
    await partner.evaluate(()=>Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition(_success:unknown,failure:(error:{code:number})=>void){failure({code:1});}}}));
    let checkInRequests=0;partner.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith("/api/sitting-lifecycle")&&request.postDataJSON()?.action==="check_in")checkInRequests++;});
