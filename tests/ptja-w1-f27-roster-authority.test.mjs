@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 /**
  * PawSpace Total Journey Audit, Wave 1 F27 — a customer's own reserve fabricated the provider roster
  * and overrode Ops-published availability windows.
@@ -78,6 +79,7 @@ async function world({ seeding }) {
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   await ensureSecurityTables(db);
   await seedProviderCapacityDefaults(db);
+  await seedOwnedPet(db, "CUST-F27", "PET-F27");
   const now = Date.now();
   await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-PTJA-F27','ops-roster@pawspace.test','Ops roster','founder','active',?,?)").bind(now, now).run();
   return { sqlite, db };

@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
@@ -130,13 +131,14 @@ async function setup() {
 }
 
 test("60 governed Grooming attempts persist an exact two-city booking swarm without overlap or cross-city assignment", async () => {
-  const { sqlite } = await setup();
+  const { sqlite, db } = await setup();
   const attempts = CITIES.flatMap((city) => Array.from({ length: 30 }, (_, index) => ({ city, index, accepted: index < 20 })));
   const successes = [];
   const rejections = [];
 
   for (const attempt of attempts) {
     const input = scheduleBody(attempt.city, attempt.index, attempt.accepted);
+    await seedOwnedPet(db, input.customerId, input.petIds[0]);
     const scheduled = await reserve(input);
     if (!attempt.accepted) {
       assert.equal(scheduled.status, 409, `${input.clientRequestId} must fail closed: ${JSON.stringify(scheduled.body)}`);

@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 /**
  * PawSpace Total Journey Audit, Wave 1 leftovers — findings that were reproduced and reported but not
  * corrected in the first pass. Every case here executes the real module or the real route.
@@ -241,6 +242,7 @@ async function reserveWorld() {
     principalKey: String(binding.principal_key), subjectType: "customer", subjectId: "CUST-F34",
   });
   const cookie = `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
+  await seedOwnedPet(db, "CUST-F34", "PET-F34");
   const reserve = async (clientRequestId, scheduledStart, scheduledEnd) => {
     const route = await import("../app/api/uat-scheduling/route.ts");
     const response = await route.POST(new Request("https://uat.pawspace.in/api/uat-scheduling", {
