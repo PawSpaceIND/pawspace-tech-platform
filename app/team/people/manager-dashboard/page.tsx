@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import{readReportJson}from"../../../../lib/read-report-json";
 
 type EmployeeRow = Record<string, unknown> & { employeeEmail: string; name: string };
 type Dashboard = {
@@ -19,9 +20,8 @@ export default function ManagerDashboardPage() {
   const [error, setError] = useState("");
 
   const load = () => {
-    fetch("/api/manager-dashboard", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((p) => { if (p.error) throw new Error(p.error); setData(p.data); })
+    readReportJson<{error?:string;data?:Dashboard}>("/api/manager-dashboard")
+      .then((p) => { if (p.error) throw new Error(p.error); if(!p.data?.verticals)throw new Error("Manager dashboard response is incomplete"); setData(p.data); })
       .catch((e) => setError(e.message));
   };
   useEffect(load, []);
@@ -37,12 +37,12 @@ export default function ManagerDashboardPage() {
         </p>
       </header>
 
-      {error && <div style={{ ...card, background: "#fff3e0", borderColor: "#f0b429" }}>Could not load: {error}</div>}
+      {error && <div style={{ ...card, background: "#fff3e0", borderColor: "#f0b429" }}><p role="alert">Could not load: {error}</p><button onClick={()=>window.location.reload()} style={{minHeight:44}}>Try again</button></div>}
       {!data && !error && <p>Loading…</p>}
 
       {data && (
         <>
-          <section style={card}>
+          <section style={{...card,overflowX:"auto"}}>
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
               <div><small style={{ color: "#6e6576" }}>Scope</small><h3 style={{ margin: "4px 0", textTransform: "capitalize" }}>{data.scope === "all" ? "Everyone" : "Your direct reports"}</h3></div>
               <div><small style={{ color: "#6e6576" }}>Employees in view</small><h3 style={{ margin: "4px 0" }}>{data.employeeCount}</h3></div>
@@ -52,14 +52,14 @@ export default function ManagerDashboardPage() {
           </section>
 
           {data.verticals.sales.length > 0 && (
-            <section style={card}>
+            <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Sales / Telesales</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr><th style={th}>Name</th><th style={th}>Today&apos;s achievement</th><th style={th}>7-day total</th><th style={th}>Month achievement</th><th style={th}>Month target</th><th style={th}>Day closed?</th><th style={th}>Talk time today</th></tr></thead>
                 <tbody>
                   {data.verticals.sales.map((row) => (
                     <tr key={row.employeeEmail}>
-                      <td style={td}>{row.name}</td>
+                      <td style={td}>{row.name}{Array.isArray(row.unavailableMetrics)&&row.unavailableMetrics.length>0&&<small style={{display:"block"}}>Unavailable: {row.unavailableMetrics.join(", ")}</small>}</td>
                       <td style={td}>{(row.daily as { achievedValue?: number } | null)?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.weekly as { achievedValue?: number })?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { achievedValue?: number } | null)?.achievedValue ?? "—"}</td>
@@ -74,7 +74,7 @@ export default function ManagerDashboardPage() {
           )}
 
           {data.verticals.groomers.length > 0 && (
-            <section style={card}>
+            <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Groomer</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr><th style={th}>Name</th><th style={th}>Month orders</th><th style={th}>Month total</th><th style={th}>Target</th><th style={th}>Crossed target?</th><th style={th}>Head payout</th></tr></thead>
@@ -95,7 +95,7 @@ export default function ManagerDashboardPage() {
           )}
 
           {data.verticals.trainers.length > 0 && (
-            <section style={card}>
+            <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Trainer</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr><th style={th}>Name</th><th style={th}>Month order value</th><th style={th}>Revenue incentive</th><th style={th}>Meet &amp; Greet incentive</th><th style={th}>Total</th></tr></thead>
@@ -115,7 +115,7 @@ export default function ManagerDashboardPage() {
           )}
 
           {data.verticals.other.length > 0 && (
-            <section style={card}>
+            <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Other / not yet classified into a vertical</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr><th style={th}>Name</th><th style={th}>Title</th></tr></thead>
