@@ -73,7 +73,6 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
       <StatCard label="Providers with reservations" value={board?providers.length:"—"} />
       <StatCard label="Awaiting admin" value={board?pendingRequests.length:"—"} />
       <StatCard label="Assigned" value={board?assigned:"—"} />
-      <StatCard label="Day (IST)" value={board?.date||date} />
     </section>
 
     <section className={styles.controls}>

@@ -10,6 +10,7 @@ type Result={groupId?:string;status?:string;provider?:{id?:string;name?:string;m
 export default function AssignmentControl(props:Props){
  const [open,setOpen]=useState(false),[action,setAction]=useState("assign"),[providerId,setProviderId]=useState(""),[reason,setReason]=useState(""),[error,setError]=useState(""),[needsRefresh,setNeedsRefresh]=useState(false);
  const submitting=useRef(false);
+ const selected=props.candidates.find(candidate=>candidate.providerId===providerId);
  async function submit(){
   if(submitting.current||props.disabled||needsRefresh||reason.trim().length<8||(action==="assign"&&!providerId))return;
   submitting.current=true;props.onBusy(true);setError("");
@@ -33,7 +34,7 @@ export default function AssignmentControl(props:Props){
    <fieldset className={`${styles.stack} ${styles.recoveryFields}`} disabled={props.disabled||needsRefresh}>
     <legend>Manage request {props.groupId}</legend>
     <label className={styles.field}>Action<select value={action} onChange={event=>setAction(event.target.value)}><option value="assign">Assign recommended provider</option><option value="cancel">Cancel request</option></select></label>
-    {action==="assign"&&<><label className={styles.field}>Recommended provider<select value={providerId} onChange={event=>setProviderId(event.target.value)} required><option value="">Choose a provider</option>{props.candidates.map(candidate=><option key={candidate.providerId} value={candidate.providerId}>{candidate.providerName} · {candidate.providerModel==="commission"?"partner acceptance required":"staff provider"}</option>)}</select></label><small>These are saved recommendations. Current availability and booking rules are checked when you submit.</small></>}
+    {action==="assign"&&<><label className={styles.field}>Recommended provider<select value={providerId} onChange={event=>setProviderId(event.target.value)} required><option value="">Choose a provider</option>{props.candidates.map(candidate=><option key={candidate.providerId} value={candidate.providerId}>{candidate.providerName}</option>)}</select></label>{selected&&<small>{selected.providerModel==="commission"?"Partner acceptance is required after an offer is recorded.":"This provider is part of the staff team."}</small>}<small>These are saved recommendations. Current availability and booking rules are checked when you submit.</small></>}
     {action==="cancel"&&<small>This cancels the saved request and releases any reservation it holds.</small>}
     <label className={styles.field}>Reason<textarea value={reason} onChange={event=>setReason(event.target.value)} minLength={8} required /></label>
     <small>Explain the action in at least 8 characters.</small>
