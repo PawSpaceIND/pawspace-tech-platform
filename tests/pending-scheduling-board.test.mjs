@@ -11,7 +11,11 @@ async function pending(ctx){
  assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(result.body.data.status,'awaiting_admin');
  return input;
 }
-const board=date=>routeCall('../../app/api/uat-scheduling/route.ts','GET',`/api/uat-scheduling?date=${date}`);
+async function board(date){
+ const {GET}=await import('../app/api/uat-scheduling/route.ts');
+ const response=await GET(new Request(`https://uat.pawspace.in/api/uat-scheduling?date=${date}`,{headers:{'oai-authenticated-user-email':'closure-admin@pawspace.test'}}));
+ return {status:response.status,body:await response.json()};
+}
 
 test('saved awaiting-admin request remains visible with zero reservations; cancellation removes it',async t=>{
  const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx);
