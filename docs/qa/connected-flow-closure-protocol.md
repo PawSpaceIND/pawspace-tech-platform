@@ -47,4 +47,22 @@ Use these stage labels: **executed**, **simulated boundary**, **source traced on
 
 `tests/cross-module-journey-gate.test.mjs` explicitly creates bookings and simulated captures directly in its database. Its downstream checks remain useful, but it is **not** proof of frontend/API/webhook delivery. Its adapter now uses BEGIN/COMMIT/ROLLBACK, with an injected duplicate-write failure proving rollback and successful retry. Seven tests pass after this change.
 
-The master report's open modules remain open. No module becomes closed merely because this protocol or the improved downstream test adapter exists. Initial connected-flow inspection also found that the Booking Command Center reads `customer_experience_tickets`, whereas newly created low-rating support cases are stored in `unified_cases`; that admin visibility boundary requires execution and remediation before F10 is closed.
+The master report's open modules remain open. No module becomes closed merely because this protocol or the improved downstream test adapter exists. Initial connected-flow inspection also found that the Booking Command Center reads `customer_experience_tickets`, whereas newly created low-rating support cases are stored in `unified_cases`; that admin API visibility boundary is remediated by the connected review/support increment below; browser visibility and notification evidence remain open.
+
+## Connected review/support increment
+
+The customer Activity star control calls `/api/booking-rating`; configured service reviews use `/api/service-review`. Both are now exercised through their real route handlers with a customer session, then the real Booking Command Center handler with a staff identity, on the same transactional SQLite-backed D1 adapter.
+
+| Boundary | Evidence in this increment |
+|---|---|
+| Customer frontend | Source traced to Activity's rating control. Load failure is now visible with retry. Browser execution still open. |
+| API and validation | Both real POST handlers execute; authenticated ownership is used; duplicate submissions return 409. Customer access to the Operations read is refused. Full Worker gateway/browser transport is not exercised by these route-handler tests. |
+| Transaction | Booking rating, provider score, recovery case and case audit event share a batch. An injected provider-score write failure rolls back the rating and case; retry succeeds. Service reviews retain their transaction coverage. |
+| Event and recovery | Real case creation event, repeated SLA sweep with one escalation, resolve and close operations executed. |
+| Notification | External notification delivery remains unverified; the case SLA sweep explicitly reports no automatic external notification. This stage is open. |
+| Admin | Booking Command Center API returns the same case ID in its ticket feed, with priority and SLA projection. Browser rendering is open. |
+| Customer visibility | Customer 360 open count includes the complaint and falls to zero after closure. |
+| Finance | Booking payment rows and analytics money totals remain unchanged by rating/escalation/resolution. Gateway capture is fixture data, not a real provider transaction. |
+| Analytics | Company CX open count reflects both ticket stores and reaches zero after case closure. Closed cases are no longer counted as open in Operations, customer counts or CX analytics. |
+
+Validation: 117 selected tests passed; build/artifact validation and typecheck passed. The added customer-to-Operations authorization assertion is included in the final connected-flow rerun. This increment does not close the flow while browser, notification and deployed checks remain open.

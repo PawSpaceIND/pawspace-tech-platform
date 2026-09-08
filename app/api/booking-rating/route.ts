@@ -1,6 +1,6 @@
 import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
-import{listCustomerRatableBookings,submitBookingRating}from"../../../lib/booking-rating";
+import{BookingRatingError,listCustomerRatableBookings,submitBookingRating}from"../../../lib/booking-rating";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin booking rating write blocked",{status:403});}
@@ -23,5 +23,5 @@ export async function POST(request:Request){
     const result=await submitBookingRating(db,{customerId,bookingId:body.bookingId,stars:body.stars,comment:body.comment,actorId:customerId});
     await securityAudit(db,actor,"booking.rating.submit","customer",customerId,"completed",{bookingId:body.bookingId,stars:body.stars,providerId:result.providerId});
     return json({data:result},201);
-  }catch(error){return authError(error,"Unable to submit rating");}
+  }catch(error){if(error instanceof BookingRatingError)return json({error:error.message},error.status);return authError(error,"Unable to submit rating");}
 }

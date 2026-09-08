@@ -1,3 +1,4 @@
+import { createUnifiedCase } from "./unified-case-center";
 import { ensureProviderCapacityTables } from "./provider-capacity-governance";
 
 /**
@@ -15,6 +16,11 @@ import { ensureProviderCapacityTables } from "./provider-capacity-governance";
  * looks like for a new provider).
  */
 
+export class BookingRatingError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.name = "BookingRatingError"; this.status = status; }
+}
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -30,18 +36,29 @@ export async function ensureBookingRatingTables(db: Db) {
 export async function submitBookingRating(db: Db, input: { customerId: string; bookingId: string; stars: number; comment?: string; actorId: string }) {
   await ensureBookingRatingTables(db);
   const stars = Number(input.stars);
-  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error("Rating must be a whole number from 1 to 5");
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new BookingRatingError("Rating must be a whole number from 1 to 5", 400);
   const booking = await db.prepare("SELECT id,customer_id,provider_id,service_code,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
-  if (!booking) throw new Error("Booking not found");
-  if (String(booking.customer_id) !== input.customerId) throw new Error("You can only rate your own bookings");
-  if (String(booking.status) !== "completed") throw new Error("You can only rate a completed booking");
+  if (!booking) throw new BookingRatingError("Booking not found", 404);
+  if (String(booking.customer_id) !== input.customerId) throw new BookingRatingError("You can only rate your own bookings", 403);
+  if (String(booking.status) !== "completed") throw new BookingRatingError("You can only rate a completed booking", 409);
   const existing = await db.prepare("SELECT id FROM booking_ratings WHERE booking_id=?").bind(input.bookingId).first<Row>();
-  if (existing) throw new Error("This booking has already been rated");
-  const id = uid("RATE"), now = Date.now();
-  await db.prepare("INSERT INTO booking_ratings (id,booking_id,customer_id,provider_id,service_code,stars,comment,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(id, input.bookingId, input.customerId, String(booking.provider_id), String(booking.service_code), stars, input.comment?.trim() || null, now).run();
-  const recomputed = await recomputeProviderRating(db, String(booking.provider_id));
-  return { id, bookingId: input.bookingId, providerId: String(booking.provider_id), stars, ...recomputed };
+  if (existing) throw new BookingRatingError("This booking has already been rated", 409);
+  await ensureProviderCapacityTables(db);
+  const id = uid("RATE"), now = Date.now(), providerId = String(booking.provider_id);
+  const statements = [
+    db.prepare("INSERT INTO booking_ratings (id,booking_id,customer_id,provider_id,service_code,stars,comment,created_at) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(id, input.bookingId, input.customerId, providerId, String(booking.service_code), stars, input.comment?.trim() || null, now),
+    providerRatingStatement(db, providerId, now),
+  ];
+  if (stars <= 2) {
+    await createUnifiedCase(db, {
+      idempotencyKey: `low-booking-rating:${input.bookingId}`, caseType: "customer_complaint", severity: "high",
+      title: `${stars}-star booking rating`, description: input.comment?.trim() || `Customer rated booking ${input.bookingId} ${stars} out of 5. Contact the customer for service recovery.`,
+      customerId: input.customerId, bookingId: input.bookingId, providerId,
+      sourceType: "booking_rating", sourceId: id, ownerTeam: "customer_support", actorId: input.actorId,
+    }, statements);
+  } else await db.batch(statements);
+  return { id, bookingId: input.bookingId, providerId, stars, ...await providerRatingSummary(db, providerId) };
 }
 
 /**
@@ -49,19 +66,24 @@ export async function submitBookingRating(db: Db, input: { customerId: string; b
  * default. Only writes to provider_capacity_profiles.rating if the provider capacity row already
  * exists (a provider must be at least activated for this to apply).
  */
-export async function recomputeProviderRating(db: Db, providerId: string) {
-  // Rating is allowed to be the first consumer of provider capacity on a fresh/partially provisioned
-  // database. The old implementation assumed another route had created this table already, which made
-  // an otherwise valid completed-booking rating fail with `no such table: provider_capacity_profiles`.
-  await Promise.all([ensureBookingRatingTables(db), ensureProviderCapacityTables(db)]);
+function providerRatingStatement(db: Db, providerId: string, now: number) {
+  return db.prepare(`UPDATE provider_capacity_profiles SET
+    rating=(SELECT ROUND(AVG(stars),2) FROM booking_ratings WHERE provider_id=?),
+    quality_score=(SELECT ROUND(ROUND(AVG(stars),2)*20) FROM booking_ratings WHERE provider_id=?),
+    updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM booking_ratings WHERE provider_id=?)`)
+    .bind(providerId, providerId, now, providerId, providerId);
+}
+
+async function providerRatingSummary(db: Db, providerId: string) {
   const row = await db.prepare("SELECT COUNT(*) count, AVG(stars) avg_stars FROM booking_ratings WHERE provider_id=?").bind(providerId).first<Row>();
   const count = Number(row?.count || 0);
-  const average = count > 0 ? Math.round(Number(row?.avg_stars || 0) * 100) / 100 : null;
-  if (average !== null) {
-    await db.prepare("UPDATE provider_capacity_profiles SET rating=?,quality_score=?,updated_at=? WHERE id=?")
-      .bind(average, Math.round(average * 20), Date.now(), providerId).run();
-  }
-  return { ratingCount: count, averageRating: average };
+  return { ratingCount: count, averageRating: count > 0 ? Math.round(Number(row?.avg_stars || 0) * 100) / 100 : null };
+}
+
+export async function recomputeProviderRating(db: Db, providerId: string) {
+  await Promise.all([ensureBookingRatingTables(db), ensureProviderCapacityTables(db)]);
+  await providerRatingStatement(db, providerId, Date.now()).run();
+  return providerRatingSummary(db, providerId);
 }
 
 export async function listCustomerRatableBookings(db: Db, customerId: string) {
