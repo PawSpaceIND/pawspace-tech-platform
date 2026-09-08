@@ -90,7 +90,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await expect(page.getByText(/Essential Bath|Bath & Basic|Complete Makeover|Just Trim/i).first()).toBeVisible();
 
   await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
-  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42 Test Road, Indiranagar, Bengaluru");
+  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
   await page.getByLabel("Pincode",{exact:true}).fill("560038");
   await page.getByRole("button",{name:"Verify map",exact:true}).click();
   await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
