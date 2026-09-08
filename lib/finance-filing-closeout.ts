@@ -4,8 +4,8 @@ import{
   ensureGstAccountingTables,
   generateAnnualReturn as generateAnnualReturnBase,
   generateStatutoryPackage as generateStatutoryPackageBase,
-  issueInvoice as issueInvoiceBase,
 }from"./gst-accounting";
+import{issueInvoiceStatutory}from"./statutory-invoicing";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -37,10 +37,10 @@ async function audit(db:Db,actor:string,entityId:string,action:string,after:unkn
     .bind(id("ga_audit"),"accounting_export",entityId,action,JSON.stringify(after),actor,reason,now()).run();
 }
 
-/** The canonical invoice path owns immutable line-identity tax rows; this wrapper only adds entity-scope readiness. */
+/** Canonical invoice issuance now uses POS resolution + FY-aware CAS serial claims in one D1 batch. */
 export async function issueInvoiceSafe(db:Db,input:Row,actor:string){
   await ensureFinanceEntityScope(db);
-  return issueInvoiceBase(db,input,actor);
+  return issueInvoiceStatutory(db,input,actor);
 }
 
 /** Recomputes monthly ITC using only bills belonging to the selected legal entity. */
