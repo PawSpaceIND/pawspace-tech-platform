@@ -49,6 +49,7 @@ const initials = (name: unknown) => text(name, "PS").split(/\s+/).map((part) => 
 const inboxRefreshMs = 5_000;
 
 export default function CustomerExperiencePage() {
+  const [liveRevision, setLiveRevision] = useState(0);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selected, setSelected] = useState("");
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -59,18 +60,19 @@ export default function CustomerExperiencePage() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("open");
   const [reply, setReply] = useState("");
   const [replyRequestId, setReplyRequestId] = useState("");
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
-  const loadThreads = useCallback(async () => {
-    const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
+  const loadThreads = useCallback(async (shouldApply: () => boolean = () => true) => {
+    const response = await fetch(`/api/conversations${statusFilter === "all" ? "" : `?status=${encodeURIComponent(statusFilter)}`}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
     if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
     const next = payload.data?.threads || [];
-    setThreads(next);
+    if (shouldApply()) setThreads(next);
     return next;
-  }, []);
+  }, [statusFilter]);
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return;
@@ -103,7 +105,7 @@ export default function CustomerExperiencePage() {
       if (!active || refreshing) return;
       refreshing = true;
       try {
-        const next = await loadThreads();
+        const next = await loadThreads(() => active);
         if (active && next[0]) setSelected((current) => current || String(next[0].id));
         if (active) setError("");
       } catch (cause) {
@@ -114,8 +116,15 @@ export default function CustomerExperiencePage() {
     };
     void refresh();
     const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const source = typeof EventSource === "undefined" ? null : new EventSource("/api/conversations/stream");
+    source?.addEventListener("conversation", () => {
+      if (!active) return;
+      void refresh();
+      setLiveRevision(value => value + 1);
+    });
     return () => {
       active = false;
+      source?.close();
       window.clearInterval(timer);
     };
   }, [loadThreads]);
@@ -142,7 +151,7 @@ export default function CustomerExperiencePage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [selected, loadConversation, loadControl]);
+  }, [selected, loadConversation, loadControl, liveRevision]);
 
   async function act(action: string, payload: Row) {
     if (!selected) return false;
@@ -269,6 +278,11 @@ export default function CustomerExperiencePage() {
           <div className={styles.listTop}>
             <h2>Shared Inbox</h2>
             <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads or conversations..." />
+            <label>Conversation status
+              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setSelected(""); setConversation(null); setControl(null); setThreads([]); }}>
+                <option value="open">Open</option><option value="pending_customer">Awaiting customer</option><option value="resolved">Resolved</option><option value="closed">Closed</option><option value="all">All statuses</option>
+              </select>
+            </label>
             <div className={styles.filters}>
               {[["all", "All"], ["whatsapp", "WhatsApp"], ["unassigned", "Unassigned"], ["human", "Human owned"]].map(([key, label]) => (
                 <Button
@@ -295,6 +309,7 @@ export default function CustomerExperiencePage() {
                 <button
                   key={row.id}
                   type="button"
+                  disabled={busy}
                   className={styles.row}
                   aria-current={selected === row.id ? "true" : undefined}
                   onClick={() => setSelected(row.id)}
@@ -302,7 +317,7 @@ export default function CustomerExperiencePage() {
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
                   <small>{text((row.lastMessage?.payload as Row | undefined)?.text || row.lastMessage?.template_key, "No message preview")}</small>
-                  <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner}` : channel === "whatsapp" ? "WhatsApp open" : "Open"}</span></div>
+                  <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner} · ${pretty(row.status || "open")}` : pretty(row.status || "open")}</span></div>
                 </button>
               );
             })}
@@ -371,6 +386,7 @@ export default function CustomerExperiencePage() {
               <Button size="sm" className={`${styles.action} ${styles.actionPrimary}`} disabled={busy || !isWhatsApp || humanOwned} onClick={() => { void controlAct("take_over", { reason: routingReason }); }}>Take over</Button>
               <Button size="sm" variant="secondary" className={styles.action} disabled={busy || !isWhatsApp || !control?.handoff?.aiPaused} onClick={() => { void controlAct("resume_ai", { reason: routingReason }); }}>Resume AI</Button>
               <Button size="sm" variant="secondary" className={styles.action} disabled={busy || !selected} onClick={() => { void act("status", { status: "pending_customer", reason: "Awaiting customer response" }); }}>Await customer</Button>
+              <Button size="sm" variant="secondary" className={styles.action} disabled={busy || !selected || thread?.status === "open"} onClick={() => { void act("status", { status: "open", reason: "Customer Experience reopened" }); }}>Reopen</Button>
               <Button size="sm" className={`${styles.action} ${styles.actionGreen}`} disabled={busy || !selected} onClick={() => { void act("status", { status: "resolved", reason: "Customer Experience resolved" }); }}>Resolve</Button>
             </div>
           </section>

@@ -51,4 +51,13 @@ export async function assignConversation(db:D1Database,input:{threadId:string;as
  db.prepare("INSERT INTO conversation_audit_events (id,thread_id,action,actor_email,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),input.threadId,"assigned",input.assignedBy,JSON.stringify({assignedTo:input.assignedTo,reason:input.reason||null,slaMinutes:input.slaMinutes||null}),now),
  ]);return{id,assignedTo:input.assignedTo};}
 
-export async function setConversationStatus(db:D1Database,input:{threadId:string;status:"open"|"pending_customer"|"resolved"|"closed";actorEmail:string;reason?:string}){await ensureConversationGovernance(db);const now=Date.now();await db.batch([db.prepare("UPDATE communication_threads SET status=?,updated_at=? WHERE id=?").bind(input.status,now,input.threadId),db.prepare("INSERT INTO conversation_audit_events (id,thread_id,action,actor_email,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),input.threadId,`status_${input.status}`,input.actorEmail,JSON.stringify({reason:input.reason||null}),now)]);return{threadId:input.threadId,status:input.status};}
+export async function setConversationStatus(db:D1Database,input:{threadId:string;status:"open"|"pending_customer"|"resolved"|"closed";actorEmail:string;reason?:string}){
+ if(!["open","pending_customer","resolved","closed"].includes(input.status))throw new Response("Unsupported conversation status",{status:400});
+ await ensureConversationGovernance(db);const now=Date.now();
+ const results=await db.batch([
+  db.prepare("UPDATE communication_threads SET status=?,updated_at=? WHERE id=?").bind(input.status,now,input.threadId),
+  db.prepare("INSERT INTO conversation_audit_events (id,thread_id,action,actor_email,detail_json,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=?)").bind(crypto.randomUUID(),input.threadId,`status_${input.status}`,input.actorEmail,JSON.stringify({reason:input.reason||null}),now,input.threadId),
+ ]);
+ if(Number(results[0]?.meta?.changes||0)!==1)throw new Response("Conversation thread not found",{status:404});
+ return{threadId:input.threadId,status:input.status};
+}
