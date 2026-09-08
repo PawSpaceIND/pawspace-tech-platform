@@ -241,7 +241,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
   const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart);
-  await page.getByLabel("Start time",{exact:true}).selectOption(time);
+  await page.getByRole("combobox",{name:"Start time",exact:true}).selectOption(time);
   const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
  }
 });
