@@ -19,3 +19,9 @@
 .carePlan dl { margin: 0; display: grid; gap: 14px; }
 .carePlan dt { font-weight: 700; }
 .carePlan dd { margin: 4px 0 0; white-space: pre-wrap; }
+
+.recovery { display: grid; gap: 12px; margin-top: 28px; padding-top: 16px; border-top: 1px solid #c8d9d3; }
+.recovery h2 { margin: 0; }
+.recovery label { font-weight: 700; }
+.recovery textarea { width: 100%; min-height: 96px; padding: 12px; border: 1px solid #728b80; border-radius: 8px; font: inherit; }
+.recovery textarea:focus-visible { outline: 3px solid #d99517; outline-offset: 3px; }

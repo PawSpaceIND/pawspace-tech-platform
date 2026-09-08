@@ -299,6 +299,14 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    await partner.evaluate(()=>Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition(_success:unknown,failure:(error:{code:number})=>void){failure({code:1});}}}));
    let checkInRequests=0;partner.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith("/api/sitting-lifecycle")&&request.postDataJSON()?.action==="check_in")checkInRequests++;});
    await partner.getByRole("button",{name:"Check in with my location",exact:true}).click();await expect(partner.getByRole("alert")).toContainText("Allow location access");expect(checkInRequests).toBe(0);await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
+   const unavailable=partner.getByRole("button",{name:"Mark unavailable",exact:true});await expect(unavailable).toBeDisabled();
+   const reason="My vehicle broke down before travel; please arrange another sitter.";await partner.getByRole("textbox",{name:"Reason you are unavailable",exact:true}).fill(reason);
+   const recovered=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST"&&response.request().postDataJSON()?.action==="sitter_unavailable");await unavailable.click();const recoveryResponse=await recovered;expect(recoveryResponse.status()).toBe(202);expect(recoveryResponse.request().postDataJSON().reason).toBe(reason);
+   await expect(partner.getByRole("status")).toContainText("Operations recovery requested");await expect(unavailable).toHaveCount(0);
+   const persisted=await partner.evaluate(async id=>{const response=await fetch(`/api/sitting-lifecycle?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});if(!response.ok)throw new Error("Unable to read recovery");return(await response.json()).data[0];},bookingId);expect(persisted.id).toBe(bookingId);expect(persisted.status).toBe("reassignment_needed");expect(JSON.parse(persisted.recovery.detail_json).reason).toBe(reason);
+   await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("reassignment needed");await expect(page.getByRole("textbox",{name:"Food and water routine",exact:true})).toHaveValue("Use the labelled food container. Refresh water after the meal.");
+   await partner.screenshot({path:test.info().outputPath("sitting-partner-recovery.png"),fullPage:true});
+
 
   }finally{await partner.close();}
 
