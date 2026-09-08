@@ -13,40 +13,34 @@ const requiredClasses = [
   "avatar",
   "greeting",
   "search",
-  "hero",
-  "heroCopy",
+  "welcomeHero",
+  "personalHero",
   "offers",
   "media",
-  "quickSection",
-  "quickGrid",
   "upcoming",
   "care",
   "sectionHead",
   "cards",
   "card",
   "cardPhoto",
-  "assurance",
+  "trustRow",
   "empty",
   "bookingShortcut",
-  "sheetBackdrop",
   "sheet",
-  "handle",
-  "deviceLocation",
-  "saveLocation",
-  "locationNote",
 ];
 
-test("premium discovery stays on the globally assigned Option 5 Premium & Visual contract", () => {
+test("premium discovery stays on the globally assigned prototype-converged contract", () => {
+  assert.match(component, /<LocationWelcome compact/, "home reuses the accessible GPS/search picker");
   for (const className of requiredClasses) {
     assert.match(component, new RegExp(`styles\\.${className}\\b`), `component should use styles.${className}`);
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);
   }
-  assert.match(component, /data-home-design="option-5-premium-visual"/);
-  assert.match(component, />Premium care for your loved ones</);
-  assert.match(component, />Everything they need</);
+  assert.match(component, /data-home-design="pawspace-prototype-converged"/);
+  assert.match(component, />Welcome to your/);
+  assert.match(component, />Care for every little need</);
   assert.match(component, /aria-label="Care services"/);
-  assert.match(component, /aria-label="Quick service guides"/);
-  assert.match(component, /PawSpace Media slot · service education and clearly labelled approved campaigns/);
+  assert.match(component, /aria-label="Care services"/);
+  assert.match(component, /Care guide · PawSpace/);
   assert.doesNotMatch(component, /Care for every kind of day/);
   assert.doesNotMatch(component, /sponsoredOffers/);
   assert.doesNotMatch(component, /Offers carousel|carouselSlots|goToAd|adSlots/);

@@ -4,18 +4,18 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("UI-MEDIA-01: customer home keeps assigned Option 5 Premium & Visual as its one global design", async () => {
+test("UI-MEDIA-01: customer home keeps assigned prototype-converged as its one global design", async () => {
   const source = await read("app/mobile-app/premium-discovery-home.tsx");
   const styles = await read("app/mobile-app/premium-discovery-home.module.css");
-  assert.match(source, /data-home-design="option-5-premium-visual"/);
-  assert.match(source, />Premium care for your loved ones</);
-  assert.match(source, />Everything they need</);
+  assert.match(source, /data-home-design="pawspace-prototype-converged"/);
+  assert.match(source, />Welcome to your/);
+  assert.match(source, />Care for every little need</);
   assert.match(source, /className=\{styles\.cards\}/);
   assert.match(source, /className=\{styles\.cardPhoto\}/);
-  assert.match(source, /aria-label="PawSpace trust standards"/);
-  assert.match(source, /aria-label="Quick service guides"/);
-  assert.match(source, /PawSpace Media slot · service education and clearly labelled approved campaigns/);
-  assert.match(styles, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /aria-label="Care with confidence"/);
+  assert.match(source, /aria-label="Care services"/);
+  assert.match(source, /Care guide · PawSpace/);
+  assert.match(styles, /scroll-snap-type:x proximity/);
   assert.doesNotMatch(source, /Offers carousel|carouselSlots|goToAd|adSlots/);
   assert.doesNotMatch(source, /HomeDesignSwitcher|HOME_DESIGN_STORAGE_KEY|design === "calm"/);
 });
@@ -51,7 +51,7 @@ test("UI-MEDIA-03: every non-funeral service owns a guarded silent HD video slot
   assert.match(banner, /IntersectionObserver/);
   assert.match(banner, /visibilitychange/);
   assert.match(banner, /prefers-reduced-motion: reduce/);
-  assert.match(banner, /Premium poster fallback/);
+  assert.match(banner, /The preview could not load. Your booking is unaffected./);
   assert.doesNotMatch(registry, /funeral.*videoFile/i);
 });
 

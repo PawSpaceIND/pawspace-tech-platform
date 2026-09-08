@@ -80,12 +80,13 @@ export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
  * governed commercial terms are seeded from it. It is here because staging needs it, not because the
  * build leaked it. */
 cfg.vars = {
+  APP_ENV: "staging",
+  FORBID_PRODUCTION: "true",
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
   PAWSPACE_DEPLOYMENT_ENV: "staging",
   PAWSPACE_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
   PAWSPACE_PAYMENT_ENV: "sandbox",
-  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
-  FORBID_PRODUCTION: "true",
   PAWSPACE_UAT_LOGIN: "on",
   PAWSPACE_MAPS_ENV: "sandbox",
   PAWSPACE_COMMUNICATION_ENV: "uat",
@@ -95,7 +96,10 @@ cfg.vars = {
   EXOTEL_SUBDOMAIN: "api.exotel.com",
   META_WHATSAPP_UAT_DELIVERY_ENABLED: "true",
   PAWSPACE_MEDIA_ENV: "uat",
+  PAWSPACE_INTERNAL_MEDIA_ENABLED: r2BucketName ? "true" : "false",
 };
+// Never inherit the local emulator bucket from the build artifact.
+delete cfg.r2_buckets;
 if (r2BucketName) {
   cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: r2BucketName }];
 }

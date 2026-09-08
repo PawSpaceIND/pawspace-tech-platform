@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { themes, DEFAULT_THEME, isThemeId } from "../app/mobile-app/theme-config.ts";
 
-test("customer app exposes five premium themes and appearance modes", async () => {
+test("approved theme options execute as exactly three unique collections", () => {
+  assert.deepEqual(themes.map(theme => theme.id), ["signature", "emerald", "rose"]);
+  assert.equal(DEFAULT_THEME, "signature");
+  assert.equal(isThemeId("unknown"), false);
+  for (const theme of themes) assert.equal(isThemeId(theme.id), true);
+});
+
+test("customer app exposes the three approved collections and appearance modes", async () => {
   const config = await readFile(new URL("../app/mobile-app/theme-config.ts", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/mobile-app/mobile.module.css", import.meta.url), "utf8");
-  for (const theme of ["signature", "midnight", "sage", "rose", "ocean"]) {
+  for (const theme of ["signature", "emerald", "rose"]) {
     assert.match(config, new RegExp(`id:\"${theme}\"`));
     assert.match(css, new RegExp(`data-theme=\\\"${theme}\\\"`));
   }

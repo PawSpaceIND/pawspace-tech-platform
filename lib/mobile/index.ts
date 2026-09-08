@@ -8,6 +8,7 @@ export * from "./push-notifications";
 export * from "./camera";
 export * from "./native-market";
 export * from "./razorpay";
+export * from "./offline-queue";
 
 export const PawSpaceDevice = {
   isNative(): boolean {

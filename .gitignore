@@ -89,3 +89,25 @@ artifacts/
 /test-results/
 /playwright-report/
 /dist/server/.wrangler/
+
+# Mobile release keys and native build outputs
+*.jks
+*.keystore
+*.aab
+*.apk
+*.xcarchive
+*.p8
+android/app/build/
+android/.gradle/
+ios/App/build/
+ios/App/DerivedData/
+
+# Fastlane outputs and Ruby bundler
+.bundle/
+vendor/bundle/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+fastlane/*-key*.json
+*-play-key*.json

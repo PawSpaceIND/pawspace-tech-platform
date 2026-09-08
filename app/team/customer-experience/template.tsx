@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-// Live invalidation belongs to the page's data loaders. Remounting this subtree erases CX drafts.
-export default function CustomerExperienceLiveTemplate({ children }: { children: ReactNode }) {
-  return children;
+export default function CustomerExperienceLiveTemplate({children}:{children:ReactNode}){
+ // Data refresh belongs to the inbox page; remounting discards drafts and selection.
+ return <>{children}</>;
 }

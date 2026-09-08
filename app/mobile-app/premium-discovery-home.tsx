@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./premium-discovery-home.module.css";
+import { SERVICE_ART } from "./service-art";
+import LocationWelcome, { DISCOVERY_PIN_KEY, WELCOME_SEEN_KEY } from "./location-welcome";
+import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 
 export type DiscoveryService = {
   name: string;
@@ -16,19 +19,6 @@ type CustomerPet = { name: string; profile?: { photo?: string } };
 type CustomerBooking = { id: string; serviceCode: string; packageName: string; scheduledStart: string; status: string };
 type CustomerOffer = { code: string; description: string; autoApply: boolean };
 
-const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
-
-const PHOTO: Record<string, string> = {
-  grooming: "/assets/banners/grooming-groomer-action.jpg",
-  dog_training: "/assets/banners/training-handshake.jpg",
-  boarding: "/assets/banners/boarding-puppy-hug.jpg",
-  pet_sitting: "/assets/banners/sitting-woman-cat.jpg",
-  pet_taxi: "/assets/banners/taxi-car-window.jpg",
-  dog_walking: "/assets/banners/walking-husky-forest.jpg",
-  food: "/assets/banners/food-prep-bowl.jpg",
-  relocation: "/assets/banners/taxi-vintage-truck.jpg",
-};
-
 const PROMISE: Record<string, string> = {
   grooming: "Salon-grade care at home",
   dog_training: "Build better behaviour",
@@ -41,7 +31,7 @@ const PROMISE: Record<string, string> = {
 };
 
 const CAMPAIGNS = [
-  { eyebrow: "PAWSPACE OFFER", title: "Complete grooming, clearly compared", copy: "See every inclusion before you choose a dog or cat package.", cta: "Compare packages", serviceCode: "grooming" },
+  { eyebrow: "CARE GUIDE", title: "Complete grooming, clearly compared", copy: "See every inclusion before you choose a dog or cat package.", cta: "Compare packages", serviceCode: "grooming" },
   { eyebrow: "TRAINING GUIDE", title: "Better walks start at home", copy: "Explore how PawSpace trainers build calm leash habits together with pet parents.", cta: "Explore training", serviceCode: "dog_training" },
   { eyebrow: "PAWSPACE MEDIA", title: "Your neighbourhood, pet-ready", copy: "Service education and approved local PawSpace campaigns appear here.", cta: "Browse services", serviceCode: "grooming" },
 ] as const;
@@ -72,20 +62,26 @@ export default function PremiumDiscoveryHome({
   onShowPets: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [locationOpen, setLocationOpen] = useState(false);
-  const [location, setLocation] = useState("HSR Layout, Bengaluru");
-  const [draft, setDraft] = useState("");
-  const [locationNote, setLocationNote] = useState("");
+  const locationDialog = useRef<HTMLDialogElement>(null);
+  const [location, setLocation] = useState("Choose your area");
+  const [showWelcome, setShowWelcome] = useState<boolean | null>(null);
+  const [editingLocation, setEditingLocation] = useState(false);
   const [campaignIndex, setCampaignIndex] = useState(0);
   const [pet, setPet] = useState<CustomerPet | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
   const [nextBooking, setNextBooking] = useState<CustomerBooking | null>(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("pawspace_discovery_location");
-    if (!stored) return;
-    const timer = window.setTimeout(() => setLocation(stored), 0);
-    return () => window.clearTimeout(timer);
+    let active = true;
+    const timer = window.setTimeout(() => {
+      let seen = false, pin: string | null = null;
+      try { seen = sessionStorage.getItem(WELCOME_SEEN_KEY) === "1"; pin = sessionStorage.getItem(DISCOVERY_PIN_KEY); } catch { /* Optional device preference. */ }
+      setShowWelcome(!seen);
+      if (pin && /^[1-9]\d{5}$/.test(pin)) void resolveServiceCoverage(pin, AbortSignal.timeout(10000)).then(coverage => {
+        if (active) setLocation(`${coverage.area}, ${coverage.city}`);
+      }).catch(() => { /* Never trust a stale stored city as verified coverage. */ });
+    }, 0);
+    return () => { active = false; window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -115,38 +111,24 @@ export default function PremiumDiscoveryHome({
     [query, services],
   );
   const careServices = visible;
-  const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const campaign = CAMPAIGNS[campaignIndex];
   const customerInitial = customerName?.trim().slice(0, 1).toUpperCase() || "P";
 
-  const saveLocation = (value: string) => {
-    const next = value.trim();
-    if (!next) return;
-    setLocation(next);
-    window.localStorage.setItem("pawspace_discovery_location", next);
-    setLocationOpen(false);
-    setLocationNote("");
+  const useCoverage = (coverage: ResolvedServiceCoverage | null) => {
+    setLocation(coverage ? `${coverage.area}, ${coverage.city}` : "Choose your area");
+    setShowWelcome(false);
   };
 
-  const useDeviceLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationNote("Location access is unavailable here. Enter your area instead.");
-      return;
-    }
-    setLocationNote("Finding your location...");
-    navigator.geolocation.getCurrentPosition(
-      () => saveLocation("Current location"),
-      () => setLocationNote("We could not access your location. Enter your area instead."),
-      { timeout: 8000, maximumAge: 300000 },
-    );
-  };
+  if (showWelcome === null) return <p role="status">Preparing your PawSpace…</p>;
+  if (showWelcome) return <LocationWelcome onContinue={useCoverage} />;
 
-  return <div className={styles.home} data-discovery data-home-design="option-5-premium-visual">
+  return <div className={styles.home} data-discovery data-home-design="pawspace-prototype-converged">
     <header className={styles.top}>
+      <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><b>PawSpace</b><small>Your Petter half</small></a>
       <div className={styles.topRow}>
-        <button className={styles.location} onClick={() => setLocationOpen(true)} aria-label="Choose your service location">
+        <button className={styles.location} onClick={() => { setEditingLocation(true); locationDialog.current?.showModal(); }} aria-label="Choose your service location">
           <i aria-hidden="true">●</i>
-          <span><b>{location.split(",")[0]}</b><small>{location.includes(",") ? location.split(",").slice(1).join(",").trim() : "Tap to set your exact address"}</small></span>
+          <span><b>Care at · {location.split(",")[0]}</b><small>{location.includes(",") ? location.split(",").slice(1).join(",").trim() : "Choose your neighbourhood"}</small></span>
         </button>
         <button className={styles.avatar} onClick={onShowPets} aria-label="Open pet profiles">
           {pet?.profile?.photo ? <img src={pet.profile.photo} alt={`${pet.name}'s profile`} /> : customerInitial}
@@ -159,21 +141,47 @@ export default function PremiumDiscoveryHome({
       </label>
     </header>
 
-    <section className={styles.hero}>
-      <img src="/assets/banners/sitter-hug-golden.jpg" alt="PawSpace caregiver with a Golden Retriever" />
-      <div className={styles.heroCopy}>
-        <small>PREMIUM CARE</small>
-        <h1>Premium care for your loved ones</h1>
-        <p>Book trusted, background-verified services across Bengaluru.</p>
-        <button onClick={() => onOpen("grooming")}>Book now</button>
-      </div>
+    <section className={pet ? styles.personalHero : styles.welcomeHero} aria-label="Your pet family">
+      {pet ? <>
+        <div><small>YOUR PETTER HALF</small><h1>What does {pet.name} need today?</h1><button onClick={onShowPets}>Your pet family <span aria-hidden="true">↗</span></button></div>
+        <button className={styles.petPortrait} onClick={onShowPets} aria-label={`Open ${pet.name}'s profile`}>
+          {pet.profile?.photo ? <img src={pet.profile.photo} alt={pet.name} /> : <span aria-hidden="true">🐾</span>}
+        </button>
+      </> : <>
+        <img className={styles.welcomePhoto} src={SERVICE_ART.dog_training.image} alt="" fetchPriority="high" />
+        <div><small>A LITTLE CARE. A LOT OF LOVE.</small><h1>Welcome to your<br /><em>Petter half.</em></h1><button onClick={onShowPets}>Add your pet <span aria-hidden="true">＋</span></button></div>
+      </>}
+    </section>
+    <section className={styles.trustRow} aria-label="Care with confidence">
+      <span><i aria-hidden="true">♡</i><b>Pet-first care</b></span>
+      <span><i aria-hidden="true">✓</i><b>Clear packages</b></span>
+      <span><i aria-hidden="true">◷</i><b>Booking updates</b></span>
     </section>
 
-    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
-      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
-        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
-      </article>)}
+    {nextBooking && <section className={styles.upcoming} aria-label="Upcoming booking">
+      <div><small>UPCOMING BOOKING</small><b>{nextBooking.packageName || nextBooking.serviceCode.replaceAll("_", " ")}</b><span>{when(nextBooking.scheduledStart)} · {nextBooking.status.replaceAll("_", " ")}</span></div>
+      <button onClick={onShowBookings}>View all</button>
     </section>}
+
+    <section className={styles.care} aria-label="Care services">
+      <div className={styles.sectionHead}><h2>Care for every little need</h2><small>Explore services →</small></div>
+      <div className={styles.cards}>
+        {careServices.map((service) => {
+          const paused = disabledServices.has(service.serviceCode);
+          const featured = ["grooming", "dog_training"].includes(service.serviceCode);
+          const symbols: Record<string, string> = { grooming: "✂", dog_training: "◎", boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
+          return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
+            <div className={styles.cardPhoto}>
+              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} width="96" height="96" loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
+              <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
+            </div>
+            <button aria-label={`${cta(service.serviceCode)} · ${service.name}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : <><span className={styles.ctaLabel}>{cta(service.serviceCode)}</span><span aria-hidden="true">↗</span></>}</button>
+          </article>;
+        })}
+      </div>
+      {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
+      <p className={styles.artDisclosure}>AI service illustrations. Caregiver profiles are shown separately after assignment.</p>
+    </section>
 
     <section className={styles.media} aria-label="Featured promotion">
       <div><span>{campaign.eyebrow}</span><em>{campaignIndex + 1}/{CAMPAIGNS.length}</em></div>
@@ -183,59 +191,20 @@ export default function PremiumDiscoveryHome({
       <nav aria-label="Choose featured promotion">
         {CAMPAIGNS.map((item, index) => <button key={item.title} aria-label={`Show campaign ${index + 1}`} aria-current={index === campaignIndex} className={index === campaignIndex ? styles.dotOn : ""} onClick={() => setCampaignIndex(index)} />)}
       </nav>
-      <small>PawSpace Media slot · service education and clearly labelled approved campaigns</small>
+      <small>Care guide · PawSpace</small>
     </section>
 
-    <section className={styles.quickSection} aria-label="Quick service guides">
-      <h2>Explore quickly</h2>
-      <div className={styles.quickGrid}>
-        {videoServices.map((service) => <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={disabledServices.has(service.serviceCode)}>
-          <span><img src={PHOTO[service.serviceCode] || service.image} alt="" /></span><b>{service.name}</b>
-        </button>)}
-      </div>
-    </section>
-
-    {nextBooking && <section className={styles.upcoming} aria-label="Upcoming booking">
-      <div><small>UPCOMING BOOKING</small><b>{nextBooking.packageName || nextBooking.serviceCode.replaceAll("_", " ")}</b><span>{when(nextBooking.scheduledStart)} · {nextBooking.status.replaceAll("_", " ")}</span></div>
-      <button onClick={onShowBookings}>View all</button>
+    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
+      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
+        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
+      </article>)}
     </section>}
-
-    <section className={styles.care} aria-label="Care services">
-      <div className={styles.sectionHead}><small>ALL 8 SERVICES</small><h2>Everything they need</h2></div>
-      <div className={styles.cards}>
-        {careServices.map((service) => {
-          const paused = disabledServices.has(service.serviceCode);
-          return <article className={styles.card} key={service.serviceCode}>
-            <div className={styles.cardPhoto}>
-              <img src={PHOTO[service.serviceCode] || service.image} alt={`PawSpace ${service.name}`} />
-              <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
-            </div>
-            <button onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : cta(service.serviceCode)}</button>
-          </article>;
-        })}
-      </div>
-      {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
-    </section>
-
-    <section className={styles.assurance} aria-label="PawSpace trust standards">
-      <article><b>Verified & trusted</b><small>Background-checked professionals</small></article>
-      <article><b>Safety & comfort first</b><small>Protocols on every visit</small></article>
-      <article><b>Real-time updates</b><small>Photos and status as it happens</small></article>
-      <article><b>GST invoice</b><small>On every completed service</small></article>
-    </section>
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
 
-    {locationOpen && <div className={styles.sheetBackdrop} role="presentation" onMouseDown={() => setLocationOpen(false)}>
-      <section className={styles.sheet} role="dialog" aria-modal="true" aria-label="Choose PawSpace service location" onMouseDown={(event) => event.stopPropagation()}>
-        <div className={styles.handle} />
-        <small>PAWSPACE LOCATION</small><h2>Where should we care for your pet?</h2>
-        <p>We will use this to show the right availability when you book.</p>
-        <button className={styles.deviceLocation} onClick={useDeviceLocation}>⌖ Use my current location</button>
-        <label><span>Area, city or pincode</span><input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="e.g. HSR Layout, Bengaluru" /></label>
-        {locationNote && <p className={styles.locationNote}>{locationNote}</p>}
-        <button className={styles.saveLocation} onClick={() => saveLocation(draft)}>Save location</button>
-      </section>
-    </div>}
+    <dialog ref={locationDialog} className={styles.sheet} aria-label="Choose your service area" onClose={() => setEditingLocation(false)}>
+        <div className={styles.sheetHead}><small>CARE NEAR YOU</small><button aria-label="Close location" onClick={() => locationDialog.current?.close()}>×</button></div>
+        {editingLocation && <LocationWelcome compact onContinue={coverage => { useCoverage(coverage); locationDialog.current?.close(); }} />}
+    </dialog>
   </div>;
 }

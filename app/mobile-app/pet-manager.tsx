@@ -58,7 +58,7 @@ async function compressImage(file: File): Promise<string> {
  *  gender, age band + optional DOB, vaccination, temperament, weight band and a photo — validated by the
  *  same pure functions the server runs. All reads/writes go through the customer-account client lib;
  *  ownership stays server-side via the platform session. */
-export default function PetManager({ customer, onPetsChanged }: { customer: LoggedInCustomer; onPetsChanged?: (pets: CustomerPet[]) => void }) {
+export default function PetManager({ customer, onPetsChanged, draftPets = [] }: { customer: LoggedInCustomer | null; onPetsChanged?: (pets: CustomerPet[]) => void; draftPets?: CustomerPet[] }) {
   const [pets, setPets] = useState<CustomerPet[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -70,6 +70,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
 
   useEffect(() => {
     let active = true;
+    if (!customer) { setPets(draftPets); setLoading(false); return; }
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
@@ -85,7 +86,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     return () => {
       active = false;
     };
-  }, [customer.customerId]);
+  }, [customer?.customerId]);
 
   const openAdd = () => {
     setIssues([]);
@@ -163,6 +164,12 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     }
     setSaving(true);
     setIssues([]);
+    if (!customer) {
+      const draft: CustomerPet = { ...candidate, id: form.id || `draft:${crypto.randomUUID()}`, sourceId: null, breed: profile.breed || null, profile };
+      const updated = [...pets.filter(pet => pet.id !== draft.id), draft];
+      setPets(updated); onPetsChanged?.(updated); setForm(null); setSaving(false);
+      return;
+    }
     try {
       await upsertCustomerPet({
         customerId: customer.customerId,

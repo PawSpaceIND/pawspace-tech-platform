@@ -2,8 +2,62 @@ import { expect, test } from "@playwright/test";
 
 const phone = process.env.PW_CUSTOMER_PHONE || "9000000911";
 
-async function sandboxLogin(page: import("@playwright/test").Page) {
+async function openDiscovery(page: import("@playwright/test").Page) {
   await page.goto("/mobile-app");
+  const skip = page.getByRole("button", { name: "Browse without location", exact: true });
+  const services = page.getByRole("region", { name: "Care services" });
+  await expect(skip.or(services)).toBeVisible();
+  if (await skip.isVisible()) await skip.click();
+  await expect(services).toBeVisible();
+}
+
+async function chooseServiceArea(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Choose your service location" }).click();
+  const sheet = page.getByRole("dialog", { name: "Choose your service area" });
+  await sheet.getByText("Can’t find your area? Use a PIN code", { exact: true }).click();
+  await expect(sheet.getByRole("button", { name: "Check area" })).toBeDisabled();
+  await sheet.getByPlaceholder("6-digit PIN code").fill("560102");
+  const coverage = page.waitForResponse(response => response.url().includes("/api/service-zone?pincode=560102"));
+  await sheet.getByRole("button", { name: "Check area" }).click();
+  expect((await coverage).ok(), "real local service coverage must resolve").toBeTruthy();
+  await sheet.getByRole("button", { name: /^Continue in / }).click();
+  await expect(sheet).not.toBeVisible();
+}
+
+test("pet-first guest home: search and accessible area sheet preserve service entry", async ({page}) => {
+  await openDiscovery(page);
+  await expect(page.getByRole('heading',{name:'Welcome to your Petter half.'})).toBeVisible();
+  await chooseServiceArea(page);
+  await page.getByRole('textbox',{name:'Search PawSpace services'}).fill('grooming');
+  const book=page.getByRole('button',{name:'Book now · Grooming',exact:true});
+  await expect(book).toBeEnabled();
+  const box=await book.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(48);
+  expect(box?.height).toBeGreaterThanOrEqual(48);
+  await book.click();
+  await expect(page.getByPlaceholder('10-digit phone number')).toBeVisible();
+});
+
+test("shared appearance: three collections persist across customer and partner entry", async ({ page }) => {
+  await openDiscovery(page);
+  await expect(page.getByRole("heading", {name: "Welcome to your Petter half."})).toBeVisible();
+  await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('input[name="paw-theme"]')).toHaveCount(3);
+  await dialog.getByLabel(/Berry & Sunshine/).check();
+  await dialog.getByRole("button", {name:"Done",exact:true}).click();
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","rose");
+  await page.goto("/partner-app");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","rose");
+  await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
+  await page.getByRole("dialog").getByLabel(/PawSpace Brand/).check();
+  await page.getByRole("dialog").getByRole("button", {name:"Done",exact:true}).click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme","signature");
+});
+
+async function sandboxLogin(page: import("@playwright/test").Page) {
+  await openDiscovery(page);
   const account = page.locator("nav").getByRole("button", { name: /account/i }).last();
   await account.click();
   await page.getByPlaceholder("10-digit phone number").fill(phone);
@@ -60,7 +114,7 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
   await home.click();
-  await expect(page.getByText("Everything they need", { exact: true })).toBeVisible();
+  await expect(page.getByText("Care for every little need", { exact: true })).toBeVisible();
 
   const grooming = serviceCard(page, "Grooming");
   const training = serviceCard(page, "Training");
@@ -74,10 +128,7 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
 
   const location = page.getByRole("button", { name: "Choose your service location" });
   if (await location.isVisible().catch(() => false)) {
-    await location.click();
-    await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Indiranagar, Bengaluru");
-    await page.getByRole("button", { name: "Save location" }).click();
-    await expect(page.getByRole("button", { name: /Choose your service location/i })).toContainText(/Indiranagar\s*,?\s*Bengaluru/i);
+    await chooseServiceArea(page);
   }
 
   await grooming.getByRole("button", { name: /book now/i }).click();
