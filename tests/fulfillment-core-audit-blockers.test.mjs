@@ -21,7 +21,7 @@ test("Grooming reschedule keeps initial-booking buffer, roster, daily cap and pr
   assert.match(source, /json_each\(a\.windows_json\) w/, "atomic move must re-check the roster window");
   assert.match(source, /substr\(datetime\(other\.scheduled_start,\?\),1,10\)=\?/, "atomic move must re-check the same local-day cap");
   assert.match(source, /provider_unavailability u/, "atomic move must re-check provider unavailability");
-  assert.match(source, /Number\(moved\.meta\?\.changes\|\|0\)!==expectedRows/, "a partial/losing guarded move must be rejected");
+  assert.match(source, /CASE WHEN changes\(\)=\? THEN 1 ELSE 0 END/, "a partial/losing move must abort the whole transaction");
 });
 
 test("Training cancellation calculation only uses an effective published policy", async () => {

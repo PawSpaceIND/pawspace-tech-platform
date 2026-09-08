@@ -215,7 +215,7 @@ test("regression: the reschedule reservation move is atomic — an overlapping r
   assert.equal(moved.meta.changes, 1);
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-R1'").get().scheduled_start, "2026-08-20T11:00:00.000Z");
   assert.match(changeRoute, /start\.getTime\(\)<=now/, "reschedule to a past time is rejected");
-  assert.match(changeRoute, /moved\.meta\?\.changes/, "the route checks the guarded write's result");
+  assert.match(changeRoute, /CASE WHEN changes\(\)=\? THEN 1 ELSE 0 END/, "the guarded write result must abort the transaction on partial/lost moves");
 });
 
 test("reschedule and cancel are server-priced: no client price fields, fee/refund from the frozen policy", async () => {

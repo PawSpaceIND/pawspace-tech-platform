@@ -119,6 +119,16 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
   const rows=savedBody.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);
   expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("grooming");expect(rows[0].status).toBe("confirmed");
+  // Exercise the authenticated reschedule transaction against the real local D1 worker.
+  const newStart=new Date(new Date(rows[0].scheduledStart).getTime()+4*3600000).toISOString();
+  const newEnd=new Date(new Date(rows[0].scheduledEnd).getTime()+4*3600000).toISOString();
+  const changed=await page.context().request.post("/api/grooming-booking-change",{data:{bookingId,customerId:savedBody.data.customerId,action:"reschedule",reason:"Customer requested a later afternoon slot",scheduledStart:newStart,scheduledEnd:newEnd}});
+  expect(changed.status(),await changed.text()).toBe(200);
+  const refreshed=await page.context().request.get("/api/customer-account");
+  expect(refreshed.ok()).toBeTruthy();const refreshedBody=await refreshed.json();
+  const changedBooking=refreshedBody.data.bookings.find((booking:{id:string})=>booking.id===bookingId);
+  expect(changedBooking.scheduledStart).toBe(newStart);expect(changedBooking.status).toBe("assigned");
+
   await page.locator("nav").getByRole("button",{name:/Activity/}).last().click();
   const activity=page.locator("article").filter({hasText:bookingId});
   await expect(activity).toHaveCount(1);
@@ -127,7 +137,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await expect(page.getByRole("region",{name:"Booking details"})).toContainText(bookingId);
   await page.reload();
   await expect(page.getByRole("region",{name:"Booking details"})).toContainText(bookingId);
-  await expect(page.getByRole("region",{name:"Booking details"})).toContainText("confirmed");
+  await expect(page.getByRole("region",{name:"Booking details"})).toContainText("assigned");
   await page.screenshot({path:test.info().outputPath("customer-grooming-persisted.png"),fullPage:true});
   await page.goto("/grooming/manage?bookingId=NOT-ON-THIS-CUSTOMER-ACCOUNT");
   await expect(page.getByRole("heading",{name:"Booking unavailable",exact:true})).toBeVisible();
