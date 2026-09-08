@@ -9,10 +9,6 @@ const communications = read("app/api/communications/route.ts");
 const callback = read("app/api/communication-provider-callback/route.ts");
 const adapters = read("lib/communication-adapters.ts");
 
-/**
- * Split a workflow_dispatch inputs block into one entry per input: { name, body }. Linear, so it
- * cannot backtrack, and it keeps each input's options list from being read as a neighbour's.
- */
 function workflowInputs(workflow) {
   const lines = workflow.split("\n");
   const start = lines.findIndex(line => /^\s{4}inputs:\s*$/.test(line));
@@ -22,16 +18,22 @@ function workflowInputs(workflow) {
     const line = lines[i];
     if (line.trim() === "") continue;
     const indent = line.length - line.trimStart().length;
-    if (indent <= 4) break;                                  // left the inputs block entirely
-    const named = line.match(/^\s{6}([a-zA-Z0-9_]+):\s*$/); // a new input at the input indent
+    if (indent <= 4) break;
+    const named = line.match(/^\s{6}([a-zA-Z0-9_]+):\s*$/);
     if (named) { out.push({ name: named[1], body: "" }); continue; }
     if (out.length) out[out.length - 1].body += `${line}\n`;
   }
   return out;
 }
 
-test("Interakt production credentials are injected only through Wrangler encrypted secrets", () => {
-  for (const name of ["INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET"]) {
+test("canonical production provider credentials are injected only through Wrangler encrypted secrets", () => {
+  const secretNames = [
+    "IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_WEBHOOK_SECRET",
+    "PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64", "PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64",
+    "META_WHATSAPP_ACCESS_TOKEN", "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN",
+    "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
+  ];
+  for (const name of secretNames) {
     assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
     assert.match(workflow, new RegExp(`requiredNames[\\s\\S]*["']${name}["']`));
     assert.doesNotMatch(prodConfig, new RegExp(`${name}:\\s*process\\.env`), `${name} must not be serialized into wrangler vars`);
@@ -41,24 +43,20 @@ test("Interakt production credentials are injected only through Wrangler encrypt
   assert.match(workflow, /trap 'rm -f "\$SECRETS_FILE"' EXIT/);
 });
 
+test("canonical production provider identifiers are required and written as non-secret Worker vars", () => {
+  const configNames = ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"];
+  for (const name of configNames) {
+    assert.match(prodConfig, new RegExp(`REQUIRED_PRODUCTION_CONFIG[\\s\\S]*["']${name}["']`));
+    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
+    assert.match(workflow, new RegExp(`cfg\\.vars[\\s\\S]*${name}`));
+  }
+});
+
 test("production voice config defaults closed and does not offer live activation", () => {
   assert.match(prodConfig, /PAWSPACE_VOICE_ENV \|\| "disabled"/);
   assert.match(prodConfig, /PAWSPACE_VOICE_UAT_APPROVED \|\| "false"/);
   assert.match(prodConfig, /\["disabled", "uat"\]/);
   assert.match(workflow, /options: \[disabled, uat\]/);
-  /*
-   * Scope the "no live voice" assertion to the voice input's OWN options list.
-   *
-   * This was a proximity regex - `options: [...live...]` followed within 120 characters by the word
-   * "voice" - which reads as "no live option near anything voice-ish". But the workflow's inputs are
-   * declared one after another, and maps_env legitimately offers `options: [sandbox, live]` directly
-   * above `voice_env:`. The heuristic therefore fired on a neighbouring input rather than on the
-   * voice one, failing a workflow that does exactly what it should.
-   *
-   * Whether live voice is offerable is a property of the voice inputs alone, so the inputs are split
-   * apart and read individually. Done with string work rather than one large regex: the obvious
-   * `(?:\s+.*\n)*?` block matcher backtracks catastrophically on this file and hangs the suite.
-   */
   const inputs = workflowInputs(workflow);
   const voice = inputs.filter(input => /voice/i.test(input.name));
   assert.ok(voice.length > 0, "the workflow must declare a voice input");
@@ -66,9 +64,6 @@ test("production voice config defaults closed and does not offer live activation
   assert.ok(voiceEnv, "the workflow must declare a voice_env input");
   assert.match(voiceEnv.body, /options: \[disabled, uat\]/, "voice_env must offer only disabled and uat");
   assert.match(voiceEnv.body, /default: disabled/, "voice_env must default to disabled");
-  // Only the options LINE is searched for "live": the description legitimately says "Live is
-  // intentionally unavailable", and reading that sentence as an offer of live voice would be the same
-  // over-broad matching this assertion replaced.
   for (const input of voice) {
     const options = input.body.match(/^\s*options: \[.*\]$/m);
     if (!options) continue;
