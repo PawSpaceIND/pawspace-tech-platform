@@ -123,7 +123,7 @@ export default function PremiumDiscoveryHome({
       <div className={styles.topRow}>
         <button className={styles.location} onClick={() => locationDialog.current?.showModal()} aria-label="Choose your service location">
           <i aria-hidden="true">●</i>
-          <span><b>Care at · {location.split(",")[0]}</b><small>{location.includes(",") ? location.split(",").slice(1).join(",").trim() : "Tap to set your exact address"}</small></span>
+          <span><b>Care at · {location.split(",")[0]}</b><small>{location.includes(",") ? location.split(",").slice(1).join(",").trim() : "Choose your neighbourhood"}</small></span>
         </button>
         <button className={styles.avatar} onClick={onShowPets} aria-label="Open pet profiles">
           {pet?.profile?.photo ? <img src={pet.profile.photo} alt={`${pet.name}'s profile`} /> : customerInitial}
@@ -143,7 +143,7 @@ export default function PremiumDiscoveryHome({
           {pet.profile?.photo ? <img src={pet.profile.photo} alt={pet.name} /> : <span aria-hidden="true">🐾</span>}
         </button>
       </> : <>
-        <img className={styles.welcomePhoto} src="/assets/pawspace-home.png" alt="A pet parent sharing a quiet moment with their Golden Retriever at home" fetchPriority="high" />
+        <img className={styles.welcomePhoto} src={SERVICE_ART.dog_training.image} alt="" fetchPriority="high" />
         <div><small>A LITTLE CARE. A LOT OF LOVE.</small><h1>Welcome to your<br /><em>Petter half.</em></h1><button onClick={onShowPets}>Add your pet <span aria-hidden="true">＋</span></button></div>
       </>}
     </section>
@@ -167,7 +167,7 @@ export default function PremiumDiscoveryHome({
           const symbols: Record<string, string> = { boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
           return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
             <div className={styles.cardPhoto}>
-              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
+              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} width="96" height="96" loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
               <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
             </div>
             <button aria-label={`${cta(service.serviceCode)} · ${service.name}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : <><span className={styles.ctaLabel}>{cta(service.serviceCode)}</span><span aria-hidden="true">↗</span></>}</button>
@@ -175,7 +175,7 @@ export default function PremiumDiscoveryHome({
         })}
       </div>
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
-      <p className={styles.artDisclosure}>Service images include AI illustrations. Your assigned caregiver’s verified profile is shown separately.</p>
+      <p className={styles.artDisclosure}>AI service illustrations. Caregiver profiles are shown separately after assignment.</p>
     </section>
 
     <section className={styles.media} aria-label="Featured promotion">

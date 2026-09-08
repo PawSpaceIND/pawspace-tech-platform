@@ -51,7 +51,7 @@ test("UI-MEDIA-03: every non-funeral service owns a guarded silent HD video slot
   assert.match(banner, /IntersectionObserver/);
   assert.match(banner, /visibilitychange/);
   assert.match(banner, /prefers-reduced-motion: reduce/);
-  assert.match(banner, /Premium poster fallback/);
+  assert.match(banner, /The preview could not load. Your booking is unaffected./);
   assert.doesNotMatch(registry, /funeral.*videoFile/i);
 });
 

@@ -52,7 +52,7 @@ export default function ServiceHero({ service }: { service: string }) {
     <section className={styles.hero} aria-label={`${service} overview`} data-service-design="option-5-premium-visual">
       <div className={styles.photo}>
         <img src={art?.image ?? spec.photo} alt={art?.alt ?? spec.alt} loading="lazy" />
-        {art?.illustrated && <small className={styles.artNote}>AI service illustration · not your assigned caregiver</small>}
+        {art?.illustrated && <small className={styles.artNote}>AI illustration</small>}
       </div>
       <div className={styles.card}>
         <span className={styles.badge} aria-hidden="true">{spec.badge}</span>
