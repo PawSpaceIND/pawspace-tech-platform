@@ -52,6 +52,9 @@ if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
   npm run build
 fi
 
+# Customer OTP uses the normal UAT challenge/session exchange. Generate disposable signing
+# material for this local server; keep preview OFF and never enable live SMS delivery.
+E2E_OTP_SIGNING_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 mkdir -p "$PERSIST_DIR"
 echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
 # The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
@@ -62,6 +65,10 @@ exec npx wrangler dev \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
   --var PAWSPACE_LOCAL_PREVIEW:off \
+  --var PAWSPACE_UAT_LOGIN:on \
+  --var PAWSPACE_UAT_SIGNING_KEY:"$E2E_OTP_SIGNING_KEY" \
+  --var PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT:"$E2E_OTP_SIGNING_KEY" \
+  --var PAWSPACE_IDENTITY_ENV:sandbox \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
   --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
   --var PAWSPACE_SCHEDULING_ENV:uat \
