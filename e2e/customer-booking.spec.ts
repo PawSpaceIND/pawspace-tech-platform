@@ -244,4 +244,14 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await page.getByRole("combobox",{name:"Start time",exact:true}).selectOption(time);
   const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
  }
+ await page.getByRole("button",{name:`See available ${mode==="boarding"?"homes":"sitters"}`,exact:true}).click();
+ await expect(page.getByRole("heading",{name:`Choose your ${mode==="boarding"?"host":"sitter"}`,exact:true})).toBeVisible();
+ await page.getByRole("button",{name:/^Continue with /}).click();
+ await page.getByLabel("Vet contact",{exact:true}).fill("UAT vet contact: 9000000951");
+ await page.getByLabel("Emergency contact",{exact:true}).fill("UAT emergency contact: 9000000952");
+ if(mode==="sitting")await page.getByLabel("Home access instructions",{exact:true}).fill("UAT fixture: call the customer at the gate.");
+ await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText("18:00 IST");await expect(review).toContainText("4 hours");
+ if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
+ await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});
 });
