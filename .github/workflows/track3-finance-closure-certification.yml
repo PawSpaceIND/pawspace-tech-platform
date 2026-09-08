@@ -60,7 +60,7 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node scripts/stage-config.mjs
-      - name: Enable Track 3 sandbox service-discovery fixture
+      - name: Enable Track 3 sandbox fixture and isolate cron
         run: |
           set -euo pipefail
           test "$APP_ENV" = staging
@@ -72,9 +72,15 @@ jobs:
           const path='dist/server/wrangler.json';
           const config=JSON.parse(fs.readFileSync(path,'utf8'));
           const vars=config.vars||{};
-          if(config.name!=='pawspace-staging'||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox') throw new Error('refusing Track 3 service-discovery fixture outside isolated staging sandbox/UAT');
+          if(config.name!=='pawspace-staging'||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox') throw new Error('refusing Track 3 fixture/cron isolation outside isolated staging sandbox/UAT');
+          const configuredCrons=[...(config.triggers?.crons||[])];
+          if(configuredCrons.length!==1||configuredCrons[0]!=='*/5 * * * *') throw new Error(`unexpected staging cron configuration: ${JSON.stringify(configuredCrons)}`);
           vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE='on';
           config.vars=vars;
+          config.triggers=config.triggers||{};
+          delete config.triggers.crons;
+          const evidence={targetSha:process.env.EXPECTED_SHA,name:config.name,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,configuredCrons,cronIsolation:'disabled_for_track3_benchmark'};
+          fs.writeFileSync('track3-cron-isolation.json',JSON.stringify(evidence,null,2));
           fs.writeFileSync(path,JSON.stringify(config,null,2));
           NODE
       - name: Verify generated staging binding before remote writes
@@ -84,11 +90,12 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+          const cronEvidence=JSON.parse(fs.readFileSync('track3-cron-isolation.json','utf8'));
           const binding=(config.d1_databases||[]).find(x=>x.binding==='DB');
           const vars=config.vars||{};
-          const evidence={name:config.name,databaseId:binding?.database_id,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,communicationEnv:vars.PAWSPACE_COMMUNICATION_ENV,serviceDiscoveryFixture:vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE,targetSha:process.env.EXPECTED_SHA};
+          const evidence={name:config.name,databaseId:binding?.database_id,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,communicationEnv:vars.PAWSPACE_COMMUNICATION_ENV,serviceDiscoveryFixture:vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE,cronIsolation:cronEvidence.cronIsolation,activeCrons:config.triggers?.crons||[],targetSha:process.env.EXPECTED_SHA};
           console.log(JSON.stringify(evidence,null,2));
-          if(config.name!=='pawspace-staging'||binding?.database_id!==process.env.STAGING_D1_ID||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_COMMUNICATION_ENV!=='uat'||vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE!=='on') process.exit(1);
+          if(config.name!=='pawspace-staging'||binding?.database_id!==process.env.STAGING_D1_ID||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_COMMUNICATION_ENV!=='uat'||vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE!=='on'||cronEvidence.cronIsolation!=='disabled_for_track3_benchmark'||(config.triggers?.crons||[]).length!==0) process.exit(1);
           fs.writeFileSync('staging-isolation-preflight.json',JSON.stringify(evidence,null,2));
           NODE
       - name: Deploy exact SHA to staging only
@@ -106,6 +113,7 @@ jobs:
           test "$APP_ENV" = staging
           test "$PAWSPACE_PAYMENT_ENV" = sandbox
           test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
           SECRETS_FILE="$RUNNER_TEMP/staging-track3-secrets.json"; export SECRETS_FILE
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module <<'NODE'
@@ -118,7 +126,15 @@ jobs:
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
-          npx wrangler deploy --message "staging $EXPECTED_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          npx wrangler deploy --message "staging $EXPECTED_SHA track3-cron-isolated" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+      - name: Drain pre-isolation scheduled invocations
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          sleep 660
       - name: Certify staging isolation and exact SHA
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -195,6 +211,7 @@ jobs:
           test "$APP_ENV" = staging
           test "$PAWSPACE_PAYMENT_ENV" = sandbox
           test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
           VERSION_ID="$(sed -n 's/^Current Version ID: //p' deployment.txt | tail -1)"
           test -n "$VERSION_ID"
           npx wrangler tail pawspace-staging --format=json --status=error --version-id="$VERSION_ID" > worker-tail.log 2>&1 &
@@ -208,6 +225,48 @@ jobs:
           echo '--- staging worker error tail ---'
           cat worker-tail.log || true
           exit "$WORKLOAD_STATUS"
+      - name: Restore staging cron trigger
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path='dist/server/wrangler.json';
+          const config=JSON.parse(fs.readFileSync(path,'utf8'));
+          const evidence=JSON.parse(fs.readFileSync('track3-cron-isolation.json','utf8'));
+          const vars=config.vars||{};
+          if(config.name!=='pawspace-staging'||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||evidence.cronIsolation!=='disabled_for_track3_benchmark') throw new Error('refusing cron restore outside isolated staging sandbox/UAT');
+          config.triggers=config.triggers||{};
+          config.triggers.crons=evidence.configuredCrons;
+          if(config.triggers.crons.length!==1||config.triggers.crons[0]!=='*/5 * * * *') throw new Error('cron restore evidence invalid');
+          fs.writeFileSync(path,JSON.stringify(config,null,2));
+          NODE
+          SECRETS_FILE="$RUNNER_TEMP/staging-track3-restore-secrets.json"; export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX'];
+          const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));
+          if(Object.values(values).some(v=>!v)) throw new Error('required Track 3 staging restore secret missing');
+          for(const n of optional) if(process.env[n]) values[n]=process.env[n];
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $EXPECTED_SHA cron-restored" --secrets-file "$SECRETS_FILE" 2>&1 | tee cron-restore-deployment.txt
       - name: Verify D1 Track 3 invariants
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -231,6 +290,8 @@ jobs:
           name: track3-finance-closure-${{ env.EXPECTED_SHA }}
           path: |
             deployment.txt
+            cron-restore-deployment.txt
+            track3-cron-isolation.json
             staging-isolation-preflight.json
             staging-track3-finance-indexes.json
             staging-scheduler-duplicates.json
