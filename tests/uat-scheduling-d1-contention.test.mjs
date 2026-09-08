@@ -96,7 +96,7 @@ test("reservation claims are request-scoped and the whole dispatch rolls back at
   assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/,"each request must own a distinct assertion scope");
   assert.match(scheduling,/COUNT\(\*\) FROM scheduling_reservations WHERE attempt_id=\? AND status='assigned'/);
   assert.match(scheduling,/scheduling_dispatch_assertions/);
-  assert.match(scheduling,/try\{await db\.batch\(statements\);\}/,"the request's rows and completeness assertion must share one D1 transaction");
+  assert.match(scheduling,/else await db\.batch\(statements\);/,"the request's rows and completeness assertion must share one D1 transaction");
   assert.match(scheduling,/WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\?/);
   assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)[\s\S]*?DO NOTHING/,"the cross-isolate slot conflict must still be enforced at write time");
   const dispatch=scheduling.slice(scheduling.indexOf("async function commitAssignmentDispatch"),scheduling.indexOf("async function operateAssignment"));
