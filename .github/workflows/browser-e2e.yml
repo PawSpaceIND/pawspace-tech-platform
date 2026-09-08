@@ -69,3 +69,12 @@ jobs:
           path: test-results/**/employee-*-form.png
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Retain customer completed-care layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-completed-care-layout
+          path: test-results/**/customer-completed-care-*.png
+          if-no-files-found: error
+          retention-days: 7
