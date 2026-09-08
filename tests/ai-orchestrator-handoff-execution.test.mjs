@@ -349,3 +349,37 @@ test('conflicting AI retry does not claim another canonical turn reservation',as
  assert.deepEqual(sqlite.prepare("SELECT * FROM ai_turn_reservations WHERE idempotency_key='reserved-key'").get(),before);
  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
 });
+
+test('staff takeover during a model request prevents the late draft from being recorded or returned',async()=>{
+ const {sqlite,db}=await world();
+ const handoff=await import('../lib/ai-human-handoff.ts');
+ const stub=provider(async()=>{
+   await handoff.requestAiHumanHandoff(db,{actorEmail:staffActor.email,threadId:'THREAD-1',customerId:'CUS-1',reason:'customer_requested_human'});
+   await handoff.manageAiHumanHandoff(db,{actor:staffActor,threadId:'THREAD-1',customerId:'CUS-1',action:'take_over'});
+   return {text:'Late model draft',provider:'stub_model',modelRef:'stub-v1',confidence:.95,latencyMs:1};
+ });
+ await assert.rejects(()=>turn(sqlite,db,{text:'what is the price of grooming',stub,key:'inflight-takeover'}),error=>error instanceof Response&&error.status===409);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_suggestions').get().n,0);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
+ assert.equal(sqlite.prepare("SELECT status FROM ai_turn_reservations WHERE idempotency_key='inflight-takeover'").get().status,'retryable');
+ assert.equal(sqlite.prepare("SELECT status FROM ai_conversation_sessions WHERE thread_id='THREAD-1'").get().status,'staff_active');
+});
+
+for(const boundary of ['ai_suggestions','ai_conversation_turns'])test(`handoff immediately before ${boundary} commit wins over the model draft`,async()=>{
+ const {sqlite,db}=await world();
+ const handoff=await import('../lib/ai-human-handoff.ts');
+ const prepare=db.prepare.bind(db),batch=db.batch.bind(db);
+ let pending=false,injected=false;
+ db.prepare=sql=>{if(sql.startsWith(`INSERT INTO ${boundary} `)&&!injected)pending=true;return prepare(sql);};
+ db.batch=async items=>{
+   if(pending&&!injected){pending=false;injected=true;await handoff.requestAiHumanHandoff(db,{actorEmail:staffActor.email,threadId:'THREAD-1',customerId:'CUS-1',reason:'customer_requested_human'});}
+   return batch(items);
+ };
+ await assert.rejects(()=>turn(sqlite,db,{text:'what is the price of grooming',stub:answered('ok'),key:`commit-race-${boundary}`}),error=>error instanceof Response&&error.status===409);
+ assert.equal(injected,true);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
+ const expected=boundary==='ai_suggestions'?0:1;
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_suggestions').get().n,expected);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_audit_events WHERE action='suggestion_recorded'").get().n,expected);
+ assert.equal(sqlite.prepare('SELECT status FROM ai_turn_reservations').get().status,'retryable');
+});
