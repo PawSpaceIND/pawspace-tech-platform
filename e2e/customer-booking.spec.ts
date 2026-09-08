@@ -232,7 +232,7 @@ test("address choice: customer can recover from a wrong map match and editing cl
  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
 });
 
-for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-selected afternoon and evening times reach the real quote`,async({page})=>{
+for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-selected afternoon and evening times reach the real quote`,async({page,browser})=>{
  await sandboxLogin(page,mode==="boarding"?"9000000943":"9000000944");await ensureCustomerPet(page);await page.goto(`/${mode}`);
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
@@ -280,6 +280,19 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
   await page.screenshot({path:test.info().outputPath("customer-sitting-booked.png"),fullPage:true});
+  const providerId=String(response.request().postDataJSON().provider.id),phones:Record<string,string>={sit_sana:"9000000945",sit_neha:"9000000946",sit_asha:"9000000947"};expect(phones[providerId]).toBeTruthy();
+  const partner=await browser.newPage({baseURL:new URL(page.url()).origin,viewport:page.viewportSize()!});
+  try{
+   await partner.goto("/partner/onboarding");await partner.getByPlaceholder("10-digit phone number").fill(phones[providerId]);await partner.getByRole("button",{name:"Send OTP",exact:true}).click();
+   const sandbox=partner.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await partner.getByPlaceholder("6-digit code").fill(code!);await partner.getByRole("button",{name:"Verify & continue",exact:true}).click();
+   await expect.poll(()=>partner.evaluate(async()=>{const response=await fetch("/api/identity-session",{cache:"no-store"});if(!response.ok)return null;return(await response.json()).data?.subjectId;})).toBe(providerId);
+   await partner.goto(`/sitter?bookingId=${encodeURIComponent(bookingId)}`);
+   const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
+   await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
+   await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
+   await partner.screenshot({path:test.info().outputPath("sitting-partner-accepted.png"),fullPage:true});
+  }finally{await partner.close();}
+
  }
 
 });
