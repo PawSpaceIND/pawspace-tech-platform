@@ -3,6 +3,8 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
+// This suite deliberately imports the real production calculator so the executable-test ratchet
+// counts behaviour, not just source-shape assertions.
 installWorkersHooks("__WALKING_PRICE_DB__", "__WALKING_PRICE_ENV__");
 const { walkingPerSessionAmount } = await import("../lib/walking-lifecycle.ts");
 const walkingSource = await readFile(new URL("../lib/walking-lifecycle.ts", import.meta.url), "utf8");
