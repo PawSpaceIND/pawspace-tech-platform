@@ -58,8 +58,36 @@ on:
         type: boolean
         required: false
         default: false
+      diagnose_login_only:
+        description: 'Trace one synthetic sandbox login request on staging only; no deployment'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
+  login-diagnostic:
+    if: ${{ github.event.inputs.confirm == 'staging' && inputs.diagnose_login_only && !inputs.provision_storage_only }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Trace sandbox login without exposing credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          node scripts/diagnose-staging-login.mjs
+
   internal-storage:
     if: ${{ github.event.inputs.confirm == 'staging' && inputs.provision_storage_only }}
     runs-on: ubuntu-latest
@@ -92,7 +120,7 @@ jobs:
         run: node scripts/provision-internal-media.mjs
 
   deploy:
-    if: ${{ github.event.inputs.confirm == 'staging' && !inputs.provision_storage_only }}
+    if: ${{ github.event.inputs.confirm == 'staging' && !inputs.provision_storage_only && !inputs.diagnose_login_only }}
     runs-on: ubuntu-latest
     concurrency: pawspace-staging-deploy
     steps:
