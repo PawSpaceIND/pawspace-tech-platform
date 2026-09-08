@@ -265,4 +265,20 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
  await expect(page.getByRole("button",{name:/^Pay .* (create canonical stay|request final partner approval)$/})).toBeDisabled();
  await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});
+ await consent.check();
+ const pay=page.getByRole("button",{name:/^Pay .* (create canonical stay|request final partner approval)$/});
+ if(mode==="boarding"){
+  const before=await page.context().request.get("/api/customer-account");expect(before.ok()).toBeTruthy();const initial=await before.json();
+  const writes:string[]=[];page.on("request",request=>{if(request.method()==="POST"&&/\/api\/(uat-scheduling|canonical-bookings|boarding-bookings|boarding-payment)/.test(request.url()))writes.push(request.url());});
+  await pay.click();await expect(page.getByRole("alert")).toContainText("Boarding requires verified vaccination");
+  expect(writes).toHaveLength(0);const after=await page.context().request.get("/api/customer-account");expect(after.ok()).toBeTruthy();expect((await after.json()).data.bookings).toEqual(initial.data.bookings);
+ }else{
+  const created=page.waitForResponse(response=>response.url().endsWith("/api/sitting-bookings")&&response.request().method()==="POST");await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);const body=await response.json();const bookingId=String(body.data.bookingId);expect(bookingId).not.toBe("");
+  await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();
+  await expect(page.getByText(bookingId,{exact:true})).toBeVisible();
+  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
+  await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByLabel("Vet contact",{exact:true})).toHaveValue("UAT vet contact: 9000000951");
+  await page.screenshot({path:test.info().outputPath("customer-sitting-booked.png"),fullPage:true});
+ }
+
 });
