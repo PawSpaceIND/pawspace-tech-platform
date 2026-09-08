@@ -39,3 +39,16 @@ test('boarding host and quote requests time out rather than spin indefinitely',a
  await assert.rejects(loadBoardingCommercial(query),/timed out/);
  await assert.rejects(quoteBoarding({}),/timed out/);
 });
+
+test('customer afternoon and evening stay choices preserve IST start, duration and midnight rollover',async()=>{
+ const{careWindowDates}=await import('../lib/stay-search-state.ts');
+ for(const[time,utc]of[['09:00','03:30'],['13:00','07:30'],['18:00','12:30']])for(const[window,hours]of[['4 hours',4],['10 hours',10],['12 hours',12]]){
+  const value=careWindowDates('2026-09-14','2026-09-16',window,time);
+  assert.equal(value.scheduledStart.toISOString(),`2026-09-14T${utc}:00.000Z`);assert.equal(value.scheduledEnd-value.scheduledStart,hours*3600000);
+ }
+ const overnight=careWindowDates('2026-09-14','2026-09-16','24 hours','18:00');assert.equal(overnight.scheduledStart.toISOString(),'2026-09-14T03:30:00.000Z');assert.equal(overnight.scheduledEnd.toISOString(),'2026-09-16T03:30:00.000Z');
+});
+test('changing daytime start invalidates a host selected for another time',()=>{
+ const morning=staySearchKey({...query,careWindow:'4 hours',startTime:'09:00'}),afternoon=staySearchKey({...query,careWindow:'4 hours',startTime:'13:00'});
+ assert.notEqual(morning,afternoon);assert.equal(currentBoardingHost([{providerId:'h1',availabilityVerified:true}],'h1',morning,afternoon),undefined);
+});

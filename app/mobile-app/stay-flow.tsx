@@ -5,7 +5,7 @@ import Link from "next/link";
 import {saveCustomerBoardingCare,boardingCareDraft} from "../../lib/boarding-customer-care";
 import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
-import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
+import { careWindowDates, staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
 import { createTestTransaction } from "../../lib/test-transaction";
 import SittingCustomerPanel from "./sitting-customer-panel";
 import PetManager from "./pet-manager";
@@ -23,7 +23,7 @@ import { createCanonicalSittingBooking } from "../../lib/sitting-booking-client"
 // Unique per-booking nonce. Kept as a module-scope helper so the impure Date.now()
 // call lives outside component render (matching istDate in the taxi/walking flows).
 const bookingNonce = () => Date.now();
-const careWindowDates=(start:string,end:string,window:CareWindow)=>{const scheduledStart=new Date(`${start}T03:30:00.000Z`),scheduledEnd=window==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduledStart.getTime()+(window==="10 hours"?10:window==="12 hours"?12:4)*3_600_000);return{scheduledStart,scheduledEnd};};
+
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
@@ -133,6 +133,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
     [careWindow, setCareWindow] = useState<CareWindow>("24 hours"),
+    [startTime, setStartTime] = useState("09:00"),
     [foodType, setFoodType] = useState(""),
     [sitters,setSitters] = useState<Caregiver[]>([]),
     [sitterWindowKey,setSitterWindowKey] = useState(""),
@@ -197,7 +198,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
   const selectedSpecies = [...new Set(selectedPetObjs.map((p) => p.species).filter((value): value is string => Boolean(value)))];
   const selectedSpeciesKey = selectedSpecies.join(",");
-  const boardingHostQueryKey = staySearchKey({cityId:serviceLocation?.assignment.cityId,zoneId:serviceLocation?.assignment.zoneId,location:serviceLocation?`${serviceLocation.placeId}|${serviceLocation.latitude}|${serviceLocation.longitude}|${serviceLocation.address}`:"",start,end,careWindow,petIds:selectedPets,species:selectedSpecies});
+  const boardingHostQueryKey = staySearchKey({cityId:serviceLocation?.assignment.cityId,zoneId:serviceLocation?.assignment.zoneId,location:serviceLocation?`${serviceLocation.placeId}|${serviceLocation.latitude}|${serviceLocation.longitude}|${serviceLocation.address}`:"",start,end,careWindow,startTime,petIds:selectedPets,species:selectedSpecies});
   const caregivers = mode === "boarding" ? (boardingHostWindowKey === boardingHostQueryKey ? boardingHosts : []) : (sitterWindowKey === boardingHostQueryKey ? sitters : []);
   const selectedBoardingHost = currentBoardingHost(boardingHosts,caregiver.providerId,boardingHostWindowKey,boardingHostQueryKey);
   const selectedSitter = currentBoardingHost(sitters,caregiver.providerId,sitterWindowKey,boardingHostQueryKey);
@@ -224,14 +225,14 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
   const balanceAmount = mode === "boarding"
     ? Math.max(0, (boardingQuote?.totalAmount??0) - (boardingQuote?.amountDueNow??0))
     : Math.max(0,(sittingQuote?.totalAmount??0)-(sittingQuote?.amountDueNow??0));
-  useEffect(()=>{if(mode!=="sitting"||!serviceLocation||selectedPets.length===0){queueMicrotask(()=>setSittingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow),packageCode=careWindow==="24 hours"?"sitting-overnight":"sitting-visit-60",paymentMode=splitEligible&&splitPayment?"split_50_50":"prepaid";queueMicrotask(()=>{if(active){setSittingQuote(null);setSittingQuoteError("");}});void createSittingQuote({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode}).then(value=>{if(active)setSittingQuote(value);}).catch(problem=>{if(active)setSittingQuoteError(problem instanceof Error?problem.message:"Unable to create canonical Sitting quote");});return()=>{active=false;};},[mode,serviceLocation,start,end,careWindow,selectedPets.length,splitEligible,splitPayment]);
-  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||selectedPets.length===0)return;let active=true;const{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,serviceLocation,careWindow,start,end,selectedPets.length,splitEligible,splitPayment]);
-  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||selectedPets.length===0)return;let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow);void loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),petCount:selectedPets.length,species:selectedSpeciesKey?selectedSpeciesKey.split(","):[]}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,serviceLocation,careWindow,start,end,selectedPets.length,boardingHostQueryKey,selectedSpeciesKey,hostRetry]);
+  useEffect(()=>{if(mode!=="sitting"||!serviceLocation||selectedPets.length===0){queueMicrotask(()=>setSittingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow,startTime),packageCode=careWindow==="24 hours"?"sitting-overnight":"sitting-visit-60",paymentMode=splitEligible&&splitPayment?"split_50_50":"prepaid";queueMicrotask(()=>{if(active){setSittingQuote(null);setSittingQuoteError("");}});void createSittingQuote({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode}).then(value=>{if(active)setSittingQuote(value);}).catch(problem=>{if(active)setSittingQuoteError(problem instanceof Error?problem.message:"Unable to create canonical Sitting quote");});return()=>{active=false;};},[mode,serviceLocation,start,end,careWindow,startTime,selectedPets.length,splitEligible,splitPayment]);
+  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||selectedPets.length===0)return;let active=true;const{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow,startTime),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,serviceLocation,careWindow,startTime,start,end,selectedPets.length,splitEligible,splitPayment]);
+  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||selectedPets.length===0)return;let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow,startTime);void loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),petCount:selectedPets.length,species:selectedSpeciesKey?selectedSpeciesKey.split(","):[]}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,serviceLocation,careWindow,startTime,start,end,selectedPets.length,boardingHostQueryKey,selectedSpeciesKey,hostRetry]);
   useEffect(()=>{
    if(mode!=="sitting"||!serviceLocation||!datesValid||!selectedPets.length)return;
-   let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow);
+   let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow,startTime);
    void previewSitters({clientRequestId:`preview:${queryKey}`,customerId:customer.customerId,petIds:selectedPets,serviceCode:"pet_sitting",serviceAddress:serviceLocation.address,servicePincode:serviceLocation.assignment.pincode,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit"}).then(data=>{if(!active)return;const rows:Caregiver[]=data.providers.map(provider=>({...sitterPlaceholder,providerId:provider.id,name:provider.name,model:provider.model,initials:hostInitials(provider.name),area:serviceLocation.assignment.area,badge:"Available for this window",home:"Availability checked against the current schedule. Confirmation rechecks the slot.",availabilityVerified:true}));setSitters(rows);setSitterWindowKey(queryKey);setSitterError("");setCaregiver(current=>rows.find(row=>row.providerId===current.providerId)??rows[0]??sitterPlaceholder);}).catch(problem=>{if(active){setSitters([]);setSitterWindowKey(queryKey);setSitterError(problem instanceof Error?problem.message:"Unable to load sitters");setCaregiver(sitterPlaceholder);}});return()=>{active=false;};
-  },[mode,serviceLocation,datesValid,selectedPets,boardingHostQueryKey,customer.customerId,start,end,careWindow,hostRetry]);
+  },[mode,serviceLocation,datesValid,selectedPets,boardingHostQueryKey,customer.customerId,start,end,careWindow,startTime,hostRetry]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
       current.includes(name)
@@ -273,7 +274,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     setScheduling(true);setScheduleError("");
     try {
     if(mode==="sitting"&&!selectedSitter)throw new Error("Select a currently available sitter before confirming");
-    const{scheduledStart:scheduleStart,scheduledEnd:scheduleEnd}=careWindowDates(start,end,careWindow),zoneId=serviceLocation.assignment.zoneId;
+    const{scheduledStart:scheduleStart,scheduledEnd:scheduleEnd}=careWindowDates(start,end,careWindow,startTime),zoneId=serviceLocation.assignment.zoneId;
     const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");
     const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}):null;
     const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${bookingNonce()}`,decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",cityId:serviceLocation.assignment.cityId,zoneId,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:selectedSitter?.providerId});
@@ -425,10 +426,10 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
           {careWindow !== "24 hours" && (
             <label className={styles.field}>
               Start time
-              <select defaultValue="9:00 AM">
-                <option>9:00 AM</option>
-                <option>1:00 PM</option>
-                <option>6:00 PM</option>
+              <select value={startTime} onChange={event=>setStartTime(event.target.value)}>
+                <option value="09:00">9:00 AM IST</option>
+                <option value="13:00">1:00 PM IST</option>
+                <option value="18:00">6:00 PM IST</option>
               </select>
             </label>
           )}
