@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./stay-flow.module.css";
+import {saveCustomerBoardingCare,boardingCareDraft} from "../../lib/boarding-customer-care";
 import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
@@ -131,7 +132,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
     [careWindow, setCareWindow] = useState<CareWindow>("24 hours"),
-    [foodType, setFoodType] = useState(initialMode==="sitting"?"":"Pet food from home"),
+    [foodType, setFoodType] = useState(""),
     [sitters,setSitters] = useState<Caregiver[]>([]),
     [sitterWindowKey,setSitterWindowKey] = useState(""),
     [sitterError,setSitterError] = useState(""),
@@ -266,7 +267,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     if (!serviceLocation) { setScheduleError("Verify the service address before continuing."); return; }
     if (mode === "sitting" && !sittingQuote) { setScheduleError(sittingQuoteError || "Wait for the canonical Sitting quote."); return; }
     if (mode === "boarding" && selectedPetObjs.some((pet) => pet.vaccinationStatus !== "verified")) { setScheduleError("Boarding requires verified vaccination for every selected pet."); return; }
-    if(mode==="sitting"&&(!careDraft.vet?.trim()||!careDraft.emergencyContact?.trim()||!careDraft.homeAccess?.trim())){setScheduleError("Add vet, emergency contact and home access instructions in your Care Card before confirming.");return;}
+    if(!careDraft.vet?.trim()||!careDraft.emergencyContact?.trim()||(mode==="sitting"&&!careDraft.homeAccess?.trim())){setScheduleError("Add vet and emergency contacts, plus home access for Sitting, in your Care Card before confirming.");return;}
     setScheduling(true);setScheduleError("");
     try {
     if(mode==="sitting"&&!selectedSitter)throw new Error("Select a currently available sitter before confirming");
@@ -280,10 +281,8 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     }else{
       const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"captured",detail:"UAT Boarding sandbox payment from server quote"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
     }
-    if(mode==="sitting"){
-      const plan={...careDraft,specialInstructions:[careDraft.specialInstructions,selectedNeeds.length?`Care requests: ${selectedNeeds.join(', ')}`:''].filter(Boolean).join('\n')};setConfirmedCarePlan(plan);
-      try{await saveSittingCustomerPlan(canonicalBookingId,plan,`initial-sitting-care:${canonicalBookingId}`);setCareSaveError("");}catch(problem){setCareSaveError(`Booking saved, but care instructions were not confirmed. Review and save them below. ${problem instanceof Error?problem.message:''}`);}
-    }
+    const plan=mode==="boarding"?boardingCareDraft(careDraft,selectedNeeds,selectedBenefits,foodType):{...careDraft,specialInstructions:[careDraft.specialInstructions,selectedNeeds.length?`Care requests: ${selectedNeeds.join(', ')}`:''].filter(Boolean).join('\n')};setConfirmedCarePlan(plan);
+    try{if(mode==="boarding")await saveCustomerBoardingCare(canonicalBookingId,plan,`initial-boarding-care:${canonicalBookingId}`);else await saveSittingCustomerPlan(canonicalBookingId,plan,`initial-sitting-care:${canonicalBookingId}`);setCareSaveError("");}catch(problem){setCareSaveError(`Booking saved, but care instructions were not confirmed. Review and save them below. ${problem instanceof Error?problem.message:''}`);if(mode==="boarding")setView("care");}
     const booking = createTestTransaction({
       customerId: customer.customerId,
       customerName: customer.customerName,
@@ -613,63 +612,13 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               </b>
               <span>
                 {mode === "boarding"
-                  ? "The host receives one approved care plan for every pet."
+                  ? "Your care instructions are saved against this booking."
                   : "Share the access instructions your assigned care team should use."}
               </span>
             </div>
           </article>
-          {mode==="sitting"?<div style={{display:"grid",gap:12}}><p>Enter the instructions your sitter should follow. These will be saved with the booking. Care requests still require sitter agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>:<>
-          <div className={styles.sectionHead}>
-            <b>Care benefits & add-ons</b>
-            <span>Shared with partner</span>
-          </div>
-          <div className={styles.benefitGrid}>
-            {careBenefits.map((benefit) => (
-              <button
-                key={benefit}
-                className={selectedBenefits.includes(benefit) ? styles.selected : ""}
-                onClick={() => toggleBenefit(benefit)}
-              >
-                {selectedBenefits.includes(benefit) ? "✓" : "＋"} {benefit}
-              </button>
-            ))}
-          </div>
-          <label className={styles.field}>
-            Food preference
-            <select value={foodType} onChange={(e) => setFoodType(e.target.value)}>
-              <option>Pet food from home</option>
-              <option>Vegetarian fresh food</option>
-              <option>Non-vegetarian fresh food</option>
-              <option>Host/sitter to quote food separately</option>
-            </select>
-          </label>
-          <label className={styles.field}>
-            Special request
-            <textarea defaultValue="Please keep Bruno separate during meals and share one play-time video daily." />
-          </label>
-          <label className={styles.field}>
-            Food & water routine
-            <textarea defaultValue="Bruno: meals at 7:30 AM and 6:30 PM. Coco: wet food at 8 AM and 7 PM." />
-          </label>
-          <label className={styles.field}>
-            Walk, toilet & sleep routine
-            <textarea defaultValue="Bruno needs two 30-minute walks. Coco sleeps in the living room." />
-          </label>
-          <label className={styles.field}>
-            Medication, allergies & vet
-            <textarea defaultValue="Bruno: one tablet after breakfast. Vet: Cessna Lifeline, Domlur." />
-          </label>
-          <div className={styles.contacts}>
-            <label className={styles.field}>
-              Primary contact
-              <input defaultValue="Karthik · +91 99969 99505" />
-            </label>
-            <label className={styles.field}>
-              Secondary contact
-              <input defaultValue="Rahul · +91 98802 22741" />
-            </label>
-          </div>
-          </>}
+          <div style={{display:"grid",gap:12}}><p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field])=>mode==="sitting"||field!=="homeAccess").map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>
+          {mode==="boarding"&&<><div className={styles.sectionHead}><b>Requested extras</b><span>Subject to host agreement</span></div><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
           <div className={styles.options}>
             <label>
               <input
@@ -931,5 +880,5 @@ function Head({ title, note }: { title: string; note: string }) {
 }
 function LiveStay({bookingId,mode,caregiver,view,setView,initialCarePlan,initialError}:{bookingId:string;initialCarePlan?:SittingCarePlan;initialError?:string;start:string;end:string;nights:number;mode:Mode;caregiver:Caregiver;pets:string[];total:number;taxi:boolean;view:View;setView:(value:View)=>void;flash:(message:string)=>void}){
  if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} initialCarePlan={initialCarePlan} initialError={initialError} />;
- return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name}/>}</section>;
+ return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name} initialCarePlan={initialCarePlan} initialError={initialError}/>}</section>;
 }

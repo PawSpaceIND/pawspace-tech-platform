@@ -309,6 +309,8 @@ test("Boarding Gate 2 host and customer surfaces call canonical stay actions, no
     readFile(new URL("../app/mobile-app/boarding-customer-stay-panel.tsx", import.meta.url), "utf8"),
   ]);
   for (const action of ["accept", "decline", "check_in", "check_out"]) assert.match(host, new RegExp(`"${action}"`));
-  assert.match(panel, /submit_care_plan/);
+  assert.match(panel, /saveCustomerBoardingCare/);
+  const careClient = await readFile(new URL("../lib/boarding-customer-care.ts", import.meta.url), "utf8");
+  assert.match(careClient, /submit_care_plan/);
   assert.match(panel, /request_extension/);
 });
