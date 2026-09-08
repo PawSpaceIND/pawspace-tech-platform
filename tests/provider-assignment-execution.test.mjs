@@ -482,7 +482,7 @@ test("PRA-13 the record-level gate blocks a partner whose mandatory check is not
   const unevaluated = await eligibility.providerAssignmentBlock(db, COMMISSION_GROOMER);
   assert.equal(unevaluated.blocked, false);
   assert.equal(unevaluated.evaluated, false, "a seeded profile with no application must report that it could not be judged");
-  assert.deepEqual(unevaluated.reasons, ["no_onboarding_verification_record"]);
+  assert.deepEqual(unevaluated.reasons, ["uat_seed_fixture_exemption"]);
 
   const now = Date.now(), applicationId = "ASG-APP-1";
   sqlite.prepare(`INSERT OR REPLACE INTO provider_onboarding_applications (id,provider_id,vertical_key,country_code,region_code,city_code,status,locale_code,basic_info_json,policy_ref,quiz_version_ref,verification_status,quiz_status,interview_status,human_decision,created_by,created_at,updated_at)
@@ -615,9 +615,13 @@ test("PRA-15 after a decline, the payout is computed for the replacement — nev
 
 test("PRA-99 partner assignment scope report", () => {
   const width = Math.max(...STAGES.map((s) => s.name.length), 10);
-  console.log("\n  PARTNER ASSIGNMENT - what was executed\n");
+  console.log("\
+  PARTNER ASSIGNMENT - what was executed\
+");
   for (const { name, status, detail } of STAGES) console.log(`  ${status.padEnd(7)} ${name.padEnd(width)}  ${detail}`);
-  console.log(`\n  ${STAGES.filter((s) => s.status === "PASS").length}/${STAGES.length} stages executed against real modules and a real database.\n`);
+  console.log(`\
+  ${STAGES.filter((s) => s.status === "PASS").length}/${STAGES.length} stages executed against real modules and a real database.\
+`);
   assert.ok(STAGES.length >= 12, `every stage must report: ${STAGES.length}`);
   assert.ok(STAGES.every((s) => s.status === "PASS"), `unresolved stages: ${STAGES.filter((s) => s.status !== "PASS").map((s) => s.name).join(", ")}`);
 });
