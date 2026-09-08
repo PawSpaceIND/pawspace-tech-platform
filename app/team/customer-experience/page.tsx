@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { inboxResponseError, inboxErrorMessage } from "../../../lib/inbox-ui-error";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -51,6 +52,7 @@ const inboxRefreshMs = 5_000;
 export default function CustomerExperiencePage() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selected, setSelected] = useState("");
+  const selectedRef = useRef("");
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [control, setControl] = useState<WhatsAppControl | null>(null);
   const [serviceWindowCheckedAt, setServiceWindowCheckedAt] = useState(0);
@@ -66,7 +68,7 @@ export default function CustomerExperiencePage() {
   const loadThreads = useCallback(async () => {
     const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
-    if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
+    if (!response.ok) throw inboxResponseError(response.status);
     const next = payload.data?.threads || [];
     setThreads(next);
     return next;
@@ -76,8 +78,8 @@ export default function CustomerExperiencePage() {
     if (!id) return;
     const response = await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
-    if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
-    if (!shouldApply()) return;
+    if (!response.ok) throw inboxResponseError(response.status);
+    if (!shouldApply() || selectedRef.current !== id) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
   }, []);
@@ -87,12 +89,12 @@ export default function CustomerExperiencePage() {
     const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
     if (response.status === 409 || response.status === 404) {
-      if (shouldApply()) setControl(null);
+      if (shouldApply() && selectedRef.current === id) setControl(null);
       return null;
     }
-    if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
+    if (!response.ok) throw inboxResponseError(response.status);
     const next = payload.data || null;
-    if (shouldApply()) setControl(next);
+    if (shouldApply() && selectedRef.current === id) setControl(next);
     return next;
   }, []);
 
@@ -104,10 +106,12 @@ export default function CustomerExperiencePage() {
       refreshing = true;
       try {
         const next = await loadThreads();
-        if (active && next[0]) setSelected((current) => current || String(next[0].id));
-        if (active) setError("");
+        if (active && next[0] && !selectedRef.current) {
+          selectedRef.current = String(next[0].id);
+          setSelected(selectedRef.current);
+        }
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(inboxErrorMessage(cause));
       } finally {
         refreshing = false;
       }
@@ -129,9 +133,8 @@ export default function CustomerExperiencePage() {
       refreshing = true;
       try {
         await Promise.all([loadConversation(selected, () => active), loadControl(selected, () => active)]);
-        if (active) setError("");
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(inboxErrorMessage(cause));
       } finally {
         refreshing = false;
       }
@@ -156,11 +159,11 @@ export default function CustomerExperiencePage() {
         body: JSON.stringify({ action, threadId: selected, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
+      if (!response.ok) throw inboxResponseError(response.status);
       await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(inboxErrorMessage(cause));
       return false;
     } finally {
       setBusy(false);
@@ -179,11 +182,11 @@ export default function CustomerExperiencePage() {
         body: JSON.stringify({ action, threadId: selected, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(body.error || `WhatsApp control failed (HTTP ${response.status})`);
+      if (!response.ok) throw inboxResponseError(response.status);
       await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(inboxErrorMessage(cause));
       return false;
     } finally {
       setBusy(false);
@@ -246,20 +249,20 @@ export default function CustomerExperiencePage() {
       description="WhatsApp AI Shared Inbox — WATI-style customer operations on PawSpace canonical conversations. UAT/sandbox only; production WhatsApp delivery stays disabled until release certification."
       actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge></>}
     >
-      {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
-      {notice ? <div className={teamStyles.panel}><b>{notice}</b></div> : null}
+      {error ? <div role="alert" className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b><Button size="sm" variant="secondary" onClick={() => setError("")}>Dismiss</Button></div> : null}
+      {notice ? <div role="status" className={teamStyles.panel}><b>{notice}</b></div> : null}
       <div className={styles.shell}>
         <aside className={styles.rail}>
           <div className={styles.brand}><div className={styles.brandMark}>PS</div><div><strong>PawSpace</strong><small>WhatsApp AI Customer Operations</small></div></div>
           <nav className={styles.nav} aria-label="WhatsApp AI navigation">
             <div className={`${styles.navItem} ${styles.navActive}`}><span>Inbox</span><span className={styles.navCount}>{threads.length}</span></div>
-            <div className={styles.navItem}><span>Leads</span><span>{threads.filter((row) => row.lead_id).length}</span></div>
-            <div className={styles.navItem}><span>Customers</span></div>
-            <div className={styles.navItem}><span>Templates</span></div>
-            <div className={styles.navItem}><span>AI Handoffs</span></div>
-            <div className={styles.navItem}><span>Booking Drafts</span></div>
-            <div className={styles.navItem}><span>Audit</span></div>
-            <div className={styles.navItem}><span>Settings</span></div>
+            <a href="/team/sales" className={styles.navItem}>Leads & customers</a>
+            <a href="/team/whatsapp/templates" className={styles.navItem}>Templates</a>
+            <a href="/team/ai/handoff" className={styles.navItem}>AI handoffs</a>
+            <a href="/team/operations/bookings" className={styles.navItem}>Bookings</a>
+            <a href="/team/whatsapp/analytics" className={styles.navItem}>Analytics</a>
+            <a href="/team/whatsapp/automation" className={styles.navItem}>Automation</a>
+            <a href="/team/ai/configuration" className={styles.navItem}>AI settings</a>
           </nav>
           <div className={styles.connection}><span className={styles.dot} />WhatsApp UAT connection<br /><b>Sandbox / governed</b><br /><small>External delivery disabled</small></div>
           <div className={styles.operator}><b>CX Operator</b><br /><small>Role-scoped access</small></div>
@@ -268,7 +271,7 @@ export default function CustomerExperiencePage() {
         <aside className={styles.list}>
           <div className={styles.listTop}>
             <h2>Shared Inbox</h2>
-            <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads or conversations..." />
+            <input aria-label="Search conversations" className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads or conversations..." />
             <div className={styles.filters}>
               {[["all", "All"], ["whatsapp", "WhatsApp"], ["unassigned", "Unassigned"], ["human", "Human owned"]].map(([key, label]) => (
                 <Button
@@ -297,7 +300,20 @@ export default function CustomerExperiencePage() {
                   type="button"
                   className={styles.row}
                   aria-current={selected === row.id ? "true" : undefined}
-                  onClick={() => setSelected(row.id)}
+                  disabled={busy}
+                  onClick={() => {
+                    if (row.id === selectedRef.current) return;
+                    if (reply.trim() && !window.confirm("Discard your unsent reply and open another conversation?")) return;
+                    selectedRef.current = row.id;
+                    setSelected(row.id);
+                    setConversation(null);
+                    setControl(null);
+                    setServiceWindowCheckedAt(0);
+                    setReply("");
+                    setReplyRequestId("");
+                    setError("");
+                    setNotice("");
+                  }}
                 >
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
@@ -338,6 +354,7 @@ export default function CustomerExperiencePage() {
             <div className={styles.notice}>This workspace does not bypass consent, quiet-hour, retry or adapter controls. AI may make mistakes. Price, availability, payment, cancellation and provider actions stay governed.</div>
             <footer className={styles.composer}>
               <input
+                aria-label="Reply to selected conversation"
                 value={reply}
                 onChange={(event) => { setReply(event.target.value); setReplyRequestId(""); }}
                 disabled={!isWhatsApp || !humanMode || busy || !withinWindow}
