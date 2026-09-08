@@ -14,6 +14,6 @@ export async function groomingChangePreview(db:D1Database,booking:Row,work:Row,p
  const reasons=[...reschedule.reasons];if(!intact)reasons.push("The existing booking schedule requires review");if(!movable)reasons.push("This service has progressed and cannot be rescheduled directly");
  const refundPolicy=await resolveRefundPolicy(db,{serviceCode:"grooming",cityId:String(booking.city_id||"")});
  const refund=evaluateCancellationRefund(refundPolicy,{scheduledStart:String(booking.scheduled_start),bookingStatus:String(booking.status),cancelledBy:"customer",amountPaid:["captured","paid"].includes(String(payment.status))?Number(payment.amount||0):0,couponValue:Number(pricing?.discount??0),now});
- const mode=!refund.automatic&&refund.requiresApproval?"review":cancel.allowed?"cancel":"unavailable";
+ const mode=!refund.automatic&&refund.requiresApproval?"review":cancel.allowed&&["confirmed","assigned","awaiting_acceptance"].includes(String(work.status))?"cancel":"unavailable";
  return{bookingId:String(booking.id),currency:String(booking.currency||"INR"),durationMinutes:intact?duration/60000:0,reschedule:{allowed:reschedule.allowed&&intact&&movable,feeAmount:reschedule.feeAmount,reasons},cancellation:{mode,refundAmount:mode==="cancel"?refund.customerRefundAmount:null,reasons:mode==="unavailable"?cancel.reasons:refund.reasons},policyVersion:reschedule.policyVersion,refundPolicyVersion:refund.policyVersion};
 }
