@@ -9,9 +9,10 @@ export default function GroomingChangePolicy({bookingId,customerId,onChanged}:{b
  const reload=()=>{setLoadedId("");setPreview(null);setError("");setRefresh(value=>value+1);};
  const money=(amount:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:preview?.currency||"INR"}).format(amount);
  return <section className={styles.card} aria-label="Booking change policy"><h2>Booking change policy</h2>{loadedId!==bookingId?<p role="status">Loading current terms…</p>:error?<><p role="alert">{error}</p><button onClick={reload}>Retry policy preview</button></>:preview?<>
-  <div><h3>{preview.reschedule.allowed?"Rescheduling available":"Rescheduling unavailable"}</h3>{preview.reschedule.allowed&&<p>Policy fee: {money(preview.reschedule.feeAmount)}</p>}<p className={styles.note}>A new time must still pass provider availability checks.</p></div>
+  <div><h3>{preview.reschedule.allowed?"Rescheduling available":"Rescheduling unavailable"}</h3>{preview.reschedule.allowed&&<p>Policy fee: {money(preview.reschedule.feeAmount)}</p>}{preview.reschedule.allowed&&<p className={styles.note}>A new time must still pass provider availability checks.</p>}</div>
   <div><h3>{preview.cancellation.mode==="cancel"?"Cancellation eligible":preview.cancellation.mode==="review"?"Cancellation needs review":"Cancellation unavailable"}</h3>{preview.cancellation.mode==="cancel"&&preview.cancellation.refundAmount!==null?<p>Estimated refund: {money(preview.cancellation.refundAmount)}</p>:preview.cancellation.mode==="review"?<p>The team must review the request. Your booking status stays unchanged, and a refund is not guaranteed.</p>:null}</div>
+  {(preview.reschedule.allowed||preview.cancellation.mode!=="unavailable")&&<p className={styles.note}>Viewing these terms does not change your booking. Review them before confirming a request below.</p>}
   <GroomingCancelForm key={preview.consentRevision} preview={preview} customerId={customerId} onChanged={onChanged} onRefresh={reload}/>
-  <p className={styles.note}>This preview does not change your booking or request a refund. Terms can change as your appointment approaches.</p><button onClick={reload}>Refresh policy preview</button>
+  <button onClick={reload}>Refresh policy preview</button>
  </>:null}</section>;
 }
