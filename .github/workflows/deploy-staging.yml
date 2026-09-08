@@ -68,6 +68,7 @@ jobs:
   login-diagnostic:
     if: ${{ github.event.inputs.confirm == 'staging' && inputs.diagnose_login_only && !inputs.provision_storage_only }}
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     permissions:
       contents: read
     steps:

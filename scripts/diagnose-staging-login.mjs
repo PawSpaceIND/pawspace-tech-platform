@@ -46,3 +46,6 @@ try {
     console.log('Temporary staging trace removed');
   }
 }
+// Node's WebSocket transport can keep its closing handle alive after the tail
+// has been deleted. Exit only after the awaited cleanup above has succeeded.
+process.exit(0);
