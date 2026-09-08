@@ -126,6 +126,8 @@ The local suite includes provider HTTP/timeouts, atomic rollback and duplicate-e
 
 ## 9. Security
 
+The simulator boundary follow-up rejects manual forged provider receipts, requires explicit sandbox locks, records refusals in the audit trail and prevents failed synthetic messages from reaching external dispatchers. Local executing tests and a built-Worker refusal probe pass; see `communication-simulator-boundary.md`.
+
 Built gateway returned 401 for anonymous callers and 403 for unauthorized customer access to staff APIs. Fixed customer notification mapping while preserving ownership and cross-origin guards.
 
 - [ ] Authentication bypass
