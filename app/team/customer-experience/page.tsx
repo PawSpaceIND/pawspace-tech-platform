@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -59,8 +59,16 @@ export default function CustomerExperiencePage() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const [reply, setReply] = useState("");
-  const [replyRequestId, setReplyRequestId] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, { text: string; clientRequestId: string }>>({});
+  const reply = drafts[selected]?.text || "";
+  const replyRequestId = drafts[selected]?.clientRequestId || "";
+  const activeThread = useRef("");
+  const mutationInFlight = useRef(false);
+  const selectThread = (id: string) => {
+    if (activeThread.current === id) return;
+    activeThread.current = id;
+    setSelected(id); setConversation(null); setControl(null); setError(""); setNotice("");
+  };
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
   const loadThreads = useCallback(async () => {
@@ -77,7 +85,7 @@ export default function CustomerExperiencePage() {
     const response = await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
-    if (!shouldApply()) return;
+    if (!shouldApply() || activeThread.current !== id) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
   }, []);
@@ -87,12 +95,12 @@ export default function CustomerExperiencePage() {
     const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
     if (response.status === 409 || response.status === 404) {
-      if (shouldApply()) setControl(null);
+      if (shouldApply() && activeThread.current === id) setControl(null);
       return null;
     }
     if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
     const next = payload.data || null;
-    if (shouldApply()) setControl(next);
+    if (shouldApply() && activeThread.current === id) setControl(next);
     return next;
   }, []);
 
@@ -104,7 +112,10 @@ export default function CustomerExperiencePage() {
       refreshing = true;
       try {
         const next = await loadThreads();
-        if (active && next[0]) setSelected((current) => current || String(next[0].id));
+        if (active && next[0] && !activeThread.current) {
+          activeThread.current = String(next[0].id);
+          setSelected(String(next[0].id));
+        }
         if (active) setError("");
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
@@ -151,7 +162,9 @@ export default function CustomerExperiencePage() {
   }, [selected, loadConversation, loadControl]);
 
   async function act(action: string, payload: Row) {
-    if (!selected) return false;
+    if (!selected || conversation?.thread.id !== selected || mutationInFlight.current) return false;
+    const target = selected;
+    mutationInFlight.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -159,22 +172,25 @@ export default function CustomerExperiencePage() {
       const response = await fetch("/api/conversations", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, threadId: selected, ...payload }),
+        body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
-      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     } finally {
+      mutationInFlight.current = false;
       setBusy(false);
     }
   }
 
   async function controlAct(action: string, payload: Row = {}) {
-    if (!selected) return false;
+    if (!selected || conversation?.thread.id !== selected || mutationInFlight.current) return false;
+    const target = selected;
+    mutationInFlight.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -182,30 +198,33 @@ export default function CustomerExperiencePage() {
       const response = await fetch("/api/whatsapp/conversation-control", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, threadId: selected, ...payload }),
+        body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || `WhatsApp control failed (HTTP ${response.status})`);
-      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     } finally {
+      mutationInFlight.current = false;
       setBusy(false);
     }
   }
 
   async function sendHumanReply() {
     const message = reply.trim();
-    if (!message) return;
+    if (!message || conversation?.thread.id !== selected || control?.threadId !== selected || mutationInFlight.current) return;
+    const target = selected;
+    const submittedText = reply;
     const clientRequestId = replyRequestId || crypto.randomUUID();
-    if (!replyRequestId) setReplyRequestId(clientRequestId);
+    if (!replyRequestId) setDrafts(current => ({ ...current, [target]: { text: submittedText, clientRequestId } }));
     const sent = await controlAct("human_reply", { message, clientRequestId });
     if (sent) {
-      setReply("");
-      setReplyRequestId("");
-      setNotice("Reply queued through the governed WhatsApp outbox.");
+      setDrafts(current => current[target]?.text === submittedText && current[target]?.clientRequestId === clientRequestId
+        ? { ...current, [target]: { text: "", clientRequestId: "" } } : current);
+      if (activeThread.current === target) setNotice("Reply queued through the governed WhatsApp outbox.");
     }
   }
 
@@ -242,7 +261,7 @@ export default function CustomerExperiencePage() {
   const ticket = thread?.ticket as Row | undefined;
   const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
   const isWhatsApp = Boolean(control);
-  const canSendHumanReply = Boolean(isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
+  const canSendHumanReply = Boolean(conversation?.thread.id === selected && control?.threadId === selected && isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
   const modeLabel = humanMode ? "Human only" : aiMode ? "AI Assistant" : "Chatbot only";
 
   return (
@@ -303,7 +322,7 @@ export default function CustomerExperiencePage() {
                   type="button"
                   className={styles.row}
                   aria-current={selected === row.id ? "true" : undefined}
-                  onClick={() => setSelected(row.id)}
+                  onClick={() => selectThread(row.id)}
                 >
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
@@ -345,7 +364,7 @@ export default function CustomerExperiencePage() {
             <footer className={styles.composer}>
               <input
                 value={reply}
-                onChange={(event) => { setReply(event.target.value); setReplyRequestId(""); }}
+                onChange={(event) => { const value = event.target.value; setDrafts(current => ({ ...current, [selected]: { text: value, clientRequestId: "" } })); }}
                 disabled={!isWhatsApp || !humanMode || busy || !withinWindow}
                 maxLength={4096}
                 placeholder={!isWhatsApp ? "Select a WhatsApp thread to reply" : !humanMode ? "Take over or switch to Human only to reply" : !withinWindow ? "24-hour window closed — use an approved template" : "Reply as PawSpace CX..."}

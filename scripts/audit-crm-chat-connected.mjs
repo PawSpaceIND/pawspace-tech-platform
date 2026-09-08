@@ -31,6 +31,7 @@ assert.equal(verifiedActor.email,actor);
 assert.equal(verifiedActor.developmentPreview,false,'browser proof must exercise provisioned staff access');
 const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';${cx?"import Page from './app/team/customer-experience/page.tsx';import Template from './app/team/customer-experience/template.tsx';":"import LiveChatPanel from './app/crm/live-chat-panel.tsx';"}createRoot(document.getElementById('root')).render(${cx?' <Template><Page/></Template> ':"<LiveChatPanel notify={message=>{document.getElementById('notice').textContent=message;}}/>"});`,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,outfile:'bundle.js',format:'iife',jsx:'automatic',define:{'process.env':'{}','process.env.NODE_ENV':'"development"'}});
 const sends=[];const writeResponses=[];
+let holdWrite=false;let releaseWrite;
 let failReads=false;let getRequests=0;let inboundSequence=0;
 const server=http.createServer(async(req,res)=>{
  try{
@@ -39,9 +40,16 @@ const server=http.createServer(async(req,res)=>{
    if(action==='incoming'){
     const {recordInboundMessage}=await import('../lib/conversation-governance.ts');
     await recordInboundMessage(db,{threadId:'THREAD-BROWSER',customerId:'CUS-BROWSER',channel:'whatsapp',payload:{text:`Incoming live audit ${++inboundSequence}`},provider:'sandbox_simulator',providerReference:`live-inbound-${inboundSequence}`,eventId:`live-inbound-${inboundSequence}`,createdBy:'audit-fixture'});
+    }else if(action==='second_thread'){
+    seedCustomer(sqlite,'CUS-OTHER','Other Customer','9876500088');
+    await inboundMessage(sqlite,db,{threadId:'THREAD-OTHER',customerId:'CUS-OTHER',text:'Other customer question',channel:'whatsapp',idempotencyKey:'other-inbound'});
+    sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,whatsapp_consent,updated_by,updated_at) VALUES ('CUS-OTHER',1,'test',?)").run(Date.now());
+    sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at) VALUES ('CUS-OTHER','sandbox_simulator',?)").run(Date.now());
    }else if(action==='fail_write')db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit fails after committed outbound');});
    else if(action==='fail')failReads=true;
    else if(action==='recover')failReads=false;
+   else if(action==='hold_write')holdWrite=true;
+   else if(action==='release_write'){holdWrite=false;releaseWrite?.();releaseWrite=undefined;}
    else if(action==='revoke')sqlite.prepare("UPDATE app_users SET status='disabled' WHERE id='USR-BROWSER'").run();
    else if(action==='restore')sqlite.prepare("UPDATE app_users SET status='active' WHERE id='USR-BROWSER'").run();
    else if(action==='read'){
@@ -70,7 +78,7 @@ const server=http.createServer(async(req,res)=>{
    const result=await streamRoute.GET(new Request(request,{signal:abort.signal}));res.writeHead(result.status,Object.fromEntries(result.headers));
    for await(const chunk of result.body)res.write(chunk);res.end();return;
   }
-  const result=await selectedRoute[req.method](request);res.writeHead(result.status,Object.fromEntries(result.headers));const responseText=await result.text();if(req.method==='POST')writeResponses.push({status:result.status,body:JSON.parse(responseText)});res.end(responseText);
+  const result=await selectedRoute[req.method](request);if(req.method==='POST'&&holdWrite)await new Promise(resolve=>{releaseWrite=resolve;});res.writeHead(result.status,Object.fromEntries(result.headers));const responseText=await result.text();if(req.method==='POST')writeResponses.push({status:result.status,body:JSON.parse(responseText)});res.end(responseText);
  }catch(error){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:String(error)}));}
 });
 let browser;
