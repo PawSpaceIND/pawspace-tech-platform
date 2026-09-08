@@ -36,9 +36,22 @@
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "bash scripts/sites-env.sh -- tsc --noEmit -p tsconfig.json",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
-    "sweep": "node scripts/screen-sweep.mjs"
+    "sweep": "node scripts/screen-sweep.mjs",
+    "cap:sync": "npx cap sync",
+    "cap:sync:customer": "CAPACITOR_TARGET=customer npx cap sync",
+    "cap:sync:partner": "CAPACITOR_TARGET=partner npx cap sync",
+    "cap:init:customer": "npx cap init PawSpaceCustomer com.pawspace.customer --web-dir .next",
+    "cap:init:partner": "npx cap init PawSpacePartner com.pawspace.partner --web-dir .next"
   },
   "dependencies": {
+    "@capacitor-community/native-market": "^8.0.0",
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/camera": "^8.2.4",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
+    "@capacitor/geolocation": "^8.2.2",
+    "@capacitor/ios": "^8.5.1",
+    "@capacitor/push-notifications": "^8.1.2",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
