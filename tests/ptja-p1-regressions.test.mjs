@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 /**
  * PawSpace Total Journey Audit — permanent behavioural regressions for the confirmed P1 defects.
  *
@@ -579,6 +580,7 @@ const F28_DAY = (day, hour) => new Date(Date.UTC(2026, 10, day, hour, 0, 0)).toI
 async function reserveWorld() {
   const { sqlite, db } = await schedulingWorld();
   const customerId = "CUST-F28";
+  await seedOwnedPet(db, customerId, "PET-F28");
   const cookie = await customerCookie(db, customerId);
   const reserve = (group, startDay, extra = {}) => post("../app/api/uat-scheduling/route.ts", "/api/uat-scheduling", {
     clientRequestId: group, customerId, petIds: ["PET-F28"], serviceCode: "grooming",

@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 /**
  * PawSpace Total Journey Audit — permanent behavioural regressions for the CONFIRMED P0 defects.
  *
@@ -194,6 +195,7 @@ async function sittingWorld(tag) {
   await seedProviderCapacityDefaults(db);
 
   const customerId = `CUS-PTJA-P02-${tag}`;
+  await seedOwnedPet(db, customerId, `PTJAPET${tag}`);
   const cookie = await sittingSession(db, customerId);
   const start = new Date(Date.now() + 10 * 86_400_000);
   start.setUTCHours(6, 0, 0, 0);

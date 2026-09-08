@@ -217,6 +217,6 @@ test("NEGATIVE: with no canonical pet records at all, Boarding refuses rather th
 
   const response = await reserve({ petIds: ["PET-VERIFIED"] });
   assert.equal(response.status, 409, "absent canonical pet records must not be read as 'fine'");
-  assert.match(String((await response.json()).error), /canonical pet records/i);
+  assert.match(String((await response.json()).error), /save your pet/i);
   assert.deepEqual(reservations(sqlite), []);
 });
