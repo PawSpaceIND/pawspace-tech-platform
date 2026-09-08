@@ -116,6 +116,9 @@ test("a partial insert rolls back atomically without touching a colliding reques
   t.after(() => { Date.now = realNow; });
 
   const customerId = "CUST-ATTEMPT-RACE";
+  // The race must reach dispatch with a valid, customer-owned saved dog.
+  ctx.sqlite.exec(fs.readFileSync("app/api/walking-bookings/route.ts", "utf8").match(/CREATE TABLE IF NOT EXISTS canonical_pets [^"\n]+/)[0]);
+  ctx.sqlite.prepare("INSERT INTO canonical_pets(id,customer_id,name,species,created_at,updated_at) VALUES (?,?,'Race dog','dog',?,?)").run("PET-ATTEMPT-RACE", customerId, FIXED, FIXED);
   const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
   const groupId = "ATTEMPT-RACE-A";
   const first = slot(21), second = slot(28);
