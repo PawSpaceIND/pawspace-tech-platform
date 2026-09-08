@@ -20,6 +20,8 @@ env:
   NODE_ENV: test
   APP_ENV: staging
   FORBID_PRODUCTION: 'true'
+  PAWSPACE_PAYMENT_ENV: sandbox
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
 
 jobs:
   track3:
@@ -108,6 +110,7 @@ jobs:
         run: |
           mkdir -p scripts/ops
           git show "${GITHUB_SHA}:scripts/ops/staging-performance-gate.mjs" > scripts/ops/staging-performance-gate.mjs
+          git show "${GITHUB_SHA}:scripts/ops/performance-evidence.mjs" > scripts/ops/performance-evidence.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}

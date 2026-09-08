@@ -1,3 +1,4 @@
+import {summarizePerformance,settlePerformanceBatch,requirePerformanceSandbox} from "./performance-evidence.mjs";
 import { createHmac, randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 
@@ -6,18 +7,11 @@ const ACCESS = String(process.env.PAWSPACE_UAT_ACCESS_CODE || '');
 const WEBHOOK_SECRET = String(process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX || '');
 const RUN_ID = String(process.env.PERF_RUN_ID || `perf-${Date.now()}-${randomUUID().slice(0,8)}`);
 const OUT = String(process.env.PERF_EVIDENCE_PATH || 'staging-performance.json');
-if (!BASE || !ACCESS || !WEBHOOK_SECRET) throw new Error('STAGING_URL, PAWSPACE_UAT_ACCESS_CODE, and RAZORPAY_WEBHOOK_SECRET_SANDBOX are required');
 
-const latencies = [];
+
 const failures = [];
 const timings = new Map();
-const percentile = (xs, p) => {
-  if (!xs.length) return 0;
-  const sorted = [...xs].sort((a,b)=>a-b);
-  return sorted[Math.min(sorted.length-1, Math.ceil(sorted.length*p)-1)];
-};
 function recordTiming(label, ms) {
-  latencies.push(ms);
   const list = timings.get(label) || [];
   list.push(ms);
   timings.set(label, list);
@@ -57,6 +51,9 @@ async function request(path, options = {}) {
   return {response, payload};
 }
 
+try {
+requirePerformanceSandbox(process.env);
+if (!BASE || !ACCESS || !WEBHOOK_SECRET) throw new Error('STAGING_URL, PAWSPACE_UAT_ACCESS_CODE, and RAZORPAY_WEBHOOK_SECRET_SANDBOX are required');
 const login = await request('/api/staging-login', {method:'POST', body:{action:'login', code:ACCESS, email:'founder@pawspace.in'}});
 const setCookie = login.response.headers.get('set-cookie') || '';
 const cookie = setCookie.split(';')[0];
@@ -159,7 +156,7 @@ while (prepared.length < 100 && candidateCursor < candidates.length) {
     return tryPrepareAssignment(candidates[index], index);
   });
   candidateCursor += width;
-  const results = await Promise.all(batch);
+  const results = await settlePerformanceBatch(batch);
   prepared.push(...results.filter(Boolean));
 }
 if (prepared.length !== 100) throw new Error(`Authoritative scheduler produced ${prepared.length}/100 assignments after ${candidateCursor} unique candidates (${skippedCapacityCandidates} expected capacity misses)`);
@@ -169,14 +166,14 @@ console.log(JSON.stringify({
 },null,2));
 
 // Required gate: 100 simultaneous canonical bookings.
-const bookingResults = await Promise.all(prepared.map(item => measured('booking', async () => {
+const bookingResults = await settlePerformanceBatch(prepared.map(item => measured('booking', async () => {
   const {payload} = await request('/api/canonical-bookings', {method:'POST',cookie,body:item.body});
   if (!payload?.data?.bookingId) throw new Error(`No bookingId for ${item.body.idempotencyKey}`);
   return {bookingId:String(payload.data.bookingId), item};
 })));
 
 // Required gate: 100 simultaneous duplicate/idempotency payment attempts against the same bookings.
-const replayResults = await Promise.all(bookingResults.map(({item}) => measured('duplicate-payment-booking-replay', async () => {
+const replayResults = await settlePerformanceBatch(bookingResults.map(({item}) => measured('duplicate-payment-booking-replay', async () => {
   const {payload} = await request('/api/canonical-bookings', {method:'POST',cookie,body:item.body});
   if (payload?.data?.duplicatePrevented !== true) throw new Error(`Replay was not marked duplicatePrevented for ${item.body.idempotencyKey}`);
   return payload.data;
@@ -203,7 +200,7 @@ if (!firstWebhook?.ok) throw new Error('First webhook delivery was not acknowled
 
 const webhookResults = [];
 for (let offset=0; offset<500; offset+=50) {
-  const chunk = await Promise.all(Array.from({length:Math.min(50,500-offset)}, () => measured('webhook-replay', async () => {
+  const chunk = await settlePerformanceBatch(Array.from({length:Math.min(50,500-offset)}, () => measured('webhook-replay', async () => {
     const {payload} = await request('/api/razorpay-webhook', {method:'POST',body:rawWebhook,headers:{'x-razorpay-signature':signature,'x-razorpay-event-id':eventId}});
     if (payload?.duplicate !== true) throw new Error('Webhook replay was not classified as duplicate');
     return payload;
@@ -213,7 +210,7 @@ for (let offset=0; offset<500; offset+=50) {
 
 let ledgerOk = 0;
 for (let offset=0; offset<10000; offset+=100) {
-  const chunk = await Promise.all(Array.from({length:100}, () => measured('ledger-query', async () => {
+  const chunk = await settlePerformanceBatch(Array.from({length:100}, () => measured('ledger-query', async () => {
     const {payload} = await request('/api/grooming-finance', {cookie});
     if (!payload || payload.source !== 'canonical Grooming booking/payment/invoice/reconciliation ledger') throw new Error('Unexpected grooming-finance payload');
     return true;
@@ -221,17 +218,21 @@ for (let offset=0; offset<10000; offset+=100) {
   ledgerOk += chunk.length;
 }
 
-const totalRequests = latencies.length;
-const p95 = percentile(latencies,0.95);
-const errorRate = totalRequests ? failures.length/totalRequests : 1;
-const metric = Object.fromEntries([...timings.entries()].map(([name,xs]) => [name,{count:xs.length,p95Ms:Number(percentile(xs,0.95).toFixed(2)),maxMs:Number(Math.max(...xs).toFixed(2))}]));
+const {metrics,thresholds} = summarizePerformance(timings,failures);
 const report = {
-  runId:RUN_ID, stagingUrl:BASE,
+  runId:RUN_ID, stagingUrl:BASE, pipelineComplete:true,
   setup:{assignmentCandidatesAttempted:candidateCursor,expectedCapacityMisses:skippedCapacityCandidates},
   counts:{assignments:prepared.length,bookings:bookingResults.length,duplicatePaymentAttempts:replayResults.length,webhookReplays:webhookResults.length,ledgerQueries:ledgerOk},
-  metrics:{totalRequests,p95Ms:Number(p95.toFixed(2)),errorRate:Number(errorRate.toFixed(6)),byOperation:metric},
-  thresholds:{p95Under750:p95<750,errorRateUnder1Percent:errorRate<0.01}, failures
+  metrics, thresholds, failures
 };
 await writeFile(OUT, JSON.stringify(report,null,2));
 console.log(JSON.stringify(report,null,2));
-if (prepared.length!==100 || bookingResults.length!==100 || replayResults.length!==100 || webhookResults.length!==500 || ledgerOk!==10000 || p95>=750 || errorRate>=0.01 || failures.length) process.exit(1);
+if (prepared.length!==100 || bookingResults.length!==100 || replayResults.length!==100 || webhookResults.length!==500 || ledgerOk!==10000 || Object.values(thresholds).some(passed=>!passed) || failures.length) process.exitCode=1;
+} catch (error) {
+  const report = {runId:RUN_ID,stagingUrl:BASE,pipelineComplete:false,
+    ...summarizePerformance(timings,failures),failures,
+    runFailure:String(error?.message || error)};
+  await writeFile(OUT,JSON.stringify(report,null,2));
+  console.error('Performance run failed; partial evidence saved.');
+  process.exitCode=1;
+}

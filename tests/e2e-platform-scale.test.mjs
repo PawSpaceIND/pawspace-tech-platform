@@ -1082,3 +1082,60 @@ test("E2E-999 result matrix", () => {
  * does the table exist? A missing table here means the code that writes to it throws in production.
  */
 
+
+// Hosted gate evidence must not allow the read-heavy workload to hide slow booking writes.
+import { summarizePerformance, settlePerformanceBatch, requirePerformanceSandbox } from '../scripts/ops/performance-evidence.mjs';
+test('hosted performance gate refuses slow booking p95 hidden by fast ledger reads', () => {
+  const report = summarizePerformance(new Map([['ledger-query',Array(10000).fill(50)],['booking',Array(100).fill(19000)]]),[]);
+  assert.equal(report.thresholds.p95Under750,true);
+  assert.equal(report.thresholds.everyOperationP95Under750,false);
+  assert.equal(report.metrics.byOperation.booking.p95Ms,19000);
+  assert.equal(summarizePerformance(new Map(),[]).thresholds.everyOperationP95Under750,false);
+  assert.equal(summarizePerformance(new Map([['booking',[750]]]),[]).thresholds.everyOperationP95Under750,false);
+});
+
+test('hosted performance batch waits for in-flight measurements after one request fails', async () => {
+  let finished=false;
+  await assert.rejects(settlePerformanceBatch([Promise.reject(new Error('fixture failure')),new Promise(resolve=>setTimeout(()=>{finished=true;resolve(1);},10))]),AggregateError);
+  assert.equal(finished,true);
+});
+
+test('hosted performance script saves partial evidence for all requests in a failed batch', async () => {
+  const {mkdtempSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');
+  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const {spawnSync}=await import('node:child_process');
+  const dir=mkdtempSync(join(tmpdir(),'pawspace-perf-evidence-'));
+  try {
+    const hook=join(dir,'transport.mjs'),out=join(dir,'report.json');
+    writeFileSync(hook,`let bookings=0;
+      globalThis.fetch=async(url,options)=>{
+        const path=new URL(url).pathname;
+        if(path==='/api/staging-login')return Response.json({}, {headers:{'set-cookie':'fixture=only; HttpOnly'}});
+        if(path==='/api/uat-scheduling')return Response.json({data:{provider:{id:'fixture-provider',name:'Fixture',model:'commission'}}});
+        if(path==='/api/canonical-bookings'){
+          const n=++bookings;await new Promise(resolve=>setTimeout(resolve,n===1?0:10));
+          return n===1?Response.json({error:'fixture rejection'},{status:503}):Response.json({data:{bookingId:'fixture-'+n}});
+        }
+        throw Error('Unexpected fixture endpoint '+path);
+      };`);
+    const result=spawnSync(process.execPath,['--import',hook,'scripts/ops/staging-performance-gate.mjs'],{cwd:process.cwd(),encoding:'utf8',timeout:15000,env:{...process.env,STAGING_URL:'https://fixture.invalid',PAWSPACE_UAT_ACCESS_CODE:'synthetic-only',RAZORPAY_WEBHOOK_SECRET_SANDBOX:'synthetic-only',PERF_EVIDENCE_PATH:out}});
+    assert.equal(result.status,1,result.stderr);
+    const report=JSON.parse(readFileSync(out,'utf8'));
+    assert.equal(report.pipelineComplete,false);
+    assert.equal(report.metrics.byOperation.assignment.count,100);
+    assert.equal(report.metrics.byOperation.booking.count,100);
+    assert.equal(report.failures.length,1);
+    assert.match(report.runFailure,/1 performance requests failed/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('hosted workload requires explicit sandbox locks before any request', () => {
+  const safe={APP_ENV:'staging',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',FORBID_PRODUCTION:'true'};
+  assert.doesNotThrow(()=>requirePerformanceSandbox(safe));
+  for (const name of Object.keys(safe)) {
+    for (const value of [undefined,'','TRUE',true,'live','production']) {
+      assert.throws(()=>requirePerformanceSandbox({...safe,[name]:value}),new RegExp(name));
+    }
+  }
+});
