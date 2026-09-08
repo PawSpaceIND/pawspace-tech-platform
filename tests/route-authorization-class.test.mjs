@@ -265,6 +265,7 @@ const UNLOADABLE_UNDER_STRIP_ONLY = [];
 // the authorized customer probe may show 400. Keep these explicit so adding a route-local guard does
 // not turn a correct customer path into a false ordering defect.
 const AUTHORIZED_PROBE_VALIDATION = new Map([
+  ["grooming-booking-change.GET", "customer probe holds scheduling.book; missing booking selector is validated only after authorization"],
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
   ["subscription-billing.GET", "customer probe holds scheduling.book; missing subscription selector is validated only after authorization"],
 ]);
@@ -515,3 +516,5 @@ test("a denied governance read performs no route-owned schema creation", async (
     assert.ok(!created.includes(owned), `a refused read created route-owned table ${owned}`);
   }
 });
+
+test("Grooming change preview refuses anonymous callers before selector validation",()=>{assert.ok(anonymousSweep.refused.includes("grooming-booking-change.GET"));assert.ok(lowPrivilegeSweep.validatedFirst.includes("grooming-booking-change.GET -> 400"));});
