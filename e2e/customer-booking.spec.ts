@@ -53,7 +53,7 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
   return page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: name }).first();
 }
 
-test("customer: discovery -> location -> grooming package -> slot/checkout surface", async ({ page }) => {
+test("customer: sandbox sign-in -> grooming checkout -> persisted booking", async ({ page }) => {
   await sandboxLogin(page);
   await ensureCustomerPet(page);
   await page.goto("/mobile-app");
@@ -88,4 +88,33 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
   await expect(choosePackage).toBeEnabled();
   await choosePackage.click();
   await expect(page.getByText(/Essential Bath|Bath & Basic|Complete Makeover|Just Trim/i).first()).toBeVisible();
+
+  await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
+  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42 Test Road, Indiranagar, Bengaluru");
+  await page.getByLabel("Pincode",{exact:true}).fill("560038");
+  await page.getByRole("button",{name:"Verify map",exact:true}).click();
+  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+
+  // Separate project slots while exercising the dates actually offered by the customer UI.
+  const ist=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+  const part=(type:string)=>Number(ist.find(value=>value.type===type)?.value);
+  const target=new Date(part("year"),part("month")-1,part("day")+(test.info().project.name==="mobile-chromium"?3:2));
+  const label=new Intl.DateTimeFormat("en-IN",{weekday:"short",day:"numeric",month:"short"}).format(target);
+  await page.getByRole("button",{name:label,exact:true}).click();
+  await page.getByRole("button",{name:/^11:00 AM–1:00 PM/}).click();
+  await page.getByRole("button",{name:"Review booking",exact:true}).click();
+  await expect(page.getByText("Review and confirm",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:/^Pay after service/}).click();
+  const created=page.waitForResponse(response=>response.url().includes("/api/canonical-bookings")&&response.request().method()==="POST");
+  await page.getByRole("button",{name:"Confirm booking",exact:true}).click();
+  const response=await created;
+  expect(response.status(),await response.text()).toBe(201);
+  const result=await response.json(),bookingId=String(result.data?.bookingId||"");
+  expect(bookingId).not.toBe("");
+  await expect(page.getByText("Your groomer is reserved.",{exact:true})).toBeVisible();
+  await expect(page.getByText(`BOOKING CONFIRMED · ${bookingId}`,{exact:true})).toBeVisible();
+  const saved=await page.context().request.get("/api/canonical-bookings");
+  expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
+  const rows=savedBody.bookings.filter((booking:{id:string})=>booking.id===bookingId);
+  expect(rows).toHaveLength(1);expect(rows[0].service_code).toBe("grooming");expect(rows[0].status).toBe("confirmed");
 });
