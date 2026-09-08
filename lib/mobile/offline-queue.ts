@@ -20,6 +20,14 @@ const STORAGE_KEY = "pawspace_offline_telemetry_queue";
 
 // In-memory queue fallback for non-native / test environments
 let memoryQueue: QueuedTelemetryItem[] = [];
+// Serialize read/modify/write operations, but never hold the lock during HTTP.
+let mutation: Promise<unknown> = Promise.resolve();
+function mutate<T>(operation: () => Promise<T>): Promise<T> {
+  const result = mutation.then(operation);
+  mutation = result.catch(() => undefined);
+  return result;
+}
+let activeFlush: Promise<{ flushed: number; remaining: number }> | null = null;
 
 export async function getOfflineQueue(): Promise<QueuedTelemetryItem[]> {
   try {
@@ -32,13 +40,12 @@ export async function getOfflineQueue(): Promise<QueuedTelemetryItem[]> {
       return value ? (JSON.parse(value) as QueuedTelemetryItem[]) : [];
     }
   } catch {
-    // Fall back to memory queue on storage failure
+    throw new Error("Could not read saved service updates. Please keep PawSpace open and try again.");
   }
   return [...memoryQueue];
 }
 
 export async function saveOfflineQueue(items: QueuedTelemetryItem[]): Promise<void> {
-  memoryQueue = [...items];
   try {
     const serialized = JSON.stringify(items);
     if (Capacitor.isNativePlatform()) {
@@ -46,8 +53,9 @@ export async function saveOfflineQueue(items: QueuedTelemetryItem[]): Promise<vo
     } else if (typeof localStorage !== "undefined") {
       localStorage.setItem(STORAGE_KEY, serialized);
     }
+    memoryQueue = [...items];
   } catch {
-    // Ignored in restricted environments
+    throw new Error("Could not save this update on your device. Please reconnect and try again.");
   }
 }
 
@@ -61,9 +69,12 @@ export async function enqueueOfflineTelemetry(
     retryCount: 0,
   };
 
-  const current = await getOfflineQueue();
-  current.push(newItem);
-  await saveOfflineQueue(current);
+  const current = await mutate(async () => {
+    const items = await getOfflineQueue();
+    items.push(newItem);
+    await saveOfflineQueue(items);
+    return items;
+  });
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("pawspace:offline-queue-updated", { detail: current.length }));
@@ -72,7 +83,14 @@ export async function enqueueOfflineTelemetry(
   return newItem;
 }
 
-export async function flushOfflineQueue(): Promise<{
+export function flushOfflineQueue(): Promise<{ flushed: number; remaining: number }> {
+  if (!activeFlush) {
+    activeFlush = performFlush().finally(() => { activeFlush = null; });
+  }
+  return activeFlush;
+}
+
+async function performFlush(): Promise<{
   flushed: number;
   remaining: number;
 }> {
@@ -83,11 +101,13 @@ export async function flushOfflineQueue(): Promise<{
 
   console.info(`[PawSpace Offline Queue] Flushing ${queue.length} stored telemetry items...`);
 
-  const remainingItems: QueuedTelemetryItem[] = [];
+  const delivered = new Set<string>();
+  const attempted = new Set<string>();
   let flushedCount = 0;
 
   // Process items sequentially to prevent server rate-limiting
   for (const item of queue) {
+    attempted.add(item.id);
     try {
       const response = await fetch(item.endpoint, {
         method: "POST",
@@ -95,25 +115,25 @@ export async function flushOfflineQueue(): Promise<{
         body: JSON.stringify(item.payload),
       });
 
-      // 2xx success or 409 conflict/already processed counts as completed
-      if (response.ok || response.status === 409) {
+      // A conflict is not proof of delivery. Only an acknowledged success removes data.
+      if (response.ok) {
         flushedCount++;
-      } else {
-        item.retryCount += 1;
-        if (item.retryCount < 5) {
-          remainingItems.push(item);
-        }
+        delivered.add(item.id);
       }
     } catch {
       // Network still failing or unreachable
-      item.retryCount += 1;
-      if (item.retryCount < 5) {
-        remainingItems.push(item);
-      }
+      // Retain every unacknowledged item, including after repeated failures.
     }
   }
 
-  await saveOfflineQueue(remainingItems);
+  const remainingItems = await mutate(async () => {
+    const latest = await getOfflineQueue();
+    const remaining = latest.filter((item) => !delivered.has(item.id)).map((item) =>
+      attempted.has(item.id) ? { ...item, retryCount: item.retryCount + 1 } : item
+    );
+    await saveOfflineQueue(remaining);
+    return remaining;
+  });
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(
@@ -127,7 +147,7 @@ export async function flushOfflineQueue(): Promise<{
 }
 
 export async function clearOfflineQueue(): Promise<void> {
-  await saveOfflineQueue([]);
+  await mutate(() => saveOfflineQueue([]));
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("pawspace:offline-queue-updated", { detail: 0 }));
   }

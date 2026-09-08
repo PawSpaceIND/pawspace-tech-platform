@@ -144,7 +144,7 @@ export default function GroomingUpload({
             headers: { "content-type": "application/json" },
             body: JSON.stringify(payload),
           });
-          if (!response.ok && response.status !== 404 && response.status !== 409) {
+          if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
         } catch {
@@ -162,10 +162,10 @@ export default function GroomingUpload({
 
       if (type === "checkin") {
         setCheckInPhoto(photo);
-        onCheckInPhotoUploaded?.(photo);
+        if (!isQueued) onCheckInPhotoUploaded?.(photo);
       } else {
         setCompletionPhoto(photo);
-        onCompletionPhotoUploaded?.(photo);
+        if (!isQueued) onCompletionPhotoUploaded?.(photo);
       }
 
       if (isQueued) {
@@ -177,9 +177,9 @@ export default function GroomingUpload({
             : "Completion photo captured successfully"
         );
       }
-    } catch (err: unknown) {
+    } catch {
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : "Error capturing photo");
+        setError("We couldn't save this photo yet. Please check camera access and your connection, then try again.");
       }
     } finally {
       if (isMountedRef.current) {

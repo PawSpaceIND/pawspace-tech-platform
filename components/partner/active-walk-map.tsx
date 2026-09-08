@@ -23,7 +23,7 @@ export interface ActiveWalkMapProps {
   sessionId?: string;
   providerId?: string;
   autoStart?: boolean;
-  onLocationPacket?: (packet: LocationPacket) => void;
+  onLocationPacket?: (packet: LocationPacket) => void | Promise<void>;
   className?: string;
 }
 
@@ -56,7 +56,7 @@ export default function ActiveWalkMap({
     Array<{ latitude: number; longitude: number; timestamp: number }>
   >([]);
   const [packetsSent, setPacketsSent] = useState(0);
-  const [lastPacketStatus, setLastPacketStatus] = useState<"idle" | "sending" | "success" | "error">("idle");
+  const [lastPacketStatus, setLastPacketStatus] = useState<"idle" | "sending" | "success" | "queued" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const watchIdRef = useRef<CallbackID | number | null>(null);
@@ -87,7 +87,7 @@ export default function ActiveWalkMap({
       setLastPacketStatus("sending");
       try {
         if (onLocationPacket) {
-          onLocationPacket(packet);
+          await onLocationPacket(packet);
           if (isMountedRef.current) {
             setPacketsSent((c) => c + 1);
             setLastPacketStatus("success");
@@ -112,9 +112,8 @@ export default function ActiveWalkMap({
             },
           });
           if (isMountedRef.current) {
-            setPacketsSent((c) => c + 1);
-            setLastPacketStatus("success");
-            setErrorMessage(null);
+            setLastPacketStatus("queued");
+            setErrorMessage("Your walk update is saved on this device and waiting to sync. Please keep PawSpace open.");
           }
           return;
         }
@@ -135,18 +134,14 @@ export default function ActiveWalkMap({
         });
 
         if (!response.ok) {
-          const body = (await response.json().catch(() => ({}))) as { error?: string };
-          // If offline or in testing without active booking session, record gracefully
-          if (response.status !== 404 && response.status !== 409) {
-            throw new Error(body.error || `HTTP ${response.status}`);
-          }
+          throw new Error("Walk update was not acknowledged");
         }
 
         if (isMountedRef.current) {
           setPacketsSent((c) => c + 1);
           setLastPacketStatus("success");
         }
-      } catch (err: unknown) {
+      } catch {
         // Fallback: Queue telemetry locally instead of dropping packet
         try {
           await enqueueOfflineTelemetry({
@@ -163,14 +158,13 @@ export default function ActiveWalkMap({
             },
           });
           if (isMountedRef.current) {
-            setPacketsSent((c) => c + 1);
-            setLastPacketStatus("success");
-            setErrorMessage("Offline: Telemetry packet saved locally to queue.");
+            setLastPacketStatus("queued");
+            setErrorMessage("Your walk update is saved on this device and waiting to sync. Please keep PawSpace open.");
           }
         } catch {
           if (isMountedRef.current) {
             setLastPacketStatus("error");
-            setErrorMessage(err instanceof Error ? err.message : "Failed to transmit telemetry packet");
+            setErrorMessage("We couldn't save this walk update. Please check your connection and try again.");
           }
         }
       }
@@ -193,7 +187,7 @@ export default function ActiveWalkMap({
           (position, err) => {
             if (!isMountedRef.current) return;
             if (err) {
-              setErrorMessage(err.message);
+              setErrorMessage("We can't find your location yet. Please check location access and move to an open area.");
               return;
             }
             if (position) {
@@ -236,9 +230,9 @@ export default function ActiveWalkMap({
             setRouteCoordinates((prev) => [...prev.slice(-49), { latitude: coords.latitude, longitude: coords.longitude, timestamp: coords.timestamp }]);
             void transmitLocationPacket(coords);
           },
-          (err) => {
+          () => {
             if (isMountedRef.current) {
-              setErrorMessage(err.message || "Failed to watch location");
+              setErrorMessage("We can't find your location yet. Please check location access and move to an open area.");
             }
           },
           { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 }
@@ -254,9 +248,9 @@ export default function ActiveWalkMap({
       } else {
         throw new Error("Geolocation is not supported on this platform");
       }
-    } catch (err: unknown) {
+    } catch {
       if (isMountedRef.current) {
-        setErrorMessage(err instanceof Error ? err.message : "Unable to initialize GPS tracking");
+        setErrorMessage("We couldn't start live tracking. Please allow location access and try again.");
         setIsTracking(false);
       }
     }
@@ -281,10 +275,10 @@ export default function ActiveWalkMap({
   }, [isNative]);
 
   useEffect(() => {
-    if (autoStart) {
-      void startTracking();
-    }
+    // Defer subscribing to the external device; cancel if the effect is replaced.
+    const startTimer = autoStart ? setTimeout(() => { void startTracking(); }, 0) : undefined;
     return () => {
+      clearTimeout(startTimer);
       void stopTracking();
     };
   }, [autoStart, startTracking, stopTracking]);

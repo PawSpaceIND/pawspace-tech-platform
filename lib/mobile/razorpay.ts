@@ -43,15 +43,15 @@ export type MobileRazorpayResult = MobileRazorpaySuccessResult | MobileRazorpayF
  */
 export function assertSandboxPaymentLocks(env?: Record<string, unknown>): void {
   const paymentEnv = String(
-    env?.PAWSPACE_PAYMENT_ENV || (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_ENV : "") || "sandbox"
+    env ? env.PAWSPACE_PAYMENT_ENV : (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_ENV : undefined)
   ).toLowerCase();
 
   const forbidProd = String(
-    env?.FORBID_PRODUCTION || (typeof process !== "undefined" ? process.env.FORBID_PRODUCTION : "") || "true"
+    env ? env.FORBID_PRODUCTION : (typeof process !== "undefined" ? process.env.FORBID_PRODUCTION : undefined)
   ).toLowerCase();
 
   const liveApproved = String(
-    env?.PAWSPACE_PAYMENT_LIVE_APPROVED || (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_LIVE_APPROVED : "") || "false"
+    env ? env.PAWSPACE_PAYMENT_LIVE_APPROVED : (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_LIVE_APPROVED : undefined)
   ).toLowerCase();
 
   if (paymentEnv !== "sandbox") {
@@ -66,7 +66,7 @@ export function assertSandboxPaymentLocks(env?: Record<string, unknown>): void {
     );
   }
 
-  if (liveApproved === "true") {
+  if (liveApproved !== "false") {
     throw new Error(
       "PAWSPACE PAYMENT SECURITY LOCK VIOLATION: PAWSPACE_PAYMENT_LIVE_APPROVED must remain false in sandbox runtime"
     );

@@ -580,7 +580,7 @@ test("Mobile network status component and offline-first UI listeners are mounted
 
   assert.match(statusSource, /Network\.addListener\(\s*["']networkStatusChange["']/);
   assert.match(statusSource, /flushOfflineQueue/);
-  assert.match(statusSource, /You are offline\. Service data is saving locally\./);
+  assert.match(statusSource, /You're offline\. Care updates saved on this device will retry/);
   assert.match(statusSource, /Triggering automatic offline queue flush/);
 
   // 2. Check layout mounts component
@@ -601,7 +601,6 @@ test("Mobile network status component and offline-first UI listeners are mounted
   assert.match(groomingSource, /type:\s*["']grooming_photo["']/);
   assert.match(groomingSource, /Offline: Photo saved to local queue\. Will sync automatically upon reconnection\./);
 });
-
 
 
 

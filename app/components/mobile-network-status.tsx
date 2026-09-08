@@ -20,15 +20,19 @@ export default function MobileNetworkStatus() {
     let isMounted = true;
     let listenerHandle: { remove: () => Promise<void> } | null = null;
     let cleanupWebListeners: (() => void) | null = null;
+    let messageTimer: ReturnType<typeof setTimeout> | undefined;
+    const reportSyncIssue = () => {
+      if (isMounted) setReconnectedMessage("We couldn't sync your care updates yet. Please keep PawSpace open and try reconnecting.");
+    };
 
     // Check initial queue count and network status
     void getOfflineQueue().then((q) => {
       if (isMounted) setQueuedCount(q.length);
-    });
+    }).catch(reportSyncIssue);
 
     void getNetworkStatus().then((status) => {
       if (isMounted) setIsOnline(status.connected);
-    });
+    }).catch(reportSyncIssue);
 
     const initNetworkWatcher = async () => {
       try {
@@ -37,6 +41,7 @@ export default function MobileNetworkStatus() {
             if (!isMounted) return;
             handleStatusChange(status.connected);
           });
+          if (!isMounted) await listenerHandle.remove();
         } else {
           // Web fallback with explicit listener references for safe teardown
           const onOnline = () => handleStatusChange(true);
@@ -60,17 +65,21 @@ export default function MobileNetworkStatus() {
       if (connected) {
         // Automatic reconnection flush
         console.info("[PawSpace Network] Reconnected. Triggering automatic offline queue flush...");
-        void flushOfflineQueue().then(({ flushed }) => {
+        void flushOfflineQueue().then(({ flushed, remaining }) => {
           if (!isMounted) return;
+          setQueuedCount(remaining);
           if (flushed > 0) {
             setReconnectedMessage(
-              `Back online. Synced ${flushed} saved service record${flushed > 1 ? "s" : ""}. All caught up for your petter half!`
+              remaining > 0
+                ? `Back online. ${flushed} care updates sent; ${remaining} still waiting to sync.`
+                : `Back online. Your ${flushed} saved care update${flushed > 1 ? "s are" : " is"} synced. Your Petter half, back in touch.`
             );
-            setTimeout(() => {
+            clearTimeout(messageTimer);
+            messageTimer = setTimeout(() => {
               if (isMounted) setReconnectedMessage(null);
             }, 4500);
-          }
-        });
+          } else if (remaining > 0) reportSyncIssue();
+        }).catch(reportSyncIssue);
       }
     };
 
@@ -92,8 +101,9 @@ export default function MobileNetworkStatus() {
 
     return () => {
       isMounted = false;
+      clearTimeout(messageTimer);
       if (listenerHandle) {
-        void listenerHandle.remove();
+        void listenerHandle.remove().catch(() => undefined);
       }
       if (cleanupWebListeners) {
         cleanupWebListeners();
@@ -121,24 +131,25 @@ export default function MobileNetworkStatus() {
         opacity: isVisible ? 1 : 0,
         pointerEvents: isVisible ? "auto" : "none",
         transition: "transform 350ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease",
-        background: showOffline ? "#e65100" : "#01261F",
+        background: showOffline ? "#8a3100" : "#01261F",
         color: "#ffffff",
         padding: "10px 16px",
         textAlign: "center",
-        fontSize: "12px",
+        fontSize: "14px",
         fontWeight: 600,
         boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
         gap: "10px",
+        flexWrap: "wrap",
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       {showOffline && (
         <>
           <span style={{ fontSize: "14px" }}>📡</span>
-          <span>You are offline. Service data is saving locally. Your petter half is keeping everything safe.</span>
+          <span>{"You're offline. Care updates saved on this device will retry when you're connected. Please keep PawSpace open."}</span>
           {queuedCount > 0 && (
             <span
               style={{

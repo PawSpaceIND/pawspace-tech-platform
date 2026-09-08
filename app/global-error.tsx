@@ -63,7 +63,7 @@ export default function GlobalError({
             Our servers are taking a quick walk. We&apos;re on it.
           </h1>
           <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 24px", color: "#5b6b66" }}>
-            PawSpace is taking a quick breath. Your pets, bookings, and payments are safe — reloading usually gets everything right back on track.
+            PawSpace is taking a quick breath. Please reload to try again. If you were paying, check your booking before making another payment.
           </p>
           <button
             type="button"

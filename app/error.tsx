@@ -18,7 +18,7 @@ export default function AppError({
   return (
     <RecoveryScreen
       title="Our servers are taking a quick walk. We're on it."
-      detail="Something took an unexpected pause while preparing this screen. Your bookings, pets, and payments are safe — trying again usually works."
+      detail="We couldn't finish loading this screen. Please try again. If you were paying, check your booking before making another payment."
       digest={error.digest}
       onRetry={reset}
     />
