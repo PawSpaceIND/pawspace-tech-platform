@@ -455,19 +455,21 @@ test("real execution: refund math deducts completed-session value exactly; clien
   assert.equal(replay.body.data.duplicatePrevented, true);
 });
 
-test("real execution: percent_captured fee and chargeable no-show change the math exactly as published", async () => {
+test("real execution: cancellation fees are refused while configured no-show treatment stays separate", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 4 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
-  // One staff-recorded no_show; policy says no-shows are chargeable + 10% fee on captured
+  // No-show treatment remains separate from the prohibited cancellation fee.
   await mutateTrainingSession(db, { sessionId: sessions[0].id, action: "no_show", actorId: "ops:staff", idempotencyKey: "ns-1", reason: "customer absent at start", staffOverride: true });
-  await call(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "percent_captured", feeValue: 10, noShowTreatment: "chargeable", effectiveFrom: "2026-08-01", reason: "fee policy for audit test" });
+  const rejected=await call(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "percent_captured", feeValue: 10, noShowTreatment: "chargeable", effectiveFrom: "2026-08-01", reason: "fee policy for audit test" });
+  assert.equal(rejected.status,400,"Cancellation fees cannot be configured");
+  const saved=await call(cancellationRoute.POST,"POST",{action:"configure_policy",cityId:"blr",feeType:"none",feeValue:0,noShowTreatment:"chargeable",effectiveFrom:"2026-08-01",reason:"No cancellation fee policy"});assert.equal(saved.status,200,JSON.stringify(saved.body));
   const req = await call(cancellationRoute.POST, "POST", { action: "request", bookingId: "B1", reason: "relocating out of city", idempotencyKey: "can-2" });
   const calc = req.body.data.calculation;
   assert.equal(calc.chargeableSessions, 1, "chargeable no_show counts as used");
   assert.equal(calc.usedValue, 2000);
-  assert.equal(calc.cancellationFee, 400, "10% of 4000 captured");
-  assert.equal(calc.calculatedRefund, 1600, "4000 - 2000 used - 400 fee");
+  assert.equal(calc.cancellationFee, 0, "No cancellation fee");
+  assert.equal(calc.calculatedRefund, 2000, "4000 captured minus 2000 chargeable service value");
 });
 
 test("real execution: approval enforces segregation of duties, cancels everything atomically, and the refund instruction carries the server-computed amount", async () => {
