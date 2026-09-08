@@ -8,7 +8,7 @@ import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
-import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
+import { reserveUatSchedule, SchedulingRefusal } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import { groomingPricingPackageCode } from "../../lib/grooming-pricing-code";
 import CustomerLogin, { type LoggedInCustomer } from "./customer-login";
@@ -163,7 +163,7 @@ export default function GroomingFlow({customer: signedInCustomer,initial,onVerif
     */
    void fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`)
      .then(async response=>{const body=await response.json() as{data?:ProviderProof;error?:string};if(response.ok&&body.data)setProviderProof(body.data);})
-     .catch(()=>{/* no proof rather than an invented one */});setBookedId(booking.id);setDone(true);}catch{setScheduleError(committedBookingId?`Booking ${committedBookingId} is confirmed and your groomer is reserved, but we couldn’t finish saving the care details. Do not rebook - contact support with this booking id.`:"We couldn’t confirm this appointment. Check My bookings before trying again, or ask the PawSpace care team for help.");}finally{setScheduling(false);}};
+     .catch(()=>{/* no proof rather than an invented one */});setBookedId(booking.id);setDone(true);}catch(error){setScheduleError(committedBookingId?`Booking ${committedBookingId} is confirmed and your groomer is reserved, but we couldn’t finish saving the care details. Do not rebook - contact support with this booking id.`:error instanceof SchedulingRefusal?error.message:"We couldn’t confirm this appointment. Check My bookings before trying again, or ask the PawSpace care team for help.");}finally{setScheduling(false);}};
  async function acceptIdentity(identity:LoggedInCustomer, matchChoice?:Record<string,string>) {
   if(savingDrafts)return;
   setVerifiedIdentity(identity);setSavingDrafts(true);setDraftSaveError("");
