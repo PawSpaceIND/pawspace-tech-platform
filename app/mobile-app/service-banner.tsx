@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import styles from "./service-banner.module.css";
 import { getServiceMediaByName, getServiceVideoUrl } from "./service-media";
 import ServiceHero from "./service-hero";
+import { SERVICE_ART } from "./service-art";
 
 const HOME_BANNER = {
   image: "/assets/banners/sitter-hug-golden.jpg",
   alt: "PawSpace caregiver with a happy pet",
   headline: "Real care. Real people.",
   sub: "One familiar PawSpace experience across every service",
-  review: "Google review carousel",
+  review: "PawSpace care details",
 };
 
 export default function ServiceBanner({ service, compact }: { service?: string; compact?: boolean }) {
@@ -24,10 +25,11 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
   const videoSrc = media ? getServiceVideoUrl(media.serviceCode) : null;
   const activeVisual = visualSelection.service === service ? visualSelection.index : 0;
   const safeVisualIndex = media ? Math.min(activeVisual, media.visuals.length - 1) : 0;
-  const mainVisual = media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
+  const serviceArt = media ? SERVICE_ART[media.serviceCode] : undefined;
+  const mainVisual = (safeVisualIndex === 0 ? serviceArt : undefined) ?? media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
   const headline = media?.headline ?? HOME_BANNER.headline;
   const sub = media?.sub ?? HOME_BANNER.sub;
-  const review = service ? `Google review carousel · ${service}` : HOME_BANNER.review;
+  const review = service ? `Care details · ${service}` : HOME_BANNER.review;
   const breedOptions = media?.breedLine.split(" · ") ?? [];
   const supportsIntersectionObserver = typeof window !== "undefined" && "IntersectionObserver" in window;
   const videoVisibleEnough = supportsIntersectionObserver ? videoInView : typeof window !== "undefined";
@@ -63,7 +65,7 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
 
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
-      <div className={styles.adSlot}><small>PAWSPACE MEDIA</small><b>Offer / education / partner placement</b></div>
+      <div className={styles.adSlot}><small>PAWSPACE CARE GUIDE</small><b>Get to know your pet’s care</b></div>
       <figure>
         <div className={styles.visualStack}>
           <img className={styles.heroImage} src={mainVisual.image} alt={mainVisual.alt} loading="lazy" />
@@ -88,6 +90,7 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
           </div>}
         </div>
         <figcaption>
+          {safeVisualIndex === 0 && serviceArt?.illustrated && <small>AI service illustration · not your assigned caregiver</small>}
           <h3>{headline}</h3>
           <p>{sub}</p>
         </figcaption>
@@ -114,9 +117,8 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
       </section>}
 
       <div className={styles.reviews} aria-label={review}>
-        <div><b>4.9 ★</b><span>Google Reviews</span></div>
-        <p>{review}</p>
-        <small>Scroll recent verified customer feedback here</small>
+        <div><b>Care you can understand</b></div>
+        <p>Compare what is included, share your pet’s needs and review the details before booking.</p>
       </div>
     </section>
   );

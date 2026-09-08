@@ -6,6 +6,7 @@
 .card { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 12px; margin: -26px 14px 0; border: 1px solid var(--ps-border, #e8e2d8); border-radius: 18px; padding: 14px 15px; background: var(--ps-surface, #fff); box-shadow: 0 14px 30px rgba(0,0,0,.10); }
 .badge { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 13px; background: var(--ps-primary, #01261f); color: var(--ps-accent, #e6b34e); font-size: 19px; line-height: 1; }
 .copy { min-width: 0; }
+.artNote{position:absolute;bottom:8px;left:10px;right:10px;z-index:1;width:fit-content;max-width:calc(100% - 20px);padding:5px 8px;border-radius:8px;background:#20152be6;color:#fff;font-size:12px;line-height:1.4}
 .copy h2 { margin: 0; color: var(--ps-text, #21201e); font-size: 18px; font-weight: 800; line-height: 1.2; }
 .copy p { margin: 3px 0 0; color: var(--ps-muted, #6f6a63); font-size: 12.5px; line-height: 1.45; }
 .copy ul { display: flex; flex-wrap: wrap; gap: 5px 6px; margin: 8px 0 0; padding: 0; list-style: none; }

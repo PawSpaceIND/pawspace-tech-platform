@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./premium-discovery-home.module.css";
+import { SERVICE_ART } from "./service-art";
 
 export type DiscoveryService = {
   name: string;
@@ -16,17 +17,6 @@ type CustomerPet = { name: string; profile?: { photo?: string } };
 type CustomerBooking = { id: string; serviceCode: string; packageName: string; scheduledStart: string; status: string };
 type CustomerOffer = { code: string; description: string; autoApply: boolean };
 
-const PHOTO: Record<string, string> = {
-  grooming: "/assets/pawspace-doorstep.png",
-  dog_training: "/assets/pawspace-home.png",
-  boarding: "/assets/banners/boarding-puppy-hug.jpg",
-  pet_sitting: "/assets/banners/sitting-woman-cat.jpg",
-  pet_taxi: "/assets/banners/taxi-car-window.jpg",
-  dog_walking: "/assets/banners/walking-husky-forest.jpg",
-  food: "/assets/banners/food-prep-bowl.jpg",
-  relocation: "/assets/banners/taxi-vintage-truck.jpg",
-};
-
 const PROMISE: Record<string, string> = {
   grooming: "Salon-grade care at home",
   dog_training: "Build better behaviour",
@@ -39,7 +29,7 @@ const PROMISE: Record<string, string> = {
 };
 
 const CAMPAIGNS = [
-  { eyebrow: "PAWSPACE OFFER", title: "Complete grooming, clearly compared", copy: "See every inclusion before you choose a dog or cat package.", cta: "Compare packages", serviceCode: "grooming" },
+  { eyebrow: "CARE GUIDE", title: "Complete grooming, clearly compared", copy: "See every inclusion before you choose a dog or cat package.", cta: "Compare packages", serviceCode: "grooming" },
   { eyebrow: "TRAINING GUIDE", title: "Better walks start at home", copy: "Explore how PawSpace trainers build calm leash habits together with pet parents.", cta: "Explore training", serviceCode: "dog_training" },
   { eyebrow: "PAWSPACE MEDIA", title: "Your neighbourhood, pet-ready", copy: "Service education and approved local PawSpace campaigns appear here.", cta: "Browse services", serviceCode: "grooming" },
 ] as const;
@@ -177,7 +167,7 @@ export default function PremiumDiscoveryHome({
           const symbols: Record<string, string> = { boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
           return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
             <div className={styles.cardPhoto}>
-              <img src={PHOTO[service.serviceCode] || service.image} alt={featured ? `PawSpace ${service.name} at home` : service.imageAlt} loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
+              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
               <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
             </div>
             <button aria-label={`${cta(service.serviceCode)} · ${service.name}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : <><span className={styles.ctaLabel}>{cta(service.serviceCode)}</span><span aria-hidden="true">↗</span></>}</button>
@@ -185,6 +175,7 @@ export default function PremiumDiscoveryHome({
         })}
       </div>
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
+      <p className={styles.artDisclosure}>Service images include AI illustrations. Your assigned caregiver’s verified profile is shown separately.</p>
     </section>
 
     <section className={styles.media} aria-label="Featured promotion">
