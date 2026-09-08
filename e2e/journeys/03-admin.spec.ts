@@ -50,3 +50,44 @@ test("an admin can read customer records the customer role could not", async ({ 
   expect(res.status(), "admin must not be refused for lack of permission").not.toBe(403);
   expect(res.status(), "admin read must not be a server error").toBeLessThan(500);
 });
+
+// Controlled response regressions for employee UI states; these are not complete staff personas.
+test("scheduling read failure is unknown, never an empty successful day", async ({ page }) => {
+  let fail = true;
+  await page.route("**/api/uat-scheduling?*", async route => {
+    const date = new URL(route.request().url()).searchParams.get("date");
+    await route.fulfill({status:fail?503:200, contentType:"application/json", body:JSON.stringify(fail?{error:"Schedule temporarily unavailable"}:{data:{date,providers:[],total:0}})});
+  });
+  await page.goto("/team/scheduling");
+  await expect(page.getByRole("alert")).toContainText("Schedule temporarily unavailable");
+  await expect(page.getByText("Schedule unavailable",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Nothing scheduled for/)).toHaveCount(0);
+  fail=false;
+  await page.getByRole("button",{name:"Refresh",exact:true}).click();
+  await expect(page.getByText(/Nothing scheduled for/)).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("Control scheduling reads real rules and saves the selected location", async ({ page }) => {
+  const saved:Array<Record<string,unknown>>=[];
+  let submitted:Record<string,unknown>|undefined;
+  await page.route("**/api/scheduling-rules",async route=>{
+    if(route.request().method()==="POST"){
+      submitted=route.request().postDataJSON();
+      saved.push({id:"E2E-RULE",name:submitted?.name,service_code:submitted?.serviceCode,city_id:submitted?.cityId,zone_id:submitted?.zoneId,active:1});
+      await route.fulfill({status:201,contentType:"application/json",body:JSON.stringify({data:{id:"E2E-RULE"}})});
+    }else await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:saved})});
+  });
+  await page.goto("/control");
+  await page.getByRole("button",{name:"Auto-scheduling",exact:false}).click();
+  await page.getByRole("button",{name:"Scheduling rules",exact:true}).click();
+  await expect(page.getByText("No custom scheduling rules are saved.")).toBeVisible();
+  await page.getByLabel("Rule name",{exact:true}).fill("South zone rating");
+  await page.getByLabel("Location",{exact:true}).selectOption("blr-south");
+  await page.getByLabel("Required value",{exact:true}).fill("4.7");
+  await page.getByRole("button",{name:"Save & activate rule",exact:true}).click();
+  await expect(page.getByText("South zone rating",{exact:true})).toBeVisible();
+  expect(submitted?.zoneId).toBe("blr-south");
+  expect(submitted?.cityId).toBe("blr");
+  await expect(page.getByRole("button",{name:"Create/reset test shortlist"})).toHaveCount(0);
+});
