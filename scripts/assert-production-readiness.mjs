@@ -4,7 +4,8 @@
 // ENFORCING (the profile resolves to "production", e.g. PAWSPACE_PRODUCTION_ENFORCE=true): every
 // declared service must have its driver, production secrets, configuration and handlers in place.
 // Production enforcement also permanently forbids test/UAT credential aliases and requires payments
-// to remain sandbox-only with live approval explicitly disabled. A single gap exits non-zero.
+// to remain sandbox-only with live approval explicitly disabled. A single gap exits non-zero unless
+// the current release explicitly defers IDfy in Production Sign-Off; that waiver never applies to deploy-production.
 //
 // DRY RUN (any other profile): the guard cannot certify anything, so it returns the non-signable result
 // and separately reports the gaps that would block enforcement. Only variable NAMES are ever printed.
@@ -20,6 +21,8 @@ import {
 
 const env = process.env;
 const STRICT_DRY_RUN = String(env.PAWSPACE_READINESS_DRY_RUN_STRICT ?? "").trim() === "true";
+const IDFY_DEFERRED_RELEASE = String(env.PAWSPACE_IDFY_DEFERRED_RELEASE ?? "").trim() === "true";
+const IDFY_SERVICE_ID = "idfy_provider_verification";
 
 function assertProductionCliInvariants() {
   if (!isProductionProfile(env)) return;
@@ -34,6 +37,30 @@ function assertProductionCliInvariants() {
     problems.push("production: payment environment must be locked to sandbox with live approval disabled");
   }
   if (problems.length) throw new ProductionConfigurationError(problems);
+}
+
+function productionCertification() {
+  assertProductionCliInvariants();
+  if (!IDFY_DEFERRED_RELEASE) return assertProductionReadiness(env);
+
+  // The current release may defer IDfy configuration at sign-off only. All other production services,
+  // handlers, canonical credentials, anti-override rules, and the sandbox payment lock remain hard gates.
+  const enforcedRegistry = PRODUCTION_SERVICE_REGISTRY.filter(service => service.id !== IDFY_SERVICE_ID);
+  const result = assertProductionReadiness(env, enforcedRegistry);
+  const deferredWarnings = collectProductionReadinessProblems(env, PRODUCTION_SERVICE_REGISTRY)
+    .filter(problem => String(problem).startsWith(`${IDFY_SERVICE_ID}:`));
+
+  for (const warning of deferredWarnings) {
+    console.error(`::warning title=Deferred IDfy production requirement::${warning}`);
+  }
+
+  return {
+    ...result,
+    servicesChecked: PRODUCTION_SERVICE_REGISTRY.length,
+    servicesEnforced: enforcedRegistry.length,
+    idfyDeferred: true,
+    deferredWarnings,
+  };
 }
 
 function dryRunGaps() {
@@ -79,8 +106,7 @@ function emitStepSummary(gaps, profile) {
 
 try {
   if (isProductionProfile(env)) {
-    assertProductionCliInvariants();
-    console.log(JSON.stringify(assertProductionReadiness(env)));
+    console.log(JSON.stringify(productionCertification()));
   } else {
     const profile = deploymentProfile(env);
     const result = assertProductionReadiness(env);
