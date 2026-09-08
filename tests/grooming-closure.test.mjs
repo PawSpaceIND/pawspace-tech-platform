@@ -95,7 +95,7 @@ test("Grooming policy sabotage: locked or late changes are refused in enforce mo
   };
   const soon = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
   const cancel = evaluateBookingChange(enforced, { action: "cancel", scheduledStart: soon, status: "confirmed", bookingAmount: 1899 });
-  assert.equal(cancel.refundPercent, 0, "late cancellation cannot invent a refund");
+  assert.equal(cancel.refundPercent, 100, "No cancellation fee overrides the legacy late penalty");
   const reschedule = evaluateBookingChange(enforced, { action: "reschedule", scheduledStart: soon, status: "confirmed", bookingAmount: 1899, rescheduleCount: 0 });
   assert.equal(reschedule.allowed, false, "late reschedule fails closed when policy disables it");
   const locked = evaluateBookingChange(enforced, { action: "cancel", scheduledStart: soon, status: "completed", bookingAmount: 1899 });
