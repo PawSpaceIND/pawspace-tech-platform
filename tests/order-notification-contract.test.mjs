@@ -22,7 +22,7 @@ test("the real five-minute scheduler runs the order notification sweep",async()=
 test("customer notification API is ownership guarded and supports read acknowledgement",async()=>{
  const source=await read("app/api/order-notifications/route.ts");
  assert.match(source,/requireCustomerOwnership/);
- assert.match(source,/runOrderNotificationSweep/);
+ assert.doesNotMatch(source,/runOrderNotificationSweep/,"customer reads must not run platform-wide delivery sweeps");
  assert.match(source,/markOrderNotificationRead/);
  assert.match(source,/action!=="mark_read"/);
 });

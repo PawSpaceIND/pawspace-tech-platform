@@ -86,3 +86,11 @@ A connected failure was found after the review-to-case fix: the staff alert swee
 | Hosted execution | Open. No deployed scheduler cadence, external notification provider, load/reconnect or hosted payment-lock evidence. |
 
 Validation: 62 selected tests passed with no failures or skips. Build/artifact validation and typecheck were rerun for the final source. These overlap previous selections and are not additive unique test counts. Previously dead-lettered notices are not automatically replayed by this change. General customer/provider chat, other notification types, real-time inbox refresh and external delivery remain open. A separate local request to `/api/order-notifications` returned 403 for the demo customer; that independent notification surface remains to be investigated.
+
+## Order-notification access and acknowledgement increment
+
+The separate `/api/order-notifications` 403 found during the local demo is fixed by explicitly routing to its customer ownership checks. GET no longer runs the platform-wide sweep; that sweep remains wired to the background scheduler. Customer responses omit internal payloads and transport errors. Unread counts cover the customer's full inbox, even when the response is limited. Read acknowledgements reject cross-origin requests and preserve the first read timestamp on retry. The UI now exposes load/read failures and retry controls instead of silently claiming an empty inbox.
+
+Evidence: the real gateway policy, notification emitter, customer route and transactional SQLite adapter are exercised together. Tests verify duplicate event handling, customer isolation, anonymous rejection, cross-origin refusal, missing-notification 404, stable repeat acknowledgement, no GET-triggered messages/alerts, unread counts beyond the returned page and no payment writes. 18 selected tests passed; build/artifact validation and typecheck passed. The local app browser reused its sandbox customer session and opened the real order inbox without the earlier permission failure.
+
+This closes the observed access/read-side-effect defects, not the complete order-notification flow. External delivery reconciliation, general chat transport, older-item UI pagination, sign-in changes without reload, all booking event sources and deployed scheduler evidence still require work. No live send or financial transaction was performed.

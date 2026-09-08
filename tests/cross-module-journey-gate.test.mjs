@@ -565,3 +565,46 @@ for (const surface of ["service-review", "booking-rating"]) test(`connected ${su
   assert.equal((await customer360.buildCustomer360(db,'C-REVIEW-FLOW'))[0].openTicketCount,0);
   assert.deepEqual(sqlite.prepare('SELECT * FROM booking_payments').all(),paymentBefore);
 });
+
+test('order notification journey: gateway ownership, customer read, repeat acknowledgement and no page-triggered delivery', async () => {
+  const {sqlite,db}=world();
+  const notifications=await import('../lib/order-notification-governance.ts');
+  const route=await import('../app/api/order-notifications/route.ts');
+  const gateway=await import('../lib/api-gateway.ts');
+  const identity=await import('../lib/identity-binding.ts');
+  const sessions=await import('../lib/platform-session.ts');
+  seedCustomer(sqlite,{customerId:'C-ORDER-NOTICE',name:'Order notification demo',phone:'9876500117',email:'order-notice@example.test'});
+  createBooking(sqlite,{bookingId:'B-ORDER-NOTICE',customerId:'C-ORDER-NOTICE',serviceCode:'grooming',amount:1200,start:'2026-07-16T05:00:00Z',end:'2026-07-16T06:00:00Z',status:'cancelled'});
+  const binding=await identity.upsertIdentityBinding(db,{identitySource:'workspace',principalType:'email',principalKey:'order-notice@example.test',subjectType:'customer',subjectId:'C-ORDER-NOTICE',actorId:OPS,reason:'verified fixture identity'});
+  const issued=await sessions.issuePlatformSession(db,{bindingId:binding.id,identitySource:'workspace',principalType:'email',principalKey:'order-notice@example.test',subjectType:'customer',subjectId:'C-ORDER-NOTICE'});
+  const event={key:'cancel-order-notice',customerId:'C-ORDER-NOTICE',cityId:'blr',bookingId:'B-ORDER-NOTICE',serviceCode:'grooming',eventType:'booking_cancelled',title:'Booking cancelled',body:'Your booking cancellation is recorded.',severity:'warning',sourceType:'booking_lifecycle_event',sourceId:'EVENT-CANCEL-NOTICE',actorId:OPS};
+  const created=await notifications.emitOrderNotification(db,event);
+  assert.equal((await notifications.emitOrderNotification(db,event)).duplicatePrevented,true);
+  const counts=()=>['order_notifications','communication_messages','communication_outbox','staff_alerts'].map(table=>sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n);
+  const before=counts();
+  const request=(path='',data)=>new Request('https://app.pawspace.in/api/order-notifications'+path,{method:data?'POST':'GET',headers:{cookie:`${sessions.PLATFORM_SESSION_COOKIE}=${issued.token}`,origin:'https://app.pawspace.in','content-type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
+  const call=async req=>{const access=await gateway.authorizeApiRequest(req,{DB:db});assert.ok(!(access instanceof Response));return req.method==='POST'?route.POST(req):route.GET(req);};
+  const read=await call(request('?customerId=C-ORDER-NOTICE'));
+  assert.equal(read.status,200,await read.clone().text());
+  const visible=(await read.json()).data.items[0];assert.equal(visible.id,created.notificationId);assert.equal(visible.payload_json,undefined);assert.equal(visible.delivery_error,undefined);
+  assert.deepEqual(counts(),before,'customer reads do not enqueue or generate other notifications');
+  assert.equal((await call(request('?customerId=another-customer'))).status,403);
+  assert.ok((await route.GET(new Request('https://app.pawspace.in/api/order-notifications?customerId=C-ORDER-NOTICE'))).status>=400);
+  const body={customerId:'C-ORDER-NOTICE',notificationId:created.notificationId,action:'mark_read'};
+  assert.equal((await call(request('',{...body,customerId:'another-customer'}))).status,403);
+  assert.equal((await call(request('',{...body,notificationId:'missing-notice'}))).status,404);
+  const crossOrigin=request('',body);crossOrigin.headers.set('origin','https://other.example');
+  assert.equal((await call(crossOrigin)).status,403);
+  const acknowledged=await call(request('',body));
+  assert.equal(acknowledged.status,200);
+  const first=(await acknowledged.json()).data.readAt;
+  // Repeating a read must preserve the original acknowledgement time.
+  sqlite.prepare('UPDATE order_notifications SET read_at=? WHERE id=?').run(first-1000,created.notificationId);
+  assert.equal((await (await call(request('',body))).json()).data.readAt,first-1000);
+  assert.equal((await (await call(request('?customerId=C-ORDER-NOTICE'))).json()).data.unread,0);
+  assert.deepEqual(counts(),before);
+  const second=await notifications.emitOrderNotification(db,{...event,key:'older-unread',occurredAt:1});
+  const limited=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1'))).json()).data;
+  assert.equal(limited.items.length,1);assert.equal(limited.items[0].status,'read');assert.equal(limited.unread,1,'unread count includes notices outside the current page');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,0,'notification acknowledgement never moves money');
+});

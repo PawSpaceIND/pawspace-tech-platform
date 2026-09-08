@@ -82,3 +82,9 @@ The fix spans communications, customer inbox, ratings and complaints: overdue-ca
 62 focused regressions passed. The selected tests include rollback/retry, duplicate prevention, authorization, deterministic pagination, scheduling, opt-out and stale-case suppression while preserving payment/analytics invariants. Build and typecheck were rerun. The standalone Playwright test could not launch under macOS sandbox restrictions; its browser execution remains open. The local app browser supplied the UI evidence described above, including an offline error/Retry state.
 
 See the connected-flow protocol for stage-by-stage evidence and limitations. This increment does not close general chat, all notifications, the full CX inbox, or any module at 95%. Existing dead letters are not automatically replayed. Hosted environment, external delivery, Operations live updates and churn telemetry remain open.
+
+### Order-notification follow-through
+
+Fixed the customer gateway 403 on the independent order inbox, removed the global notification sweep from customer GET, protected cross-origin read acknowledgements, preserved their original timestamp on retry and corrected unread totals beyond the current page. Customer responses omit internal payload/transport details. Load/read failures now remain visible with retry controls.
+
+18 focused tests passed, with build/artifact validation and typecheck successful. The authenticated local browser opened the real order inbox successfully. The connected protocol records coverage and remaining transport, pagination, identity-refresh and deployed checks; no broader module closure is claimed.
