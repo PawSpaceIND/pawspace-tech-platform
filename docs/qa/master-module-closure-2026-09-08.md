@@ -104,3 +104,8 @@ Connected ordinary order chat messages to internal delivery after validating the
 ### Provider chat authorization
 
 Fixed idempotency replay returning message content before current provider assignment/suspension checks. Keys now remain bound to the provider's chat activity and conversation. Assignment-store failures fail closed in send/read paths rather than silently trusting fallback ownership. Eleven focused tests passed with build/artifact validation and typecheck; complete provider/customer chat UI and takeover journeys remain open.
+
+
+### Atomic staff takeover and AI resume
+
+Handoff lifecycle transitions now atomically update ownership, SLA, assignment/audit history and AI session state. Concurrent transitions have a single winner; failures roll back and remain retryable. Wrong-customer duplicate requests are rejected. Twenty-nine selected tests passed, including six new rollback/concurrency regressions, with build/artifact validation and typecheck successful. Full connected browser/deployed handoff readiness is still open; see the protocol for evidence limits.

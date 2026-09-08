@@ -118,3 +118,12 @@ The provider send path returned earlier message content for an idempotency key b
 Provider send/read assignment lookups also distinguish a genuinely absent legacy table from database errors. Store failures stop access instead of falling back to potentially stale canonical booking ownership.
 
 11 focused tests passed, covering valid replay without duplicate activity, reassignment, suspension, another sender's key, assignment-store failure and existing provider communication boundaries. Build/artifact validation and typecheck passed. This is service/route-source evidence, not a complete customer-provider browser journey. Booking-created conversation wiring, provider chat UI, offline routing, staff takeover, payload visibility and measured real-time behavior remain open. No payment or external communication was performed.
+
+
+## Atomic AI-to-staff handoff
+
+Handoff requests, staff takeover and explicit AI resume now commit handoff state, assignment history, canonical thread ownership/SLA, audit events and optional orchestrator session state in one D1 batch. A conditional event claims each transition; all related writes depend on that event, so concurrent contenders cannot overwrite the winner. Failed session writes propagate and roll back instead of being swallowed. Request retries validate the thread/customer pair before returning an existing handoff.
+
+29 selected tests passed, including six new executed transaction tests using a serialized, rollback-capable SQLite D1 adapter. Faults injected at the final session update leave the entire prior ownership state intact; removing the fault permits retry. Concurrent request/takeover/resume tests verify one active handoff/assignment, one transition event and conflict responses for losing transitions. The orchestrator remains blocked while queued or staff-owned and can reply after explicit successful resume. Build/artifact validation and typecheck passed.
+
+This provides service/database/orchestrator evidence. Staff browser controls, deployed D1 races, messages already in flight at takeover, provider presence routing, customer-provider UI and complete module readiness remain open. No external message or finance transaction was performed.
