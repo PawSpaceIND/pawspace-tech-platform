@@ -49,7 +49,7 @@ export async function listConversationThreads(db:D1Database,input:{customerId?:s
 export async function getConversation(db:D1Database,threadId:string,scope:ConversationScope){await ensureConversationGovernance(db);const thread=await db.prepare("SELECT * FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread)return null;const [participants,messages,assignments]=await Promise.all([db.prepare("SELECT participant_type,participant_id,display_ref,role,created_at FROM communication_participants WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,created_by,created_at,updated_at FROM communication_messages WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,assigned_to,assigned_by,status,reason,created_at,ended_at FROM conversation_assignments WHERE thread_id=? ORDER BY created_at DESC").bind(threadId).all<Row>()]);
  const visibleParticipants=participants.results.filter(item=>scope==="staff"||String(item.participant_type)!=="provider");
  const visibleMessages=messages.results.map(item=>{let payload:Record<string,unknown>={};try{payload=JSON.parse(String(item.payload_json||"{}")) as Record<string,unknown>}catch{}if(scope!=="staff"){delete payload.internalNote;delete payload.providerPhone;delete payload.customerPhone;}const rest={...item};delete rest.payload_json;return{...rest,payload};});
- return{thread:scope==="staff"?await conversationStaffContext(db,thread):thread,participants:visibleParticipants,messages:visibleMessages,assignments:scope==="staff"?assignments.results:[]};
+ return{thread:scope==="staff"?await conversationStaffContext(db,thread):thread,participants:visibleParticipants,messages:visibleMessages,assignments:scope==="staff"?assignments.results:[],notes:scope==="staff"?await conversationInternalNotes(db,threadId):[]};
 }
 
 export async function recordInboundMessage(db:D1Database,input:{threadId:string;customerId:string;channel:CommunicationChannel;payload:Record<string,unknown>;provider:string;providerReference:string;eventId:string;createdBy:string}){await ensureConversationGovernance(db);const existing=await db.prepare("SELECT id FROM communication_messages WHERE provider_reference=? AND provider=? LIMIT 1").bind(input.providerReference,input.provider).first<Row>();if(existing)return{id:String(existing.id),duplicatePrevented:true};const thread=await db.prepare("SELECT customer_id,status FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();if(!thread||String(thread.customer_id)!==input.customerId)throw new Error("Conversation thread/customer mismatch");if(String(thread.status)==="closed")throw new Error("Closed conversation cannot accept a new inbound message until reopened");const now=Date.now(),id=`MSG-${crypto.randomUUID().slice(0,14).toUpperCase()}`;await db.batch([
@@ -75,4 +75,23 @@ export async function setConversationStatus(db:D1Database,input:{threadId:string
  ]);
  if(Number(results[0]?.meta?.changes||0)!==1)throw new Response("Conversation thread not found",{status:404});
  return{threadId:input.threadId,status:input.status};
+}
+
+export async function recordConversationInternalNote(db:D1Database,input:{threadId:string;actorEmail:string;body:string;idempotencyKey:string}){
+ if(typeof input.body!=="string"||!input.body.trim()||input.body.trim().length>4096||typeof input.idempotencyKey!=="string"||!input.idempotencyKey||input.idempotencyKey.length>120)throw new Response("A note of 1–4096 characters and a request key are required",{status:400});
+ await ensureConversationGovernance(db);
+ const body=input.body.trim(),digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([input.threadId,input.idempotencyKey]))),id=`CNOTE-${Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("")}`,now=Date.now();
+ const [result]=await db.batch([
+  db.prepare("INSERT OR IGNORE INTO conversation_audit_events (id,thread_id,action,actor_email,detail_json,created_at) SELECT ?,?,'internal_note',?,?,? WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=?)").bind(id,input.threadId,input.actorEmail,JSON.stringify({body}),now,input.threadId),
+  db.prepare("UPDATE communication_threads SET updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM conversation_audit_events WHERE id=? AND created_at=?)").bind(now,input.threadId,id,now),
+ ]);
+ const stored=await db.prepare("SELECT e.thread_id,e.actor_email,e.detail_json FROM conversation_audit_events e JOIN communication_threads t ON t.id=e.thread_id WHERE e.id=?").bind(id).first<Row>();
+ if(!stored)throw new Response("Conversation thread not found",{status:404});
+ if(stored.thread_id!==input.threadId||stored.actor_email!==input.actorEmail||JSON.parse(String(stored.detail_json)).body!==body)throw new Response("Note request key was already used for different content",{status:409});
+ return{id,duplicatePrevented:Number(result.meta?.changes||0)===0};
+}
+
+async function conversationInternalNotes(db:D1Database,threadId:string){
+ const result=await db.prepare("SELECT id,actor_email,detail_json,created_at FROM conversation_audit_events WHERE thread_id=? AND action='internal_note' ORDER BY created_at DESC,id DESC LIMIT 100").bind(threadId).all<Row>();
+ return result.results.map(row=>{const detail=JSON.parse(String(row.detail_json||"{}"));return{id:row.id,actorEmail:row.actor_email,body:typeof detail.body==="string"?detail.body:"",createdAt:row.created_at};});
 }

@@ -23,6 +23,7 @@ type Conversation = {
   participants: Row[];
   messages: Array<Row & { payload?: Row }>;
   assignments: Row[];
+  notes?: Array<{id:string;actorEmail:string;body:string;createdAt:number}>;
 };
 type RoutingMode = "human_only" | "chatbot_only" | "ai_assistant";
 type WhatsAppControl = {
@@ -63,6 +64,8 @@ export default function CustomerExperiencePage() {
   const [statusFilter, setStatusFilter] = useState("open");
   const [reply, setReply] = useState("");
   const [replyRequestId, setReplyRequestId] = useState("");
+  const [internalNote, setInternalNote] = useState("");
+  const [noteRequestId, setNoteRequestId] = useState("");
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
   const loadThreads = useCallback(async (shouldApply: () => boolean = () => true) => {
@@ -176,6 +179,15 @@ export default function CustomerExperiencePage() {
     }
   }
 
+  async function saveInternalNote() {
+    if (!selected || !internalNote.trim() || busy) return;
+    const key = noteRequestId || crypto.randomUUID();
+    setNoteRequestId(key);
+    if (await act("add_internal_note", { note: internalNote, idempotencyKey: key })) {
+      setInternalNote(""); setNoteRequestId(""); setNotice("Internal note saved.");
+    }
+  }
+
   async function controlAct(action: string, payload: Row = {}) {
     if (!selected) return false;
     setBusy(true);
@@ -280,7 +292,7 @@ export default function CustomerExperiencePage() {
             <h2>Shared Inbox</h2>
             <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads or conversations..." />
             <label>Conversation status
-              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setSelected(""); setConversation(null); setControl(null); setThreads([]); }}>
+              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setReply(""); setReplyRequestId(""); setInternalNote(""); setNoteRequestId(""); setSelected(""); setConversation(null); setControl(null); setThreads([]); }}>
                 <option value="open">Open</option><option value="pending_customer">Awaiting customer</option><option value="resolved">Resolved</option><option value="closed">Closed</option><option value="all">All statuses</option>
               </select>
             </label>
@@ -313,7 +325,7 @@ export default function CustomerExperiencePage() {
                   disabled={busy}
                   className={styles.row}
                   aria-current={selected === row.id ? "true" : undefined}
-                  onClick={() => setSelected(row.id)}
+                  onClick={() => { if (row.id !== selected) { setReply(""); setReplyRequestId(""); setInternalNote(""); setNoteRequestId(""); } setSelected(row.id); }}
                 >
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
@@ -390,6 +402,12 @@ export default function CustomerExperiencePage() {
               <Button size="sm" variant="secondary" className={styles.action} disabled={busy || !selected || thread?.status === "open"} onClick={() => { void act("status", { status: "open", reason: "Customer Experience reopened" }); }}>Reopen</Button>
               <Button size="sm" className={`${styles.action} ${styles.actionGreen}`} disabled={busy || !selected} onClick={() => { void act("status", { status: "resolved", reason: "Customer Experience resolved" }); }}>Resolve</Button>
             </div>
+          </section>
+          <section className={styles.card}>
+            <div className={styles.cardHead}><strong>Internal notes</strong></div>
+            <textarea aria-label="Internal note" className={styles.noteInput} value={internalNote} maxLength={4096} disabled={busy || !selected} onChange={event => { setInternalNote(event.target.value); setNoteRequestId(""); }} placeholder="Add a staff note for this conversation" />
+            <Button size="sm" disabled={busy || !selected || !internalNote.trim()} onClick={() => { void saveInternalNote(); }}>Save internal note</Button>
+            <div className={styles.audit}>{conversation?.notes?.length ? conversation.notes.map(note => <div className={styles.note} key={note.id}><small>{dateTime(note.createdAt)} · {note.actorEmail}</small><p>{note.body}</p></div>) : <small>No internal notes yet.</small>}</div>
           </section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Activity / Audit Trail</strong><a>Canonical</a></div><div className={styles.audit}>{messages.slice(-5).reverse().map((message) => <div className={styles.auditItem} key={`audit-${text(message.id)}`}><span className={styles.auditDot} /><span>{when(message.created_at)} · {pretty(message.channel)} {pretty(message.direction)} · {pretty(message.status)}</span></div>)}{control?.handoff?.events?.slice(-3).reverse().map((event) => <div className={styles.auditItem} key={`handoff-${text(event.id)}`}><span className={styles.auditDot} /><span>{when(event.created_at)} · {pretty(event.event_type)} · {text(event.actor_email)}</span></div>)}{messages.length === 0 && !control?.handoff?.events?.length ? <small>No message events yet.</small> : null}</div></section>
         </aside>
