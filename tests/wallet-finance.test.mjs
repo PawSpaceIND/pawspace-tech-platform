@@ -617,3 +617,61 @@ test("The cash-flow statement is direct-method, excludes non-cash journals and r
   assert.equal(authorised.cacheControl, "no-store", "a finance report is never cached");
   assert.equal((await get(FINANCE_MAKER, "")).status, 400, "and a request without a period is a 400, not an empty report");
 });
+
+
+test("wallet credit and redemption roll back balances if ledger persistence fails", async () => {
+  const { sqlite, db } = await walletWorld();
+  const credit = { customerId: CUSTOMER, amount: 1000, source: "refund", idempotencyKey: "atomic-credit", actorId: FINANCE_MAKER };
+  db.onSql("INSERT INTO pawspace_wallet_ledger", () => { throw new Error("simulated ledger outage"); });
+  await assert.rejects(() => wallet.creditWallet(db, credit), /simulated ledger outage/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM pawspace_wallet_ledger").get().n, 0);
+  await wallet.creditWallet(db, credit);
+  db.onSql("INSERT INTO pawspace_wallet_ledger", () => { throw new Error("simulated ledger outage"); });
+  await assert.rejects(() => wallet.redeemWalletForBooking(db, { customerId: CUSTOMER, bookingId: BOOKING, actorId: CUSTOMER }), /simulated ledger outage/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 1000, "a failed redemption must not consume customer balance");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM pawspace_wallet_ledger WHERE entry_type='redeem'").get().n, 0);
+});
+
+
+test("odd PawPoints redemption spends only the points matching the applied discount", async () => {
+  const { db } = await walletWorld();
+  const points = await import("../lib/paw-points-governance.ts");
+  await points.grantGoodwillPoints(db, { customerId: CUSTOMER, points: 3, reason: "Test loyalty grant", actorId: FINANCE_MAKER, idempotencyKey: "odd-points" });
+  const result = await points.redeemPoints(db, { customerId: CUSTOMER, bookingId: BOOKING, points: 3, actorId: CUSTOMER });
+  assert.equal(result.discountApplied, 1);
+  assert.equal(result.pointsRedeemed, 2, "do not consume an extra half-rupee of points for a whole-rupee discount");
+  assert.equal(result.balance, 1);
+  const { creditsAppliedToBooking } = await import("../lib/booking-credit-application.ts");
+  assert.equal(await creditsAppliedToBooking(db, BOOKING), result.discountApplied);
+});
+
+
+test("redemption retry repairs a failed financial journal without debiting the wallet again", async () => {
+  const { sqlite, db } = await walletWorld();
+  await wallet.creditWallet(db, { customerId: CUSTOMER, amount: 1000, source: "refund", idempotencyKey: "journal-recovery", actorId: FINANCE_MAKER });
+  db.onSql("INSERT OR IGNORE INTO finance_journal_entries", () => { throw new Error("simulated finance outage"); });
+  const input = { customerId: CUSTOMER, bookingId: BOOKING, actorId: CUSTOMER };
+  await assert.rejects(() => wallet.redeemWalletForBooking(db, input), /simulated finance outage/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 0);
+  assert.equal(journalLines(sqlite, `JRN-wallet-redeem-${BOOKING}`).length, 0);
+  await assert.rejects(() => wallet.redeemWalletForBooking(db, input), /already been applied/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 0);
+  const lines = journalLines(sqlite, `JRN-wallet-redeem-${BOOKING}`);
+  assert.equal(lines.length, 3);
+  assert.equal(lines.reduce((sum, row) => sum + row.debit - row.credit, 0), 0);
+});
+
+
+test("wallet batch rolls back an inserted ledger row when the companion balance write fails", async () => {
+  const { sqlite, db } = await walletWorld();
+  const credit = { customerId: CUSTOMER, amount: 1000, source: "refund", idempotencyKey: "companion-credit", actorId: FINANCE_MAKER };
+  db.onSql("INSERT INTO pawspace_wallet_accounts", () => { throw new Error("balance write failed"); });
+  await assert.rejects(() => wallet.creditWallet(db, credit), /balance write failed/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM pawspace_wallet_ledger").get().n, 0);
+  await wallet.creditWallet(db, credit);
+  db.onSql("UPDATE pawspace_wallet_accounts SET balance=ROUND(balance-?", () => { throw new Error("balance write failed"); });
+  await assert.rejects(() => wallet.redeemWalletForBooking(db, { customerId: CUSTOMER, bookingId: BOOKING, actorId: CUSTOMER }), /balance write failed/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 1000);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM pawspace_wallet_ledger WHERE entry_type='redeem'").get().n, 0);
+});
