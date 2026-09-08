@@ -119,7 +119,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
   const rows=savedBody.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);
   expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("grooming");expect(rows[0].status).toBe("confirmed");
-  await page.getByRole("navigation",{name:"Customer navigation"}).getByRole("button",{name:/Activity/}).click();
+  await page.locator("nav").getByRole("button",{name:/Activity/}).last().click();
   const activity=page.locator("article").filter({hasText:bookingId});
   await expect(activity).toHaveCount(1);
   await activity.getByRole("link",{name:"View booking and care →",exact:true}).click();
