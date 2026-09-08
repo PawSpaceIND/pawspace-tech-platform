@@ -143,7 +143,7 @@ Built gateway returned 401 for anonymous callers and 403 for unauthorized custom
 
 ## 10. Performance
 
-No production-like p95/concurrency budget has been agreed or measured. Local journey elapsed times are functional-test timings, not production latency certification.
+An older hosted Track 3 run measured aggregate p95 834.29 ms against an under-750 ms gate, with booking p95 18,755.13 ms. That candidate failed performance acceptance. These timings are not evidence for this branch or the current staging version; see `consolidated-readiness-and-staging.md`.
 
 - [ ] Booking API latency
 - [ ] Pricing latency
@@ -171,7 +171,7 @@ Scheduled-handler failures surfaced as runtime exceptions during the probe. Remo
 
 ## 12. UAT / Automated Test Coverage
 
-The final local suite passed 4,652 tests with zero failures or skips. The built-Worker HTTP demo covers reservation through completion/finance/notifications. Native browser inspection covers CX; the headless browser launcher is blocked by host sandbox permissions.
+The consolidated local suite at c35ef49d passed 4,662 tests with zero failures or skips. The built-Worker HTTP demo covers reservation through completion/finance/notifications. Native browser inspection covers CX; the headless browser launcher is blocked by host sandbox permissions.
 
 - [ ] Customer golden journey
 - [ ] Provider golden journey
@@ -188,7 +188,7 @@ The final local suite passed 4,652 tests with zero failures or skips. The built-
 
 ## 13. Production / Release Flow
 
-Sandbox flags, build and typecheck are validated locally. No push, merge, deployment or production financial action has been performed. Staging target remains unspecified.
+Sandbox flags, build and typecheck are validated locally. No push, merge, deployment or production financial action has been performed. Standalone staging is reachable, but its latest inspected certified candidate is 34 commits ahead of the main baseline. The stricter sandbox certification fix is local; it has not re-certified that deployment.
 
 - [ ] Environment configuration
 - [ ] Secrets
