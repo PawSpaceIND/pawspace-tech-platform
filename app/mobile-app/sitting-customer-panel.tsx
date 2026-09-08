@@ -1,11 +1,11 @@
 "use client";
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useRef,useState,type ReactNode} from 'react';
 import type {SittingCarePlan} from '../../lib/sitting-lifecycle';
 import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation,type SittingCustomerView} from '../../lib/sitting-customer-view';
 const fields=[['feeding','Food and water routine'],['medication','Medication instructions from your vet'],['emergencyContact','Emergency contact'],['vet','Vet contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const;
 const label=(text:string)=>text.replaceAll('_',' ');
 const when=(value:string|number)=>{const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('en-IN'):'Time unavailable';};
-export default function SittingCustomerPanel({bookingId}:{bookingId:string}){
+export default function SittingCustomerPanel({bookingId,children}:{bookingId:string;children?:(booking:SittingCustomerView)=>ReactNode}){
  const[data,setData]=useState<SittingCustomerView|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[message,setMessage]=useState(''),[plan,setPlan]=useState<SittingCarePlan>({}),[reason,setReason]=useState(''),[busy,setBusy]=useState(false);
  const readVersion=useRef(0);
  const saveIntent=useRef({payload:'',key:''});
@@ -25,6 +25,7 @@ export default function SittingCustomerPanel({bookingId}:{bookingId:string}){
    <button disabled={busy||closed} style={{minHeight:44,background:'#124d3c',color:'white',borderRadius:8}}>{busy?'Please wait…':'Save care instructions'}</button></form>
    <section><h3>Recorded care activity</h3>{data.events.length?<ol>{data.events.map(event=><li key={event.id}><b>{label(event.type)}</b><p>{when(event.at)}</p></li>)}</ol>:<p>No care activity has been recorded yet.</p>}</section>
    {!closed&&data.status!=='in_progress'&&<form onSubmit={event=>{event.preventDefault();void cancel();}} style={{display:'grid',gap:8}}><h3>Request cancellation</h3><label>Reason<textarea required value={reason} onChange={event=>setReason(event.target.value)} disabled={busy} style={{width:'100%',minHeight:72,fontSize:16,border:'1px solid #adbdb5',padding:10}} /></label><p>A request starts policy review; it does not cancel the booking or issue a refund.</p><button disabled={busy||!reason.trim()} style={{minHeight:44}}>Submit cancellation request</button></form>}
+   {children?.(data)}
    <p>Live location and sitter messaging are currently unavailable.</p>
   </>}
  </section>;

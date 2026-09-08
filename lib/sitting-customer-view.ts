@@ -18,3 +18,13 @@ async function request(url:string,body?:Record<string,unknown>):Promise<unknown>
 export async function loadSittingCustomerView(bookingId:string){return sittingCustomerView(await request(`/api/sitting-lifecycle?scope=customer&bookingId=${encodeURIComponent(bookingId)}`),bookingId);}
 export async function saveSittingCustomerPlan(bookingId:string,carePlan:SittingCarePlan,idempotencyKey:string){const data=await request('/api/sitting-lifecycle',{action:'submit_care_plan',bookingId,carePlan,idempotencyKey}) as Record<string,unknown>;if(data.bookingId!==bookingId||data.status!=='care_plan_ready')throw new Error('Care-plan save was not confirmed. Please retry.');}
 export async function requestCustomerSittingCancellation(bookingId:string,reason:string){const data=await request('/api/sitting-finance',{action:'request_cancel',bookingId,reason,idempotencyKey:`sitting-cancel-request:${bookingId}:${reason.trim().toLowerCase()}`}) as Record<string,unknown>;if(data.bookingId!==bookingId||typeof data.requestId!=='string'||!data.requestId.trim()||data.status!=='policy_review_required')throw new Error('Cancellation request was not confirmed. Please retry.');return data.requestId;}
+
+export async function requestCustomerSittingDateChange(bookingId:string,requestedStart:string,requestedEnd:string,reason:string){
+ const start=new Date(requestedStart).getTime(),end=new Date(requestedEnd).getTime();
+ if(!Number.isFinite(start)||!Number.isFinite(end)||start<=Date.now()||end<=start)throw new Error('Choose a future start and an end after the start.');
+ if(reason.trim().length<3)throw new Error('Please explain the requested date change.');
+ const from=new Date(start).toISOString(),to=new Date(end).toISOString();
+ const data=await request('/api/sitting-finance',{action:'request_date_change',bookingId,requestedStart:from,requestedEnd:to,reason:reason.trim(),idempotencyKey:`sitting-date-request:${bookingId}:${from}:${to}`}) as Record<string,unknown>;
+ if(data.bookingId!==bookingId||typeof data.requestId!=='string'||!data.requestId.trim()||data.status!=='commercial_quote_required'||data.stayWindowUnchanged!==true)throw new Error('Date-change request was not confirmed. Please retry.');
+ return data.requestId;
+}
