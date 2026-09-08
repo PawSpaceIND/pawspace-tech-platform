@@ -384,7 +384,7 @@ test("P0-03: both recognised modes are still accepted - the fix is not a blanket
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM grooming_commercial_policies WHERE policy_code LIKE 'ptja-p03-ok-%'").get().n), 2);
 });
 
-test("P0-03: the consequence - an enforcing policy actually withholds the late-cancellation refund", async () => {
+test("P0-03: no cancellation fee overrides legacy enforced refund penalties", async () => {
   // This is the money the defect gave away. Run through the real resolver and the real evaluator: a
   // policy created as "enforce" resolves as enforce and applies refund_percent_after_cutoff (0) to a
   // cancellation inside the cutoff. Under the defect the same create stored "Enforce", resolved as
@@ -397,7 +397,7 @@ test("P0-03: the consequence - an enforcing policy actually withholds the late-c
 
   const now = Date.UTC(2026, 10, 26, 4, 0, 0);
   const late = evaluateBookingChange(policy, { action: "cancel", scheduledStart: new Date(now + 60 * 60_000).toISOString(), status: "confirmed", bookingAmount: 1899, now });
-  assert.equal(late.refundPercent, 0, "a cancellation one hour before a stay, inside a 24-hour cutoff, refunds the configured 0%");
+  assert.equal(late.refundPercent, 100, "No cancellation fee applies even inside a legacy 24-hour cutoff");
 
   const early = evaluateBookingChange(policy, { action: "cancel", scheduledStart: new Date(now + 5 * 86_400_000).toISOString(), status: "confirmed", bookingAmount: 1899, now });
   assert.equal(early.refundPercent, 100, "and a cancellation outside the cutoff still refunds in full");
