@@ -129,3 +129,15 @@ for (const outcome of ["assigned","awaiting_acceptance","ops_escalation","confli
  if(outcome==="ops_escalation")await expect(page.getByRole("status")).toContainText("Operations follow-up is required (case CASE-REAL)");
  if(outcome==="conflict"){await expect(page.getByRole("alert")).toContainText("Assignment changed");await expect(submit).toBeDisabled();await expect(page.getByLabel("Recovery reason",{exact:true})).toHaveValue("Original groomer reported illness");await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Recover provider",exact:true})).toBeVisible();}
 });
+
+test("waiting requests remain visible when no provider holds a reservation",async({page})=>{
+ await page.route("**/api/uat-scheduling?*",async route=>{
+  const date=new URL(route.request().url()).searchParams.get("date");
+  await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:{date,providers:[],total:0,pendingRequests:[{groupId:"WAITING-GROUP",status:"awaiting_admin",customerId:"WAITING-CUSTOMER",serviceCode:"grooming",zoneId:"blr-east",petCount:1,occurrences:[{start:`${date}T05:30:00.000Z`,end:`${date}T07:30:00.000Z`,occurrenceNumber:1}]}]}})});
+ });
+ await page.goto("/team/scheduling");
+ const waiting=page.getByRole("region",{name:"Requests awaiting admin"});
+ await expect(waiting).toBeVisible();await expect(waiting).toContainText("WAITING-GROUP");await expect(waiting).toContainText("WAITING-CUSTOMER");await expect(waiting).toContainText("10:00");
+ await expect(page.getByText(/Nothing scheduled for/)).toHaveCount(0);
+ await expect(waiting.getByText(/no confirmed provider assignment/)).toBeVisible();
+});

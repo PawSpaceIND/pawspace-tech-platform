@@ -8,7 +8,8 @@ import {apiSend} from "../../../lib/api-fetch";
 
 type Reservation={id:string;groupId:string;bookingId?:string|null;bookingStatus?:string|null;canRecover?:boolean;canRetryNotifications?:boolean;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
 type ProviderColumn={providerId:string;providerName:string;providerModel:string;reservations:Reservation[]};
-type Board={date:string;providers:ProviderColumn[];total:number};
+type PendingRequest={groupId:string;status:"awaiting_admin";customerId:string;serviceCode:string;zoneId:string;petCount:number;occurrences:{start:string;end:string;occurrenceNumber:number}[]};
+type Board={pendingRequests?:PendingRequest[];date:string;providers:ProviderColumn[];total:number};
 
 const istToday=()=>new Date(Date.now()+330*60_000).toISOString().slice(0,10);
 const istTime=(iso:string)=>new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(iso));
@@ -29,6 +30,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
   const fetchBoard=useCallback(async(day:string)=>{
     const data=await apiSend<Board>(`/api/uat-scheduling?date=${encodeURIComponent(day)}`,{cache:"no-store"});
     if(data.date!==day||!Array.isArray(data.providers)||typeof data.total!=="number"||data.providers.some(column=>!column||typeof column.providerId!=="string"||!Array.isArray(column.reservations)))throw new Error("The scheduling response was incomplete. Refresh to try again.");
+    if(data.pendingRequests!==undefined&&(!Array.isArray(data.pendingRequests)||data.pendingRequests.some(row=>!row||typeof row.groupId!=="string"||row.status!=="awaiting_admin"||!Array.isArray(row.occurrences))))throw new Error("The waiting request list was incomplete. Refresh to try again.");
     return data;
   },[]);
   useEffect(()=>{
@@ -58,6 +60,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
   }
 
   const providers=board?.providers||[];
+  const pendingRequests=board?.pendingRequests||[];
   const assigned=providers.reduce((sum,column)=>sum+column.reservations.filter(row=>row.status!=="cancelled"&&row.decisionStatus==="assigned").length,0);
 
   const content=<>
@@ -67,6 +70,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
     <section className={styles.tiles}>
       <StatCard label="Reservations" value={board?.total??"—"} />
       <StatCard label="Providers with reservations" value={board?providers.length:"—"} />
+      <StatCard label="Awaiting admin" value={board?pendingRequests.length:"—"} />
       <StatCard label="Assigned" value={board?assigned:"—"} />
       <StatCard label="Day (IST)" value={board?.date||date} />
     </section>
@@ -76,8 +80,21 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
       <Button size="sm" variant="secondary" disabled={loading||Boolean(busyGroup)} onClick={refresh}>{loading?"Refreshing…":"Refresh"}</Button>
     </section>
 
+    {pendingRequests.length>0&&<section className={styles.panel} aria-label="Requests awaiting admin">
+      <h2>Awaiting admin assignment</h2>
+      <p>These saved requests have no confirmed provider assignment. Availability must be checked before assignment.</p>
+      {pendingRequests.map(row=><article key={row.groupId} className={styles.slot}>
+        <Badge tone="warning">Awaiting admin</Badge>
+        <b>{row.serviceCode.replaceAll("_"," ")} · {row.petCount} {row.petCount===1?"pet":"pets"}</b>
+        <small>Customer {row.customerId} · {row.zoneId}</small>
+        <small>Request {row.groupId}</small>
+        {row.occurrences.map(occ=><small key={occ.occurrenceNumber}>Visit {occ.occurrenceNumber}: {new Date(occ.start).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})} {istTime(occ.start)}–{new Date(occ.end).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})} {istTime(occ.end)} IST</small>)}
+      </article>)}
+    </section>}
+
     {loading&&!board?<EmptyState title="Loading the day board" body="Reading live scheduling reservations for this IST day…" />
       :error?<EmptyState title="Schedule unavailable" body="The schedule could not be read. Refresh to try again." />
+      :providers.length===0&&pendingRequests.length>0?null
       :providers.length===0?<EmptyState title={`Nothing scheduled for ${board?.date||date}`} body="No provider holds a reservation on this day. Pick another date, or check that the schedule has been generated." />
       :<div className={styles.boardScroll}>{providers.map(column=><section key={column.providerId} className={styles.boardColumn}>
         <header className={styles.boardHead}>
