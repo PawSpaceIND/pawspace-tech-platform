@@ -531,3 +531,33 @@ test("WH-18: a signed capture claiming a booking that does not own the gateway o
   assert.equal(Number(money("PAY-bkg_adv_thief")?.captured_amount ?? 0), 0, "no money may land on the claiming booking");
   assert.equal(payStatus("PAY-bkg_adv_thief"), "created", "and its payment must stay unpaid");
 });
+
+
+test("capture-first delivery with a durable CREATED checkout intent records money without awaiting authorization", async () => {
+  freshDb();
+  const bookingId = "BK-CAPTURE-FIRST";
+  seedBooking({ id: bookingId });
+  await linkGatewayOrder(db, { bookingId, gatewayOrderId: "order_ADV1", environment: "sandbox", actor: "audit" });
+  const { claimPaymentIntent } = await import("../lib/financial-lifecycle.ts");
+  const intent = await claimPaymentIntent(db, {
+    bookingId, customerId: "cus_adv", paymentId: `PAY-${bookingId}`,
+    idempotencyKey: "capture-first", amountPaise: 200000, currency: "INR", environment: "sandbox",
+  });
+  sqlite.prepare("UPDATE payment_intents SET gateway_order_id='order_ADV1',order_request_state='ORDER_CREATED' WHERE id=?").run(intent.id);
+  const capture = captureEvent(bookingId, 200000);
+  const first = await postSigned(capture, { eventId: "evt_capture_first" });
+  assert.equal(first.body.deferred, undefined, JSON.stringify(first));
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "CAPTURED");
+  assert.equal(money(`PAY-${bookingId}`).captured_amount, 2000);
+  const late = await postSigned(authorizedEvent(bookingId, 200000), { eventId: "evt_authorized_late" });
+  assert.equal(late.status, 200, JSON.stringify(late));
+  await postSigned(capture, { eventId: "evt_capture_replayed_header" });
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "CAPTURED");
+  assert.equal(money(`PAY-${bookingId}`).captured_amount, 2000);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get().n, 1);
+  sqlite.prepare("UPDATE payment_intents SET state='SETTLED' WHERE id=?").run(intent.id);
+  const settledReplay = await postSigned({ ...capture, event: "order.paid" }, { eventId: "evt_order_paid_after_settlement" });
+  assert.equal(settledReplay.body.duplicateCapture, true, JSON.stringify(settledReplay));
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "SETTLED");
+  assert.equal(sqlite.prepare("SELECT SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE -amount_paise END) variance FROM journal_entries").get().variance, 0);
+});

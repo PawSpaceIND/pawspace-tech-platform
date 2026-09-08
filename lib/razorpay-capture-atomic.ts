@@ -60,7 +60,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     if (input.gatewayOrderId && text(intent.gateway_order_id) && text(intent.gateway_order_id) !== text(input.gatewayOrderId)) throw new Error("Razorpay order does not belong to the payment intent");
     if (Number(intent.amount_paise) !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the payment intent", Number(intent.amount_paise), input.amountPaise);
     if (text(intent.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the payment intent");
-    if (!["AUTHORIZED", "CAPTURED"].includes(text(intent.state))) throw new Error(`Payment intent state ${text(intent.state)} cannot be captured atomically`);
+    if (!["CREATED", "AUTHORIZED", "CAPTURED", "SETTLED"].includes(text(intent.state))) throw new Error(`Payment intent state ${text(intent.state)} cannot be captured atomically`);
   } else {
     const expectedPaise = Math.round(Number(current?.expected_amount ?? payment.amount ?? 0) * 100);
     if (expectedPaise !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the linked payment expectation", expectedPaise, input.amountPaise);
@@ -87,6 +87,8 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     const existingEffects = await db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>();
     return { duplicateCapture: true, effectsOutboxId: text(existingEffects?.id), effectsStatus: text(existingEffects?.status), capturedTotal: Number(current?.captured_amount || 0), collectedInFull: true };
   }
+
+  if (intent && text(intent.state) === "SETTLED") throw new Error("A settled payment intent cannot accept an unrecorded capture");
 
   const amount = input.amountPaise / 100;
   const capturedCurrent = Number(current?.captured_amount || 0);
@@ -126,7 +128,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       VALUES (?,?,?,?,?,?,?,?,'captured',?,0,?,?)
       ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,captured_amount=excluded.captured_amount,refunded_amount=excluded.refunded_amount,currency=excluded.currency,gateway_status='captured',reconciliation_status=excluded.reconciliation_status,variance_amount=0,last_event_id=excluded.last_event_id,updated_at=excluded.updated_at`)
       .bind(input.paymentId, input.bookingId, "razorpay", input.environment, amount, capturedTotal, refundedCurrent, input.currency, collectedInFull ? "matched" : "partially_captured", input.eventId, now),
-    ...(input.intentId ? [db.prepare("UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)")
+    ...(input.intentId ? [db.prepare("UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)")
       .bind(input.gatewayPaymentId || null, now, input.intentId, input.gatewayPaymentId || null)] : []),
     db.prepare("INSERT INTO journal_transactions (id,source_type,source_id,source_event_id,currency,status,narration,created_at) VALUES (?,?,?, ?,?,'DRAFT',?,?) ON CONFLICT(source_event_id) DO NOTHING")
       .bind(journalId, "razorpay_capture", input.intentId || input.paymentId, journalEventId, input.currency, `Razorpay capture ${captureKey(input)}`, now),

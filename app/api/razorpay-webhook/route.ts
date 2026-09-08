@@ -84,6 +84,8 @@ function transitionWouldDefer(intent:Row,target:PaymentState){
   const current=String(intent.state||"") as PaymentState;
   if(!(current in rank))throw new Error("Payment intent contains an unknown state");
   if(rank[current]>=90)return true;
+  // A verified capture is sufficient provider evidence even when authorization delivery is late.
+  if(current==="CREATED"&&target==="CAPTURED")return false;
   return rank[target]>rank[current]+1;
 }
 
@@ -98,7 +100,7 @@ export async function POST(request:Request){
   try{
     const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
     const gate=resolvePaymentWebhookGate(runtime);if(!gate.ok)return json({error:gate.reason},gate.status);
-    const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase(),eventId=(request.headers.get("x-razorpay-event-id")||"").trim();if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
+    const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase();let eventId=(request.headers.get("x-razorpay-event-id")||"").trim();if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
     const raw=await request.text();const db=await database();
     let accepted:Awaited<ReturnType<typeof acceptRazorpayWebhook>>;
     try{
@@ -110,6 +112,8 @@ export async function POST(request:Request){
       if(message.includes("replayed with a different payload"))return json({error:"Razorpay event ID payload mismatch"},409);
       throw error;
     }
+    // The verified inbox identity also owns retries of subscription/refund domain effects.
+    eventId=String(accepted.row.event_id||eventId);
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
@@ -177,7 +181,7 @@ export async function POST(request:Request){
         }
         const effects=atomic.effectsOutboxId?await executeRazorpayCapturePostCommit(db,{outboxId:atomic.effectsOutboxId,workerId:`razorpay-webhook:${crypto.randomUUID()}`}):null;
         if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,status:"processed",atomicCapture:true,coreCommitted:true,captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
-        return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
+        return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:atomic.duplicateCapture?String(intent.state):"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
       }
 
       const result=await processGatewayEvent(db,event);
