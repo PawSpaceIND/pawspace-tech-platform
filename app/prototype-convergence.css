@@ -12,6 +12,9 @@ html[data-paw-mode="dark"][data-paw-theme="emerald"]{--paw-bg:#0e2923;--paw-surf
 html[data-paw-mode="dark"][data-paw-theme="rose"]{--paw-bg:#2e1724;--paw-surface:#3b2332;--paw-raised:#503246;--paw-text:#fff5f8;--paw-muted:#e7bdd1;--paw-line:#845b70;--paw-primary:#ffd16b;--paw-on-primary:#392532}
 :root{--psu-emerald:var(--paw-primary);--psu-emerald-2:var(--paw-primary);--psu-emerald-3:var(--paw-primary);--psu-emerald-soft:var(--paw-raised);--psu-gold:var(--paw-gold);--psu-gold-soft:var(--paw-yellow);--psu-ivory:var(--paw-bg);--psu-surface:var(--paw-surface);--psu-border:var(--paw-line);--psu-text:var(--paw-text);--psu-muted:var(--paw-muted);--psu-hero:var(--paw-hero)}
 body{background:var(--paw-bg);color:var(--paw-text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>nav{display:none!important}
+.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>header,.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>[class*="_title"]{display:none!important}
+.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome]){padding-bottom:0!important}
 button,input,select,textarea{font:inherit}button,a,input,select,textarea,summary{-webkit-tap-highlight-color:transparent}
 :is(button,a,input,select,textarea,summary):focus-visible{outline:3px solid var(--paw-primary);outline-offset:3px}
 .route-mobile-app main[data-theme]{--ps-primary:var(--paw-primary);--ps-primary-2:var(--paw-primary);--ps-accent:var(--paw-gold);--ps-accent-text:#302216;--ps-bg:var(--paw-bg);--ps-surface:var(--paw-surface);--ps-surface-2:var(--paw-raised);--ps-text:var(--paw-text);--ps-muted:var(--paw-muted);--ps-border:var(--paw-line);--ps-hero:var(--paw-hero);--ps-hero-2:var(--paw-hero);background:var(--paw-bg)!important;color:var(--paw-text);font-family:inherit}

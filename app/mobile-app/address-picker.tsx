@@ -21,6 +21,8 @@ function remember(result:ZoneResult|null){try{if(result)sessionStorage.setItem(S
 
 export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:ZoneResult|null)=>void}){
  const[address,setAddress]=useState(""),[pincode,setPincode]=useState(""),[resolvedZone,setResolvedZone]=useState<ZoneResult|null>(null),[zones,setZones]=useState<Zone[]>([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
+ // Discovery only prefills the PIN. Complete address/map verification below remains mandatory.
+ useEffect(()=>{const timer=window.setTimeout(()=>{try{const pin=sessionStorage.getItem("pawspace.discovery.pin");if(pin&&/^[1-9]\d{5}$/.test(pin))setPincode(pin);}catch{/* Optional session preference. */}},0);return()=>window.clearTimeout(timer);},[]);
  useEffect(()=>{async function loadZones(){try{const r=await fetch("/api/service-zone?action=list");const body=await r.json() as{data?:Zone[]};if(body.data)setZones(body.data);}catch(e){console.error("Failed to load zones:",e);}}void loadZones();},[]);
  async function resolveZone(){setError("");setLoading(true);try{
   if(address.trim().length<8){setError("Enter the complete doorstep address");return;}if(!/^[1-9]\d{5}$/.test(pincode)){setError("Please enter a valid 6-digit pincode");return;}

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./premium-discovery-home.module.css";
 import { SERVICE_ART } from "./service-art";
+import LocationWelcome, { DISCOVERY_PIN_KEY, WELCOME_SEEN_KEY } from "./location-welcome";
+import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 
 export type DiscoveryService = {
   name: string;
@@ -64,17 +66,24 @@ export default function PremiumDiscoveryHome({
   const [location, setLocation] = useState("Choose your area");
   const [draft, setDraft] = useState("");
   const [locationNote, setLocationNote] = useState("");
+  const [showWelcome, setShowWelcome] = useState<boolean | null>(null);
+  const [checkingArea, setCheckingArea] = useState(false);
   const [campaignIndex, setCampaignIndex] = useState(0);
   const [pet, setPet] = useState<CustomerPet | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
   const [nextBooking, setNextBooking] = useState<CustomerBooking | null>(null);
 
   useEffect(() => {
-    let stored: string | null = null;
-    try { stored = window.localStorage.getItem("pawspace_discovery_location"); } catch { /* Optional device preference. */ }
-    if (!stored) return;
-    const timer = window.setTimeout(() => setLocation(stored), 0);
-    return () => window.clearTimeout(timer);
+    let active = true;
+    const timer = window.setTimeout(() => {
+      let seen = false, pin: string | null = null;
+      try { seen = sessionStorage.getItem(WELCOME_SEEN_KEY) === "1"; pin = sessionStorage.getItem(DISCOVERY_PIN_KEY); } catch { /* Optional device preference. */ }
+      setShowWelcome(!seen);
+      if (pin && /^[1-9]\d{5}$/.test(pin)) void resolveServiceCoverage(pin, AbortSignal.timeout(10000)).then(coverage => {
+        if (active) setLocation(`${coverage.area}, ${coverage.city}`);
+      }).catch(() => { /* Never trust a stale stored city as verified coverage. */ });
+    }, 0);
+    return () => { active = false; window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -107,15 +116,24 @@ export default function PremiumDiscoveryHome({
   const campaign = CAMPAIGNS[campaignIndex];
   const customerInitial = customerName?.trim().slice(0, 1).toUpperCase() || "P";
 
-  const saveLocation = (value: string) => {
-    const next = value.trim();
-    if (!next) return;
-    setLocation(next);
-    try { window.localStorage.setItem("pawspace_discovery_location", next); } catch { /* Optional device preference. */ }
-    locationDialog.current?.close();
-    setLocationNote("");
+  const useCoverage = (coverage: ResolvedServiceCoverage | null) => {
+    setLocation(coverage ? `${coverage.area}, ${coverage.city}` : "Choose your area");
+    setShowWelcome(false);
+  };
+  const saveLocation = async (value: string) => {
+    if (!/^[1-9]\d{5}$/.test(value)) return;
+    setCheckingArea(true); setLocationNote("");
+    try {
+      const coverage = await resolveServiceCoverage(value, AbortSignal.timeout(10000));
+      useCoverage(coverage);
+      try { sessionStorage.setItem(DISCOVERY_PIN_KEY, coverage.pincode); } catch { /* Optional device preference. */ }
+      locationDialog.current?.close();
+    } catch { setLocationNote("We couldn’t confirm coverage. Check your PIN code and try again."); }
+    finally { setCheckingArea(false); }
   };
 
+  if (showWelcome === null) return <p role="status">Preparing your PawSpace…</p>;
+  if (showWelcome) return <LocationWelcome onContinue={useCoverage} />;
 
   return <div className={styles.home} data-discovery data-home-design="pawspace-prototype-converged">
     <header className={styles.top}>
@@ -200,10 +218,10 @@ export default function PremiumDiscoveryHome({
     <dialog ref={locationDialog} className={styles.sheet} aria-labelledby="care-area-title">
         <div className={styles.sheetHead}><small>CARE NEAR YOU</small><button aria-label="Close location" onClick={() => locationDialog.current?.close()}>×</button></div>
         <h2 id="care-area-title">Where is home?</h2>
-        <p>This saves your preferred area on this device. Your exact address and service availability are verified during booking.</p>
-        <label><span>Area, city or pincode</span><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="e.g. HSR Layout, Bengaluru" /></label>
+        <p>Enter your PIN code to check your city and service area. Your exact doorstep and final price are verified during booking.</p>
+        <label><span>Area PIN code</span><input inputMode="numeric" maxLength={6} value={draft} onChange={(event) => setDraft(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="e.g. 560102" disabled={checkingArea} /></label>
         {locationNote && <p className={styles.locationNote}>{locationNote}</p>}
-        <button className={styles.saveLocation} disabled={!draft.trim()} onClick={() => saveLocation(draft)}>Save area</button>
+        <button className={styles.saveLocation} disabled={checkingArea || !/^[1-9]\d{5}$/.test(draft)} onClick={() => void saveLocation(draft)}>{checkingArea ? "Checking coverage…" : "Use this area"}</button>
     </dialog>
   </div>;
 }
