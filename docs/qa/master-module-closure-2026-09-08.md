@@ -88,3 +88,9 @@ See the connected-flow protocol for stage-by-stage evidence and limitations. Thi
 Fixed the customer gateway 403 on the independent order inbox, removed the global notification sweep from customer GET, protected cross-origin read acknowledgements, preserved their original timestamp on retry and corrected unread totals beyond the current page. Customer responses omit internal payload/transport details. Load/read failures now remain visible with retry controls.
 
 18 focused tests passed, with build/artifact validation and typecheck successful. The authenticated local browser opened the real order inbox successfully. The connected protocol records coverage and remaining transport, pagination, identity-refresh and deployed checks; no broader module closure is claimed.
+
+### Older inbox pages and sign-in recovery
+
+Order notifications now have deterministic cursor pagination, UI newer/older navigation, input validation and a matching index. The widget rechecks verified identity after customer OTP and on focus/periodic checks, clears stale customer data, and times out stalled requests. The current page survives acknowledgement refresh.
+
+18 selected tests, build/artifact validation and typecheck passed. Local browser evidence covers 32 fixture notices across two pages, a persisted acknowledgement/count change, return navigation, and sandbox sign-in restoring the widget without page reload after simulated local session expiry. The connected protocol distinguishes these executed paths from unexecuted adversarial races and deployed checks. Module-wide readiness remains open.

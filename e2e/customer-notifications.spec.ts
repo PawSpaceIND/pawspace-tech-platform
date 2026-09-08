@@ -39,3 +39,21 @@ test("customer notifications: authenticated empty inbox and recoverable UI deliv
   await expect(dialog.getByText("Booking: UI-BOOKING")).toBeVisible();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
 });
+
+test('order inbox appears after sign-in without reload and pages older updates', async ({ page }) => {
+  // UI contract fixtures only; gateway/database cursor coverage lives in the connected route suite.
+  const item=(id:string)=>({id,service_code:'grooming',event_type:'completed',severity:'info',status:'unread',title:`Update ${id}`,body:'Fixture service update',created_at:100});
+  await page.route('**/api/order-notifications?**',route=>{
+    const older=new URL(route.request().url()).searchParams.has('cursor');
+    return route.fulfill({json:{data:{items:[item(older?'older':'newer')],unread:2,nextCursor:older?null:{at:100,id:'newer'}}}});
+  });
+  await sandboxLogin(page);
+  await page.getByRole('button',{name:'2 unread order updates'}).click();
+  const dialog=page.getByRole('dialog',{name:'PawSpace order notifications'});
+  await expect(dialog.getByText('Update newer',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Older updates'}).click();
+  await expect(dialog.getByText('Update older',{exact:true})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Older updates'})).toBeDisabled();
+  await dialog.getByRole('button',{name:'Newer updates'}).click();
+  await expect(dialog.getByText('Update newer',{exact:true})).toBeVisible();
+});

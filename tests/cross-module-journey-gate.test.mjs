@@ -606,5 +606,18 @@ test('order notification journey: gateway ownership, customer read, repeat ackno
   const second=await notifications.emitOrderNotification(db,{...event,key:'older-unread',occurredAt:1});
   const limited=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1'))).json()).data;
   assert.equal(limited.items.length,1);assert.equal(limited.items[0].status,'read');assert.equal(limited.unread,1,'unread count includes notices outside the current page');
+  assert.ok(limited.nextCursor);
+  const older=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1&cursor='+encodeURIComponent(JSON.stringify(limited.nextCursor))))).json()).data;
+  assert.equal(older.items[0].id,second.notificationId);assert.equal(older.nextCursor,null);
+  for(const invalid of ['null','{}','{"at":-1,"id":"x"}','{"at":1,"id":""}'])assert.equal((await call(request('?customerId=C-ORDER-NOTICE&cursor='+encodeURIComponent(invalid)))).status,400);
+  for(const limit of ['0','201','NaN','1.5'])assert.equal((await call(request('?customerId=C-ORDER-NOTICE&limit='+limit))).status,400);
+  // Identical timestamps must still traverse deterministically; acknowledgement must not move a row.
+  sqlite.prepare('UPDATE order_notifications SET created_at=100 WHERE customer_id=?').run('C-ORDER-NOTICE');
+  const page1=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1'))).json()).data;
+  await call(request('',{...body,notificationId:page1.items[0].id}));
+  const page2=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1&cursor='+encodeURIComponent(JSON.stringify(page1.nextCursor))))).json()).data;
+  assert.equal(new Set([...page1.items,...page2.items].map(item=>item.id)).size,2);
+  assert.equal(page2.nextCursor,null);
+
   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,0,'notification acknowledgement never moves money');
 });

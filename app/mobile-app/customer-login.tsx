@@ -84,6 +84,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
       if (!r.ok || !b.data) throw new Error(b.error || "Incorrect code");
       if (persistDevOtpSession) sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
       onLoggedIn(b.data);
+      window.dispatchEvent(new Event("pawspace:identity-changed"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to verify code");
     } finally {
