@@ -1,3 +1,4 @@
+import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governance";
 import{groomingChangePreview}from"../../../lib/grooming-change-preview";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
@@ -13,7 +14,7 @@ type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reas
 
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
-async function ensureTables(db:Db){await db.batch([
+async function ensureTables(db:Db){await ensureProviderCapacityTables(db);await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_change_assertions (id TEXT PRIMARY KEY,ok INTEGER NOT NULL CONSTRAINT grooming_change_assertion CHECK(ok=1))"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -116,6 +117,7 @@ export async function POST(request:Request){
     if(!policyEvaluation.allowed)return json({error:`Booking change is blocked by policy ${policyEvaluation.policyVersion}`,policy:policyEvaluation},409);
 
     if(input.action==="cancel"){
+      if(!["confirmed","assigned","awaiting_acceptance"].includes(String(work.status)))return json({error:"Provider work has progressed or changed. Refresh the booking and contact support for cancellation review."},409);
       const reason=(input.reason||"Customer cancelled from PawSpace").trim();
       if(!refundEvaluation)return json({error:"The cancellation refund policy could not be evaluated"},409);
       const refundAmount=refundEvaluation.customerRefundAmount;
@@ -134,6 +136,7 @@ export async function POST(request:Request){
         db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=?").bind(now,input.bookingId),
         db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
         db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").bind(booking.schedule_group_id),
+        db.prepare("UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending'").bind(now,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(json_set(detail_json,'$.cancelReason',?),'$.commercialPolicyEvaluation',json(?)),updated_at=? WHERE booking_id=?").bind(refundAmount>0?"refund_pending":"cancelled",reason,JSON.stringify(policyEvaluation),now,input.bookingId),
         db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN 'reversed' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
