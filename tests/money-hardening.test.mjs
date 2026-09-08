@@ -1,3 +1,4 @@
+import { d1 as makeD1 } from "./helpers/execution-harness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -32,21 +33,6 @@ if (typeof nodeModule.registerHooks === "function") {
   nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const results = []; for (const stmt of statements) results.push(await stmt.run()); return results; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
 
 let sqlite;
 function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
