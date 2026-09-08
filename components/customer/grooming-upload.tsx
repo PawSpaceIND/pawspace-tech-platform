@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
-import { Network } from "@capacitor/network";
-import { enqueueOfflineTelemetry } from "../../lib/mobile/offline-queue";
+import { prepareGroomingPhoto } from "../../lib/mobile/grooming-photo-client";
 
 export interface GroomingPhoto {
   dataUrl: string;
@@ -14,16 +13,14 @@ export interface GroomingPhoto {
 }
 
 export interface GroomingUploadProps {
-  bookingId?: string;
+  bookingId: string;
   onCheckInPhotoUploaded?: (photo: GroomingPhoto) => void;
   onCompletionPhotoUploaded?: (photo: GroomingPhoto) => void;
   className?: string;
 }
 
 export default function GroomingUpload({
-  bookingId = "UAT-GROOMING-SAMPLE",
-  onCheckInPhotoUploaded,
-  onCompletionPhotoUploaded,
+  bookingId,
   className = "",
 }: GroomingUploadProps) {
   const isMountedRef = useRef(true);
@@ -117,66 +114,15 @@ export default function GroomingUpload({
       const photo = await takePhoto(type, source);
       if (!photo) return;
 
-      const purpose = type === "checkin" ? "before_service" : "after_service";
-      const payload = {
+      const prepared = await prepareGroomingPhoto({
         bookingId,
-        purpose,
+        purpose: type === "checkin" ? "before_service" : "after_service",
         dataUrl: photo.dataUrl,
-        format: photo.format,
-        capturedAt: photo.capturedAt,
-      };
-
-      // Check network status before attempting upload
-      const networkStatus = await Network.getStatus().catch(() => ({ connected: true }));
-      let isQueued = false;
-
-      if (!networkStatus.connected) {
-        await enqueueOfflineTelemetry({
-          type: "grooming_photo",
-          endpoint: "/api/service-media",
-          payload,
-        });
-        isQueued = true;
-      } else {
-        try {
-          const response = await fetch("/api/service-media", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-        } catch {
-          // If network call failed, enqueue offline telemetry
-          await enqueueOfflineTelemetry({
-            type: "grooming_photo",
-            endpoint: "/api/service-media",
-            payload,
-          });
-          isQueued = true;
-        }
-      }
-
+      });
       if (!isMountedRef.current) return;
-
-      if (type === "checkin") {
-        setCheckInPhoto(photo);
-        if (!isQueued) onCheckInPhotoUploaded?.(photo);
-      } else {
-        setCompletionPhoto(photo);
-        if (!isQueued) onCompletionPhotoUploaded?.(photo);
-      }
-
-      if (isQueued) {
-        setSuccessMessage("Offline: Photo saved to local queue. Will sync automatically upon reconnection.");
-      } else {
-        setSuccessMessage(
-          type === "checkin"
-            ? "Check-in photo captured successfully"
-            : "Completion photo captured successfully"
-        );
-      }
+      if (type === "checkin") setCheckInPhoto(photo);
+      else setCompletionPhoto(photo);
+      setSuccessMessage(`Photo registered (${prepared.mediaRef}). Internal test: file upload and independent review are still pending. Keep the original photo; this preview is not saved as approved service proof.`);
     } catch {
       if (isMountedRef.current) {
         setError("We couldn't save this photo yet. Please check camera access and your connection, then try again.");
@@ -237,7 +183,7 @@ export default function GroomingUpload({
             fontWeight: 600,
           }}
         >
-          {isNative ? "Capacitor Native Camera" : "Web Simulation Mode"}
+          {isNative ? "Device camera" : "Browser photo capture"}
         </span>
       </div>
 
@@ -279,7 +225,7 @@ export default function GroomingUpload({
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: "16px" }}>
         {/* Check-in / Before Photo */}
         <div
           style={{

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { assertSandboxPaymentLocks } from "../lib/mobile/razorpay.ts";
 
 const safe = {
   ...process.env,
@@ -36,6 +37,7 @@ test("Fastlane executes distinct app identities and the SPM project without exte
 test("Fastlane refuses missing or invalid isolation and missing Apple credentials", () => {
   for (const key of ["PAWSPACE_PAYMENT_ENV", "FORBID_PRODUCTION", "PAWSPACE_PAYMENT_LIVE_APPROVED"]) {
     for (const value of [undefined, "", "invalid"]) {
+      assert.throws(() => assertSandboxPaymentLocks({ ...safe, [key]: value }), "device and distribution isolation guards must both reject this configuration");
       const result = lane("android", "beta", { [key]: value });
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /SECURITY LOCK VIOLATION/);

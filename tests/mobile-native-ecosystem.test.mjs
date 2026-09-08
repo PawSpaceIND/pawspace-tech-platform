@@ -598,12 +598,10 @@ test("Mobile network status component and offline-first UI listeners are mounted
 
   // 4. Check grooming-upload offline buffering
   const groomingSource = readFileSync(resolve("components/customer/grooming-upload.tsx"), "utf-8");
-  assert.match(groomingSource, /enqueueOfflineTelemetry/);
-  assert.match(groomingSource, /Network\.getStatus\(\)/);
-  assert.match(groomingSource, /type:\s*["']grooming_photo["']/);
-  assert.match(groomingSource, /Offline: Photo saved to local queue\. Will sync automatically upon reconnection\./);
+  assert.match(groomingSource, /prepareGroomingPhoto/);
+  assert.match(groomingSource, /file upload and independent review are still pending/);
+  assert.doesNotMatch(groomingSource, /enqueueOfflineTelemetry/);
 });
-
 
 
 
