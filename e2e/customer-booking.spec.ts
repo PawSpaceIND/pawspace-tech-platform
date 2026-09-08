@@ -118,3 +118,17 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   const rows=savedBody.bookings.filter((booking:{id:string})=>booking.id===bookingId);
   expect(rows).toHaveLength(1);expect(rows[0].service_code).toBe("grooming");expect(rows[0].status).toBe("confirmed");
 });
+
+test("customer can select next month when grooming opens on the last evening of this month",async({page})=>{
+ await sandboxLogin(page);await ensureCustomerPet(page);
+ await page.clock.setFixedTime(new Date("2026-09-30T18:00:00Z"));
+ await page.goto("/mobile-app");
+ await serviceCard(page,"Grooming").getByRole("button",{name:/book now/i}).click();
+ await page.getByRole("button",{name:/Choose a package/i}).click();
+ await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
+ const tomorrow=page.getByRole("button",{name:"Thu, 1 Oct",exact:true});
+ await expect(tomorrow).toBeVisible();await tomorrow.click();await expect(tomorrow).toHaveAttribute("aria-pressed","true");
+ const lastDate=page.getByRole("button",{name:"Fri, 30 Oct",exact:true});
+ await lastDate.click();await expect(lastDate).toHaveAttribute("aria-pressed","true");
+ await expect(tomorrow).toHaveAttribute("aria-pressed","false");
+});
