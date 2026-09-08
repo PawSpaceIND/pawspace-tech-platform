@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
 import {freshSqlite,makeD1,seedSittingBooking,customerSessionCookie} from './helpers/stay-harness.mjs';
-import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation} from '../lib/sitting-customer-view.ts';
+import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation,requestCustomerSittingDateChange} from '../lib/sitting-customer-view.ts';
 installWorkersHooks('__SIT_CUSTOMER_DB__','__SIT_CUSTOMER_ENV__');
 test('customer care and cancellation controls persist through the real owned routes',async t=>{
  const sqlite=freshSqlite(),db=makeD1(sqlite);t.after(()=>sqlite.close());globalThis.__SIT_CUSTOMER_DB__=db;globalThis.__SIT_CUSTOMER_ENV__={PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
@@ -16,5 +16,9 @@ test('customer care and cancellation controls persist through the real owned rou
  const before=sqlite.prepare('SELECT status FROM canonical_bookings WHERE id=?').get(seed.bookingId).status;
  const requestId=await requestCustomerSittingCancellation(seed.bookingId,'Travel plans changed');assert.equal(await requestCustomerSittingCancellation(seed.bookingId,'Travel plans changed'),requestId);
  const row=sqlite.prepare('SELECT * FROM sitting_cancellation_requests WHERE id=?').get(requestId);assert.equal(row.booking_id,seed.bookingId);assert.equal(row.status,'policy_review_required');assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_cancellation_requests WHERE booking_id=?').get(seed.bookingId).n,1);assert.equal(sqlite.prepare('SELECT status FROM canonical_bookings WHERE id=?').get(seed.bookingId).status,before,'request does not claim cancellation completed');
- cookie=(await customerSessionCookie(db,{principalKey:'customer:foreign',customerId:'FOREIGN-CUSTOMER'})).cookie;await assert.rejects(loadSittingCustomerView(seed.bookingId),/ownership/i);await assert.rejects(saveSittingCustomerPlan(seed.bookingId,plan,'FOREIGN-CARE'),/ownership/i);assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_care_events WHERE booking_id=?').get(seed.bookingId).n,1);
+ const anchor=Date.now(),start=new Date(anchor+72*3600000).toISOString(),end=new Date(anchor+96*3600000).toISOString();
+ const oldWindow=sqlite.prepare('SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?').get(seed.bookingId);
+ const dateRequest=await requestCustomerSittingDateChange(seed.bookingId,start,end,'Travel dates changed');assert.equal(await requestCustomerSittingDateChange(seed.bookingId,start,end,'Travel dates changed'),dateRequest);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_date_change_requests WHERE booking_id=?').get(seed.bookingId).n,1);assert.deepEqual(sqlite.prepare('SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?').get(seed.bookingId),oldWindow);
+ cookie=(await customerSessionCookie(db,{principalKey:'customer:foreign',customerId:'FOREIGN-CUSTOMER'})).cookie;await assert.rejects(loadSittingCustomerView(seed.bookingId),/ownership/i);await assert.rejects(saveSittingCustomerPlan(seed.bookingId,plan,'FOREIGN-CARE'),/ownership/i);await assert.rejects(requestCustomerSittingDateChange(seed.bookingId,start,end,'Foreign request'),/ownership/i);assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_care_events WHERE booking_id=?').get(seed.bookingId).n,1);
 });
