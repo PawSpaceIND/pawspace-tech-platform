@@ -1,5 +1,6 @@
 import{authError,authorize,database,resolveActor,requirePermission,securityAudit}from"../../../lib/server-auth";
-import{saveCommercialTerm,activateCommercialTerm,setOrderCommercialOverride,computeOrderPayout,commercialTermsDirectory}from"../../../lib/provider-commercial-terms";
+import{saveCommercialTerm,activateCommercialTerm,setOrderCommercialOverride,commercialTermsDirectory}from"../../../lib/provider-commercial-terms";
+import{computeOrderPayoutStatutory}from"../../../lib/provider-payout-statutory";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -12,7 +13,7 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
  if(action==="save_term")result=await saveCommercialTerm(db,{serviceCode:text(body.serviceCode),providerId:text(body.providerId)||null,engagementModel:text(body.engagementModel) as never,providerSharePct:body.providerSharePct==null?undefined:Number(body.providerSharePct),gstMode:body.gstMode?text(body.gstMode) as never:undefined,platformGstRate:body.platformGstRate==null?undefined:Number(body.platformGstRate),cashAllowed:body.cashAllowed==null?undefined:Boolean(body.cashAllowed),onboardingFee:Number(body.onboardingFee)||0,renewalFee:Number(body.renewalFee)||0,renewalMonths:body.renewalMonths==null?undefined:Number(body.renewalMonths),effectiveFrom:text(body.effectiveFrom),reason:text(body.reason),actorId:actor.email});
  else if(action==="activate_term")result=await activateCommercialTerm(db,{termId:text(body.termId),approvalReference:text(body.approvalReference),actorId:actor.email});
  else if(action==="order_override")result=await setOrderCommercialOverride(db,{bookingId:text(body.bookingId),providerSharePct:body.providerSharePct==null?null:Number(body.providerSharePct),engagementModel:body.engagementModel?text(body.engagementModel) as never:null,gstMode:body.gstMode?text(body.gstMode) as never:null,reason:text(body.reason),actorId:actor.email});
- else if(action==="compute_payout")result=await computeOrderPayout(db,{bookingId:text(body.bookingId),actorId:actor.email});
+ else if(action==="compute_payout")result=await computeOrderPayoutStatutory(db,{bookingId:text(body.bookingId),actorId:actor.email});
  else return json({error:"Unknown commercial-terms action"},400);
  await securityAudit(db,actor,`commercial_terms.${action}`,"provider_commercial_terms",text(body.termId)||text(body.bookingId)||null,"completed");
  return json({data:result,productionReady:false});}catch(error){return authError(error,"Commercial-terms update failed");}}
