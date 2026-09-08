@@ -122,7 +122,8 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   // Exercise the authenticated reschedule transaction against the real local D1 worker.
   const newStart=new Date(new Date(rows[0].scheduledStart).getTime()+4*3600000).toISOString();
   const newEnd=new Date(new Date(rows[0].scheduledEnd).getTime()+4*3600000).toISOString();
-  const changed=await page.context().request.post("/api/grooming-booking-change",{data:{bookingId,customerId:savedBody.data.customerId,action:"reschedule",reason:"Customer requested a later afternoon slot",scheduledStart:newStart,scheduledEnd:newEnd}});
+  const terms=await page.context().request.get(`/api/grooming-booking-change?bookingId=${encodeURIComponent(bookingId)}`);expect(terms.status()).toBe(200);const termsBody=await terms.json();expect(termsBody.data.consentRevision).toMatch(/^[a-f0-9]{64}$/);
+  const changed=await page.context().request.post("/api/grooming-booking-change",{data:{expectedConsentRevision:termsBody.data.consentRevision,bookingId,customerId:savedBody.data.customerId,action:"reschedule",reason:"Customer requested a later afternoon slot",scheduledStart:newStart,scheduledEnd:newEnd}});
   expect(changed.status(),await changed.text()).toBe(200);
   const refreshed=await page.context().request.get("/api/customer-account");
   expect(refreshed.ok()).toBeTruthy();const refreshedBody=await refreshed.json();

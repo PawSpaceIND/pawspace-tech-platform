@@ -1,7 +1,7 @@
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"./grooming-policy-governance";
 import{evaluateCancellationRefund,resolveRefundPolicy}from"./refund-policy-governance";
 type Row=Record<string,unknown>;
-export type GroomingChangePreview={bookingId:string;currency:string;durationMinutes:number;reschedule:{allowed:boolean;feeAmount:number;reasons:string[]};cancellation:{mode:"cancel"|"review"|"unavailable";refundAmount:number|null;reasons:string[]};policyVersion:string;refundPolicyVersion:string};
+export type GroomingChangePreview={consentRevision:string;bookingId:string;currency:string;durationMinutes:number;reschedule:{allowed:boolean;feeAmount:number;reasons:string[]};cancellation:{mode:"cancel"|"review"|"unavailable";refundAmount:number|null;reasons:string[]};policyVersion:string;refundPolicyVersion:string};
 export async function groomingChangePreview(db:D1Database,booking:Row,work:Row,payment:Row,now=Date.now()):Promise<GroomingChangePreview>{
  let pricing:Record<string,unknown>={};try{pricing=JSON.parse(String(booking.pricing_json||"{}"));}catch{}
  const policy=parsePolicySnapshot(pricing?.commercialPolicy)??await resolveGroomingPolicy(db,String(booking.city_id),String(booking.zone_id),new Date(Number(booking.created_at||now)));
@@ -15,5 +15,8 @@ export async function groomingChangePreview(db:D1Database,booking:Row,work:Row,p
  const refundPolicy=await resolveRefundPolicy(db,{serviceCode:"grooming",cityId:String(booking.city_id||"")});
  const refund=evaluateCancellationRefund(refundPolicy,{scheduledStart:String(booking.scheduled_start),bookingStatus:String(booking.status),cancelledBy:"customer",amountPaid:["captured","paid"].includes(String(payment.status))?Number(payment.amount||0):0,couponValue:Number(pricing?.discount??0),now});
  const mode=!refund.automatic&&refund.requiresApproval?"review":cancel.allowed&&["confirmed","assigned","awaiting_acceptance"].includes(String(work.status))?"cancel":"unavailable";
- return{bookingId:String(booking.id),currency:String(booking.currency||"INR"),durationMinutes:intact?duration/60000:0,reschedule:{allowed:reschedule.allowed&&intact&&movable,feeAmount:reschedule.feeAmount,reasons},cancellation:{mode,refundAmount:mode==="cancel"?refund.customerRefundAmount:null,reasons:mode==="unavailable"?cancel.reasons:refund.reasons},policyVersion:reschedule.policyVersion,refundPolicyVersion:refund.policyVersion};
+ const result={bookingId:String(booking.id),currency:String(booking.currency||"INR"),durationMinutes:intact?duration/60000:0,reschedule:{allowed:reschedule.allowed&&intact&&movable,feeAmount:reschedule.feeAmount,reasons},cancellation:{mode:mode as "cancel"|"review"|"unavailable",refundAmount:mode==="cancel"?refund.customerRefundAmount:null,reasons:mode==="unavailable"?cancel.reasons:refund.reasons},policyVersion:reschedule.policyVersion,refundPolicyVersion:refund.policyVersion};
+ const basis=JSON.stringify({preview:result,booking:{status:booking.status,start:booking.scheduled_start,end:booking.scheduled_end,updatedAt:booking.updated_at},work:{status:work.status,provider:work.provider_id,updatedAt:work.updated_at},payment:{status:payment.status,amount:payment.amount,updatedAt:payment.updated_at}});
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(basis));
+ return{...result,consentRevision:Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,"0")).join("")};
 }

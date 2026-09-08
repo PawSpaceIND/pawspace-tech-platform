@@ -10,7 +10,7 @@ import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authori
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
-type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;reasonCategory?:string;scheduledStart?:string;scheduledEnd?:string};
+type Input={expectedConsentRevision?:string;bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;reasonCategory?:string;scheduledStart?:string;scheduledEnd?:string};
 
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
@@ -60,6 +60,10 @@ export async function POST(request:Request){
     const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
     if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
+    if(input.expectedConsentRevision!==undefined){
+      const current=await groomingChangePreview(db,booking,work,payment);
+      if(input.expectedConsentRevision!==current.consentRevision)return json({error:"Booking change terms have changed. Review the latest preview before confirming.",code:"booking_change_terms_changed"},409);
+    }
     const now=Date.now(),auditActor=actor.email;
 
     /*
