@@ -170,7 +170,7 @@ test("regression: completing a service settles reserved credits even when the su
     .run("USE-P-1", "BK-P-1", "CUS-G-1", "SUB-P", 1, 0, "reserved", NOW, NOW);
   assert.doesNotMatch(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?"), /status IN \('active','exhausted'\)/, "the consume update no longer skips paused/grace subscriptions");
   await db.prepare(findStatement(lifecycleRoute, "UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved")).bind(NOW, "BK-P-1").run();
-  await db.prepare(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?")).bind(1, 1, 1, NOW, "SUB-P").run();
+  await db.prepare(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?")).bind(1, 1, 1, NOW, "SUB-P", "BK-P-1").run();
   const sub = sqlite.prepare("SELECT sessions_reserved,sessions_consumed,status FROM customer_grooming_subscriptions WHERE id='SUB-P'").get();
   assert.equal(sub.sessions_reserved, 0, "reserved credits are released at completion");
   assert.equal(sub.sessions_consumed, 1, "consumed count is recorded at completion");
@@ -190,8 +190,8 @@ test("real execution: booking -> accept -> travel -> proof -> complete mirrors i
   };
   for (const step of ["assigned", "on_the_way", "arrived", "in_service"]) statusPair(step);
   await db.prepare(findStatement(lifecycleRoute, "INSERT INTO grooming_service_proof")).bind("BK-C-1", "uat://proof/BK-C-1/before", "uat://proof/BK-C-1/after", JSON.stringify(["Coat check", "Finish review"]), "done", NOW, NOW).run();
-  await db.prepare(findStatement(lifecycleRoute, "UPDATE canonical_bookings SET status='completed'")).bind(NOW, "BK-C-1").run();
-  await db.prepare(findStatement(lifecycleRoute, "UPDATE provider_work_orders SET status='completed'")).bind(NOW, "BK-C-1").run();
+  await db.prepare(findStatement(lifecycleRoute, "UPDATE canonical_bookings SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun").run();
+  await db.prepare(findStatement(lifecycleRoute, "UPDATE provider_work_orders SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun", "in_service").run();
   await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO booking_invoices")).bind("INV-1", "BK-C-1", "CUS-G-1", "PS-2026-0001", "issued", "INR", 1899, 0, 1899, NOW, NOW, NOW).run();
   await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO repeat_booking_tasks")).bind("RPT-1", "BK-C-1", "CUS-G-1", "grooming", NOW + 21 * 86_400_000, NOW, NOW).run();
   const { readCustomerAccount } = await import("../lib/customer-account.ts");
