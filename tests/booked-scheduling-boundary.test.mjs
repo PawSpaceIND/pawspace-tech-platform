@@ -30,7 +30,7 @@ test("the existing Grooming recovery route keeps booking, work and capacity on o
   assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM booking_payments").all(),payments);
 });
 
-for(const action of ["cancel","reassign","assign","manual"])test(`confirmation inside generic ${action} leaves the new booking and original capacity intact`,async t=>{
+for(const action of ["cancel","reassign","assign","manual"])test(action==="assign"?"ranked assign refuses an already assigned reservation before opening a mutation window":`confirmation inside generic ${action} leaves the new booking and original capacity intact`,async t=>{
   const ctx=await setupJourney();t.after(ctx.close);const input=config();await seedOwnedPet(ctx.db,input.customerId,input.petSourceId,input.petName);
   const cookie=await sessionCookie(ctx.db,"customer",input.customerId,`customer:${input.customerId}`),end=new Date(new Date(input.start).getTime()+7200000).toISOString();
   const reserved=await post({clientRequestId:input.groupId,customerId:input.customerId,petIds:[input.petSourceId],serviceCode:"grooming",serviceAddress:"42 Test Road, Indiranagar, Bengaluru",servicePincode:"560038",scheduledStart:input.start,scheduledEnd:end,preferredProviderId:input.preferredProviderId},cookie);
@@ -41,7 +41,9 @@ for(const action of ["cancel","reassign","assign","manual"])test(`confirmation i
     confirmed=await routeCall("../../app/api/canonical-bookings/route.ts","POST","/api/canonical-bookings",{idempotencyKey:input.groupId,scheduleGroupId:input.groupId,customer:{id:input.customerId,name:input.customerName,primaryPhone:input.phone},pets:[{sourceId:input.petSourceId,name:input.petName,species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:"dog-basic",packageName:"Bath & Basic",scheduledStart:input.start,scheduledEnd:end,provider:reserved.body.data.provider,totalAmount:1899,amountDueNow:1899,payment:{method:"upi",mode:"prepaid",status:"created",detail:"Controlled race test"},pricing:{discount:0}},cookie);
     assert.equal(confirmed.status,201,JSON.stringify(confirmed.body));before=snapshot(ctx.sqlite);
   };
+  const priorDecision=ctx.sqlite.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").get(input.groupId),priorReservations=ctx.sqlite.prepare("SELECT * FROM scheduling_reservations WHERE group_id=?").all(input.groupId);
   const rejected=await post({action,groupId:input.groupId,providerId:reserved.body.data.provider.id,reason:"Controlled simultaneous confirmation test"});
+  if(action==="assign"){assert.equal(confirmed,undefined);assert.equal(rejected.status,409);assert.equal(rejected.body.code,"SCHEDULING_DECISION_CHANGED");assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").get(input.groupId),priorDecision);assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM scheduling_reservations WHERE group_id=?").all(input.groupId),priorReservations);return;}
   assert.ok(confirmed,"confirmation must commit inside the mutation window");assert.equal(rejected.status,409,JSON.stringify(rejected.body));assert.equal(rejected.body.code,"BOOKING_RECOVERY_REQUIRED");assert.deepEqual(snapshot(ctx.sqlite),before);
 });
 

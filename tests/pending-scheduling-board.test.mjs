@@ -46,3 +46,46 @@ test('waiting list uses IST boundaries and survives a decisions-only database',a
  assert.deepEqual((await board(day)).body.data.pendingRequests,[]);
  const tomorrow=new Date(Date.parse(input.scheduledStart)+86400000).toISOString().slice(0,10);assert.equal((await board(tomorrow)).body.data.pendingRequests.length,1);
 });
+
+const operation=(groupId,action,providerId)=>routeCall('../../app/api/uat-scheduling/route.ts','POST','/api/uat-scheduling',{groupId,action,providerId,reason:'Verified request from the operations desk'});
+const decision=(ctx,id)=>ctx.sqlite.prepare('SELECT * FROM scheduling_assignment_decisions WHERE group_id=?').get(id);
+const active=(ctx,id)=>ctx.sqlite.prepare("SELECT * FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY id").all(id);
+
+for(const boundary of ['release','dispatch'])for(const winnerAction of ['assign','manual','cancel'])test(`a concurrent ${winnerAction} wins before the stale assignment ${boundary}`,async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const choices=JSON.parse(decision(ctx,groupId).shortlist_json).choices.map(choice=>choice.provider.id);
+ if(boundary==='dispatch'&&winnerAction==='assign')ctx.sqlite.prepare("UPDATE provider_capacity_profiles SET provider_model='commission' WHERE id=?").run(choices[1]);
+ let injected=false,winner,saved,rows,offers,audits;
+ ctx.db.beforeBatch=async statements=>{
+  const target=boundary==='release'?"UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=":"INSERT INTO scheduling_reservations (";
+  if(!injected&&statements.some(statement=>statement._sql?.startsWith(target))){
+   injected=true;winner=await operation(groupId,winnerAction,choices[1]);assert.equal(winner.status,200,JSON.stringify(winner.body));saved=decision(ctx,groupId);rows=active(ctx,groupId);
+   offers=ctx.sqlite.prepare('SELECT * FROM provider_assignment_offers WHERE group_id=?').all(groupId);
+   audits=ctx.sqlite.prepare("SELECT * FROM security_audit_events WHERE resource_id=? AND outcome='completed' ORDER BY id").all(groupId);
+  }
+ };
+ const stale=await operation(groupId,'assign',choices[0]);
+ assert.equal(injected,true);assert.equal(stale.status,409,JSON.stringify(stale.body));assert.equal(stale.body.code,'SCHEDULING_DECISION_CHANGED');
+ assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),rows);assert.equal(rows.length,winnerAction==='cancel'?0:1);
+ assert.deepEqual(ctx.sqlite.prepare('SELECT * FROM provider_assignment_offers WHERE group_id=?').all(groupId),offers);
+ assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM security_audit_events WHERE resource_id=? AND outcome='completed' ORDER BY id").all(groupId),audits);
+ if(boundary==='dispatch'&&winnerAction==='assign'){assert.equal(offers.length,1);assert.equal(offers[0].provider_id,choices[1]);assert.equal(offers[0].status,'pending');}
+ assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) AS n FROM scheduling_dispatch_assertions').get().n,0);
+});
+
+test('normal staff assignment removes the waiting request and refuses duplicate or missing selections',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const choices=JSON.parse(decision(ctx,groupId).shortlist_json).choices.map(choice=>choice.provider.id);
+ assert.equal((await operation(groupId,'assign',undefined)).status,400);assert.equal(active(ctx,groupId).length,0);
+ const first=await operation(groupId,'assign',choices[0]);assert.equal(first.status,200,JSON.stringify(first.body));assert.equal(first.body.data.provider.id,choices[0]);
+ assert.deepEqual((await board(input.scheduledStart.slice(0,10))).body.data.pendingRequests,[]);
+ const saved=decision(ctx,groupId),rows=active(ctx,groupId);
+ const replay=await operation(groupId,'assign',choices[0]);assert.equal(replay.status,409);assert.equal(replay.body.code,'SCHEDULING_DECISION_CHANGED');assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),rows);
+});
+
+test('unavailable recommended provider leaves the request waiting and does not claim an existing assignment',async t=>{
+ const ctx=await setupJourney();t.after(ctx.close);const input=await pending(ctx),groupId=input.clientRequestId;
+ const saved=decision(ctx,groupId),provider=JSON.parse(saved.shortlist_json).choices[0].provider.id;
+ ctx.sqlite.prepare("UPDATE provider_capacity_profiles SET status='inactive'").run();
+ const response=await operation(groupId,'assign',provider);assert.equal(response.status,409);assert.match(response.body.error,/still needs admin assignment/);assert.equal(response.body.restored,false);assert.deepEqual(decision(ctx,groupId),saved);assert.deepEqual(active(ctx,groupId),[]);assert.equal((await board(input.scheduledStart.slice(0,10))).body.data.pendingRequests.length,1);
+});
