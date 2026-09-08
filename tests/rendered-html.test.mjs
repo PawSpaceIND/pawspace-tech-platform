@@ -195,7 +195,8 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(training, /PAWSPACE RECOMMENDS/);
   assert.match(training, /Video \+ homework/);
   assert.match(training, /complimentary Bath & Basic grooming/);
-  assert.match(training, /All training programmes/);
+  assert.match(training, /Programmes for your selected dogs/);
+  assert.match(training, /eligiblePlans\.map/);
   assert.match(training, /Select this programme/);
   assert.match(training, /Selected programme/);
   assert.match(training, /training-plans\.module\.css/);

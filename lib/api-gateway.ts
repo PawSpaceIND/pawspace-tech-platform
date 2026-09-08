@@ -79,6 +79,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/training-payment-sandbox")return "scheduling.book";
+  if(url.pathname==="/api/training-eligibility")return "scheduling.book";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";
   if(url.pathname==="/api/training-ops")return "bookings.manage";

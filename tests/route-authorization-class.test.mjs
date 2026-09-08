@@ -266,6 +266,7 @@ const UNLOADABLE_UNDER_STRIP_ONLY = [];
 // not turn a correct customer path into a false ordering defect.
 const AUTHORIZED_PROBE_VALIDATION = new Map([
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
+  ["training-eligibility.POST", "customer probe holds scheduling.book; saved-pet payload validation follows the route permission check, then ownership is enforced"],
   ["subscription-billing.GET", "customer probe holds scheduling.book; missing subscription selector is validated only after authorization"],
 ]);
 

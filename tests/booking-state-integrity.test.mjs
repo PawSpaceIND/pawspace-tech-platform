@@ -60,10 +60,10 @@ test("Training programme confirmation attests sandbox payment before canonical b
  try{
   const common={idempotencyKey:"training-key",scheduleGroupId:"G-1",customer:{id:"CUS-A",name:"A",primaryPhone:"9999999999"},pets:[{sourceId:"PET-A",name:"Dog",species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageName:"P",scheduledStart:"2026-09-01T09:30:00.000Z",scheduledEnd:"2026-09-01T10:30:00.000Z",provider:{id:"P-1",name:"Trainer",model:"commission"},totalAmount:12000,amountDueNow:6000,payment:{method:"payment_link",mode:"split",status:"created",detail:"Awaiting verified payment"},pricing:{discount:0,trainingQuoteId:"TQ-1"}};
   await createCanonicalLifecycle({...common,packageCode:"training-8-basic"});
-  assert.equal(calls.length,2);assert.equal(calls[0].url,"/api/training-payment-sandbox");assert.equal(JSON.parse(String(calls[0].init.body)).amount,6000);assert.equal(calls[1].url,"/api/canonical-bookings");const programmePayload=JSON.parse(String(calls[1].init.body));assert.equal(programmePayload.payment.status,"captured");assert.match(programmePayload.payment.detail,/TRN-UAT-PAY-1/);
+  assert.equal(calls.length,3);assert.equal(calls.shift().url,"/api/training-eligibility");assert.equal(calls[0].url,"/api/training-payment-sandbox");assert.equal(JSON.parse(String(calls[0].init.body)).amount,6000);assert.equal(calls[1].url,"/api/canonical-bookings");const programmePayload=JSON.parse(String(calls[1].init.body));assert.equal(programmePayload.payment.status,"captured");assert.match(programmePayload.payment.detail,/TRN-UAT-PAY-1/);
   calls.length=0;
   await createCanonicalLifecycle({...common,packageCode:"trainer-meet-greet",amountDueNow:500,totalAmount:500,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting verified payment"}});
-  assert.equal(calls.length,1);assert.equal(calls[0].url,"/api/canonical-bookings");assert.equal(JSON.parse(String(calls[0].init.body)).payment.status,"created");
+  assert.equal(calls.length,2);assert.equal(calls.shift().url,"/api/training-eligibility");assert.equal(calls[0].url,"/api/canonical-bookings");assert.equal(JSON.parse(String(calls[0].init.body)).payment.status,"created");
  }finally{globalThis.fetch=originalFetch;}
 });
 

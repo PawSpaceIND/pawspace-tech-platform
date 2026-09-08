@@ -11,6 +11,7 @@ import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import PetManager from "./pet-manager";
 import { CustomerSessionExpiredError, loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import CustomerLogin from "./customer-login";
+import {trainingAgeGroup,trainingEligibilityProblem} from "../../lib/training-age-eligibility";
 import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
 import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";
 import { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";
@@ -147,10 +148,15 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
   const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
   const discount=checkoutQuote?.discount??0;
   const payableNow=checkoutQuote?.amountDueNow??0;
-  const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
+  const agePets=pets.filter(p=>selectedPets.includes(p.id));
+  const eligiblePlans=plans.filter(item=>!trainingEligibilityProblem(item.packageCode,agePets));
+  const recommendedPlan=eligiblePlans.find(item=>item.packageCode===(agePets.every(p=>trainingAgeGroup(p)==="puppy")?"training-4-puppy":"training-8-basic"))||eligiblePlans[0]||emptyPlan;
+  const eligibilityProblem=trainingEligibilityProblem(plan.packageCode,agePets);
+  const eligibleKey=eligiblePlans.map(item=>item.packageCode).join(",");
+  useEffect(()=>{if(plans.length && eligibilityProblem){setPlan(recommendedPlan);setCheckoutQuote(null);setAgreed(false);}},[eligibleKey,eligibilityProblem,recommendedPlan.packageCode,plans.length]);
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;if(pincode.length!==6){queueMicrotask(()=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");}});return()=>{active=false;};}void resolveServiceCoverage(pincode).then(resolved=>{if(!active)return;setCoverage(resolved);return loadTrainingTrainers({cityId:resolved.cityId,zoneId:resolved.zoneId,at:selectedStartIso});}).then(result=>{if(!active||!result)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");setScheduleError("");}).catch(problem=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to resolve Training coverage");}});return()=>{active=false;};},[pincode,selectedStartIso]);
-  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";queueMicrotask(()=>{if(active)setCheckoutQuote(null);});void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
+  useEffect(()=>{if(stage!==5||!plan.sessions||eligibilityProblem)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";queueMicrotask(()=>{if(active)setCheckoutQuote(null);});void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[eligibilityProblem,stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
   const togglePet = (pet: string) =>
     setSelectedPets((current) =>
       current.includes(pet)
@@ -221,6 +227,7 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
+      if(eligibilityProblem){setScheduleError(eligibilityProblem);setStage(2);return;}
       if(!agreed || !healthSafetyNotes){setScheduleError("Confirm health and safety details and accept the terms before booking.");return;}
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       if(!checkoutQuote){setScheduleError("Refresh the Training quote before confirming.");return;}
@@ -349,13 +356,14 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
       {stage === 2 && (
         <section>
           <div className={styles.head}><h3>{primaryPet?.name ? `${primaryPet.name}'s training options` : "Your dog's training options"}</h3><small>Package · 2 of 5</small></div>
-          <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>Basic Obedience Plan</h4><p>Best match for the goals you selected: {selectedGoals.slice(0, 2).join(" + ")}.</p></div><b>{recommendedPlan.sessionLabel}</b></article>
+          <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>{recommendedPlan.name}</h4><p>Age-appropriate starting point. Your selected goals: {selectedGoals.slice(0, 2).join(" + ")}.</p></div><b>{recommendedPlan.sessionLabel}</b></article>
+          <p className={styles.policy}>Puppy programmes are for dogs under six months; other programmes are for six months and older. For unknown or mixed ages, start with an assessment or book each age group separately. A valid date of birth takes priority over a saved age band.</p><button className={styles.back} onClick={()=>{setShowPetManager(true);setStage(1);}}>Review pet ages</button>
           <div className={styles.goalSummary}><b>Selected requirements</b>{selectedGoals.map((goal) => <span key={goal}><i>✓</i> {goal}</span>)}</div>
           <section className={styles.meetTrainer}>
             <div className={styles.meetPitch}><span>MEET A TRAINER FIRST</span><h4>Prefer to meet a trainer before choosing a programme?</h4><p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p></div>
             <label className={styles.consent}>Service PIN code<input value={pincode} inputMode="numeric" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Enter six-digit PIN code" /></label>
             <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
-            <div className={styles.meetSlots}>{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}</div>
+            <div className={styles.meetSlots}>{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Requested":"Check availability"}</small></button>;})}</div>
             <p>Trainer availability is checked in the governed city and zone before booking. This creates one standalone canonical Meet &amp; Greet with payment awaiting a verified event.</p>
             <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Reserving Meet & Greet…":"Book Meet & Greet only"}</button>
             {meetLinked&&<article className={styles.meetConfirmed}><b>✓ Meet &amp; Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||"Assigned trainer"} · {meetBookingId}</span><small>You can continue to a programme now or return after the meeting.</small></article>}
@@ -363,11 +371,11 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
             {scheduleError&&<p role="alert">{scheduleError}</p>}
           </section>
           <div className={styles.planGuide}><span><i>1</i><b>Pick by goal</b><small>Puppy, obedience, leash or advanced</small></span><span><i>2</i><b>Compare effort</b><small>Sessions, validity and price together</small></span><span><i>3</i><b>See outcomes</b><small>Tap a plan to expand inclusions</small></span></div>
-          <div className={styles.planListHead}><b>All training programmes</b><span>{plans.length} options · select to compare</span></div>
+          <div className={styles.planListHead}><b>Programmes for your selected dogs</b><span>{eligiblePlans.length} options · select to compare</span></div>
           <div className={planStyles.grid} data-testid="training-plan-grid">
-            {plans.map((item) => (
+            {eligiblePlans.map((item) => (
               <article key={item.name} className={`${planStyles.card} ${plan.name === item.name ? planStyles.selected : ""}`} onClick={() => setPlan(item)} onKeyDown={(event) => {if (event.key === "Enter" || event.key === " ") {event.preventDefault();setPlan(item);}}} role="button" tabIndex={0} aria-pressed={plan.name === item.name} aria-label={`${plan.name === item.name ? "Selected" : "Select"} ${item.name}, ${item.sessionLabel}, ${item.validity}, ${money(item.price)}`}>
-                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.recommended ? "BEST MATCH" : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(item.price)}</strong></header>
+                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.packageCode===recommendedPlan.packageCode ? "AGE-SUITABLE PICK" : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(item.price)}</strong></header>
                 <p className={planStyles.description}>{item.detail}</p>
                 <div className={planStyles.metrics}><span><b>{item.sessionLabel}</b><small>at home</small></span><span><b>{item.validity}</b><small>validity</small></span><span><b>{item.directMinutes+item.coachingMinutes} minutes</b><small>per pet session</small></span><span><b>Video + homework</b><small>after every session</small></span></div>
                 <small className={planStyles.includes}>Includes trainer notes, parent practice tasks, milestone tracking, two-session feedback and replacement protection.</small>
@@ -427,7 +435,7 @@ function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; on
           <article className={styles.policy}><b>Cancellation and refund</b><p>Cancellation requests go for PawSpace approval. Once approved, the unused-session value is refunded after completed sessions and adjustments are reconciled.</p></article>
           <label className={styles.consent}><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />{" "}I agree to training, attendance, rescheduling, safety, media and refund terms.</label>
           <button className={styles.back} onClick={() => setStage(4)}>← Calendar</button>
-          <button disabled={!agreed || scheduling || !checkoutQuote || selectedPets.length === 0 || !coverage} className={styles.primary} onClick={confirm}>{scheduling ? "Reserving all sessions…" : !checkoutQuote ? "Refreshing server quote…" : `Pay ${money(payableNow)} & request trainer approval`}</button>
+          <button disabled={Boolean(eligibilityProblem) || !agreed || scheduling || !checkoutQuote || selectedPets.length === 0 || !coverage} className={styles.primary} onClick={confirm}>{scheduling ? "Reserving all sessions…" : !checkoutQuote ? "Refreshing server quote…" : `Pay ${money(payableNow)} & request trainer approval`}</button>
           {scheduleError && <p role="alert">{scheduleError}</p>}
         </section>
       )}

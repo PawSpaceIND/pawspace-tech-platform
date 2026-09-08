@@ -91,7 +91,7 @@ test("every Team workspace card on the front door points at a page that exists",
 test("the handoff screen opens on a live escalation instead of an arbitrary thread", () => {
   const page = read("app/team/ai/handoff/page.tsx");
   assert.match(page, /mode=queue/, "the page must ask for the escalation queue");
-  assert.match(page, /const escalated = rows\.find/, "it must prefer a thread that actually has a handoff");
+  assert.match(page, /const escalated = allRows\.find/, "it must prefer an escalation from the merged queue and thread list, including queue-only threads");
   assert.match(page, /Waiting for staff/, "the thread list must show which conversations are escalated");
   const lib = read("lib/ai-human-handoff.ts");
   assert.match(lib, /export async function listAiHandoffQueue/);

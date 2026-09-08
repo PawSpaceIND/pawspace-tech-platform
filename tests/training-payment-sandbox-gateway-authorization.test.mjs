@@ -101,6 +101,25 @@ function attestationCount(sqlite) {
   return Number(sqlite.prepare("SELECT COUNT(*) AS count FROM training_quote_payment_attestations").get().count);
 }
 
+test("saved-age preflight reaches its route through customer authentication and refuses foreign profiles",async()=>{
+  const {sqlite,db}=await world();
+  try{
+    const cookie=await customerCookie(db);
+    sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets(id TEXT,customer_id TEXT,source_pet_id TEXT,species TEXT,age_years REAL,profile_json TEXT)");
+    sqlite.prepare("INSERT INTO canonical_pets VALUES(?,?,?,?,?,?)").run("AGE-PET","CUS-TRAINING-CAPTURE","age-source","dog",2,null);
+    const {POST}=await import("../app/api/training-eligibility/route.ts");
+    const request=(customerId,petIds)=>new Request(ORIGIN+"/api/training-eligibility",{method:"POST",headers:{origin:ORIGIN,cookie,"content-type":"application/json"},body:JSON.stringify({customerId,petIds,packageCode:"training-8-basic"})});
+    const valid=request("CUS-TRAINING-CAPTURE",["AGE-PET"]);
+    assert.equal((await throughGateway(valid)).refused,undefined);
+    assert.equal((await POST(valid)).status,200);
+    assert.equal((await POST(request("CUS-TRAINING-CAPTURE",["foreign-pet"]))).status,409);
+    const foreign=request("ANOTHER-CUSTOMER",["AGE-PET"]);
+    assert.equal((await throughGateway(foreign)).refused.status,403);
+    assert.equal((await POST(foreign)).status,403);
+    assert.equal(attestationCount(sqlite),0);
+  }finally{sqlite.close();}
+});
+
 test("a verified customer session can perform its training sandbox capture through the real Worker authorization composition", async () => {
   const { sqlite, db, quote } = await world();
   const cookie = await customerCookie(db);
