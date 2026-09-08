@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {setupJourney,routeCall,sessionCookie} from './helpers/grooming-journey-harness.mjs';
+import {setupJourney,sessionCookie} from './helpers/grooming-journey-harness.mjs';
 async function fixture(t){
  const ctx=await setupJourney();t.after(ctx.close);
  ctx.sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,email TEXT,city_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT,name TEXT,species TEXT,breed TEXT,vaccination_status TEXT,created_at INTEGER,updated_at INTEGER)");
@@ -9,7 +9,8 @@ async function fixture(t){
  const cookie=await sessionCookie(ctx.db,'customer','SEARCH-C','customer:SEARCH-C');
  const start=new Date(Date.now()+7*86400000);start.setUTCHours(3,30,0,0);
  const input={action:'preview',clientRequestId:'SEARCH-ONLY',customerId:'SEARCH-C',petIds:['SEARCH-P'],serviceCode:'pet_sitting',serviceAddress:'100 Feet Road, Indiranagar, Bengaluru',servicePincode:'560038',scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+86400000).toISOString(),careMode:'overnight'};
- return {...ctx,input,call:(over={})=>routeCall('../../app/api/uat-scheduling/route.ts','POST','/api/uat-scheduling',{...input,...over},cookie)};
+ const {POST}=await import('../app/api/uat-scheduling/route.ts');
+ return {...ctx,input,call:async(over={})=>{const response=await POST(new Request('https://uat.pawspace.in/api/uat-scheduling',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({...input,...over})}));return {status:response.status,body:await response.json()};}};
 }
 function count(sqlite,table){return sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)?sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n:0;}
 test('sitter preview returns governed choices without reservation, decision or provider offer',async t=>{
