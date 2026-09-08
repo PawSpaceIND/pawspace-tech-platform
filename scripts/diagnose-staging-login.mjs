@@ -25,7 +25,10 @@ try {
       const raw = typeof event.data === 'string' ? event.data : await event.data.text();
       const entry = JSON.parse(raw);
       console.log(JSON.stringify({ traceReceived: true, fields: Object.keys(entry), outcome: entry.outcome }));
-      if (!entry.event?.request?.url?.includes(probe)) return;
+      // Cloudflare may redact the query string, and startup exceptions can omit
+      // the request entirely. Keep only this endpoint or request-less errors.
+      const requestUrl = entry.event?.request?.url;
+      if (requestUrl && new URL(requestUrl).pathname !== '/api/customer-otp') return;
       console.log(JSON.stringify({ outcome: entry.outcome, exceptions: (entry.exceptions || []).map(error => ({ name: clean(error.name), message: clean(error.message) })) }));
     } catch { console.log('Trace message could not be decoded; raw data withheld'); }
   });
