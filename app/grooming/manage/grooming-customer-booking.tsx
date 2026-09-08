@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import GroomingCareSummary from "./grooming-care-summary";
 import GroomingChangePolicy from "./grooming-change-policy";
 import {useEffect,useState} from "react";
 import {loadCustomerAccount} from "../../../lib/customer-account-client";
@@ -30,6 +31,7 @@ export default function GroomingCustomerBooking({bookingId}:{bookingId:string}) 
     <dl><div><dt>Starts</dt><dd>{formatDate(booking.scheduledStart)} IST</dd></div><div><dt>Ends</dt><dd>{formatDate(booking.scheduledEnd)} IST</dd></div><div><dt>Booking total</dt><dd>{new Intl.NumberFormat("en-IN",{style:"currency",currency:booking.currency}).format(booking.totalAmount)}</dd></div></dl>
     <p className={styles.note}>The booking total is not a receipt or confirmation of payment.</p>
    </section>
+   {booking.status==="completed"&&<GroomingCareSummary key={booking.id} bookingId={booking.id}/>}
    <GroomingChangePolicy key={`${booking.id}:${booking.scheduledStart}:${booking.status}`} bookingId={booking.id} customerId={customerId} onChanged={message=>{setNotice({bookingId:booking.id,text:message});reload();}}/>
    <button onClick={reload}>Refresh booking status</button>
   </>}
