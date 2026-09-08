@@ -675,3 +675,12 @@ test("wallet batch rolls back an inserted ledger row when the companion balance 
   assert.equal(await wallet.walletBalance(db, CUSTOMER), 1000);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM pawspace_wallet_ledger WHERE entry_type='redeem'").get().n, 0);
 });
+
+
+test("credit lookup failure cannot become zero applied credit and permit a wallet debit", async () => {
+  const { db } = await walletWorld();
+  await wallet.creditWallet(db, { customerId: CUSTOMER, amount: 1000, source: "refund", idempotencyKey: "read-failure-credit", actorId: FINANCE_MAKER });
+  db.onSql("SELECT COALESCE(SUM(applied_value),0)", () => { throw new Error("credit ledger temporarily unavailable"); });
+  await assert.rejects(() => wallet.redeemWalletForBooking(db, { customerId: CUSTOMER, bookingId: BOOKING, actorId: CUSTOMER }), /credit ledger temporarily unavailable/);
+  assert.equal(await wallet.walletBalance(db, CUSTOMER), 1000);
+});
