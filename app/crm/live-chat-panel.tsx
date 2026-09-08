@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, FormEvent } from "react";
-import styles from "./crm.module.css";
+import { useState, useEffect, useMemo, useCallback, FormEvent } from "react";
 
 interface ThreadItem {
   id: string;
@@ -56,7 +55,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   const [simulateText, setSimulateText] = useState("Hi PawSpace, I'd like to check my pet grooming booking details");
 
   // Load threads
-  const loadThreads = async () => {
+  const loadThreads = useCallback(async () => {
     try {
       const res = await fetch("/api/crm/chat", { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as {
@@ -66,31 +65,57 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       };
       if (res.ok && body.data?.threads) {
         setThreads(body.data.threads);
-        if (!selectedThreadId && body.data.threads.length > 0) {
-          setSelectedThreadId(body.data.threads[0].id);
-        }
+        setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
       }
     } catch {
       notify("Failed to load chat threads");
     } finally {
       setLoading(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
-    loadThreads();
-  }, []);
+    let active = true;
+    void fetch("/api/crm/chat", { cache: "no-store" })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          data?: { threads?: ThreadItem[] };
+          error?: string;
+        };
+        if (!active) return;
+        if (res.ok && body.data?.threads) {
+          setThreads(body.data.threads);
+          setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
+        }
+      })
+      .catch(() => {
+        if (active) notify("Failed to load chat threads");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [notify]);
 
   // Load thread detail when selected
   useEffect(() => {
     if (!selectedThreadId) {
-      setThreadDetail(null);
+      queueMicrotask(() => {
+        setThreadDetail(null);
+      });
       return;
     }
 
     let active = true;
-    setDetailLoading(true);
-    fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`, { cache: "no-store" })
+    queueMicrotask(() => {
+      if (active) setDetailLoading(true);
+    });
+
+    void fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`, { cache: "no-store" })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
@@ -114,7 +139,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
     return () => {
       active = false;
     };
-  }, [selectedThreadId]);
+  }, [selectedThreadId, notify]);
 
   // Filter threads
   const filteredThreads = useMemo(() => {
