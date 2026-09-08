@@ -7,6 +7,8 @@ console.log("PAWSPACE_PAYMENT_ENV=sandbox\nFORBID_PRODUCTION=true\nPAWSPACE_PAYM
 console.log("Local regression evidence only: external delivery, deployed D1 and browser certification remain separate gates.");
 const suites = [
   "infrastructure-payment-lock", "grooming-golden-journey",
+  "conversation-live-refresh", "order-notification-gateway-execution",
+  "subscription-scheduled-bootstrap", "trust-safety-engine",
   "grooming-vertical-execution", "training-vertical-execution", "sitting-vertical-execution", "walking-vertical-execution",
   "provider-assignment-execution", "provider-journey-execution", "subscription-billing-lifecycle",
   "financial-lifecycle-executable-concurrency", "transaction-atomicity-chaos",

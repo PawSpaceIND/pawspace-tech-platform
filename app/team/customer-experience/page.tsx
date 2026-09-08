@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { subscribeConversationRefresh } from "../../../lib/conversation-live-refresh";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -97,6 +98,11 @@ export default function CustomerExperiencePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof EventSource === "undefined") return;
+    return subscribeConversationRefresh(() => window.dispatchEvent(new Event("pawspace:cx-refresh")));
+  }, []);
+
+  useEffect(() => {
     let active = true;
     let refreshing = false;
     const refresh = async () => {
@@ -113,10 +119,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const invalidate = () => { void refresh(); };
+    window.addEventListener("pawspace:cx-refresh", invalidate);
+    const timer = window.setInterval(invalidate, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:cx-refresh", invalidate);
     };
   }, [loadThreads]);
 
@@ -137,10 +146,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const invalidate = () => { void refresh(); };
+    window.addEventListener("pawspace:cx-refresh", invalidate);
+    const timer = window.setInterval(invalidate, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:cx-refresh", invalidate);
     };
   }, [selected, loadConversation, loadControl]);
 

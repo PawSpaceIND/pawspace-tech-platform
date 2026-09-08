@@ -8,6 +8,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const D1_DIRS = [
+  ...(process.env.E2E_PERSIST_DIR ? [join(process.env.E2E_PERSIST_DIR, "v3/d1/miniflare-D1DatabaseObject")] : []),
   "dist/server/.wrangler/state/v3/d1/miniflare-D1DatabaseObject",
   ".wrangler/state/v3/d1/miniflare-D1DatabaseObject",
 ];

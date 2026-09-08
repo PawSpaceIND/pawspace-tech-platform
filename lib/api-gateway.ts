@@ -66,6 +66,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
   if(url.pathname==="/api/unified-cases")return "bookings.manage";
+  if(url.pathname==="/api/order-notifications"&&["GET","POST"].includes(method))return "scheduling.book";
   if(url.pathname==="/api/staff-alerts"){if(method==="GET")return "reports.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="sweep"?"customers.manage":"reports.view";}
   if(url.pathname==="/api/staff-alert-runner")return "settings.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";

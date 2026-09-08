@@ -108,7 +108,7 @@ export async function ensureTrustSafetyTables(db: Db) {
 
 async function ensureBlocklistTriggers(db: Db) {
   if (await tableExists(db, "canonical_bookings")) {
-    await db.exec(`CREATE TRIGGER IF NOT EXISTS trg_global_blocklist_booking_insert
+    await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_global_blocklist_booking_insert
       BEFORE INSERT ON canonical_bookings
       WHEN EXISTS (
         SELECT 1 FROM global_blocklist_customer_links l
@@ -117,7 +117,7 @@ async function ensureBlocklistTriggers(db: Db) {
       )
       BEGIN
         SELECT RAISE(ABORT,'global_customer_blocked');
-      END;`);
+      END;`).run();
   }
 }
 

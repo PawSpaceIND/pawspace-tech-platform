@@ -57,8 +57,8 @@ start_server() {
     return 1
   fi
 
-  setsid env E2E_SKIP_BUILD=1 bash scripts/e2e/serve-hardened.sh >> "$SERVE_LOG" 2>&1 &
-  local pid=$!
+  local pid
+  pid="$(node scripts/e2e/start-server.mjs "$SERVE_LOG")"
   echo "$pid" > "$PID_FILE"
 
   for _ in $(seq 1 60); do
@@ -119,6 +119,7 @@ journeys=(
   e2e/journeys/02-partner.spec.ts
   e2e/journeys/03-admin.spec.ts
   e2e/journeys/04-multi-actor.spec.ts
+  e2e/journeys/05-cx-reconnect.spec.ts
 )
 projects=(chromium mobile-chromium)
 

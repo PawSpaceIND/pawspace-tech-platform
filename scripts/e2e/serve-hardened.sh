@@ -20,7 +20,7 @@
 set -euo pipefail
 PORT="${E2E_PORT:-8788}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PERSIST_DIR="$ROOT/dist/server/.wrangler/state"
+PERSIST_DIR="${E2E_PERSIST_DIR:-$ROOT/dist/server/.wrangler/state}"
 cd "$ROOT"
 
 # This harness is never allowed to inherit a live-money posture from the caller. Refuse first so an
@@ -34,6 +34,11 @@ if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
   echo "[e2e] refusing to start: PAWSPACE_PAYMENT_LIVE_APPROVED must be false" >&2
   exit 1
 fi
+if [ "${FORBID_PRODUCTION:-true}" != "true" ]; then
+  echo "[e2e] refusing to start: FORBID_PRODUCTION must be true" >&2
+  exit 1
+fi
+export FORBID_PRODUCTION="true"
 export PAWSPACE_PAYMENT_ENV="sandbox"
 export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
 export PAWSPACE_SCHEDULING_ENV="uat"
@@ -57,11 +62,21 @@ echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuse
 # The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
 # OpenAI Sites dispatch layer. This explicit trust marker is LOCAL E2E simulation only; the standalone
 # staging worker intentionally does not set it, so raw external identity headers fail closed there.
-exec npx wrangler dev \
-  --config dist/server/wrangler.json \
+wrangler_command=(dev)
+worker_config="dist/server/wrangler.json"
+if [ "${E2E_TEST_SCHEDULED:-0}" = "1" ]; then
+  wrangler_command+=(--test-scheduled)
+  # Wrangler's local scheduled endpoint must target the Worker directly, without the assets router.
+  # This probe mode serves APIs/cron only; use the default mode for browser assets.
+  worker_config="dist/server/wrangler-scheduled.json"
+  node --input-type=module -e 'import{readFileSync,writeFileSync}from"node:fs";const c=JSON.parse(readFileSync("dist/server/wrangler.json","utf8"));delete c.assets;writeFileSync("dist/server/wrangler-scheduled.json",JSON.stringify(c));'
+fi
+exec npx wrangler "${wrangler_command[@]}" \
+  --config "$worker_config" \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
   --var PAWSPACE_LOCAL_PREVIEW:off \
+  --var FORBID_PRODUCTION:true \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
   --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
   --var PAWSPACE_SCHEDULING_ENV:uat \

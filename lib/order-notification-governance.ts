@@ -1,4 +1,4 @@
-import{enqueueCommunication}from"./communication-engine";
+import{enqueueCommunication,ensureCommunicationTables}from"./communication-engine";
 import{repairSchemaDrift}from"./schema-drift-repair";
 
 type Db=D1Database;type Row=Record<string,unknown>;type Severity="info"|"warning"|"critical";
@@ -46,5 +46,19 @@ async function sweepRefunds(db:Db,actorId:string){if(!(await tableExists(db,"can
 
 export async function runOrderNotificationSweep(db:Db,input:{actorId?:string}={}){const actorId=input.actorId||"system:order-notification-sweep";await ensureOrderNotificationTables(db);const results=await Promise.allSettled([sweepCanonicalBookings(db,actorId),sweepBookingEvents(db,actorId),sweepFood(db,actorId),sweepRefunds(db,actorId)]),names=["canonicalOrders","bookingEvents","foodOrders","refunds"],output:Record<string,unknown>={};const errors:string[]=[];results.forEach((result,index)=>{if(result.status==="fulfilled")output[names[index]]=result.value;else errors.push(`${names[index]}:${result.reason instanceof Error?result.reason.message:String(result.reason)}`)});return{...output,errors,ok:errors.length===0};}
 
-export async function listOrderNotifications(db:Db,customerId:string,limit=100){await ensureOrderNotificationTables(db);const safe=Math.max(1,Math.min(200,Math.floor(limit)||100));return(await db.prepare(`SELECT id,customer_id,booking_id,order_id,service_code,event_type,severity,status,delivery_status,delivery_attempts,delivery_error,title,body,source_type,source_id,payload_json,created_at,read_at FROM order_notifications WHERE customer_id=? ORDER BY created_at DESC LIMIT ${safe}`).bind(customerId).all<Row>()).results;}
+export async function listOrderNotifications(db:Db,customerId:string,limit=100){
+ await ensureOrderNotificationTables(db);
+ await ensureCommunicationTables(db);
+ const safe=Math.max(1,Math.min(200,Math.floor(limit)||100));
+ // Enqueue status is only a snapshot. Return the canonical dispatch state so retry/DLQ/delivery
+ // transitions cannot remain misleadingly "queued" in the customer's notification read model.
+ return(await db.prepare(`SELECT n.id,n.customer_id,n.booking_id,n.order_id,n.service_code,n.event_type,n.severity,n.status,
+ COALESCE(m.status,n.delivery_status) delivery_status,n.delivery_attempts,
+ CASE WHEN m.id IS NOT NULL THEN o.last_error ELSE n.delivery_error END delivery_error,
+ n.title,n.body,n.source_type,n.source_id,n.payload_json,n.created_at,n.read_at
+ FROM order_notifications n
+ LEFT JOIN communication_messages m ON m.idempotency_key=n.idempotency_key||':customer' AND m.customer_id=n.customer_id
+ LEFT JOIN communication_outbox o ON o.message_id=m.id
+ WHERE n.customer_id=? ORDER BY n.created_at DESC LIMIT ${safe}`).bind(customerId).all<Row>()).results;
+}
 export async function markOrderNotificationRead(db:Db,input:{notificationId:string;customerId:string;readAt?:number}){await ensureOrderNotificationTables(db);const readAt=input.readAt??Date.now(),result=await db.prepare("UPDATE order_notifications SET status='read',read_at=? WHERE id=? AND customer_id=?").bind(readAt,input.notificationId,input.customerId).run();if(Number(result.meta?.changes||0)!==1)throw new Response("Order notification not found",{status:404});return{notificationId:input.notificationId,status:"read",readAt};}

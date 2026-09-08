@@ -103,3 +103,19 @@ test("globally blocked customer is rejected by the shared Audio Bot pre-dial gat
   assert.equal(order.provider_call_id, null);
   assert.throws(() => sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id) VALUES (?,?)").run("BKG-BLOCK-2", seeded.contactId), /global_customer_blocked/);
 });
+test("blocklist trigger bootstraps through D1's single-statement API and still rejects blocked customers", async (t) => {
+  const sqlite = freshSqlite(), db = makeD1(sqlite); t.after(() => sqlite.close());
+  sqlite.exec('CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL)');
+  const originalExec = db.exec.bind(db);
+  db.exec = async (sql) => {
+    if (sql.includes('\n')) throw new Error('D1 exec splits newline-delimited input; multiline trigger is incomplete');
+    return originalExec(sql);
+  };
+  await trust.ensureTrustSafetyTables(db);
+  await trust.ensureTrustSafetyTables(db);
+  sqlite.prepare("INSERT INTO global_blocklist (phone_e164,phone_key,customer_id,reason_code,status,flagged_by,flagged_by_type,created_at,updated_at) VALUES ('+919900009999','9900009999','BLOCKED-DEMO','test','active','test','staff',1,1)").run();
+  sqlite.prepare("INSERT INTO global_blocklist_customer_links (customer_id,phone_e164,linked_at) VALUES ('BLOCKED-DEMO','+919900009999',1)").run();
+  assert.throws(() => sqlite.prepare("INSERT INTO canonical_bookings VALUES ('B1','BLOCKED-DEMO')").run(), /global_customer_blocked/);
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('B2','ALLOWED-DEMO')").run();
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n, 1);
+});
