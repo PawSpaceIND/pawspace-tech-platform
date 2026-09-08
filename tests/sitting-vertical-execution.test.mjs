@@ -255,7 +255,7 @@ function seedCanonical(sqlite, over = {}) {
     .run(BOOKING, CUSTOMER, SITTER, "18 Indiranagar", DOORSTEP.lat, DOORSTEP.lng, now, now);
   sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES ('SIT-RES-1','SIT-SG-1',?,'pet_sitting',?,?,?,'[\"SIT-PET-1\"]',?,?,1,1,'overnight','confirmed','{}',?)")
     .run(SITTER, CITY, ZONE, CUSTOMER, start, end, now);
-  sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('SIT-PAY-1',?,?,1598,799,'INR','card','split_50_50','captured','razorpay','sit-idem-1','{}',?,?)")
+  sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('SIT-PAY-1',?,?,1598,1598,'INR','card','prepaid','captured','razorpay','sit-idem-1','{}',?,?)")
     .run(BOOKING, CUSTOMER, now, now);
   sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,attempt_no,updated_at) VALUES ('SIT-SG-1',?,?,?,?,?,1,?)")
     .run(BOOKING, over.offerProviderId ?? SITTER, over.offerStatus ?? "pending", now, over.offerExpiresAt ?? (now + 3600000), now);

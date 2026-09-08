@@ -14,6 +14,7 @@ import { enterWorkersDbScope } from "./module-hooks.mjs";
 /** Adapter from the D1 interface onto node:sqlite. Real SQL, real engine, no stubbed behaviour. */
 export function d1(sqlite) {
   let batchSeq = 0;
+  let batchQueue = Promise.resolve();
   const statement = (sql, args) => ({
     sql,
     bind: (...bound) => statement(sql, bound),
@@ -34,17 +35,31 @@ export function d1(sqlite) {
     batch: async (list) => {
       // Cloudflare D1 batches are transactional: a failing statement rolls back the full sequence.
       // SAVEPOINT keeps that contract even when a test opens an outer SQLite transaction.
-      const savepoint = `d1_batch_${++batchSeq}`;
-      sqlite.exec(`SAVEPOINT ${savepoint}`);
-      const out = [];
+      // Multiple concurrent batch calls on the same SQLite handle (e.g. via Promise.all) must run
+      // consecutively so interleaved savepoint releases do not invalidate each other.
+      const runBatch = async () => {
+        const savepoint = `d1_batch_${++batchSeq}`;
+        sqlite.exec(`SAVEPOINT ${savepoint}`);
+        const out = [];
+        try {
+          for (const s of list) out.push(await s.run());
+          sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          return out;
+        } catch (error) {
+          sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+          throw error;
+        }
+      };
+
+      const previous = batchQueue;
+      let nextResolve;
+      batchQueue = new Promise((resolve) => { nextResolve = resolve; });
       try {
-        for (const s of list) out.push(await s.run());
-        sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
-        return out;
-      } catch (error) {
-        sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
-        throw error;
+        await previous;
+        return await runBatch();
+      } finally {
+        nextResolve();
       }
     },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
