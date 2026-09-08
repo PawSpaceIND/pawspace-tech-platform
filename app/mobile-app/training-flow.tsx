@@ -50,7 +50,7 @@ const petDetail = (pet: CustomerPet) =>
   "Profiles, health notes and service history included";
 const planMarketing = [
   { packageCode:"training-2-starter",name:"Starter Plan",detail:"Professional guidance and a clear starting structure for dogs of any age.",bonus:false,level:"Assessment start",idealFor:"Parents who need a professional plan before committing long-term",outcomes:["Behaviour assessment","Home routine","Action plan"] },
-  { packageCode:"training-4-puppy",name:"Puppy Training Plan",detail:"Early habits, confidence, socialisation and essential puppy foundations.",bonus:false,level:"Puppy foundation",idealFor:"Puppies up to 8 months building their first routines",outcomes:["Toilet routine","Biting control","Social confidence"] },
+  { packageCode:"training-4-puppy",name:"Puppy Training Plan",detail:"Early habits, confidence, socialisation and essential puppy foundations.",bonus:false,level:"Puppy foundation",idealFor:"Puppies under 6 months building their first routines",outcomes:["Toilet routine","Biting control","Social confidence"] },
   { packageCode:"training-8-basic",name:"Basic Obedience Plan",detail:"Obedience, impulse control, home manners and communication.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:["Sit, stay and recall","Impulse control","Home manners"],recommended:true },
   { packageCode:"training-8-leash",name:"Leash Obedience Plan · 8",detail:"Pulling, reactivity, heel positioning and real-world walking control.",bonus:true,level:"Leash focus",idealFor:"Dogs who pull, lunge or lose focus outdoors",outcomes:["Loose-leash walk","Heel position","Calm passing"] },
   { packageCode:"training-12-leash",name:"Leash Obedience Plan · 12",detail:"Extended leash, recall and distraction-control programme.",bonus:true,level:"Leash intensive",idealFor:"Persistent pulling or reactivity needing more practice",outcomes:["Leash control","Outdoor recall","Distraction work"] },
@@ -91,8 +91,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       "Leash walking",
     ]),
     [trainingCategory, setTrainingCategory] = useState("obedience"),
-    [behaviourNotes, setBehaviourNotes] = useState("Pulls on walks and gets excited when guests arrive."),
-    [healthSafetyNotes, setHealthSafetyNotes] = useState("No aggression or medical concern"),
+    [behaviourNotes, setBehaviourNotes] = useState(""),
+    [healthSafetyNotes, setHealthSafetyNotes] = useState(""),
     [selRaw, setSelectedPets] = useState<string[]>([]),
     [petsState, setPets] = useState<CustomerPet[] | null>(null),
     [petsLoading, setPetsLoading] = useState(true),
@@ -108,7 +108,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
     [couponCode, setCouponCode] = useState(""),
     [confirmed, setConfirmed] = useState(false),
-    [agreed, setAgreed] = useState(true),
+    [agreed, setAgreed] = useState(false),
     [bookingId, setBookingId] = useState(""),
     [scheduling, setScheduling] = useState(false),
     [scheduleError, setScheduleError] = useState(""),
@@ -198,6 +198,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     },
     confirmMeetFirst = async () => {
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
+      if(!healthSafetyNotes){setScheduleError("Please confirm your dog’s health and safety details.");setStage(1);return;}
       if(pincode.length!==6){setScheduleError("Enter the six-digit service PIN code before booking a Meet & Greet.");return;}
       setScheduling(true);setScheduleError("");
       try {
@@ -213,6 +214,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
+      if(!agreed || !healthSafetyNotes){setScheduleError("Confirm health and safety details and accept the terms before booking.");return;}
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       if(!checkoutQuote){setScheduleError("Refresh the Training quote before confirming.");return;}
       setScheduling(true);setScheduleError("");
@@ -324,9 +326,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             )}
             <small>{selectedGoals.length} requirement{selectedGoals.length === 1 ? "" : "s"} selected · Tap any highlighted option to remove it.</small>
           </div>
-          <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
-          <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
-          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See PawSpace plans"}</button>
+          <label className={styles.field}>Home routine, behaviour and trainer notes<textarea placeholder="Optional: tell your trainer about your dog’s routine and behaviour" value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
+          <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option value="" disabled>Select health and safety details</option><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
+          <button disabled={!healthSafetyNotes || !selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See PawSpace plans"}</button>
         </section>
       )}
       {stage === 2 && (
@@ -402,7 +404,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <label className={styles.consent}>Service PIN code<input value={pincode} inputMode="numeric" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Enter six-digit PIN code" /></label>
           <p className={styles.policy}>{coverage?`Coverage confirmed for ${coverage.area || coverage.zoneName}, ${coverage.city}.`:"Enter the service PIN code to resolve the governed city and trainer zone."}</p>
           <div className={styles.paymentOptions}>
-            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
+            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay {plan.splitDuePercent}% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
             <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(plan.price)} before an eligible coupon</span></div></button>
           </div>
           <CouponField eligible={paymentMode === "full"} service="Dog Training" orderValue={plan.price} customerId={customer.customerId} customerKind="existing" paymentMode={paymentMode === "full" ? "full" : "partial"} onDiscountChange={(_value, code) => {setCouponCode(code);setCheckoutQuote(null);}} />
