@@ -246,12 +246,21 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  }
  await page.getByRole("button",{name:`See available ${mode==="boarding"?"homes":"sitters"}`,exact:true}).click();
  await expect(page.getByRole("heading",{name:`Choose your ${mode==="boarding"?"host":"sitter"}`,exact:true})).toBeVisible();
+ if(mode==="sitting"){
+  await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");
+  await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();
+  await page.getByRole("button",{name:/Trip details/}).click();
+  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`);
+  await page.getByRole("combobox",{name:"Start time",exact:true}).selectOption("13:00");
+  const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
+  await page.getByRole("button",{name:"See available sitters",exact:true}).click();
+ }
  await page.getByRole("button",{name:/^Continue with /}).click();
  await page.getByLabel("Vet contact",{exact:true}).fill("UAT vet contact: 9000000951");
  await page.getByLabel("Emergency contact",{exact:true}).fill("UAT emergency contact: 9000000952");
  if(mode==="sitting")await page.getByLabel("Home access instructions",{exact:true}).fill("UAT fixture: call the customer at the gate.");
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
- const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText("18:00 IST");await expect(review).toContainText("4 hours");
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"13:00 IST":"18:00 IST");await expect(review).toContainText("4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});
 });
