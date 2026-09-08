@@ -201,10 +201,12 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await page.getByPlaceholder("6-digit code").fill(code!);
     const name=page.getByPlaceholder("Your name (first time only)");if(await name.isVisible().catch(()=>false))await name.fill("E2E UI Customer");
     await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
-    const ownAccount=await expectOk(await page.context().request.get("/api/customer-account"),"completed booking customer identity");expect(ownAccount.data.customerId).toBe(CUSTOMER_ID);
+    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not.
+    // Read through the actual browser session, without manually copying or weakening cookies.
+    const ownAccount=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(ownAccount.status).toBe(200);expect(ownAccount.body.data.customerId).toBe(CUSTOMER_ID);
     await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
     const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoice_number));
-    const summary=await expectOk(await page.context().request.get(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}`),"customer persisted completion summary");expect(summary.data.invoice.total).toBe(adminBody.data.invoice.gross_amount);expect(summary.data.invoice.tax).toBe(adminBody.data.invoice.tax_amount);expect(summary.data).not.toHaveProperty("payoutReadiness");
+    const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(adminBody.data.invoice.gross_amount);expect(summary.body.data.invoice.tax).toBe(adminBody.data.invoice.tax_amount);expect(summary.body.data).not.toHaveProperty("payoutReadiness");
     await page.reload();await expect(care).toContainText("Persona E2E completed safely");await page.screenshot({path:test.info().outputPath(`customer-completed-care-${assignmentMode}.png`),fullPage:true});
     await page.context().clearCookies();
     await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL });
