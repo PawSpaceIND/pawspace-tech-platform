@@ -1,5 +1,6 @@
 "use client";
 
+import DeliveryRecovery from "./DeliveryRecovery";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { subscribeConversationRefresh } from "../../../lib/conversation-live-refresh";
 import { Badge, Button, EmptyState } from "../../components/ui";
@@ -389,6 +390,7 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Activity / Audit Trail</strong><a>Canonical</a></div><div className={styles.audit}>{messages.slice(-5).reverse().map((message) => <div className={styles.auditItem} key={`audit-${text(message.id)}`}><span className={styles.auditDot} /><span>{when(message.created_at)} · {pretty(message.channel)} {pretty(message.direction)} · {pretty(message.status)}</span></div>)}{control?.handoff?.events?.slice(-3).reverse().map((event) => <div className={styles.auditItem} key={`handoff-${text(event.id)}`}><span className={styles.auditDot} /><span>{when(event.created_at)} · {pretty(event.event_type)} · {text(event.actor_email)}</span></div>)}{messages.length === 0 && !control?.handoff?.events?.length ? <small>No message events yet.</small> : null}</div></section>
         </aside>
       </div>
+      <DeliveryRecovery />
     </OpsShell>
   );
 }

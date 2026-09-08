@@ -120,6 +120,7 @@ journeys=(
   e2e/journeys/03-admin.spec.ts
   e2e/journeys/04-multi-actor.spec.ts
   e2e/journeys/05-cx-reconnect.spec.ts
+  e2e/journeys/07-delivery-recovery.spec.ts
 )
 projects=(chromium mobile-chromium)
 

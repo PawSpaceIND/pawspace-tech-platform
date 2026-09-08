@@ -14,7 +14,7 @@ const suites = [
   "financial-lifecycle-executable-concurrency", "transaction-atomicity-chaos",
   "schema-migration-idempotency", "schema-query-plan", "booking-state-integrity",
   "payment-provider-contract", "adversarial-webhook-replay-signature", "payment-webhook-parser-boundary",
-  "notifications-outbox-closure", "communication-outbox-hardening", "communication-provider-boundary", "communication-simulator-isolation", "meta-whatsapp-webhook",
+  "notifications-outbox-closure", "communication-outbox-hardening", "communication-provider-boundary", "communication-simulator-isolation", "communication-replay", "meta-whatsapp-webhook",
   "auth-security-audit", "gps-tracking-audit", "analytics-scale-truth", "analytics-hardening",
   "release-preview-gate-behavior", "refund-cap-collected-funds", "partner-settlement-payout-governance",
 ];
