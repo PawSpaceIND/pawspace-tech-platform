@@ -65,3 +65,18 @@ test("closure load harness keeps the full workload and long-lived synthetic stag
   assert.match(source,/offset<10000/);
   assert.match(source,/p95>=750/);
 });
+
+test("Track 3 certification removes only staging cron triggers for the load window and always restores them",()=>{
+  locked();
+  const source=readFileSync(".github/workflows/track3-finance-closure-certification.yml","utf8");
+  assert.match(source,/PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'/);
+  assert.match(source,/configuredCrons/);
+  assert.match(source,/delete triggers\.crons/);
+  assert.match(source,/cronIsolation:'disabled_for_track3_benchmark'/);
+  assert.match(source,/Drain pre-isolation scheduled invocations/);
+  assert.match(source,/sleep 660/);
+  assert.match(source,/name: Restore staging cron trigger/);
+  assert.match(source,/if: always\(\)/);
+  assert.match(source,/cron-restored/);
+  assert.match(source,/triggers\.crons=evidence\.configuredCrons/);
+});
