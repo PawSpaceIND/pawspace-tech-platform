@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {setupJourney,runCompletedJourney,routeCall} from "./helpers/grooming-journey-harness.mjs";
+import {setupJourney,runCompletedJourney,routeCall,sessionCookie} from "./helpers/grooming-journey-harness.mjs";
 
 async function fixture(t){
  const ctx=await setupJourney();t.after(ctx.close);
@@ -45,4 +45,31 @@ test("a competing reservation before commit leaves the old booking schedule inta
 test("an already started Grooming service cannot be reset by a customer reschedule",async t=>{
  const f=await fixture(t);f.sqlite.prepare("UPDATE provider_work_orders SET status='on_the_way' WHERE booking_id=?").run(f.result.bookingId);const before=f.snapshot();
  const response=await f.call();assert.equal(response.status,409,JSON.stringify(response.body));assert.deepEqual(f.snapshot(),before);
+});
+for(const minutes of [30,180])test(`reschedule cannot change the booked service duration to ${minutes} minutes`,async t=>{
+ const f=await fixture(t),before=f.snapshot();f.input.scheduledEnd=new Date(Date.parse(f.input.scheduledStart)+minutes*60000).toISOString();
+ const response=await f.call();assert.equal(response.status,400,JSON.stringify(response.body));assert.deepEqual(f.snapshot(),before);
+});
+for(const column of ['travel_buffer_minutes','max_daily_jobs'])test(`changed ${column} during rescheduling requires fresh eligibility evaluation`,async t=>{
+ const f=await fixture(t),before=f.snapshot();let injected=false;
+ f.db.beforeBatch=items=>{if(injected||!items.some(item=>item._sql.includes('UPDATE canonical_bookings SET scheduled_start')))return;injected=true;
+  f.sqlite.prepare(`UPDATE provider_capacity_profiles SET ${column}=${column}+1 WHERE id='groom_arun'`).run();
+ };
+ const response=await f.call();assert.equal(response.status,409,JSON.stringify(response.body));assert.equal(injected,true);assert.deepEqual(f.snapshot(),before);
+});
+
+test("rescheduling a commission replacement cannot accept the partner offer",async t=>{
+ const f=await fixture(t),group=f.result.bookingPayload.scheduleGroupId;
+ const stored=f.sqlite.prepare("SELECT shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").get(group),shortlist=JSON.parse(stored.shortlist_json);
+ shortlist.choices=shortlist.choices.filter(choice=>choice.provider.model==="commission");assert.ok(shortlist.choices.length);
+ f.sqlite.prepare("UPDATE scheduling_assignment_decisions SET shortlist_json=? WHERE group_id=?").run(JSON.stringify(shortlist),group);
+ const replacement=await routeCall("../../app/api/provider-assignment-recovery/route.ts","POST","/api/provider-assignment-recovery",{bookingId:f.result.bookingId,providerId:f.result.provider.id,action:"unavailable",reason:"Commission provider recovery test"});
+ assert.equal(replacement.status,200,JSON.stringify(replacement.body));assert.equal(replacement.body.data.status,"awaiting_acceptance");
+ const changed=await f.call();assert.equal(changed.status,200,JSON.stringify(changed.body));
+ assert.equal(f.snapshot().work.status,"awaiting_acceptance");assert.equal(f.snapshot().booking.status,"confirmed");
+ assert.equal(f.sqlite.prepare("SELECT status FROM provider_assignment_offers WHERE group_id=?").get(group).status,"pending");
+ const id=replacement.body.data.replacement.id,cookie=await sessionCookie(f.db,"provider",id,`provider:${id}`);
+ const early=await routeCall("../../app/api/grooming-lifecycle/route.ts","POST","/api/grooming-lifecycle",{bookingId:f.result.bookingId,action:"on_the_way"},cookie);assert.equal(early.status,409,JSON.stringify(early.body));
+ const accepted=await routeCall("../../app/api/provider-assignment-recovery/route.ts","POST","/api/provider-assignment-recovery",{bookingId:f.result.bookingId,providerId:id,action:"accept"},cookie);assert.equal(accepted.status,200,JSON.stringify(accepted.body));
+ assert.equal(f.snapshot().work.status,"assigned");assert.equal(f.snapshot().work.scheduled_start,f.input.scheduledStart);
 });

@@ -133,6 +133,9 @@ export async function POST(request:Request){
     if(!input.scheduledStart||!input.scheduledEnd)return json({error:"New start and end times are required"},400);
     const start=new Date(input.scheduledStart),end=new Date(input.scheduledEnd);
     if(Number.isNaN(start.getTime())||Number.isNaN(end.getTime())||end<=start||start.getTime()<=now)return json({error:"A valid future time range is required"},400);
+    const bookedDuration=Date.parse(String(booking.scheduled_end))-Date.parse(String(booking.scheduled_start));
+    if(!Number.isFinite(bookedDuration)||bookedDuration<=0||String(work.scheduled_start)!==String(booking.scheduled_start)||String(work.scheduled_end)!==String(booking.scheduled_end))return json({error:"The existing booking schedule requires review before it can be moved"},409);
+    if(end.getTime()-start.getTime()!==bookedDuration)return json({error:"Rescheduling must preserve the booked service duration"},400);
     const providerId=String(work.provider_id),cityId=String(booking.city_id),zoneId=String(booking.zone_id),offsetMinutes=cityOffsetMinutes(cityId);
     const profile=await db.prepare("SELECT travel_buffer_minutes,max_daily_jobs,live,status,effective_from,effective_to FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
     if(!profile||Number(profile.live)!==1||String(profile.status)!=="active")return json({error:"The assigned provider is no longer available for that slot"},409);
@@ -168,17 +171,19 @@ export async function POST(request:Request){
         AND EXISTS (SELECT 1 FROM scheduling_availability a,json_each(a.windows_json) w WHERE a.provider_id=scheduling_reservations.provider_id AND a.city_id=? AND a.zone_id=? AND a.date=? AND (a.source IN ('partner_app','operations','roster') OR NOT EXISTS (SELECT 1 FROM scheduling_availability authored WHERE authored.provider_id=a.provider_id AND authored.date=a.date AND authored.source IN ('partner_app','operations','roster'))) AND (CAST(substr(w.value,1,2) AS INTEGER)*60+CAST(substr(w.value,4,2) AS INTEGER))<=? AND (CAST(substr(w.value,7,2) AS INTEGER)*60+CAST(substr(w.value,10,2) AS INTEGER))>=?)
         AND NOT EXISTS (SELECT 1 FROM provider_unavailability u WHERE u.provider_id=scheduling_reservations.provider_id AND u.status='active' AND u.starts_at<? AND u.ends_at>?)`)
       .bind(start.toISOString(),end.toISOString(),booking.schedule_group_id,booking.schedule_group_id,bufferedEnd,bufferedStart,booking.schedule_group_id,offsetModifier,localStart.date,maxDailyJobs,localStart.date,localStart.date,cityId,zoneId,localStart.date,localStart.minutes,localEnd.minutes,localDayEndUtc,localDayStartUtc);
+    const awaitingAcceptance=String(work.status)==="awaiting_acceptance",nextBookingStatus=awaitingAcceptance?status:"assigned",nextWorkStatus=awaitingAcceptance?"awaiting_acceptance":"assigned";
     const assertionId=crypto.randomUUID();
     try{await db.batch([
       db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
         EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
         AND EXISTS (SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
+        AND EXISTS (SELECT 1 FROM provider_capacity_profiles WHERE id=? AND travel_buffer_minutes IS ? AND max_daily_jobs IS ?)
         AND (SELECT COUNT(*) FROM scheduling_reservations WHERE group_id=? AND status!='cancelled')=?
-        THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,oldStart,oldEnd,providerId,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,providerId,work.updated_at,booking.schedule_group_id,expectedRows),
+        THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,oldStart,oldEnd,providerId,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,providerId,work.updated_at,providerId,profile.travel_buffer_minutes??null,profile.max_daily_jobs??null,booking.schedule_group_id,expectedRows),
       moveStatement,
       db.prepare("INSERT INTO grooming_change_assertions (id,ok) VALUES (?,CASE WHEN changes()=? THEN 1 ELSE 0 END)").bind(`${assertionId}-move`,expectedRows),
-      db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
-      db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
+      db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),nextBookingStatus,now,input.bookingId),
+      db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),nextWorkStatus,now,input.bookingId),
       db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
       db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_rescheduled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}),now),
       securityAuditStatement(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date}),
@@ -187,6 +192,6 @@ export async function POST(request:Request){
       if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking or provider availability changed. Refresh before requesting another time."},409);
       throw error;
     }
-    return json({data:{bookingId:input.bookingId,status:"assigned",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
+    return json({data:{bookingId:input.bookingId,status:nextBookingStatus,workOrderStatus:nextWorkStatus,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
   }catch(error){return authError(error,"Unable to change Grooming booking");}
 }
