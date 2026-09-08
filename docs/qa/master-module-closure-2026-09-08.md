@@ -116,3 +116,10 @@ Handoff lifecycle transitions now atomically update ownership, SLA, assignment/a
 The broader run found that booking complaint projections sorted only inside each D1 chunk. The projection now sorts the combined result by creation time descending and ID, preserving deterministic ordering across large booking lists. A new executed regression spans more than two chunks and compares with a single SQL ordering. Two AI assertions were updated for the deliberate HTTP 400 validation response and removal of the non-atomic assignment helper. The gateway audit now separately recognizes the two route-authenticated customer inboxes; their ownership protection remains exercised by the connected suite.
 
 50 selected checks passed (33 AI/chunk semantics, 7 gateway reachability, 10 connected journeys), with build/artifact validation and typecheck successful. The broader suite is still in progress; no full-suite or 95% readiness claim is made.
+
+
+### Provider conversation read visibility
+
+Provider GET now applies the Trust & Safety suspension/ban check used by sending, excludes queued/suppressed/failed messages and returns an explicit text projection rather than arbitrary stored payload fields. Text contact details are masked by the existing pure redactor. Private notes, nested finance/identity metadata and raw media URLs are not returned. This projection does not implement governed provider media delivery; that remains open along with audience-specific customer/staff threads, older-history pagination and browser chat wiring.
+
+The new route regression failed before the fix because queued content was visible, then passed after it. Twelve focused provider/trust checks pass, with build/artifact validation and typecheck successful. The broader earlier run completed with 4,678/4,682 passing; all four failures were addressed with focused tests in the preceding increment. A fresh full-suite run is still required. No real communications or financial transactions were performed.
