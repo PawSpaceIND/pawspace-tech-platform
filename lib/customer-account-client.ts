@@ -32,14 +32,14 @@ export async function loadCustomerPets(customerId?: string): Promise<CustomerPet
   return account.pets;
 }
 
-export async function upsertCustomerPet(input: { customerId?: string; pet: PetProfileInput }) {
+export async function upsertCustomerPet(input: { customerId?: string; pet: PetProfileInput; idempotencyKey?: string }) {
   const response = await fetch("/api/customer-account", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       customerId: input.customerId,
       action: "upsert_pet",
-      idempotencyKey: `pet-manager:${crypto.randomUUID()}`,
+      idempotencyKey: input.idempotencyKey ?? `pet-manager:${crypto.randomUUID()}`,
       pet: input.pet,
     }),
   });

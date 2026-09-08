@@ -27,11 +27,10 @@ const requiredClasses = [
   "empty",
   "bookingShortcut",
   "sheet",
-  "saveLocation",
-  "locationNote",
 ];
 
 test("premium discovery stays on the globally assigned prototype-converged contract", () => {
+  assert.match(component, /<LocationWelcome compact/, "home reuses the accessible GPS/search picker");
   for (const className of requiredClasses) {
     assert.match(component, new RegExp(`styles\\.${className}\\b`), `component should use styles.${className}`);
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);

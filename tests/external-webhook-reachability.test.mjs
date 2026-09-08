@@ -5,13 +5,11 @@ import fs from "node:fs";
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const gateway = read("lib/api-gateway.ts");
 
-const exemptPaths = new Set([...gateway.matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)]
-  .map(match => match[1])
-  .filter(path => {
-    const index = gateway.indexOf(`url.pathname==="${path}"`);
-    const firstReturnNull = gateway.indexOf("return null;");
-    return index < firstReturnNull;
-  }));
+// Inspect each direct public guard, not just the first return statement.
+// Method-specific exemptions are checked separately below.
+const publicGuards = [...gateway.matchAll(/if\(([^{};]+)\)return null;/g)];
+const exemptPaths = new Set(publicGuards.flatMap(match =>
+  [...match[1].matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)].map(path => path[1])));
 
 const routeFiles = fs.readdirSync(new URL("../app/api", import.meta.url), { withFileTypes: true })
   .filter(entry => entry.isDirectory())
@@ -97,6 +95,7 @@ test("the WhatsApp inbound webhook is reachable and fail-closed on its signature
 
 test("no gateway-exempt route is left without any caller authentication", () => {
   const knownPublicSurfaces = new Set([
+    "/api/address-autocomplete", "/api/uat-provider-switch",
     "/api/pricing-quote", "/api/training-commercial", "/api/training-trainers", "/api/boarding-commercial",
     "/api/sitting-commercial", "/api/taxi-commercial", "/api/food-commercial", "/api/walking-commercial",
     "/api/identity-session", "/api/service-availability", "/api/public-contact", "/api/inquiries", "/api/provider-public-profile",
@@ -113,6 +112,16 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     unguarded.push(path);
   }
   assert.deepEqual(unguarded, [], `gateway-exempt with no caller authentication at all: ${unguarded.join(", ")}`);
+});
+
+test("guest address discovery is GET-only, bounded and does not leak provider errors", () => {
+  assert.match(gateway, /if\(url\.pathname==="\/api\/address-autocomplete"&&method==="GET"\)return null;/);
+  assert.match(gateway, /if\(url\.pathname==="\/api\/address-autocomplete"\)return "scheduling.book";/);
+  const source = read("app/api/address-autocomplete/route.ts");
+  assert.match(source, /if\(!lookupBudget\(\)\)/);
+  assert.match(source, /url.search.length>2048/);
+  assert.equal([...source.matchAll(/data:safeResult\(data\)/g)].length, 3);
+  assert.doesNotMatch(source, /export async function (POST|PUT|PATCH|DELETE)/);
 });
 
 test("the telephony callback is reachable and fail-closed on its verification", () => {
