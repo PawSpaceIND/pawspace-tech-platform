@@ -28,3 +28,18 @@ export async function requestCustomerSittingDateChange(bookingId:string,requeste
  if(data.bookingId!==bookingId||typeof data.requestId!=='string'||!data.requestId.trim()||data.status!=='commercial_quote_required'||data.stayWindowUnchanged!==true)throw new Error('Date-change request was not confirmed. Please retry.');
  return data.requestId;
 }
+
+export type SittingCustomerIncident={id:string;severity:string;status:string;summary:string;opsStatus:string;notificationStatus:string;acknowledged:boolean};
+export function sittingCustomerIncidents(value:unknown,bookingId:string):SittingCustomerIncident[]{
+ const data=value as Record<string,unknown>|null;
+ if(!data||data.bookingId!==bookingId||!Array.isArray(data.incidents))throw new Error('Sitting incident response is incomplete or belongs to another booking.');
+ const ids=new Set<string>();return data.incidents.map((item:Record<string,unknown>)=>{
+  if(!item||typeof item.id!=='string'||!item.id.trim()||ids.has(item.id)||typeof item.summary!=='string'||typeof item.severity!=='string'||typeof item.status!=='string')throw new Error('Sitting incident details are incomplete.');
+  ids.add(item.id);return{id:item.id,severity:item.severity,status:item.status,summary:item.summary,opsStatus:typeof item.ops_status==='string'?item.ops_status:'unavailable',notificationStatus:typeof item.notification_status==='string'?item.notification_status:'unavailable',acknowledged:Number(item.customer_acknowledged_at)>0};
+ });
+}
+export async function loadCustomerSittingIncidents(bookingId:string){return sittingCustomerIncidents(await request(`/api/sitting-proof?bookingId=${encodeURIComponent(bookingId)}&scope=customer`),bookingId);}
+export async function acknowledgeCustomerSittingIncident(bookingId:string,incidentId:string){
+ const data=await request('/api/sitting-proof',{action:'acknowledge_incident',bookingId,incidentId,idempotencyKey:`sitting-customer-incident:${bookingId}:${incidentId}`}) as Record<string,unknown>;
+ if(data.bookingId!==bookingId||data.incidentId!==incidentId||(data.customerAcknowledged!==true&&data.duplicateAcknowledgement!==true))throw new Error('Incident acknowledgement was not confirmed. Please retry.');
+}

@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./stay-flow.module.css";
+import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
+import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
 import { createTestTransaction } from "../../lib/test-transaction";
 import SittingCustomerPanel from "./sitting-customer-panel";
@@ -118,6 +120,7 @@ const toBoardingCaregiver = (host: BoardingHost): Caregiver => ({
 
 import type { LoggedInCustomer } from "./customer-login";
 export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; customer: LoggedInCustomer }) {
+ const [careDraft,setCareDraft]=useState<SittingCarePlan>({}),[confirmedCarePlan,setConfirmedCarePlan]=useState<SittingCarePlan|undefined>(),[careSaveError,setCareSaveError]=useState("");
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
     [selRaw, setSelectedPets] = useState<string[]>([]),
@@ -125,17 +128,10 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     [petsLoading, setPetsLoading] = useState(true),
     [petsError, setPetsError] = useState(""),
     [showPetManager, setShowPetManager] = useState(false),
-    [selectedNeeds, setSelectedNeeds] = useState([
-      "Medication",
-      "Two daily walks",
-    ]),
-    [selectedBenefits, setSelectedBenefits] = useState([
-      "Three walks",
-      "Medication support",
-      "1-hour play time",
-    ]),
+    [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
+    [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
     [careWindow, setCareWindow] = useState<CareWindow>("24 hours"),
-    [foodType, setFoodType] = useState("Pet food from home"),
+    [foodType, setFoodType] = useState(initialMode==="sitting"?"":"Pet food from home"),
     [sitters,setSitters] = useState<Caregiver[]>([]),
     [sitterWindowKey,setSitterWindowKey] = useState(""),
     [sitterError,setSitterError] = useState(""),
@@ -270,6 +266,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     if (!serviceLocation) { setScheduleError("Verify the service address before continuing."); return; }
     if (mode === "sitting" && !sittingQuote) { setScheduleError(sittingQuoteError || "Wait for the canonical Sitting quote."); return; }
     if (mode === "boarding" && selectedPetObjs.some((pet) => pet.vaccinationStatus !== "verified")) { setScheduleError("Boarding requires verified vaccination for every selected pet."); return; }
+    if(mode==="sitting"&&(!careDraft.vet?.trim()||!careDraft.emergencyContact?.trim()||!careDraft.homeAccess?.trim())){setScheduleError("Add vet, emergency contact and home access instructions in your Care Card before confirming.");return;}
     setScheduling(true);setScheduleError("");
     try {
     if(mode==="sitting"&&!selectedSitter)throw new Error("Select a currently available sitter before confirming");
@@ -282,6 +279,10 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       const quote=sittingQuote!;await captureSittingQuoteSandbox({quoteId:quote.quoteId,amount:quote.amountDueNow});const result=await createCanonicalSittingBooking({idempotencyKey:`sitting:${quote.quoteId}:${customer.customerId}`,groupId:decision.groupId,sittingQuoteId:quote.quoteId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other",vaccinationStatus:"not_provided"})),cityId:serviceLocation.assignment.cityId,zoneId,packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:quote.paymentMode,detail:"Server-attested Sitting UAT sandbox capture"}});canonicalBookingId=result.bookingId;
     }else{
       const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"captured",detail:"UAT Boarding sandbox payment from server quote"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
+    }
+    if(mode==="sitting"){
+      const plan={...careDraft,specialInstructions:[careDraft.specialInstructions,selectedNeeds.length?`Care requests: ${selectedNeeds.join(', ')}`:''].filter(Boolean).join('\n')};setConfirmedCarePlan(plan);
+      try{await saveSittingCustomerPlan(canonicalBookingId,plan,`initial-sitting-care:${canonicalBookingId}`);setCareSaveError("");}catch(problem){setCareSaveError(`Booking saved, but care instructions were not confirmed. Review and save them below. ${problem instanceof Error?problem.message:''}`);}
     }
     const booking = createTestTransaction({
       customerId: customer.customerId,
@@ -316,7 +317,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       creditsBefore: 0,
       crmOwner: "Asha",
       crmNextAction: "Commission caregiver approval, secure chat and Meet & Greet",
-      reminder: "Care Card and emergency-contact updates queued",
+      reminder: "Review the saved care plan before check-in",
     },canonicalBookingId);
     setConfirmedTotal(governedBoardingQuote?.totalAmount ?? sittingQuote?.totalAmount ?? total);
     setBookingId(booking.id);
@@ -329,6 +330,8 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
         {toast && <div className={styles.toast}>{toast}</div>}
         <LiveStay
           bookingId={bookingId}
+          initialCarePlan={confirmedCarePlan}
+          initialError={careSaveError}
           start={start}
           end={end}
           nights={nights}
@@ -611,10 +614,11 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               <span>
                 {mode === "boarding"
                   ? "The host receives one approved care plan for every pet."
-                  : "Access is revealed only to the confirmed sitter shortly before check-in."}
+                  : "Share the access instructions your assigned care team should use."}
               </span>
             </div>
           </article>
+          {mode==="sitting"?<div style={{display:"grid",gap:12}}><p>Enter the instructions your sitter should follow. These will be saved with the booking. Care requests still require sitter agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>:<>
           <div className={styles.sectionHead}>
             <b>Care benefits & add-ons</b>
             <span>Shared with partner</span>
@@ -655,16 +659,6 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
             Medication, allergies & vet
             <textarea defaultValue="Bruno: one tablet after breakfast. Vet: Cessna Lifeline, Domlur." />
           </label>
-          {mode === "sitting" && (
-            <label className={styles.field}>
-              Secure home access
-              <select>
-                <option>Key handover during Meet & Greet</option>
-                <option>Building staff access</option>
-                <option>Time-limited digital lock code</option>
-              </select>
-            </label>
-          )}
           <div className={styles.contacts}>
             <label className={styles.field}>
               Primary contact
@@ -675,6 +669,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               <input defaultValue="Rahul · +91 98802 22741" />
             </label>
           </div>
+          </>}
           <div className={styles.options}>
             <label>
               <input
@@ -760,7 +755,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               Care benefits<b>{selectedBenefits.join(" · ")}</b>
             </span>
             <span>
-              Food<b>{foodType}</b>
+              Food<b>{foodType||"See care instructions"}</b>
             </span>
             <span>
               {mode === "boarding" ? "Host-home trial" : "Meet & Greet"}
@@ -934,7 +929,7 @@ function Head({ title, note }: { title: string; note: string }) {
     </div>
   );
 }
-function LiveStay({bookingId,mode,caregiver,view,setView}:{bookingId:string;start:string;end:string;nights:number;mode:Mode;caregiver:Caregiver;pets:string[];total:number;taxi:boolean;view:View;setView:(value:View)=>void;flash:(message:string)=>void}){
- if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} />;
+function LiveStay({bookingId,mode,caregiver,view,setView,initialCarePlan,initialError}:{bookingId:string;initialCarePlan?:SittingCarePlan;initialError?:string;start:string;end:string;nights:number;mode:Mode;caregiver:Caregiver;pets:string[];total:number;taxi:boolean;view:View;setView:(value:View)=>void;flash:(message:string)=>void}){
+ if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} initialCarePlan={initialCarePlan} initialError={initialError} />;
  return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name}/>}</section>;
 }
