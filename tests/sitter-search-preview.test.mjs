@@ -35,3 +35,15 @@ test('a no-longer-available selected sitter is not silently substituted',async t
  const c=await fixture(t);c.sqlite.prepare("UPDATE provider_capacity_profiles SET status='inactive' WHERE id='sit_sana'").run();
  const r=await c.call({action:'reserve',preferredProviderId:'sit_sana'});assert.equal(r.status,409,JSON.stringify(r.body));assert.equal(r.body.error,'SELECTED_SITTER_UNAVAILABLE');assert.equal(count(c.sqlite,'scheduling_reservations'),0);
 });
+
+
+test('scheduling gives safe address guidance before creating any reservation',async t=>{
+ const c=await fixture(t),invalid=await c.call({action:'reserve',serviceCode:'dog_walking',serviceAddress:'short'});
+ assert.equal(invalid.status,400);assert.equal(invalid.body.code,'SERVICE_ADDRESS_UNVERIFIED');assert.match(invalid.body.error,/Check the address and PIN/);
+ const prior=globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE;
+ try{globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE='off';
+ const missing=await c.call({action:'reserve',serviceCode:'dog_walking',serviceAddress:'',servicePincode:''});
+ assert.equal(missing.status,409);assert.equal(missing.body.code,'SERVICE_ADDRESS_REQUIRED');assert.match(missing.body.error,/Save and verify/);
+ assert.equal(count(c.sqlite,'scheduling_reservations'),0);
+ }finally{globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=prior;}
+});

@@ -7,7 +7,8 @@ import type {WalkingOwnerCare} from "../../lib/walking-owner-care";
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import type { LoggedInCustomer } from "./customer-login";
-import { resolveServiceCoverage } from "../../lib/service-zone-client";
+import AddressPicker, {type ZoneResult} from "./address-picker";
+import {walkingReservationKey} from "../../lib/walking-reservation-key";
 
 // Same prop contract as training-flow.tsx: the shell passes the logged-in customer; pets follow the
 // UAT roster pattern the other flows use. Walking is a dogs-only service, so the roster keeps the
@@ -60,7 +61,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [pincode, setPincode] = useState("");
+  const [serviceLocation, setServiceLocation] = useState<ZoneResult|null>(null);
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2800); };
 
   useEffect(() => {
@@ -119,15 +120,18 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   }, [stage, packageCode, mode, effectiveWalks, weekdays, scheduledStart, scheduledEnd, selectedPackage]);
 
   async function confirm() {
+    if (busy) return;
+    if (!serviceLocation?.zone.serviceAvailable) {setError("Verify a complete service address before booking."); return;}
+    if (!pet || pet.species !== "dog") {setError("Select one of your dogs to book a walk."); return;}
     setBusy(true); setError("");
     try {
       // Fresh server quote at confirmation time (display quote may have aged past its expiry).
       const fresh = await createWalkingQuote({ packageCode, mode, petCount: 1, walkCount: effectiveWalks, weekdays: mode === "recurring" ? weekdays : undefined, scheduledStart, scheduledEnd });
-      const requestId = `walking-${customer.customerId}-${fresh.packageCode}-${scheduledStart}-${mode === "recurring" ? weekdays.join("") : "once"}x${fresh.walkCount}`;
+      const requestId = await walkingReservationKey({customerId:customer.customerId,petId:pet.id,address:serviceLocation.address,pincode:serviceLocation.assignment.pincode,packageCode:fresh.packageCode,scheduledStart,scheduledEnd,walkCount:fresh.walkCount,weekdays:fresh.weekdays,ownerCare:{instructions,handoverPreference}});
       // Auto-assignment is allowed for walking (founder rule) — the scheduler picks the walker.
       if (!pet || pet.species !== "dog") { setError("Select one of your dogs to book a walk."); setBusy(false); return; }
-      const coverage = await resolveServiceCoverage(pincode);
-      const reservation = await reserveWalkingSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], cityId: coverage.cityId, zoneId: coverage.zoneId, scheduledStart, scheduledEnd, walkCount: fresh.walkCount, weekdays: mode === "recurring" ? weekdays : undefined });
+      const coverage = serviceLocation.assignment;
+      const reservation = await reserveWalkingSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], serviceAddress:serviceLocation.address, servicePincode:serviceLocation.assignment.pincode, cityId: coverage.cityId, zoneId: coverage.zoneId, scheduledStart, scheduledEnd, walkCount: fresh.walkCount, weekdays: mode === "recurring" ? weekdays : undefined });
       const created = await createCanonicalWalkingBooking({ ownerCare: {instructions, handoverPreference}, idempotencyKey: requestId, groupId: reservation.groupId, walkingQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: "dog" }], cityId: coverage.cityId, zoneId: coverage.zoneId, packageCode: fresh.packageCode, packageName: fresh.packageName, walkCount: fresh.walkCount, weekdays: fresh.weekdays, scheduledStart, scheduledEnd, provider: { id: reservation.walker.id, name: reservation.walker.name, model: reservation.walker.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "pay_after_service", detail: "Payment remains pending until a verified post-service payment event" } });
       setQuote(fresh); setWalker(reservation.walker); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Dog Walking booking"); }
@@ -277,12 +281,10 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
             </select>
           </label>
           <p className={styles.note}>Instructions are saved with your booking. Access approval and handover still require verification.</p>
-          <span className={styles.label}>Service PIN code</span>
-          <input className={styles.input} value={pincode} inputMode="numeric" maxLength={6} onChange={event => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter six-digit PIN code" />
-          <p className={styles.note}>Coverage is resolved from this PIN code when you confirm; no city or zone is assumed.</p>
+          <fieldset disabled={busy} style={{border:0,padding:0,margin:0,minWidth:0}}><legend className={styles.label}>Service address</legend><AddressPicker onZoneResolved={setServiceLocation}/></fieldset>
           <p className={styles.note}>Pay-after-service: nothing is charged now. Each walk is billed at the server-quoted per-walk price only after it is completed. Your walker is auto-assigned from the canonical roster with full-calendar conflict checks.</p>
           {error && <p className={styles.alert} role="alert">{error}</p>}
-          <button className={styles.primary} disabled={busy || !quote || pincode.length !== 6} onClick={() => void confirm()}>
+          <button className={styles.primary} disabled={busy || !quote || !serviceLocation?.zone.serviceAvailable} onClick={() => void confirm()}>
             {busy ? "Reserving your walk calendar…" : !quote ? "Refreshing server quote…" : `Confirm ${quote.walkCount} walk${quote.walkCount === 1 ? "" : "s"} · ${money(quote.totalAmount)} after service`}
           </button>
           <button className={styles.back} onClick={() => { setQuote(null); setStage(3); }}>← Your dog</button>
