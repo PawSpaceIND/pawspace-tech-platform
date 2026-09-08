@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./stay-flow.module.css";
+import Link from "next/link";
 import {saveCustomerBoardingCare,boardingCareDraft} from "../../lib/boarding-customer-care";
 import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
@@ -881,5 +882,5 @@ function Head({ title, note }: { title: string; note: string }) {
 }
 function LiveStay({bookingId,mode,caregiver,view,setView,initialCarePlan,initialError}:{bookingId:string;initialCarePlan?:SittingCarePlan;initialError?:string;start:string;end:string;nights:number;mode:Mode;caregiver:Caregiver;pets:string[];total:number;taxi:boolean;view:View;setView:(value:View)=>void;flash:(message:string)=>void}){
  if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} initialCarePlan={initialCarePlan} initialError={initialError} />;
- return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name} initialCarePlan={initialCarePlan} initialError={initialError}/>}</section>;
+ return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><Link href={`/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`}>Open saved booking and care</Link><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name} initialCarePlan={initialCarePlan} initialError={initialError}/>}</section>;
 }
