@@ -13,3 +13,9 @@
 .workspace ul { margin: 0; padding-left: 20px; }
 .workspace li { padding: 10px 0; border-bottom: 1px solid #e2e9e5; }
 @media (max-width: 480px) { .workspace { padding: 16px 12px 36px; } .workspace section { padding: 18px 14px; } .actions { grid-template-columns: 1fr; } }
+
+.carePlan { margin: 24px 0; padding: 16px; background: #f3f7f4; border-radius: 12px; }
+.carePlan h2 { margin-top: 0; }
+.carePlan dl { margin: 0; display: grid; gap: 14px; }
+.carePlan dt { font-weight: 700; }
+.carePlan dd { margin: 4px 0 0; white-space: pre-wrap; }

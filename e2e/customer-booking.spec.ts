@@ -290,6 +290,10 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
+   const sitterCare=partner.getByRole("region",{name:"Customer care instructions",exact:true});
+   await expect(sitterCare).toContainText("UAT vet contact: 9000000951");await expect(sitterCare).toContainText("UAT emergency contact: 9000000952");await expect(sitterCare).toContainText("UAT fixture: call the customer at the gate.");
+   await page.getByRole("textbox",{name:"Food and water routine",exact:true}).fill("Use the labelled food container. Refresh water after the meal.");await page.getByRole("button",{name:"Save care instructions",exact:true}).click();await expect(page.getByRole("status")).toContainText("Care instructions saved.");
+   await partner.getByRole("button",{name:"Refresh booking",exact:true}).click();await expect(sitterCare).toContainText("Use the labelled food container. Refresh water after the meal.");
    await expect(partner.locator("main")).toContainText("1:00 pm IST");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-accepted.png"),fullPage:true});
    await partner.evaluate(()=>Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition(_success:unknown,failure:(error:{code:number})=>void){failure({code:1});}}}));
