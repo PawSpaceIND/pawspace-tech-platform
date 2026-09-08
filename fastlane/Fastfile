@@ -5,9 +5,9 @@
 default_platform(:android)
 
 before_all do
-  payment_env = ENV["PAWSPACE_PAYMENT_ENV"] || "sandbox"
-  forbid_prod = ENV["FORBID_PRODUCTION"] || "true"
-  live_approved = ENV["PAWSPACE_PAYMENT_LIVE_APPROVED"] || "false"
+  payment_env = ENV["PAWSPACE_PAYMENT_ENV"]
+  forbid_prod = ENV["FORBID_PRODUCTION"]
+  live_approved = ENV["PAWSPACE_PAYMENT_LIVE_APPROVED"]
 
   UI.message("Verifying PawSpace pre-distribution safety locks...")
   UI.message("  PAWSPACE_PAYMENT_ENV: #{payment_env}")
@@ -20,9 +20,28 @@ before_all do
   UI.success("✔ Fail-closed security locks verified.")
 end
 
+def select_pawspace_target(target)
+  UI.user_error!("Unknown mobile target") unless %w[customer partner].include?(target)
+  ENV["CAPACITOR_TARGET"] = target
+  ENV["APP_TARGET"] = target
+end
+
+def pawspace_apple_key
+  required = %w[APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID APP_STORE_CONNECT_API_KEY_KEY]
+  missing = required.select { |name| ENV[name].to_s.strip.empty? }
+  UI.user_error!("Missing Apple distribution configuration: #{missing.join(', ')}") unless missing.empty?
+  app_store_connect_api_key(
+    key_id: ENV["APP_STORE_CONNECT_API_KEY_KEY_ID"],
+    issuer_id: ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
+    key_content: ENV["APP_STORE_CONNECT_API_KEY_KEY"],
+    in_house: false
+  )
+end
+
 platform :android do
   desc "Distribute Customer Android App Bundle (.aab) to Google Play Internal Testing"
   lane :beta do
+    select_pawspace_target("customer")
     UI.message("Syncing latest Capacitor Android assets...")
     sh("npx", "cap", "sync", "android")
 
@@ -46,6 +65,7 @@ platform :android do
 
   desc "Distribute Partner Android App Bundle (.aab) to Google Play Internal Testing"
   lane :partner_beta do
+    select_pawspace_target("partner")
     UI.message("Syncing latest Capacitor Android assets...")
     sh("npx", "cap", "sync", "android")
 
@@ -69,19 +89,23 @@ end
 platform :ios do
   desc "Distribute Customer iOS App to Apple TestFlight"
   lane :beta do
+    select_pawspace_target("customer")
+    api_key = pawspace_apple_key
     UI.message("Syncing latest Capacitor iOS assets...")
     sh("npx", "cap", "sync", "ios")
 
     UI.message("Building iOS release archive...")
     build_app(
-      workspace: "ios/App/App.xcworkspace",
+      project: "ios/App/App.xcodeproj",
       scheme: "App",
-      configuration: "Release"
+      configuration: "Release",
+      xcargs: "PRODUCT_BUNDLE_IDENTIFIER=com.pawspace.customer",
+      export_method: "app-store"
     )
 
     UI.message("Uploading archive to Apple TestFlight...")
     upload_to_testflight(
-      api_key_path: ENV["APP_STORE_CONNECT_API_KEY_PATH"],
+      api_key: api_key,
       skip_waiting_for_build_processing: true
     )
     UI.success("✔ iOS Customer App distributed to Apple TestFlight!")
@@ -89,17 +113,21 @@ platform :ios do
 
   desc "Distribute Partner iOS App to Apple TestFlight"
   lane :partner_beta do
+    select_pawspace_target("partner")
+    api_key = pawspace_apple_key
     UI.message("Syncing latest Capacitor iOS assets...")
     sh("npx", "cap", "sync", "ios")
 
     build_app(
-      workspace: "ios/App/App.xcworkspace",
+      project: "ios/App/App.xcodeproj",
       scheme: "App",
-      configuration: "Release"
+      configuration: "Release",
+      xcargs: "PRODUCT_BUNDLE_IDENTIFIER=com.pawspace.partner",
+      export_method: "app-store"
     )
 
     upload_to_testflight(
-      api_key_path: ENV["APP_STORE_CONNECT_API_KEY_PATH"],
+      api_key: api_key,
       skip_waiting_for_build_processing: true
     )
     UI.success("✔ iOS Partner App distributed to Apple TestFlight!")

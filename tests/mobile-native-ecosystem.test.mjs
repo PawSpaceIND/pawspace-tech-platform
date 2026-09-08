@@ -390,7 +390,9 @@ test("Fastlane CI/CD automation lanes configure Play Store internal testing and 
   // iOS lanes: build_app and upload_to_testflight
   assert.match(fastfile, /platform\s+:ios\s+do/);
   assert.match(fastfile, /build_app\(/);
-  assert.match(fastfile, /workspace:\s*["']ios\/App\/App\.xcworkspace["']/);
+  assert.match(fastfile, /project:\s*["']ios\/App\/App\.xcodeproj["']/);
+  assert.match(fastfile, /key_content:\s*ENV\["APP_STORE_CONNECT_API_KEY_KEY"\]/);
+  assert.doesNotMatch(fastfile, /api_key_path:/);
   assert.match(fastfile, /upload_to_testflight\(/);
   assert.match(fastfile, /skip_waiting_for_build_processing:\s*true/);
 
@@ -601,7 +603,6 @@ test("Mobile network status component and offline-first UI listeners are mounted
   assert.match(groomingSource, /type:\s*["']grooming_photo["']/);
   assert.match(groomingSource, /Offline: Photo saved to local queue\. Will sync automatically upon reconnection\./);
 });
-
 
 
 
