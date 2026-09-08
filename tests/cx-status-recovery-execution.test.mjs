@@ -113,3 +113,18 @@ test('CX global search and filters precede stable cursor pagination and reject m
  const restricted=await route.GET(new Request('https://app.pawspace.in/api/conversations?q=100%25_LITERAL',{headers:{'oai-authenticated-user-email':'search@pawspace.in'}}));
  assert.equal(restricted.status,200);assert.deepEqual((await restricted.json()).data.threads,[]);
 });
+
+
+test('inbound replay verifies current customer ownership and canonical message identity first',async()=>{
+ const w=await world();
+ const input={threadId:'THREAD-CX',customerId:'CUS-CX',channel:'whatsapp',provider:'qa',providerReference:'qa-ref',eventId:'qa-event',createdBy:'cx@pawspace.in',payload:{text:'Inbound retry fixture'}};
+ const first=await conversation.recordInboundMessage(w.db,input);
+ assert.equal((await conversation.recordInboundMessage(w.db,input)).id,first.id);
+ await assert.rejects(()=>conversation.recordInboundMessage(w.db,{...input,customerId:'OTHER'}),/thread\/customer mismatch/);
+ await assert.rejects(()=>conversation.recordInboundMessage(w.db,{...input,channel:'sms'}),error=>error instanceof Response&&error.status===409);
+ await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-OTHER',customerId:'CUS-CX',text:'Other thread',idempotencyKey:'other-replay'});
+ await assert.rejects(()=>conversation.recordInboundMessage(w.db,{...input,threadId:'THREAD-OTHER'}),error=>error instanceof Response&&error.status===409);
+ w.sqlite.exec("UPDATE communication_threads SET customer_id='REASSIGNED' WHERE id='THREAD-CX'");
+ await assert.rejects(()=>conversation.recordInboundMessage(w.db,input),/thread\/customer mismatch/);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE provider_reference='qa-ref'").get().n,1);
+});
