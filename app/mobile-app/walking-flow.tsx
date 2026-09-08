@@ -8,6 +8,7 @@ import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import type { LoggedInCustomer } from "./customer-login";
 import AddressPicker, {type ZoneResult} from "./address-picker";
+import {walkingQuoteNeedsReview} from "../../lib/walking-quote-consent";
 import {walkingReservationKey} from "../../lib/walking-reservation-key";
 
 // Same prop contract as training-flow.tsx: the shell passes the logged-in customer; pets follow the
@@ -127,6 +128,11 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
     try {
       // Fresh server quote at confirmation time (display quote may have aged past its expiry).
       const fresh = await createWalkingQuote({ packageCode, mode, petCount: 1, walkCount: effectiveWalks, weekdays: mode === "recurring" ? weekdays : undefined, scheduledStart, scheduledEnd });
+      if (walkingQuoteNeedsReview(quote, fresh)) {
+        setQuote(fresh);
+        setError("The price or walk details changed. Review the updated quote and confirm again.");
+        return;
+      }
       const requestId = await walkingReservationKey({customerId:customer.customerId,petId:pet.id,address:serviceLocation.address,pincode:serviceLocation.assignment.pincode,packageCode:fresh.packageCode,scheduledStart,scheduledEnd,walkCount:fresh.walkCount,weekdays:fresh.weekdays,ownerCare:{instructions,handoverPreference}});
       // Auto-assignment is allowed for walking (founder rule) — the scheduler picks the walker.
       if (!pet || pet.species !== "dog") { setError("Select one of your dogs to book a walk."); setBusy(false); return; }
@@ -287,7 +293,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
           <button className={styles.primary} disabled={busy || !quote || !serviceLocation?.zone.serviceAvailable} onClick={() => void confirm()}>
             {busy ? "Reserving your walk calendar…" : !quote ? "Refreshing server quote…" : `Confirm ${quote.walkCount} walk${quote.walkCount === 1 ? "" : "s"} · ${money(quote.totalAmount)} after service`}
           </button>
-          <button className={styles.back} onClick={() => { setQuote(null); setStage(3); }}>← Your dog</button>
+          <button className={styles.back} disabled={busy} onClick={() => { setQuote(null); setStage(3); }}>← Your dog</button>
         </section>
       )}
     </div>
