@@ -17,15 +17,17 @@ export default function Loading() {
       <div
         aria-hidden="true"
         style={{
-          width: 26,
-          height: 26,
+          width: 32,
+          height: 32,
           borderRadius: "50%",
           border: "3px solid rgba(1,38,31,.15)",
           borderTopColor: "#01261F",
           animation: "ps-spin 900ms linear infinite",
         }}
       />
-      <span style={{ fontSize: 13, color: "#5b6b66" }}>Loading…</span>
+      <span style={{ fontSize: 13, color: "#5b6b66", fontWeight: 500 }}>
+        Getting things ready for your petter half…
+      </span>
     </div>
   );
 }

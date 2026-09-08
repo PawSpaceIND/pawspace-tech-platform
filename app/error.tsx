@@ -17,8 +17,8 @@ export default function AppError({
 
   return (
     <RecoveryScreen
-      title="This page didn't load"
-      detail="Something went wrong while preparing this screen. Trying again usually works — the rest of PawSpace is unaffected."
+      title="Our servers are taking a quick walk. We're on it."
+      detail="Something took an unexpected pause while preparing this screen. Your bookings, pets, and payments are safe — trying again usually works."
       digest={error.digest}
       onRetry={reset}
     />

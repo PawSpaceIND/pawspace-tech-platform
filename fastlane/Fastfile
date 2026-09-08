@@ -1,0 +1,107 @@
+# PawSpace Mobile Automated Distribution Fastfile
+# Customer & Partner release channels for Google Play Internal & Apple TestFlight
+# Enforces strict non-production payment and fail-closed sandbox safeguards.
+
+default_platform(:android)
+
+before_all do
+  payment_env = ENV["PAWSPACE_PAYMENT_ENV"] || "sandbox"
+  forbid_prod = ENV["FORBID_PRODUCTION"] || "true"
+  live_approved = ENV["PAWSPACE_PAYMENT_LIVE_APPROVED"] || "false"
+
+  UI.message("Verifying PawSpace pre-distribution safety locks...")
+  UI.message("  PAWSPACE_PAYMENT_ENV: #{payment_env}")
+  UI.message("  FORBID_PRODUCTION: #{forbid_prod}")
+  UI.message("  PAWSPACE_PAYMENT_LIVE_APPROVED: #{live_approved}")
+
+  if payment_env != "sandbox" || forbid_prod != "true" || live_approved != "false"
+    UI.user_error!("SECURITY LOCK VIOLATION: Distribution aborted. Pre-distribution requires sandbox isolation!")
+  end
+  UI.success("✔ Fail-closed security locks verified.")
+end
+
+platform :android do
+  desc "Distribute Customer Android App Bundle (.aab) to Google Play Internal Testing"
+  lane :beta do
+    UI.message("Syncing latest Capacitor Android assets...")
+    sh("npx", "cap", "sync", "android")
+
+    UI.message("Compiling Android release bundle (AAB)...")
+    gradle(
+      task: "bundleRelease",
+      project_dir: "android/"
+    )
+
+    UI.message("Uploading to Google Play Console Internal Testing...")
+    upload_to_play_store(
+      track: "internal",
+      json_key: ENV["GOOGLE_PLAY_JSON_KEY_PATH"],
+      package_name: "com.pawspace.customer",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success("✔ Android Customer App distributed to Play Store Internal Testing!")
+  end
+
+  desc "Distribute Partner Android App Bundle (.aab) to Google Play Internal Testing"
+  lane :partner_beta do
+    UI.message("Syncing latest Capacitor Android assets...")
+    sh("npx", "cap", "sync", "android")
+
+    gradle(
+      task: "bundleRelease",
+      project_dir: "android/"
+    )
+
+    upload_to_play_store(
+      track: "internal",
+      json_key: ENV["GOOGLE_PLAY_JSON_KEY_PATH"],
+      package_name: "com.pawspace.partner",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success("✔ Android Partner App distributed to Play Store Internal Testing!")
+  end
+end
+
+platform :ios do
+  desc "Distribute Customer iOS App to Apple TestFlight"
+  lane :beta do
+    UI.message("Syncing latest Capacitor iOS assets...")
+    sh("npx", "cap", "sync", "ios")
+
+    UI.message("Building iOS release archive...")
+    build_app(
+      workspace: "ios/App/App.xcworkspace",
+      scheme: "App",
+      configuration: "Release"
+    )
+
+    UI.message("Uploading archive to Apple TestFlight...")
+    upload_to_testflight(
+      api_key_path: ENV["APP_STORE_CONNECT_API_KEY_PATH"],
+      skip_waiting_for_build_processing: true
+    )
+    UI.success("✔ iOS Customer App distributed to Apple TestFlight!")
+  end
+
+  desc "Distribute Partner iOS App to Apple TestFlight"
+  lane :partner_beta do
+    UI.message("Syncing latest Capacitor iOS assets...")
+    sh("npx", "cap", "sync", "ios")
+
+    build_app(
+      workspace: "ios/App/App.xcworkspace",
+      scheme: "App",
+      configuration: "Release"
+    )
+
+    upload_to_testflight(
+      api_key_path: ENV["APP_STORE_CONNECT_API_KEY_PATH"],
+      skip_waiting_for_build_processing: true
+    )
+    UI.success("✔ iOS Partner App distributed to Apple TestFlight!")
+  end
+end

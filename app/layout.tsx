@@ -5,6 +5,9 @@ import "./review-overrides.css";
 import "./unified-pawspace-theme.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
 import OrderNotificationCenter from "./components/order-notification-center";
+import MobilePushListener from "./components/mobile-push-listener";
+import MobileDeepLinkHandler from "./components/mobile-deep-link-handler";
+import MobileNetworkStatus from "./components/mobile-network-status";
 
 export const metadata: Metadata = {
   title: "PawSpace — Pet Care Platform",
@@ -33,7 +36,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
+        <MobileNetworkStatus />
         <ReviewUxFixes />
+        <MobilePushListener />
+        <MobileDeepLinkHandler />
         {children}
         <OrderNotificationCenter />
       </body>

@@ -21,8 +21,8 @@ export default function MobileAppError({
 
   return (
     <RecoveryScreen
-      title="This screen didn't load"
-      detail="Something went wrong in the customer app. Your bookings and pets are safe — trying again usually works."
+      title="Our servers are taking a quick walk. We're on it."
+      detail="Something took an unexpected pause in the customer app. Your bookings, pets, and payments are safe — trying again usually gets everything right back on track."
       digest={error.digest}
       onRetry={reset}
       homeHref="/mobile-app"

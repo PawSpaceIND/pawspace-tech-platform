@@ -28,22 +28,48 @@ export default function GlobalError({
             'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
         }}
       >
-        <div role="alert" style={{ maxWidth: 460, textAlign: "center" }}>
-          <div aria-hidden="true" style={{ fontSize: 40, marginBottom: 14 }}>
-            ⌾
+        <div role="alert" style={{ maxWidth: 480, textAlign: "center" }}>
+          <div
+            aria-hidden="true"
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "28px",
+              background: "#eef6f3",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 28,
+              margin: "0 auto 16px",
+              boxShadow: "0 2px 8px rgba(1,38,31,0.06)",
+            }}
+          >
+            🐾
           </div>
-          <h1 style={{ fontSize: 20, margin: "0 0 8px", color: "#06231c" }}>
-            PawSpace couldn&apos;t start this page
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "1.2px",
+              textTransform: "uppercase",
+              color: "#01261F",
+              marginBottom: 8,
+              opacity: 0.8,
+            }}
+          >
+            PawSpace · Your Petter Half
+          </div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 10px", color: "#06231c" }}>
+            Our servers are taking a quick walk. We&apos;re on it.
           </h1>
-          <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 20px", color: "#5b6b66" }}>
-            This is unexpected. Reloading usually clears it. If it keeps happening, quote the
-            reference below.
+          <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 24px", color: "#5b6b66" }}>
+            PawSpace is taking a quick breath. Your pets, bookings, and payments are safe — reloading usually gets everything right back on track.
           </p>
           <button
             type="button"
             onClick={reset}
             style={{
-              padding: "11px 20px",
+              padding: "12px 24px",
               borderRadius: 12,
               border: "none",
               cursor: "pointer",
@@ -51,14 +77,29 @@ export default function GlobalError({
               fontWeight: 600,
               color: "#ffffff",
               background: "#01261F",
+              boxShadow: "0 2px 8px rgba(1,38,31,0.2)",
             }}
           >
             Reload
           </button>
           {error.digest ? (
-            <p style={{ fontSize: 11, marginTop: 18, color: "#8a9a95" }}>
-              Reference: <code>{error.digest}</code>
-            </p>
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #eef2f0" }}>
+              <p style={{ fontSize: 12, margin: 0, color: "#8a9a95" }}>
+                Need support? Quote Reference:{" "}
+                <code
+                  style={{
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    fontSize: 11,
+                    background: "#eef2f0",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    color: "#01261F",
+                  }}
+                >
+                  {error.digest}
+                </code>
+              </p>
+            </div>
           ) : null}
         </div>
       </body>

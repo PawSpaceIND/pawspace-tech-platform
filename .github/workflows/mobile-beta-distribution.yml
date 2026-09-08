@@ -1,0 +1,166 @@
+name: Mobile Beta Distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform to distribute'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+      target_app:
+        description: 'Target application distribution'
+        required: true
+        default: 'customer'
+        type: choice
+        options:
+          - customer
+          - partner
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-beta-dist-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PAWSPACE_PAYMENT_ENV: "sandbox"
+  FORBID_PRODUCTION: "true"
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+  NEXT_PUBLIC_API_BASE_URL: "https://staging-api.pawspace.in"
+  APP_ENV: "staging"
+  NODE_ENV: "production"
+
+jobs:
+  distribute-android:
+    name: Distribute Android App (Play Store Internal)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Ruby for Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify ecosystem type integrity
+        run: |
+          npm run typecheck
+          node tests/mobile-native-ecosystem.test.mjs
+
+      - name: Compile Next.js web application
+        run: npm run build
+
+      - name: Sync Capacitor Android platform
+        run: npx cap sync android
+
+      - name: Provision Android release keystore & credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_PLAY_JSON: ${{ secrets.GOOGLE_PLAY_JSON }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/pawspace-release.jks
+            echo "ANDROID_KEYSTORE_FILE=pawspace-release.jks" >> $GITHUB_ENV
+          fi
+          if [ -n "$GOOGLE_PLAY_JSON" ]; then
+            mkdir -p fastlane
+            echo "$GOOGLE_PLAY_JSON" > fastlane/google-play-key.json
+            echo "GOOGLE_PLAY_JSON_KEY_PATH=fastlane/google-play-key.json" >> $GITHUB_ENV
+          fi
+
+      - name: Build and Distribute to Google Play Internal Track
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'pawspace_key' }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GOOGLE_PLAY_JSON_KEY_PATH: ${{ env.GOOGLE_PLAY_JSON_KEY_PATH || 'fastlane/google-play-key.json' }}
+        run: |
+          LANE="beta"
+          if [ "${{ inputs.target_app || 'customer' }}" = "partner" ]; then
+            LANE="partner_beta"
+          fi
+          echo "Executing Fastlane Android lane: $LANE"
+          bundle exec fastlane android "$LANE"
+
+  distribute-ios:
+    name: Distribute iOS App (Apple TestFlight)
+    runs-on: macos-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Setup Ruby for Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile Next.js web application
+        run: npm run build
+
+      - name: Sync Capacitor iOS platform
+        run: npx cap sync ios
+
+      - name: Provision App Store Connect API Key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          if [ -n "$ASC_PRIVATE_KEY" ]; then
+            mkdir -p ~/.appstoreconnect/private_keys
+            echo "$ASC_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+            echo "APP_STORE_CONNECT_API_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" >> $GITHUB_ENV
+          fi
+
+      - name: Build and Distribute to Apple TestFlight
+        env:
+          APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          APP_STORE_CONNECT_API_KEY_PATH: ${{ env.APP_STORE_CONNECT_API_KEY_PATH || '' }}
+        run: |
+          LANE="beta"
+          if [ "${{ inputs.target_app || 'customer' }}" = "partner" ]; then
+            LANE="partner_beta"
+          fi
+          echo "Executing Fastlane iOS lane: $LANE"
+          bundle exec fastlane ios "$LANE"
