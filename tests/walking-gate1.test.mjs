@@ -282,11 +282,26 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
     }),
   }));
 
-  const created = await post();
+  const care={instructions:"Use Luna's red harness. Avoid busy roads.",handoverPreference:"owner"};
+  const badCare=await post({ownerCare:{instructions:"x".repeat(2001),handoverPreference:"owner"}});
+  assert.equal(badCare.status,400);
+  const created = await post({ownerCare:care,idempotencyKey:"walking-care-replay"});
   assert.equal(created.status, 201, `the governed booking is created: ${await created.clone().text()}`);
   const bundle = (await created.json()).data;
   assert.match(bundle.bookingId, /^PS-UAT-WALK-/);
   assert.equal(bundle.liveMoney, false, "and never claims live money");
+  const assignment=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
+  assert.deepEqual(JSON.parse(assignment.assignment_json).ownerCare,care);
+  const lifecycle=await import('../lib/walking-lifecycle.ts');
+  for (const scope of [{customerId:CUSTOMER},{providerId:'walker_dev'}]) {
+    const rows=await lifecycle.listWalkingBookings(db,{...scope,bookingId:bundle.bookingId});
+    assert.deepEqual(rows[0].ownerCare,care,'customer and assigned provider read the persisted instructions');
+  }
+  const replay=await post({ownerCare:{...care,instructions:'Changed after first commit'},idempotencyKey:'walking-care-replay'});
+  assert.equal(replay.status,200);
+  const unchanged=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
+  assert.deepEqual(JSON.parse(unchanged.assignment_json).ownerCare,care,'retry cannot rewrite the saved care plan');
+
 
   // The PRODUCTION path consumed the quote and linked it to the booking it paid for.
   const consumed = await db.prepare("SELECT status,used_booking_id FROM walking_commercial_quotes WHERE id=?").bind(quote.quoteId).first();
