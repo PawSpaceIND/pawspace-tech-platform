@@ -1,7 +1,7 @@
 import {governedJsonError} from "./governed-http-error";
 type Row=Record<string,unknown>;
-const bookingStates=new Set(["confirmed","assigned"]);
-const workStates=new Set(["awaiting_acceptance","assigned","reassignment_needed"]);
+const bookingStates=new Set(["confirmed","assigned","on_the_way","arrived"]);
+const workStates=new Set(["awaiting_acceptance","assigned","reassignment_needed","on_the_way","arrived"]);
 export function requireRecoverableGroomingState(booking:Row,work:Row){
   if(!bookingStates.has(String(booking.status))||!workStates.has(String(work.status)))throw governedJsonError({error:"This job is no longer awaiting service. Use the appropriate service incident or cancellation workflow.",code:"RECOVERY_STATE_CONFLICT"},409);
   if(String(booking.provider_id)!==String(work.provider_id))throw governedJsonError({error:"Booking and work assignment disagree. Operations reconciliation is required.",code:"RECOVERY_STATE_CONFLICT"},409);

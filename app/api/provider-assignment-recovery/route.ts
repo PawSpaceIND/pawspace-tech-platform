@@ -1,3 +1,4 @@
+import {groomingRecoveryLifecycle} from "../../../lib/grooming-recovery-lifecycle";
 import {captureProviderAssignmentAuthority} from "../../../lib/provider-assignment-authority";
 import {providerAssignmentBlock} from "../../../lib/provider-assignment-eligibility";
 import {groomingReplacementCapacity} from "../../../lib/grooming-replacement-capacity";
@@ -30,20 +31,22 @@ export async function POST(request:Request){try{const input=await request.json()
   if(input.action==="accept"){
     if(String(work.provider_model)!=="commission")return json({data:{bookingId:input.bookingId,status:String(work.status),message:"Full-time provider is already assigned"}});
     if(!offer||String(offer.provider_id)!==input.providerId||String(offer.status)!=="pending")return json({error:"No pending provider offer is available"},409);if(Number(offer.expires_at)<now)return json({error:"Provider offer has expired; replacement is required"},409);
-    await mutateCurrentGroomingAssignment(db,booking,work,offer,[
+    const lifecycle=await groomingRecoveryLifecycle(db,booking,"accept",input.providerId,actor.email);await mutateCurrentGroomingAssignment(db,booking,work,offer,[
+      ...lifecycle.statements,
       db.prepare("UPDATE provider_assignment_offers SET status='accepted',responded_at=?,response_reason=?,updated_at=? WHERE group_id=?").bind(now,input.reason??"Accepted in Partner app",now,groupId),
       db.prepare("UPDATE provider_work_orders SET status='assigned',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
       db.prepare("UPDATE canonical_bookings SET status=CASE WHEN status='confirmed' THEN 'assigned' ELSE status END,updated_at=? WHERE id=?").bind(now,input.bookingId),
       providerPerformanceStatement(db,{providerId:input.providerId,groupId,bookingId:input.bookingId,eventType:"assignment_accepted",impactScore:1,createdAt:now}),
       eventStatement(db,input.bookingId,"provider_assignment_accepted",actor.email,{providerId:input.providerId,groupId}),
       securityAuditStatement(db,actor,"provider.assignment.accept","booking",input.bookingId,"completed",{providerId:input.providerId,groupId}),
-    ]);return json({data:{bookingId:input.bookingId,providerId:input.providerId,status:"assigned"}});
+    ],lifecycle.guard);return json({data:{bookingId:input.bookingId,providerId:input.providerId,status:"assigned"}});
   }
   if(input.action==="timeout"&&offer&&Number(offer.expires_at)>now)return json({error:"Provider offer has not expired yet"},409);const reason=(input.reason||input.action.replaceAll("_"," ")).trim();if(reason.length<3)return json({error:"A recovery reason is required"},400);const impact=input.action==="no_show"?-10:input.action==="decline"?-2:input.action==="timeout"?-2:-3,eventId=crypto.randomUUID();
   const offerStatement=offer?db.prepare("UPDATE provider_assignment_offers SET status=?,responded_at=?,response_reason=?,updated_at=? WHERE group_id=?").bind(input.action==="decline"?"declined":input.action==="timeout"?"expired":"cancelled",now,reason,now,groupId):null;
   const performanceStatement=providerPerformanceStatement(db,{providerId:input.providerId,groupId,bookingId:input.bookingId,eventType:`assignment_${input.action}`,impactScore:impact,detail:{reason},createdAt:now});
   const decision=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first<Row>();const payload=parse<{request?:Record<string,unknown>;choices?:Array<{provider:Provider;score?:number;reasons?:string[]}>}>(decision?.shortlist_json,{});const candidates=payload.choices??[];let replacement:Provider|null=null,assignmentAuthority:Awaited<ReturnType<typeof captureProviderAssignmentAuthority>>|null=null;for(const choice of candidates){if(choice.provider.id===input.providerId)continue;const governed=await getGovernedProvider(db,choice.provider.id);if(governed&&await canTake(db,governed,booking,groupId)){const authority=await captureProviderAssignmentAuthority(db,governed.id);if((await providerAssignmentBlock(db,governed.id,new Date(String(booking.scheduled_start)).getTime())).blocked)continue;replacement=governed;assignmentAuthority=authority;break;}}
-  const recoveryId=crypto.randomUUID();if(!replacement){await mutateCurrentGroomingAssignment(db,booking,work,offer,[
+  const recoveryId=crypto.randomUUID();if(!replacement){const lifecycle=await groomingRecoveryLifecycle(db,booking,"escalate",null,actor.email);await mutateCurrentGroomingAssignment(db,booking,work,offer,[
+    ...lifecycle.statements,
     ...(offerStatement?[offerStatement]:[]),performanceStatement,
     db.prepare("INSERT INTO provider_recovery_cases (id,group_id,booking_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES (?,?,?,?,?,'ops_escalation',NULL,?,?,NULL,?)").bind(recoveryId,groupId,input.bookingId,input.providerId,input.action,JSON.stringify({reason,shortlistExhausted:true}),now,now),
     db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,reason,now,groupId),
@@ -51,13 +54,14 @@ export async function POST(request:Request){try{const input=await request.json()
     eventStatement(db,input.bookingId,"provider_recovery_escalated",actor.email,{failedProviderId:input.providerId,reasonCode:input.action,recoveryId},eventId),
     ...notificationStatements(db,input.bookingId,String(booking.customer_id),eventId,"Your PawSpace provider needs to be replaced. Our Operations team is protecting your slot and will confirm the replacement shortly."),
     securityAuditStatement(db,actor,"provider.assignment.recovery","booking",input.bookingId,"completed",{outcome:"ops_escalation",recoveryId}),
-  ]);const communications=await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications"});return json({data:{bookingId:input.bookingId,status:"ops_escalation",recoveryId,communications}},202);}
-  const capacity=groomingReplacementCapacity(booking,replacement.id,replacement.model);if(!assignmentAuthority)throw new Error("Replacement authority is missing");const replacementGuard={sql:`(${capacity.sql}) AND (${assignmentAuthority.sql})`,values:[...capacity.values,...assignmentAuthority.values]};
+  ],lifecycle.guard);const communications=await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications"});return json({data:{bookingId:input.bookingId,status:"ops_escalation",recoveryId,communications}},202);}
+  const capacity=groomingReplacementCapacity(booking,replacement.id,replacement.model);if(!assignmentAuthority)throw new Error("Replacement authority is missing");const lifecycle=await groomingRecoveryLifecycle(db,booking,"replace",replacement.id,actor.email),replacementGuard={sql:`(${capacity.sql}) AND (${assignmentAuthority.sql}) AND (${lifecycle.guard.sql})`,values:[...capacity.values,...assignmentAuthority.values,...lifecycle.guard.values]};
   const nextAttempt=Number(offer?.attempt_no||0)+1,nextStatus=replacement.model==="commission"?"awaiting_acceptance":"assigned",timeoutMinutes=replacement.model==="commission"?await getProviderAcceptanceTimeout(db,replacement.id):null,nextOffer=timeoutMinutes===null?null:{timeoutMinutes,expiresAt:now+timeoutMinutes*60000};await mutateCurrentGroomingAssignment(db,booking,work,offer,[
     ...(offerStatement?[offerStatement]:[]),performanceStatement,
+    ...lifecycle.statements,
     db.prepare("UPDATE scheduling_reservations SET provider_id=?,status='assigned' WHERE group_id=? AND status!='cancelled'").bind(replacement.id,groupId),
     db.prepare("UPDATE scheduling_assignment_decisions SET selected_provider_id=?,status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(replacement.id,actor.email,`Recovery from ${input.action}: ${reason}`,now,groupId),
-    db.prepare("UPDATE canonical_bookings SET provider_id=?,status=CASE WHEN status IN ('confirmed','assigned') THEN 'confirmed' ELSE status END,updated_at=? WHERE id=?").bind(replacement.id,now,input.bookingId),
+    db.prepare("UPDATE canonical_bookings SET provider_id=?,status=CASE WHEN status IN ('confirmed','assigned','on_the_way','arrived') THEN 'confirmed' ELSE status END,updated_at=? WHERE id=?").bind(replacement.id,now,input.bookingId),
     db.prepare("UPDATE provider_work_orders SET provider_id=?,provider_name=?,provider_model=?,status=?,updated_at=? WHERE booking_id=?").bind(replacement.id,replacement.name,replacement.model,nextStatus,now,input.bookingId),
     ...(nextOffer?[db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=excluded.booking_id,provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(groupId,input.bookingId,replacement.id,now,nextOffer.expiresAt,nextAttempt,now)]:[]),
     db.prepare("INSERT INTO provider_recovery_cases (id,group_id,booking_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(recoveryId,groupId,input.bookingId,input.providerId,input.action,replacement.model==="commission"?"replacement_offered":"resolved",replacement.id,JSON.stringify({reason,automatic:true}),now,replacement.model==="commission"?null:now,now),
