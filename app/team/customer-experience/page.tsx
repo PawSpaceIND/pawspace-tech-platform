@@ -64,36 +64,60 @@ export default function CustomerExperiencePage() {
   const replyRequestId = drafts[selected]?.clientRequestId || "";
   const activeThread = useRef("");
   const mutationInFlight = useRef(false);
+  const [routingReason, setRoutingReason] = useState("CX operator routing decision");
+  const accessEpoch = useRef(0);
+  const clearAccess = useCallback((threadId?: string) => {
+    accessEpoch.current++;
+    if (threadId) {
+      setThreads(current => current.filter(row => row.id !== threadId));
+      setDrafts(current => { const next = { ...current }; delete next[threadId]; return next; });
+    } else {
+      setThreads([]); setDrafts({}); setQuery("");
+    }
+    if (!threadId || activeThread.current === threadId) {
+      activeThread.current = "";
+      setSelected(""); setConversation(null); setControl(null); setNotice("");
+      setServiceWindowCheckedAt(0); setRoutingReason("CX operator routing decision");
+    }
+  }, []);
   const selectThread = (id: string) => {
     if (activeThread.current === id) return;
     activeThread.current = id;
     setSelected(id); setConversation(null); setControl(null); setError(""); setNotice("");
   };
-  const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
   const loadThreads = useCallback(async () => {
+    const epoch = accessEpoch.current;
     const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
+    if (epoch !== accessEpoch.current) return [];
+    if ([401, 403].includes(response.status)) clearAccess();
     if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
     const next = payload.data?.threads || [];
     setThreads(next);
     return next;
-  }, []);
+  }, [clearAccess]);
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return;
+    const epoch = accessEpoch.current;
     const response = await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
+    if (!shouldApply() || epoch !== accessEpoch.current) return;
+    if ([401, 403, 404].includes(response.status)) clearAccess(response.status === 401 ? undefined : id);
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
     if (!shouldApply() || activeThread.current !== id) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
-  }, []);
+  }, [clearAccess]);
 
   const loadControl = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return null;
+    const epoch = accessEpoch.current;
     const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
+    if (!shouldApply() || epoch !== accessEpoch.current) return null;
+    if ([401, 403].includes(response.status)) clearAccess(response.status === 401 ? undefined : id);
     if (response.status === 409 || response.status === 404) {
       if (shouldApply() && activeThread.current === id) setControl(null);
       return null;
@@ -102,7 +126,7 @@ export default function CustomerExperiencePage() {
     const next = payload.data || null;
     if (shouldApply() && activeThread.current === id) setControl(next);
     return next;
-  }, []);
+  }, [clearAccess]);
 
   useEffect(() => {
     let active = true;
@@ -229,7 +253,7 @@ export default function CustomerExperiencePage() {
   }
 
   const visible = useMemo(() => threads.filter((row) => {
-    const hay = `${text(row.customer_name, "")} ${text(row.customer_id, "")} ${text(row.primary_phone, "")} ${text(row.lastMessage?.channel, "")}`.toLowerCase();
+    const hay = `${text(row.customer_name, "")} ${text(row.customer_id, "")} ${text(row.primary_phone, "")} ${text(row.lastMessage?.channel, "")} ${text(row.lastMessage?.text, "")}`.toLowerCase();
     if (!hay.includes(query.toLowerCase())) return false;
     if (filter === "unassigned") return !text(row.assigned_to, "");
     if (filter === "whatsapp") return text(row.lastMessage?.channel, "") === "whatsapp";
@@ -326,7 +350,7 @@ export default function CustomerExperiencePage() {
                 >
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
-                  <small>{text((row.lastMessage?.payload as Row | undefined)?.text || row.lastMessage?.template_key, "No message preview")}</small>
+                  <small>{text(row.lastMessage?.text, row.lastMessage ? "Message" : "No messages yet")}</small>
                   <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner}` : channel === "whatsapp" ? "WhatsApp open" : "Open"}</span></div>
                 </button>
               );

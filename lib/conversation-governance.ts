@@ -21,6 +21,13 @@ function missingTableOnly(table:string){
   throw error;
  };
 }
+function conversationMessagePreview(row:Row|null){
+ if(!row)return null;
+ const{payload_json,...metadata}=row;
+ let text="";
+ try{const payload=JSON.parse(String(payload_json||"{}"));if(payload&&typeof payload.text==="string")text=Array.from(payload.text.trim()).slice(0,240).join("");}catch{}
+ return{...metadata,text};
+}
 export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
@@ -29,7 +36,7 @@ export async function listConversationThreads(db:D1Database,input:{customerId?:s
   // screen showed nothing at all rather than the threads it does have.
   if(!/no such table: canonical_customers/i.test(error instanceof Error?error.message:String(error)))throw error;
   result=await db.prepare(query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t")).bind(...binds).all<Row>();
- }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>(),row.ticket_id?db.prepare("SELECT id,priority,status,subject,sla_due_at FROM customer_experience_tickets WHERE id=?").bind(row.ticket_id).first<Row>().catch(missingTableOnly("customer_experience_tickets")):Promise.resolve(null)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}return threads;}
+ }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at,payload_json FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(row.id).first<Row>(),row.ticket_id?db.prepare("SELECT id,priority,status,subject,sla_due_at FROM customer_experience_tickets WHERE id=?").bind(row.ticket_id).first<Row>().catch(missingTableOnly("customer_experience_tickets")):Promise.resolve(null)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:conversationMessagePreview(lastMessage),ticket:openTicket||null});}return threads;}
 
 export async function getConversation(db:D1Database,threadId:string,scope:ConversationScope){await ensureConversationGovernance(db);const thread=await db.prepare("SELECT * FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread)return null;const [participants,messages,assignments]=await Promise.all([db.prepare("SELECT participant_type,participant_id,display_ref,role,created_at FROM communication_participants WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,created_by,created_at,updated_at FROM communication_messages WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,assigned_to,assigned_by,status,reason,created_at,ended_at FROM conversation_assignments WHERE thread_id=? ORDER BY created_at DESC").bind(threadId).all<Row>()]);
  const visibleParticipants=participants.results.filter(item=>scope==="staff"||String(item.participant_type)!=="provider");

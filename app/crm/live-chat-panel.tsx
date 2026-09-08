@@ -277,7 +277,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: "#6e637a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.lastMessage?.text || "No messages yet"}
+                    {t.lastMessage?.text || (t.lastMessage ? "Message" : "No messages yet")}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                     <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: t.withinSession ? "#d4f4dd" : "#f4e0d4", color: t.withinSession ? "#13632e" : "#873200" }}>

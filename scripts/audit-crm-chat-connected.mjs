@@ -31,7 +31,7 @@ assert.equal(verifiedActor.email,actor);
 assert.equal(verifiedActor.developmentPreview,false,'browser proof must exercise provisioned staff access');
 const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';${cx?"import Page from './app/team/customer-experience/page.tsx';import Template from './app/team/customer-experience/template.tsx';":"import LiveChatPanel from './app/crm/live-chat-panel.tsx';"}createRoot(document.getElementById('root')).render(${cx?' <Template><Page/></Template> ':"<LiveChatPanel notify={message=>{document.getElementById('notice').textContent=message;}}/>"});`,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,outfile:'bundle.js',format:'iife',jsx:'automatic',define:{'process.env':'{}','process.env.NODE_ENV':'"development"'}});
 const sends=[];const writeResponses=[];
-let holdWrite=false;let releaseWrite;
+let holdWrite=false;let releaseWrite;let holdList=false;let heldReads=[];
 let failReads=false;let getRequests=0;let inboundSequence=0;
 const server=http.createServer(async(req,res)=>{
  try{
@@ -49,6 +49,8 @@ const server=http.createServer(async(req,res)=>{
    else if(action==='fail')failReads=true;
    else if(action==='recover')failReads=false;
    else if(action==='hold_write')holdWrite=true;
+   else if(action==='hold_list')holdList=true;
+   else if(action==='release_reads'){holdList=false;for(const release of heldReads)release();heldReads=[];}
    else if(action==='release_write'){holdWrite=false;releaseWrite?.();releaseWrite=undefined;}
    else if(action==='revoke')sqlite.prepare("UPDATE app_users SET status='disabled' WHERE id='USR-BROWSER'").run();
    else if(action==='restore')sqlite.prepare("UPDATE app_users SET status='active' WHERE id='USR-BROWSER'").run();
@@ -61,7 +63,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.url==='/audit-result'){
    const outboundMessages=sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n;
    const outboxRows=sqlite.prepare('SELECT COUNT(*) n FROM communication_outbox').get().n;
-   const result={writeResponses,getRequests,attempts:sends.length,outboundMessages,outboxRows,frontendRetryKeyStable:sends.length===2&&Boolean(sends[0].clientRequestId)&&sends[0].clientRequestId===sends[1].clientRequestId,externalDelivery:false};
+   const result={heldReads:heldReads.length,writeResponses,getRequests,attempts:sends.length,outboundMessages,outboxRows,frontendRetryKeyStable:sends.length===2&&Boolean(sends[0].clientRequestId)&&sends[0].clientRequestId===sends[1].clientRequestId,externalDelivery:false};
    console.log(JSON.stringify(result));res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(result));return;
   }
   if(req.url==='/bundle.css'){res.writeHead(200,{'content-type':'text/css'});res.end(bundle.outputFiles.find(file=>file.path.endsWith('.css'))?.text||'');return;}
@@ -78,7 +80,7 @@ const server=http.createServer(async(req,res)=>{
    const result=await streamRoute.GET(new Request(request,{signal:abort.signal}));res.writeHead(result.status,Object.fromEntries(result.headers));
    for await(const chunk of result.body)res.write(chunk);res.end();return;
   }
-  const result=await selectedRoute[req.method](request);if(req.method==='POST'&&holdWrite)await new Promise(resolve=>{releaseWrite=resolve;});res.writeHead(result.status,Object.fromEntries(result.headers));const responseText=await result.text();if(req.method==='POST')writeResponses.push({status:result.status,body:JSON.parse(responseText)});res.end(responseText);
+  const result=await selectedRoute[req.method](request);if(req.method==='GET'&&holdList&&req.url==='/api/conversations?status=open')await new Promise(resolve=>heldReads.push(resolve));if(req.method==='POST'&&holdWrite)await new Promise(resolve=>{releaseWrite=resolve;});res.writeHead(result.status,Object.fromEntries(result.headers));const responseText=await result.text();if(req.method==='POST')writeResponses.push({status:result.status,body:JSON.parse(responseText)});res.end(responseText);
  }catch(error){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:String(error)}));}
 });
 let browser;
