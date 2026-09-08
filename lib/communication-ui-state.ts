@@ -10,7 +10,8 @@ export function consentEvidenceLabel(applicable: boolean, status: unknown): stri
     verified: "Verification reported · server policy still applies",
     pending: "Consent pending · not confirmed",
   };
-  return labels[status.trim().toLowerCase()] || "Not confirmed · check consent before messaging";
+  const key = status.trim().toLowerCase();
+  return Object.hasOwn(labels, key) ? labels[key] : "Not confirmed · check consent before messaging";
 }
 
 export class CustomerChatUiError extends Error {}

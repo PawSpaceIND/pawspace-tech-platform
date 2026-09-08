@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {consentEvidenceLabel,customerChatResponseError,customerChatErrorMessage} from "../lib/communication-ui-state.ts";
 test("missing or unknown consent never appears verified",()=>{
-  for(const value of [undefined,null,{},"unexpected","<script>bad</script>"])assert.doesNotMatch(consentEvidenceLabel(true,value),/verified|<script>/i);
+  for(const value of [undefined,null,{},"unexpected","constructor","__proto__","<script>bad</script>"])assert.doesNotMatch(consentEvidenceLabel(true,value),/verified|<script>/i);
   assert.equal(consentEvidenceLabel(false,"verified"),"Not available for this conversation");
   assert.match(consentEvidenceLabel(true,"opted_out"),/do not message/);
   assert.match(consentEvidenceLabel(true,"granted"),/reported.*server policy/);
