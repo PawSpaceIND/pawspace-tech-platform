@@ -137,7 +137,7 @@ test("waiting requests remain visible when no provider holds a reservation",asyn
  });
  await page.goto("/team/scheduling");
  const waiting=page.getByRole("region",{name:"Requests awaiting admin"});
- await expect(waiting).toBeVisible();await expect(waiting).toContainText("WAITING-GROUP");await expect(waiting).toContainText("WAITING-CUSTOMER");await expect(waiting).toContainText("10:00");
+ await expect(waiting).toBeVisible();await expect(waiting).toContainText("WAITING-GROUP");await expect(waiting).toContainText("WAITING-CUSTOMER");await expect(waiting).toContainText("11:00");
  await expect(page.getByText(/Nothing scheduled for/)).toHaveCount(0);
  await expect(waiting.getByText(/no confirmed provider assignment/)).toBeVisible();
 });
