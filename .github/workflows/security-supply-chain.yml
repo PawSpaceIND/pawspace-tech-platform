@@ -87,10 +87,12 @@ jobs:
           node-version: "22.15.0"
           cache: npm
       - name: Install locked dependencies
+        id: install
         run: npm ci --ignore-scripts
       - name: Explicit vulnerability gate
         run: npm audit --audit-level=high
       - name: Generate CycloneDX SBOM
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: .
