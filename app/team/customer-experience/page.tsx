@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { inboxResponseError, inboxErrorMessage } from "../../../lib/inbox-ui-error";
+import { consentEvidenceLabel } from "../../../lib/communication-ui-state";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -237,8 +238,8 @@ export default function CustomerExperiencePage() {
   const phone = text(thread?.primary_phone, "Masked by role");
   const leadId = text(thread?.lead_id, "Not lead-linked");
   const ticket = thread?.ticket as Row | undefined;
-  const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
   const isWhatsApp = Boolean(control);
+  const consentState = consentEvidenceLabel(isWhatsApp, (lastMessage?.payload as Row | undefined)?.consentStatus);
   const canSendHumanReply = Boolean(isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
   const modeLabel = humanMode ? "Human only" : aiMode ? "AI Assistant" : "Chatbot only";
 
