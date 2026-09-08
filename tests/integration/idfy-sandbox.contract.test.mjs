@@ -74,7 +74,7 @@ test("IDFY-02: a real sandbox task submission returns a contract mapStatus can r
   console.log(`IDFY-02 reference=${result.reference} status=${result.status}`);
 });
 
-test("IDFY-03: the callback boundary refuses a tampered signature and admits a correctly signed one", { ...state.gate(), ...(process.env[WEBHOOK_SECRET] ? {} : { skip: `${WEBHOOK_SECRET} is not configured — the inbound leg cannot be exercised` }) }, async () => {
+test("IDFY-03: the callback boundary refuses a tampered signature and admits a correctly signed one", state.gateOn(WEBHOOK_SECRET), async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   await boundary.ensureIdfyCallbackTables(db);
@@ -109,7 +109,7 @@ test("IDFY-03: the callback boundary refuses a tampered signature and admits a c
   console.log(`IDFY-03 signed callback cleared verification and correlation gates (status ${signed.status}), tampered refused 401`);
 });
 
-test("IDFY-04: a stale signature is refused even though it verifies", { ...state.gate(), ...(process.env[WEBHOOK_SECRET] ? {} : { skip: `${WEBHOOK_SECRET} is not configured — the inbound leg cannot be exercised` }) }, async () => {
+test("IDFY-04: a stale signature is refused even though it verifies", state.gateOn(WEBHOOK_SECRET), async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   await boundary.ensureIdfyCallbackTables(db);
