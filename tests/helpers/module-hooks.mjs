@@ -31,6 +31,16 @@ export function runWithWorkersDb(db, callback) {
   return als.run(db, callback);
 }
 
+// `world()` is created from inside a node:test callback. enterWith() attaches that world's D1
+// adapter to the current test async resource, and every promise/import spawned by the test inherits
+// the same store. When the test callback completes, Node returns to the runner's parent async
+// resource, so another test cannot overwrite this binding the way a process-global active DB did.
+export function enterWorkersDbScope(db) {
+  const als = globalThis[WORKERS_DB_ALS_KEY] ?? workersDbAls;
+  als.enterWith(db);
+  return db;
+}
+
 // Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
 let cachedTs = null;
 function typescript() {
