@@ -182,13 +182,32 @@ jobs:
           NODE
       - name: Run authoritative 10,801-request Track 3 workload
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
           PERF_RUN_ID: remediation-${{ github.run_id }}-${{ github.run_attempt }}
           PERF_ASSIGNMENT_CONCURRENCY: '3'
           PERF_WEBHOOK_REPLAY_CONCURRENCY: '3'
           PERF_LEDGER_QUERY_CONCURRENCY: '2'
-        run: node scripts/ops/staging-performance-gate-closure.mjs
+        run: |
+          set -uo pipefail
+          test "$APP_ENV" = staging
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          VERSION_ID="$(sed -n 's/^Current Version ID: //p' deployment.txt | tail -1)"
+          test -n "$VERSION_ID"
+          npx wrangler tail pawspace-staging --format=json --status=error --version-id="$VERSION_ID" > worker-tail.log 2>&1 &
+          TAIL_PID=$!
+          sleep 4
+          node scripts/ops/staging-performance-gate-closure.mjs
+          WORKLOAD_STATUS=$?
+          sleep 2
+          kill "$TAIL_PID" 2>/dev/null || true
+          wait "$TAIL_PID" 2>/dev/null || true
+          echo '--- staging worker error tail ---'
+          cat worker-tail.log || true
+          exit "$WORKLOAD_STATUS"
       - name: Verify D1 Track 3 invariants
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -216,6 +235,7 @@ jobs:
             staging-track3-finance-indexes.json
             staging-scheduler-duplicates.json
             healthz-evidence.json
+            worker-tail.log
             staging-performance.json
             staging-performance-d1.json
             track3-finance-closure-evidence.json
