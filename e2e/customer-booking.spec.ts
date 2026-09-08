@@ -230,3 +230,17 @@ test("address choice: customer can recover from a wrong map match and editing cl
  await expect(page.getByRole("button",{name:"Verify service address",exact:true})).toBeDisabled();
  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
 });
+
+for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-selected afternoon and evening times reach the real quote`,async({page})=>{
+ await sandboxLogin(page,mode==="boarding"?"9000000943":"9000000944");await ensureCustomerPet(page);await page.goto(`/${mode}`);
+ await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
+ await page.getByRole("button",{name:/^4 hours/}).click();
+ const date=new Date(Date.now()+5*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
+ await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Verify map",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
+  const expectedStart=`${date}T${utc}:00.000Z`;
+  const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart);
+  await page.getByLabel("Start time",{exact:true}).selectOption(time);
+  const response=await quoted;expect(response.status(),await response.text()).toBe(200);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
+ }
+});
