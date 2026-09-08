@@ -84,5 +84,7 @@ test("address picker resolves service location from the canonical coverage, not 
   assert.doesNotMatch(pickerSource, /zones\.find\(item=>item\.zoneId===coverage\.zoneId\)/);
   assert.doesNotMatch(pickerSource, /The resolved service zone is not enabled in this UAT build/);
   // The informational "Configured UAT service zones" list stays list-driven for display.
-  assert.match(pickerSource, /Configured UAT service zones/);
+  assert.match(pickerSource, /Explore service areas/);
+  assert.match(pickerSource, /aria-label="Service address pincode"/);
+  assert.doesNotMatch(pickerSource, />\{zone.color\}</);
 });
