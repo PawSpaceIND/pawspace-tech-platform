@@ -59,7 +59,6 @@ test("POST /api/uat-scheduling wires retrying D1 and converts database conflicts
   assert.doesNotMatch(post,/isSqliteConstraintError\(error\)[\s\S]*?authError\(error,"Scheduling failed"\)[\s\S]*?isSqliteConstraintError/);
 });
 
-
 test("D1 retry policy hard-caps caller retry storms",async()=>{let attempts=0;const delays=[];await assert.rejects(()=>retry.withD1WriteRetry(async()=>{attempts+=1;const error=new Error("database is busy");error.code="SQLITE_BUSY";throw error;},{attempts:99,baseDelayMs:100,maxDelayMs:1000,maxTotalDelayMs:1000,random:()=>0.999999,sleep:async delay=>{delays.push(delay);}}),error=>retry.isSqliteBusyError(error));assert.equal(attempts,3);assert.deepEqual(delays,[50,50]);});
 
 test("Track 3 scheduling writes remain bounded, retrying and attempt-atomic after main convergence",()=>{
@@ -68,13 +67,13 @@ test("Track 3 scheduling writes remain bounded, retrying and attempt-atomic afte
   assert.match(scheduling,/withRetryingD1Writes\(env\.DB\)/);
   assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/);
   assert.match(scheduling,/attempt_id TEXT\)/);
+  assert.match(scheduling,/scheduling_dispatch_assertions/);
   assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);
   assert.match(leases,/cleanupRunning=new WeakMap/);
   assert.match(leases,/SELECT DISTINCT r\.group_id/);
   assert.match(leases,/LIMIT 8/);
   assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);
 });
-
 
 test("UAT roster writes remain explicitly environment-gated before assignment discovery",()=>{
   const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
@@ -92,13 +91,17 @@ test("expired reservation maintenance is bounded per foreground request",()=>{
   assert.match(leases,/scheduling_reservation_lease_cleanup[\s\S]*?released_at=\?/);
 });
 
-
-test("reservation claims are request-scoped and retain the authoritative atomic slot guard",()=>{
+test("reservation claims are request-scoped and the whole dispatch rolls back atomically on a lost slot",()=>{
   const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
-  assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/,"each request must own a distinct rollback scope");
-  assert.match(scheduling,/UPDATE scheduling_reservations SET status='cancelled' WHERE attempt_id=\?/);
+  assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/,"each request must own a distinct assertion scope");
+  assert.match(scheduling,/COUNT\(\*\) FROM scheduling_reservations WHERE attempt_id=\? AND status='assigned'/);
+  assert.match(scheduling,/scheduling_dispatch_assertions/);
+  assert.match(scheduling,/try\{await db\.batch\(statements\);\}/,"the request's rows and completeness assertion must share one D1 transaction");
   assert.match(scheduling,/WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\?/);
   assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)[\s\S]*?DO NOTHING/,"the cross-isolate slot conflict must still be enforced at write time");
+  const dispatch=scheduling.slice(scheduling.indexOf("async function commitAssignmentDispatch"),scheduling.indexOf("async function operateAssignment"));
+  assert.doesNotMatch(dispatch,/UPDATE scheduling_reservations SET status='cancelled' WHERE attempt_id=\?/,
+    "a failed transactional dispatch must leave no partial rows requiring manual cancellation");
 });
 
 test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
@@ -108,14 +111,12 @@ test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
   assert.match(leases,/released_at=\?/);
 });
 
-
 test("Track 3 retained downstream batching removes redundant finance-policy waits",()=>{
   const ledger=fs.readFileSync(new URL("../lib/collection-ledger.ts",import.meta.url),"utf8");
   const finance=fs.readFileSync(new URL("../lib/finance-accounts.ts",import.meta.url),"utf8");
   assert.match(ledger,/const\[,policy\]=await Promise\.all/);
   assert.match(finance,/const\[period,existing\]=await Promise\.all/);
 });
-
 
 test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger",()=>{
   const route=fs.readFileSync(new URL("../app/api/grooming-finance/route.ts",import.meta.url),"utf8");
@@ -133,7 +134,6 @@ test("Track 3 staging actor reads combine identity and role lookup in one D1 que
   assert.match(auth,/SELECT u\.name,u\.role_code,u\.status,r\.permissions_json FROM app_users u LEFT JOIN role_definitions/);
   assert.match(auth,/const uatActorReads=new WeakMap<Db,Map<string,Promise<Row\|null>>>\(\)/);
 });
-
 
 test("Track 3 coalesces concurrent finance snapshots and staging actor reads without stale TTL caching",()=>{
   const finance=fs.readFileSync(new URL("../app/api/grooming-finance/route.ts",import.meta.url),"utf8");
