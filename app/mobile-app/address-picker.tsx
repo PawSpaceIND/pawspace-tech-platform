@@ -25,7 +25,8 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
  async function resolveZone(){setError("");setLoading(true);try{
   if(address.trim().length<8){setError("Enter the complete doorstep address");return;}if(!/^[1-9]\d{5}$/.test(pincode)){setError("Please enter a valid 6-digit pincode");return;}
   const coverage=await resolveServiceCoverage(pincode),sessionToken=crypto.randomUUID(),lookup=await searchAddresses(`${address.trim()}, ${pincode}`,sessionToken);
-  if(lookup.status!=="configured"||!lookup.suggestions.length)throw new Error(lookup.error||"Choose an address that can be verified on the map");
+  if(lookup.status!=="configured")throw new Error("Address verification is unavailable right now. Please try again later or contact PawSpace support.");
+  if(!lookup.suggestions.length)throw new Error("No matching map address was found. Check your complete address and PIN, then try again.");
   const suggestion=lookup.suggestions[0],place=await resolveAddress(suggestion.placeId,sessionToken);if(place.status!=="configured"||!validGpsCoordinates(Number(place.latitude),Number(place.longitude)))throw new Error(place.error||"The doorstep coordinates could not be verified");
   const mappedAddress=String(place.address||suggestion.fullText||address.trim());if(!mappedAddress.includes(pincode))throw new Error("The mapped doorstep does not match the selected pincode");
   const zone:Zone={zoneId:coverage.zone.zoneId,zoneName:coverage.zone.zoneName,description:coverage.zone.description,color:coverage.zone.color,serviceAvailable:coverage.zone.serviceAvailable};
