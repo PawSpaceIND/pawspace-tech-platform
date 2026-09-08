@@ -191,9 +191,11 @@ test("real execution: reserveWalkingSchedule sends the dog_walking scheduling co
     return { ok: true, json: async () => ({ data: { groupId: "grp-77", provider: { id: "walk_nisha", name: "Nisha P.", model: "commission", rating: 4.9 }, occurrences: [{ start: "2026-08-13T07:00:00Z", end: "2026-08-13T07:30:00Z", occurrenceNumber: 1 }], explanation: ["auto-assigned"] } }) };
   };
   try {
-    const reservation = await reserveWalkingSchedule({ clientRequestId: "walking-req-1", customerId: "cus_1", petIds: ["Bruno"], zoneId: "blr-east", scheduledStart: "2026-08-13T07:00:00Z", scheduledEnd: "2026-08-13T07:30:00Z", walkCount: 6, weekdays: [1, 3, 5] });
+    const reservation = await reserveWalkingSchedule({ clientRequestId: "walking-req-1", serviceAddress:"42 Test Street, HSR Layout",servicePincode:"560102", customerId: "cus_1", petIds: ["Bruno"], zoneId: "blr-east", scheduledStart: "2026-08-13T07:00:00Z", scheduledEnd: "2026-08-13T07:30:00Z", walkCount: 6, weekdays: [1, 3, 5] });
     assert.equal(captured.url, "/api/uat-scheduling");
     assert.equal(captured.body.serviceCode, "dog_walking");
+    assert.equal(captured.body.serviceAddress,"42 Test Street, HSR Layout");
+    assert.equal(captured.body.servicePincode,"560102");
     assert.equal(captured.body.occurrences, 6, "walkCount maps to scheduler occurrences");
     assert.deepEqual(captured.body.weekdays, [1, 3, 5]);
     assert.equal(reservation.groupId, "grp-77");
