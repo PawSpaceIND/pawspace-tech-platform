@@ -2,6 +2,9 @@ import type { CustomerAccountRecord } from "./customer-account";
 import type { PetProfile } from "./pet-profile-options";
 
 export type CustomerPet = CustomerAccountRecord["pets"][number];
+export class CustomerSessionExpiredError extends Error {
+  constructor() { super("Please verify your phone again to continue. Your session has expired."); }
+}
 export type PetProfileInput = {
   id?: string;
   name: string;
@@ -14,6 +17,7 @@ export type PetProfileInput = {
 };
 
 async function payload<T>(response: Response, fallback: string): Promise<T> {
+  if (response.status === 401) throw new CustomerSessionExpiredError();
   const body = (await response.json().catch(() => ({}))) as { data?: T; error?: string };
   if (!response.ok || body.data === undefined) throw new Error(body.error || fallback);
   return body.data;

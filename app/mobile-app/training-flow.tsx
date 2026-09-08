@@ -9,7 +9,8 @@ import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import PetManager from "./pet-manager";
-import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
+import { CustomerSessionExpiredError, loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
+import CustomerLogin from "./customer-login";
 import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
 import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";
 import { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";
@@ -73,7 +74,13 @@ function previewHour(time:string){return time.startsWith("9")?9:time.startsWith(
 function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent),outcomes:[...marketing.outcomes]}];});}
 function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 import type { LoggedInCustomer } from "./customer-login";
-export default function TrainingFlow({ customer }: { customer: LoggedInCustomer }) {
+export default function TrainingFlow({ customer, onVerified }: { customer: LoggedInCustomer; onVerified?: (customer: LoggedInCustomer) => void }) {
+  const [identity, setIdentity] = useState(customer);
+  return <TrainingForm key={identity.customerId} customer={identity} onVerified={verified => {setIdentity(verified); onVerified?.(verified);}} />;
+}
+function TrainingForm({ customer, onVerified }: { customer: LoggedInCustomer; onVerified: (customer: LoggedInCustomer) => void }) {
+  const [sessionExpired,setSessionExpired]=useState(false);
+  const [sessionRevision,setSessionRevision]=useState(0);
   const [plans,setPlans]=useState<Plan[]>([]);
   const [trainers,setTrainers]=useState<TrainingTrainer[]>([]);
   const [trainerId,setTrainerId]=useState("");
@@ -173,10 +180,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         setSelectedPets((prev) => (prev.length ? prev : firstDog ? [firstDog.id] : []));
         setPetsError("");
       })
-      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .catch((e) => { if (active) {setPetsError(e instanceof Error ? e.message : "Unable to load your pets");if(e instanceof CustomerSessionExpiredError)setSessionExpired(true);} })
       .finally(() => { if (active) setPetsLoading(false); });
     return () => { active = false; };
-  }, [customer.customerId]);
+  }, [customer.customerId,sessionRevision]);
   const onPetsChanged = (updated: CustomerPet[]) => {
     setPets(updated);
     setSelectedPets((prev) => {
@@ -230,6 +237,14 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         setBookingId(booking.id);setConfirmed(true);
       } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {setScheduling(false);}
     };
+  if (sessionExpired) return <section>
+    <h3>Let’s reconnect your account</h3>
+    <p role="status">Your session has expired. Verify the same account to keep your training choices in this tab. A different account starts a fresh form.</p>
+    <CustomerLogin embedded onLoggedIn={verified => {
+      setCheckoutQuote(null);setAgreed(false);setPets(null);setPetsError("");setStage(1);
+      setSessionExpired(false);setSessionRevision(value=>value+1);onVerified(verified);
+    }}/>
+  </section>;
   if (confirmed)
     return (
       <TrainingDashboard
