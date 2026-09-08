@@ -35,3 +35,11 @@ body:is(.route-team,.route-control,.route-admin){--purple:var(--paw-primary);--l
 @media(max-width:600px){.route-mobile-app main[data-theme]{padding:16px!important}.paw-appearance-trigger{padding:10px;right:10px}.paw-appearance-trigger>span:last-child{display:none}.paw-appearance-trigger>span:first-child{font-size:23px;width:24px;line-height:24px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
 html[data-paw-mode="dark"]{--paw-danger:#ffabbc}
+@media(max-width:600px){
+ .route-mobile-app main[data-theme]{padding:calc(12px + env(safe-area-inset-top)) 20px 0!important;min-height:100dvh}
+ .route-mobile-app main[data-theme] [class*="_phone"]>nav{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important;border-radius:0!important}
+}
+@media(prefers-reduced-motion:no-preference){
+ .route-mobile-app main[data-theme] [class*="_screen"]>section{animation:paw-screen-enter .2s ease-out both}
+ @keyframes paw-screen-enter{from{opacity:.7;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+}

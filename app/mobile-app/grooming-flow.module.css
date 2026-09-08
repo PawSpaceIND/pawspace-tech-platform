@@ -1,6 +1,11 @@
 .flow {
   padding-bottom: 10px;
 }
+.petSummary { display: grid; gap: 12px; width: 100%; }
+.petSummary > div { display: flex; gap: 12px; align-items: center; }
+.petSummary img { border-radius: 50%; object-fit: cover; }
+.petSummary small { display: block; color: var(--paw-muted); font-size: 14px; }
+.petSummary > div > span { font-size: 28px; }
 .steps {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

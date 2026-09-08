@@ -13,8 +13,8 @@ const requiredClasses = [
   "avatar",
   "greeting",
   "search",
-  "hero",
-  "heroCopy",
+  "welcomeHero",
+  "personalHero",
   "offers",
   "media",
   "upcoming",
@@ -23,13 +23,10 @@ const requiredClasses = [
   "cards",
   "card",
   "cardPhoto",
-  "assurance",
+  "trustRow",
   "empty",
   "bookingShortcut",
-  "sheetBackdrop",
   "sheet",
-  "handle",
-  "deviceLocation",
   "saveLocation",
   "locationNote",
 ];
@@ -40,8 +37,8 @@ test("premium discovery stays on the globally assigned prototype-converged contr
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);
   }
   assert.match(component, /data-home-design="pawspace-prototype-converged"/);
-  assert.match(component, />Happy pets./);
-  assert.match(component, />What do they need today\?</);
+  assert.match(component, />Welcome to your/);
+  assert.match(component, />Care for every little need</);
   assert.match(component, /aria-label="Care services"/);
   assert.match(component, /aria-label="Care services"/);
   assert.match(component, /Care guide · PawSpace/);

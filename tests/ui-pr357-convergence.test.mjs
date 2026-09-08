@@ -41,7 +41,7 @@ test("PR357 convergence: premium visual system remains additive and presentation
 
 test("PR357 convergence: acceptance harness targets modern home and preserves six-guide/8-service coverage", async () => {
   const harness = await read("scripts/customer-ui-acceptance-v2.mjs");
-  assert.match(harness, /What do they need today\?/);
+  assert.match(harness, /Care for every little need/);
   assert.match(harness, /Care services/);
   assert.match(harness, /guide slots=.*expected 6/);
   for (const label of ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"]) {

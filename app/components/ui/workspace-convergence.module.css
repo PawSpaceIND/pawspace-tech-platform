@@ -141,7 +141,7 @@
 .partner [class*="brand"] { color: var(--paw-primary) !important; }
 .partner [class*="brand"] b { color: var(--ws-deep) !important; }
 .partner [class*="identityPill"] { background: #e7f4ee !important; color: #0d6b46 !important; }
-.partner [class*="heroCard"] { background: var(--paw-hero) !important; }
+.partner [class*="heroCard"] { background: linear-gradient(135deg,var(--paw-hero),color-mix(in srgb,var(--paw-hero),#141021 24%)) !important; }
 .partner [class*="heroCard"] button { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
 .partner [class*="heroCard"] button[class*="secondary"] { background: #fff !important; color: var(--ws-deep) !important; }
 .partner [class*="stats"] span,

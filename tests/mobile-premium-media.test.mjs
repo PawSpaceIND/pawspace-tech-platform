@@ -8,14 +8,14 @@ test("UI-MEDIA-01: customer home keeps assigned prototype-converged as its one g
   const source = await read("app/mobile-app/premium-discovery-home.tsx");
   const styles = await read("app/mobile-app/premium-discovery-home.module.css");
   assert.match(source, /data-home-design="pawspace-prototype-converged"/);
-  assert.match(source, />Happy pets./);
-  assert.match(source, />What do they need today\?</);
+  assert.match(source, />Welcome to your/);
+  assert.match(source, />Care for every little need</);
   assert.match(source, /className=\{styles\.cards\}/);
   assert.match(source, /className=\{styles\.cardPhoto\}/);
-  assert.match(source, /aria-label="PawSpace trust standards"/);
+  assert.match(source, /aria-label="Care with confidence"/);
   assert.match(source, /aria-label="Care services"/);
   assert.match(source, /Care guide · PawSpace/);
-  assert.match(styles, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /scroll-snap-type:x proximity/);
   assert.doesNotMatch(source, /Offers carousel|carouselSlots|goToAd|adSlots/);
   assert.doesNotMatch(source, /HomeDesignSwitcher|HOME_DESIGN_STORAGE_KEY|design === "calm"/);
 });

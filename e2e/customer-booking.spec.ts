@@ -2,9 +2,29 @@ import { expect, test } from "@playwright/test";
 
 const phone = process.env.PW_CUSTOMER_PHONE || "9000000911";
 
+test("pet-first guest home: search and accessible area sheet preserve service entry", async ({page}) => {
+  await page.goto('/mobile-app');
+  await expect(page.getByRole('heading',{name:'Welcome to your Petter half.'})).toBeVisible();
+  await page.getByRole('button',{name:'Choose your service location'}).click();
+  const sheet=page.getByRole('dialog',{name:'Where is home?'});
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('button',{name:'Save area'})).toBeDisabled();
+  await sheet.getByPlaceholder('e.g. HSR Layout, Bengaluru').fill('Indiranagar, Bengaluru');
+  await sheet.getByRole('button',{name:'Save area'}).click();
+  await expect(sheet).not.toBeVisible();
+  await page.getByRole('textbox',{name:'Search PawSpace services'}).fill('grooming');
+  const book=page.getByRole('button',{name:'Book now · Grooming',exact:true});
+  await expect(book).toBeEnabled();
+  const box=await book.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(48);
+  expect(box?.height).toBeGreaterThanOrEqual(48);
+  await book.click();
+  await expect(page.getByPlaceholder('10-digit phone number')).toBeVisible();
+});
+
 test("shared appearance: three collections persist across customer and partner entry", async ({ page }) => {
   await page.goto("/mobile-app");
-  await expect(page.getByRole("heading", {name: "Happy pets. Happier homes."})).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Welcome to your Petter half."})).toBeVisible();
   await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.locator('input[name="paw-theme"]')).toHaveCount(3);
@@ -78,7 +98,7 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
   await home.click();
-  await expect(page.getByText("What do they need today?", { exact: true })).toBeVisible();
+  await expect(page.getByText("Care for every little need", { exact: true })).toBeVisible();
 
   const grooming = serviceCard(page, "Grooming");
   const training = serviceCard(page, "Training");
@@ -94,7 +114,7 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
   if (await location.isVisible().catch(() => false)) {
     await location.click();
     await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Indiranagar, Bengaluru");
-    await page.getByRole("button", { name: "Save location" }).click();
+    await page.getByRole("button", { name: "Save area" }).click();
     await expect(page.getByRole("button", { name: /Choose your service location/i })).toContainText(/Indiranagar\s*,?\s*Bengaluru/i);
   }
 

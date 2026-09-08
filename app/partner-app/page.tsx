@@ -195,10 +195,9 @@ export default function PartnerMobileApp() {
       <section className={styles.content}>
         {error && <div className={styles.error} role="alert">{error}</div>}
         {!identity?.subjectId && error && <p><Link href="/partner/onboarding">Sign in to your partner account →</Link></p>}
-        {PHOTO_UPLOADS_DEFERRED && <section className={styles.notice}><b>Internal human test · photos deferred</b><p>{PHOTO_UAT_NOTICE}</p></section>}
 
         {tab === "home" && <>
-          <div className={styles.greeting}><div><small>PAWSPACE PARTNER MOBILE</small><h1>{providerName}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "Identity-scoped UAT workspace"}</p></div><button aria-label="Refresh jobs" disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          <div className={styles.greeting}><div><small>YOUR CARE DAY</small><h1>{identity?.subjectId ? providerName : "Hello, care partner."}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "A little care makes their whole day."}</p></div><button aria-label="Refresh jobs" disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
 
           <section className={styles.heroCard}>
             <div className={styles.heroTop}><span>NEXT ASSIGNMENT</span>{selected && <em>{label(selected.status)}</em>}</div>
@@ -210,7 +209,7 @@ export default function PartnerMobileApp() {
                 {nextAction && <button disabled={busy || photoActionDeferred} onClick={() => void act(nextAction)}>{photoActionDeferred ? "Photo proof · later test round" : busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, canTrack ? "tracking" : "jobs")}>{canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
+            </> : <><h2>{identity?.subjectId ? "Ready for your next pet visit" : "Your next tail-wag starts here"}</h2><p>{identity?.subjectId ? "Your assigned visits will appear here, with each pet’s needs and your next step." : "Sign in to see your assigned pets, visit details and care instructions."}</p></>}
           </section>
 
           <div className={styles.stats}>
@@ -219,11 +218,11 @@ export default function PartnerMobileApp() {
             <article><span>GPS</span><small>tap to start</small></article>
           </div>
 
-          <h3 className={styles.sectionTitle}>Work from your phone</h3>
+          <h3 className={styles.sectionTitle}>Your care essentials</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
             <button onClick={() => setTab("tracking")}><i>⌖</i><b>GPS & ETA</b><small>Foreground tracking</small></button>
-            <button onClick={() => setTab("earnings")}><i>₹</i><b>Earnings</b><small>Settlement-safe view</small></button>
+            <button onClick={() => setTab("earnings")}><i>₹</i><b>Earnings</b><small>Visits, payments & totals</small></button>
             <button onClick={() => setTab("more")}><i>☰</i><b>More</b><small>Onboarding & support</small></button>
           </div>
 
@@ -290,6 +289,7 @@ export default function PartnerMobileApp() {
         </>}
       </section>
 
+      {PHOTO_UPLOADS_DEFERRED && <section className={styles.notice} style={{margin:"0 20px 110px"}}><b>Internal human test · photos deferred</b><p>{PHOTO_UAT_NOTICE}</p></section>}
       <nav className={styles.bottomNav} aria-label="Partner mobile navigation">
         {([[
           "home", "⌂", "Home"

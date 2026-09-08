@@ -51,7 +51,7 @@ async function ensurePet(page){
 }
 
 const care=(page)=>page.getByRole("region",{name:"Care services"});
-async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("What do they need today?",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
+async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Care for every little need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const card=care(page).getByRole("button",{name:new RegExp(name,"i")});const count=await card.count();if(count!==1)die(`${name} discovery card count=${count}`);if(await card.isDisabled())die(`${name} discovery card disabled`);await card.click();await wait(page,450);}
 
 async function observeFinal(page,button,target,safePosts=[],timeout=SERVER_TIMEOUT){
