@@ -60,7 +60,8 @@ async function rawRequestWithTransientRetry(path, options = {}) {
     try {
       const result = await rawRequest(path, options);
       if (![429,500,502,503,504].includes(result.response.status)) return result;
-      lastError = new Error(`transient ${result.response.status} from ${path}`);
+      const detail = String(result.payload?.error || result.payload?.message || result.payload?.code || result.text.slice(0,500) || 'no response detail').replace(/\s+/g,' ').slice(0,500);
+      lastError = new Error(`transient ${result.response.status} from ${path}: ${detail}`);
     } catch (error) {
       lastError = error;
       const transient = error?.name === 'TimeoutError' || /timeout|ECONNRESET|fetch failed/i.test(String(error?.message || error));
