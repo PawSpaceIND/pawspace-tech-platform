@@ -114,10 +114,11 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   expect(bookingId).not.toBe("");
   await expect(page.getByText("Your groomer is reserved.",{exact:true})).toBeVisible();
   await expect(page.getByText(`BOOKING CONFIRMED · ${bookingId}`,{exact:true})).toBeVisible();
-  const saved=await page.context().request.get("/api/canonical-bookings");
+  // Read the customer-owned account view; the all-bookings endpoint is correctly staff-only.
+  const saved=await page.context().request.get("/api/customer-account");
   expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
-  const rows=savedBody.bookings.filter((booking:{id:string})=>booking.id===bookingId);
-  expect(rows).toHaveLength(1);expect(rows[0].service_code).toBe("grooming");expect(rows[0].status).toBe("confirmed");
+  const rows=savedBody.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);
+  expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("grooming");expect(rows[0].status).toBe("confirmed");
 });
 
 test("customer can select next month when grooming opens on the last evening of this month",async({page})=>{
