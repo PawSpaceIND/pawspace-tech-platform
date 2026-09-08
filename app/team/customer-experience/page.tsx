@@ -243,6 +243,7 @@ export default function CustomerExperiencePage() {
   const phone = text(thread?.primary_phone, "Masked by role");
   const leadId = text(thread?.lead_id, "Not lead-linked");
   const ticket = thread?.ticket as Row | undefined;
+  const booking = thread?.booking as Row | undefined;
   const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
   const isWhatsApp = Boolean(control);
   const canSendHumanReply = Boolean(isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
@@ -345,7 +346,7 @@ export default function CustomerExperiencePage() {
               ) : messages.map((message) => (
                 <div key={text(message.id)} className={`${styles.bubble} ${text(message.direction, "") === "outbound" ? styles.bubbleOut : ""}`}>
                   <small>{pretty(message.direction)} · {pretty(message.channel)} · {pretty(message.status)}</small>
-                  <p>{text(message.payload?.text || message.payload?.message || message.template_key, "Message")}</p>
+                  <p>{text(message.payload?.text || message.payload?.message || message.payload?.body || message.payload?.notice || message.template_key, "Message")}</p>
                   <small>{dateTime(message.created_at)}</small>
                 </div>
               ))}
@@ -369,7 +370,7 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Lead / Customer</strong><a>Canonical</a></div><div className={styles.kv}><span>Name</span><b>{customerName}</b><span>Phone</span><b>{phone}</b><span>Lead</span><b>{leadId}</b><span>Thread</span><b>{text(thread?.id)}</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Consent Evidence</strong><a>Governed</a></div><div className={styles.kv}><span>WhatsApp</span><b>{consentState}</b><span>Purpose</span><b>Lead response / service</b><span>Marketing</span><b>No</b><span>Opt-out</span><b>Prior opt-out always wins</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Qualification</strong><a>AI summary</a></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
-          <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Ticket</span><b>{text(ticket?.id, "None")}</b><span>Priority</span><b>{pretty(ticket?.priority || "normal")}</b><span>Subject</span><b>{text(ticket?.subject, "No active ticket")}</b><span>Promise</span><b>Never invent slot/price</b></div></section>
+          <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Booking</span><b>{text(booking?.id || thread?.booking_id, "Not linked")}</b><span>Service</span><b>{pretty(booking?.service_code)}</b><span>Package</span><b>{text(booking?.package_name)}</b><span>Booking status</span><b>{pretty(booking?.status)}</b><span>Scheduled start</span><b>{text(booking?.scheduled_start)}</b><span>Ticket</span><b>{text(ticket?.id || thread?.ticket_id, "Not linked")}</b><span>Priority</span><b>{pretty(ticket?.priority)}</b><span>Subject</span><b>{text(ticket?.subject, "No linked ticket details")}</b><span>Ticket status</span><b>{pretty(ticket?.status)}</b><span>Response due</span><b>{dateTime(ticket?.sla_due_at)}</b></div></section>
           <section className={styles.card}>
             <div className={styles.cardHead}><strong>Conversation Routing</strong><a>{isWhatsApp ? modeLabel : "Not WhatsApp"}</a></div>
             <input className={styles.search} value={routingReason} onChange={(event) => setRoutingReason(event.target.value)} maxLength={240} aria-label="Routing change reason" />

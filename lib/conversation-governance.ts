@@ -21,6 +21,21 @@ function missingTableOnly(table:string){
   throw error;
  };
 }
+async function linkedConversationTicket(db:D1Database,thread:Row){
+ if(!thread.ticket_id)return null;
+ const args=[thread.ticket_id,thread.customer_id,thread.booking_id??null,thread.booking_id??null];
+ const unified=await db.prepare("SELECT id,severity AS priority,status,title AS subject,first_response_due_at AS sla_due_at,resolution_due_at,'unified_case' AS source_kind FROM unified_cases WHERE id=? AND customer_id=? AND (? IS NULL OR booking_id IS NULL OR booking_id=?)").bind(...args).first<Row>().catch(missingTableOnly("unified_cases"));
+ if(unified)return unified;
+ return db.prepare("SELECT id,priority,status,subject,sla_due_at,'legacy_ticket' AS source_kind FROM customer_experience_tickets WHERE id=? AND customer_id=? AND (? IS NULL OR booking_id IS NULL OR booking_id=?)").bind(...args).first<Row>().catch(missingTableOnly("customer_experience_tickets"));
+}
+async function conversationStaffContext(db:D1Database,thread:Row){
+ const [customer,booking,ticket]=await Promise.all([
+  db.prepare("SELECT name,primary_phone FROM canonical_customers WHERE id=?").bind(thread.customer_id).first<Row>().catch(missingTableOnly("canonical_customers")),
+  thread.booking_id?db.prepare("SELECT id,service_code,package_name,status,scheduled_start,scheduled_end FROM canonical_bookings WHERE id=? AND customer_id=?").bind(thread.booking_id,thread.customer_id).first<Row>().catch(missingTableOnly("canonical_bookings")):Promise.resolve(null),
+  linkedConversationTicket(db,thread),
+ ]);
+ return {...thread,customer_name:customer?.name??null,primary_phone:customer?.primary_phone??null,booking:booking??null,ticket:ticket??null};
+}
 export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
@@ -29,12 +44,12 @@ export async function listConversationThreads(db:D1Database,input:{customerId?:s
   // screen showed nothing at all rather than the threads it does have.
   if(!/no such table: canonical_customers/i.test(error instanceof Error?error.message:String(error)))throw error;
   result=await db.prepare(query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t")).bind(...binds).all<Row>();
- }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>(),row.ticket_id?db.prepare("SELECT id,priority,status,subject,sla_due_at FROM customer_experience_tickets WHERE id=?").bind(row.ticket_id).first<Row>().catch(missingTableOnly("customer_experience_tickets")):Promise.resolve(null)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}return threads;}
+ }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>(),linkedConversationTicket(db,row)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}return threads;}
 
 export async function getConversation(db:D1Database,threadId:string,scope:ConversationScope){await ensureConversationGovernance(db);const thread=await db.prepare("SELECT * FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread)return null;const [participants,messages,assignments]=await Promise.all([db.prepare("SELECT participant_type,participant_id,display_ref,role,created_at FROM communication_participants WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,created_by,created_at,updated_at FROM communication_messages WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,assigned_to,assigned_by,status,reason,created_at,ended_at FROM conversation_assignments WHERE thread_id=? ORDER BY created_at DESC").bind(threadId).all<Row>()]);
  const visibleParticipants=participants.results.filter(item=>scope==="staff"||String(item.participant_type)!=="provider");
  const visibleMessages=messages.results.map(item=>{let payload:Record<string,unknown>={};try{payload=JSON.parse(String(item.payload_json||"{}")) as Record<string,unknown>}catch{}if(scope!=="staff"){delete payload.internalNote;delete payload.providerPhone;delete payload.customerPhone;}const rest={...item};delete rest.payload_json;return{...rest,payload};});
- return{thread,participants:visibleParticipants,messages:visibleMessages,assignments:scope==="staff"?assignments.results:[]};
+ return{thread:scope==="staff"?await conversationStaffContext(db,thread):thread,participants:visibleParticipants,messages:visibleMessages,assignments:scope==="staff"?assignments.results:[]};
 }
 
 export async function recordInboundMessage(db:D1Database,input:{threadId:string;customerId:string;channel:CommunicationChannel;payload:Record<string,unknown>;provider:string;providerReference:string;eventId:string;createdBy:string}){await ensureConversationGovernance(db);const existing=await db.prepare("SELECT id FROM communication_messages WHERE provider_reference=? AND provider=? LIMIT 1").bind(input.providerReference,input.provider).first<Row>();if(existing)return{id:String(existing.id),duplicatePrevented:true};const thread=await db.prepare("SELECT customer_id,status FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();if(!thread||String(thread.customer_id)!==input.customerId)throw new Error("Conversation thread/customer mismatch");if(String(thread.status)==="closed")throw new Error("Closed conversation cannot accept a new inbound message until reopened");const now=Date.now(),id=`MSG-${crypto.randomUUID().slice(0,14).toUpperCase()}`;await db.batch([

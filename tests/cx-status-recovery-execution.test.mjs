@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installAiHooks,freshAiDb,seedCustomer,inboundMessage} from './helpers/ai-harness.mjs';
+import {installAiHooks,freshAiDb,seedCustomer,inboundMessage,applyOwnedDdl} from './helpers/ai-harness.mjs';
 installAiHooks();
 const conversation=await import('../lib/conversation-governance.ts');
 const route=await import('../app/api/conversations/route.ts');
@@ -38,4 +38,18 @@ test('status audit failure rolls back the thread change and permits retry',async
  assert.equal(w.sqlite.prepare('SELECT status FROM communication_threads').get().status,'open');
  w.sqlite.exec('DROP TRIGGER fail_status_audit');assert.equal((await w.change('resolved')).status,200);
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM conversation_audit_events').get().n,1);
+});
+
+test('CX detail and queue attach canonical customer, booking and unified-case context without cross-customer links',async()=>{
+ const w=await world();
+ applyOwnedDdl(w.sqlite,'lib/unified-case-center.ts');
+ w.sqlite.exec("INSERT INTO canonical_bookings(id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount) VALUES ('BOOK-CX','CUS-CX','grooming','Basic grooming','completed','2026-09-08T10:00:00Z','2026-09-08T11:00:00Z',0)");
+ w.sqlite.exec("INSERT INTO unified_cases(id,idempotency_key,case_type,severity,title,description,customer_id,booking_id,source_type,source_id,owner_team,created_by,updated_by,created_at,updated_at,first_response_due_at) VALUES ('CASE-CX','cx-key','customer_complaint','high','Delayed','Needs follow-up','CUS-CX','BOOK-CX','test','test','cx','qa','qa',1,1,1000)");
+ w.sqlite.exec("UPDATE communication_threads SET booking_id='BOOK-CX',ticket_id='CASE-CX'");
+ const get=async()=>{const response=await route.GET(new Request('https://app.pawspace.in/api/conversations?threadId=THREAD-CX',{headers:{'oai-authenticated-user-email':'cx@pawspace.in'}}));assert.equal(response.status,200);return (await response.json()).data.thread;};
+ const detail=await get();assert.ok(detail.customer_name);assert.notEqual(detail.customer_name,'CUS-CX');assert.equal(detail.booking.package_name,'Basic grooming');assert.equal(detail.ticket.subject,'Delayed');assert.equal(detail.ticket.sla_due_at,1000);
+ assert.equal((await w.list('open'))[0].ticket.source_kind,'unified_case');
+ const customerView=await conversation.getConversation(w.db,'THREAD-CX','customer');assert.equal(customerView.thread.primary_phone,undefined);assert.equal(customerView.thread.ticket,undefined);
+ w.sqlite.exec("UPDATE canonical_bookings SET customer_id='OTHER'; UPDATE unified_cases SET customer_id='OTHER'");
+ const refused=await get();assert.equal(refused.booking,null);assert.equal(refused.ticket,null);assert.equal((await w.list('open'))[0].ticket,null);
 });
