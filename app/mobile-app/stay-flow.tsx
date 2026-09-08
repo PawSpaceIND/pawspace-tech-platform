@@ -1,6 +1,5 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./stay-flow.module.css";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
 import { createTestTransaction } from "../../lib/test-transaction";
@@ -195,12 +194,12 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     });
   };
   const pets = petsState ?? [];
-  const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
+  const selectedPets = useMemo(() => selRaw.filter((id) => petsState?.some((p) => p.id === id)), [selRaw,petsState]);
   const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
   const selectedSpecies = [...new Set(selectedPetObjs.map((p) => p.species).filter((value): value is string => Boolean(value)))];
   const selectedSpeciesKey = selectedSpecies.join(",");
-  const boardingHostQueryKey = staySearchKey({cityId:serviceLocation?.assignment.cityId,zoneId:serviceLocation?.assignment.zoneId,start,end,careWindow,petIds:selectedPets,species:selectedSpecies});
+  const boardingHostQueryKey = staySearchKey({cityId:serviceLocation?.assignment.cityId,zoneId:serviceLocation?.assignment.zoneId,location:serviceLocation?`${serviceLocation.placeId}|${serviceLocation.latitude}|${serviceLocation.longitude}|${serviceLocation.address}`:"",start,end,careWindow,petIds:selectedPets,species:selectedSpecies});
   const caregivers = mode === "boarding" ? (boardingHostWindowKey === boardingHostQueryKey ? boardingHosts : []) : (sitterWindowKey === boardingHostQueryKey ? sitters : []);
   const selectedBoardingHost = currentBoardingHost(boardingHosts,caregiver.providerId,boardingHostWindowKey,boardingHostQueryKey);
   const selectedSitter = currentBoardingHost(sitters,caregiver.providerId,sitterWindowKey,boardingHostQueryKey);
@@ -234,7 +233,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
    if(mode!=="sitting"||!serviceLocation||!datesValid||!selectedPets.length)return;
    let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=careWindowDates(start,end,careWindow);
    void previewSitters({clientRequestId:`preview:${queryKey}`,customerId:customer.customerId,petIds:selectedPets,serviceCode:"pet_sitting",serviceAddress:serviceLocation.address,servicePincode:serviceLocation.assignment.pincode,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit"}).then(data=>{if(!active)return;const rows:Caregiver[]=data.providers.map(provider=>({...sitterPlaceholder,providerId:provider.id,name:provider.name,model:provider.model,initials:hostInitials(provider.name),area:serviceLocation.assignment.area,badge:"Available for this window",home:"Availability checked against the current schedule. Confirmation rechecks the slot.",availabilityVerified:true}));setSitters(rows);setSitterWindowKey(queryKey);setSitterError("");setCaregiver(current=>rows.find(row=>row.providerId===current.providerId)??rows[0]??sitterPlaceholder);}).catch(problem=>{if(active){setSitters([]);setSitterWindowKey(queryKey);setSitterError(problem instanceof Error?problem.message:"Unable to load sitters");setCaregiver(sitterPlaceholder);}});return()=>{active=false;};
-  },[mode,serviceLocation,datesValid,selectedPets.length,boardingHostQueryKey,customer.customerId,start,end,careWindow,hostRetry]);
+  },[mode,serviceLocation,datesValid,selectedPets,boardingHostQueryKey,customer.customerId,start,end,careWindow,hostRetry]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
       current.includes(name)
