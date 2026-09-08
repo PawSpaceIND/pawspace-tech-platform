@@ -48,7 +48,7 @@ test("Boarding customer search renders only governed discovered hosts",()=>{
   assert.match(flow,/item\.providerId===caregiver\.providerId/);
   assert.match(flow,/Selected Boarding host is no longer available for this stay window/);
   assert.match(flow,/No verified Boarding host currently has capacity for every selected pet/);
-  assert.match(flow,/disabled=\{mode === "boarding" && !caregiver\.providerId\}/);
+  assert.match(flow,/disabled=\{mode === "boarding" && !selectedBoardingHost\}/);
 });
 
 test("Boarding customer host cards do not fabricate marketplace proof",()=>{

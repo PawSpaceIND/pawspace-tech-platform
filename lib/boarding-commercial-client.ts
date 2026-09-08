@@ -3,6 +3,15 @@ export type BoardingHost={providerId:string;name:string;model:"full_time"|"commi
 export type BoardingQuote={quoteId:string;packageCode:string;packageName:string;packageVersion:number;petCount:number;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string;durationHours:number;stayUnits:number;basePricePerPet:number;totalAmount:number;amountDueNow:number;paymentMode:"prepaid"|"split_50_50";expiresAt:number;liveMoney:false};
 export type BoardingCommercial={packages:BoardingPackage[];hosts:BoardingHost[];source:string;availabilityMode:"uat_canonical"|"catalogue_only";availabilityVerified:boolean;liveAvailability:false;liveMoney:false};
 
-async function payload<T>(response:Response){const body=await response.json() as {data?:T;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Boarding request failed");return body.data;}
-export async function loadBoardingCommercial(input:{cityId:string;zoneId:string;scheduledStart?:string;scheduledEnd?:string;petCount?:number;species?:string[]}){const query=new URLSearchParams({cityId:input.cityId,zoneId:input.zoneId});if(input.scheduledStart)query.set("scheduledStart",input.scheduledStart);if(input.scheduledEnd)query.set("scheduledEnd",input.scheduledEnd);if(input.petCount)query.set("petCount",String(input.petCount));if(input.species?.length)query.set("species",input.species.join(","));return payload<BoardingCommercial>(await fetch(`/api/boarding-commercial?${query.toString()}`,{cache:"no-store"}));}
-export async function quoteBoarding(input:{packageCode:string;petCount:number;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string;paymentMode:"prepaid"|"split_50_50";couponCode?:string}){return payload<BoardingQuote>(await fetch("/api/boarding-commercial",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}));}
+async function boardingRequest<T>(url:string,init:RequestInit={}){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ try{
+  const response=await fetch(url,{...init,signal:controller.signal});
+  const body=await response.json() as {data?:T;error?:string}|null;
+  if(!response.ok||!body?.data)throw new Error(body?.error||"Boarding request failed. Please try again.");
+  return body.data;
+ }catch(error){if(controller.signal.aborted)throw new Error("Boarding request timed out. Please try again.");if(error instanceof SyntaxError)throw new Error("Boarding response could not be read. Please try again.");throw error;}
+ finally{clearTimeout(timer);}
+}
+export async function loadBoardingCommercial(input:{cityId:string;zoneId:string;scheduledStart?:string;scheduledEnd?:string;petCount?:number;species?:string[]}){const query=new URLSearchParams({cityId:input.cityId,zoneId:input.zoneId});if(input.scheduledStart)query.set("scheduledStart",input.scheduledStart);if(input.scheduledEnd)query.set("scheduledEnd",input.scheduledEnd);if(input.petCount)query.set("petCount",String(input.petCount));if(input.species?.length)query.set("species",input.species.join(","));return boardingRequest<BoardingCommercial>(`/api/boarding-commercial?${query.toString()}`,{cache:"no-store"});}
+export async function quoteBoarding(input:{packageCode:string;petCount:number;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string;paymentMode:"prepaid"|"split_50_50";couponCode?:string}){return boardingRequest<BoardingQuote>("/api/boarding-commercial",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});}
