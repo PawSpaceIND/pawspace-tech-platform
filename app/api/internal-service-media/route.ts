@@ -23,9 +23,10 @@ async function runtime() {
 
 export async function PUT(request: Request) {
   try {
-    sameOrigin(request);
-    const bucket = await runtime(), db = await database(), actor = await resolveActor(request);
+    const db = await database(), actor = await resolveActor(request);
     requirePermission(actor, "bookings.view");
+    sameOrigin(request);
+    const bucket = await runtime();
     await ensureMediaBoundaryTables(db);
     const token = request.headers.get("x-media-upload-token") || "";
     const grant = await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(token.split(".")[0]).first<Record<string, unknown>>();
@@ -49,8 +50,9 @@ export async function PUT(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const bucket = await runtime(), db = await database(), actor = await resolveActor(request);
+    const db = await database(), actor = await resolveActor(request);
     requirePermission(actor, "bookings.manage");
+    const bucket = await runtime();
     if (new URL(request.url).searchParams.get("capabilities") === "1") return Response.json({ internalTest: true, privateStorage: true }, { headers: { "cache-control": "no-store" } });
     const id = new URL(request.url).searchParams.get("mediaId") || "";
     const asset = await db.prepare("SELECT * FROM service_media_assets WHERE id=?").bind(id).first<Record<string, unknown>>();
@@ -64,11 +66,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const db = await database(), actor = await resolveActor(request);
+    requirePermission(actor, "bookings.manage");
     sameOrigin(request);
     if (!request.headers.get("content-type")?.startsWith("application/json")) throw new Response("JSON review request required", { status: 415 });
     await runtime();
-    const db = await database(), actor = await resolveActor(request);
-    requirePermission(actor, "bookings.manage");
     const input = await request.json() as { mediaId?: string; decision?: "approved" | "rejected"; reason?: string };
     if (!input.reason || input.reason.trim().length < 5) throw new Response("Please give a review reason", { status: 400 });
     const result = await reviewMedia(db, { mediaId: String(input.mediaId || ""), decision: input.decision!, actorId: actor.email, reason: `Internal UAT manual review: ${input.reason.trim()}` });
