@@ -40,12 +40,12 @@ function makeD1(sqlite) {
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
     first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+    run: async () => { const stmt = sqlite.prepare(sql); if (stmt.columns().length) return { success: true, results: stmt.all(...args), meta: { changes: 0 } }; const info = stmt.run(...args); return { success: true, results: [], meta: { changes: Number(info.changes) } }; },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    batch: async (list) => { sqlite.exec("BEGIN"); try { const out = []; for (const item of list) out.push(await item.run()); sqlite.exec("COMMIT"); return out; } catch(error) { sqlite.exec("ROLLBACK"); throw error; } },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
 }
