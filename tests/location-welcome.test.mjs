@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {resolveServiceCoverage} from '../lib/service-zone-client.ts';
 
+test('welcome and home share GPS-first location with neighbourhood search and optional PIN fallback',()=>{
+ const welcome=readFileSync('app/mobile-app/location-welcome.tsx','utf8');
+ const home=readFileSync('app/mobile-app/premium-discovery-home.tsx','utf8');
+ assert.match(welcome,/Or search your neighbourhood/);
+ assert.match(welcome,/<details className=\{styles.fallback\}>/);
+ assert.match(welcome,/mode: "search", query: search.trim\(\)/);
+ assert.match(welcome,/mode: "resolve", placeId/);
+ assert.match(welcome,/await checkPin\(foundPin, request\)/);
+ assert.match(home,/editingLocation && <LocationWelcome compact/);
+ assert.match(home,/onClose=\{\(\) => setEditingLocation\(false\)\}/);
+ assert.doesNotMatch(home,/Area PIN code/);
+});
+
 test('location welcome requests optional one-shot location only from an action',()=>{
  const source=readFileSync('app/mobile-app/location-welcome.tsx','utf8');
  assert.match(source,/onClick=\{\(\) => void locate\(\)\}/);

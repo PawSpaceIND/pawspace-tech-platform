@@ -64,10 +64,8 @@ export default function PremiumDiscoveryHome({
   const [query, setQuery] = useState("");
   const locationDialog = useRef<HTMLDialogElement>(null);
   const [location, setLocation] = useState("Choose your area");
-  const [draft, setDraft] = useState("");
-  const [locationNote, setLocationNote] = useState("");
   const [showWelcome, setShowWelcome] = useState<boolean | null>(null);
-  const [checkingArea, setCheckingArea] = useState(false);
+  const [editingLocation, setEditingLocation] = useState(false);
   const [campaignIndex, setCampaignIndex] = useState(0);
   const [pet, setPet] = useState<CustomerPet | null>(null);
   const [offers, setOffers] = useState<CustomerOffer[]>([]);
@@ -120,17 +118,6 @@ export default function PremiumDiscoveryHome({
     setLocation(coverage ? `${coverage.area}, ${coverage.city}` : "Choose your area");
     setShowWelcome(false);
   };
-  const saveLocation = async (value: string) => {
-    if (!/^[1-9]\d{5}$/.test(value)) return;
-    setCheckingArea(true); setLocationNote("");
-    try {
-      const coverage = await resolveServiceCoverage(value, AbortSignal.timeout(10000));
-      useCoverage(coverage);
-      try { sessionStorage.setItem(DISCOVERY_PIN_KEY, coverage.pincode); } catch { /* Optional device preference. */ }
-      locationDialog.current?.close();
-    } catch { setLocationNote("We couldn’t confirm coverage. Check your PIN code and try again."); }
-    finally { setCheckingArea(false); }
-  };
 
   if (showWelcome === null) return <p role="status">Preparing your PawSpace…</p>;
   if (showWelcome) return <LocationWelcome onContinue={useCoverage} />;
@@ -139,7 +126,7 @@ export default function PremiumDiscoveryHome({
     <header className={styles.top}>
       <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><b>PawSpace</b><small>Your Petter half</small></a>
       <div className={styles.topRow}>
-        <button className={styles.location} onClick={() => locationDialog.current?.showModal()} aria-label="Choose your service location">
+        <button className={styles.location} onClick={() => { setEditingLocation(true); locationDialog.current?.showModal(); }} aria-label="Choose your service location">
           <i aria-hidden="true">●</i>
           <span><b>Care at · {location.split(",")[0]}</b><small>{location.includes(",") ? location.split(",").slice(1).join(",").trim() : "Choose your neighbourhood"}</small></span>
         </button>
@@ -215,13 +202,9 @@ export default function PremiumDiscoveryHome({
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
 
-    <dialog ref={locationDialog} className={styles.sheet} aria-labelledby="care-area-title">
+    <dialog ref={locationDialog} className={styles.sheet} aria-label="Choose your service area" onClose={() => setEditingLocation(false)}>
         <div className={styles.sheetHead}><small>CARE NEAR YOU</small><button aria-label="Close location" onClick={() => locationDialog.current?.close()}>×</button></div>
-        <h2 id="care-area-title">Where is home?</h2>
-        <p>Enter your PIN code to check your city and service area. Your exact doorstep and final price are verified during booking.</p>
-        <label><span>Area PIN code</span><input inputMode="numeric" maxLength={6} value={draft} onChange={(event) => setDraft(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="e.g. 560102" disabled={checkingArea} /></label>
-        {locationNote && <p className={styles.locationNote}>{locationNote}</p>}
-        <button className={styles.saveLocation} disabled={checkingArea || !/^[1-9]\d{5}$/.test(draft)} onClick={() => void saveLocation(draft)}>{checkingArea ? "Checking coverage…" : "Use this area"}</button>
+        {editingLocation && <LocationWelcome compact onContinue={coverage => { useCoverage(coverage); locationDialog.current?.close(); }} />}
     </dialog>
   </div>;
 }

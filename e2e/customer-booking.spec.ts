@@ -13,12 +13,14 @@ async function openDiscovery(page: import("@playwright/test").Page) {
 
 async function chooseServiceArea(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Choose your service location" }).click();
-  const sheet = page.getByRole("dialog", { name: "Where is home?" });
-  await expect(sheet.getByRole("button", { name: "Use this area" })).toBeDisabled();
-  await sheet.getByPlaceholder("e.g. 560102").fill("560102");
+  const sheet = page.getByRole("dialog", { name: "Choose your service area" });
+  await sheet.getByText("Can’t find your area? Use a PIN code", { exact: true }).click();
+  await expect(sheet.getByRole("button", { name: "Check area" })).toBeDisabled();
+  await sheet.getByPlaceholder("6-digit PIN code").fill("560102");
   const coverage = page.waitForResponse(response => response.url().includes("/api/service-zone?pincode=560102"));
-  await sheet.getByRole("button", { name: "Use this area" }).click();
+  await sheet.getByRole("button", { name: "Check area" }).click();
   expect((await coverage).ok(), "real local service coverage must resolve").toBeTruthy();
+  await sheet.getByRole("button", { name: /^Continue in / }).click();
   await expect(sheet).not.toBeVisible();
 }
 
