@@ -31,6 +31,16 @@ test("staging actor cache remains downstream of signed-cookie verification",()=>
   assert.match(source,/String\(row\.status\)===\"active\"&&row\.permissions_json!==null/);
 });
 
+test("direct Worker authorization sanitization preserves the original POST body",async()=>{
+  locked();
+  const {requestForAuthorization}=await import("../lib/trusted-workspace-identity.ts");
+  const original=new Request("https://pawspace-staging.example.workers.dev/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json","oai-authenticated-user-email":"spoof@example.com"},body:JSON.stringify({serviceCode:"grooming",clientRequestId:"track3-body"})});
+  const inspection=requestForAuthorization(original,{PAWSPACE_DEPLOYMENT_ENV:"staging"});
+  assert.equal(inspection.headers.get("oai-authenticated-user-email"),null);
+  assert.deepEqual(await inspection.json(),{serviceCode:"grooming",clientRequestId:"track3-body"});
+  assert.deepEqual(await original.json(),{serviceCode:"grooming",clientRequestId:"track3-body"});
+});
+
 test("certified finance hot-path indexes avoid temp sort trees",()=>{
   locked();
   const db=new DatabaseSync(":memory:");
