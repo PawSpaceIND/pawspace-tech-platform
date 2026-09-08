@@ -5,7 +5,7 @@ import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 import {apiSend} from "../../../lib/api-fetch";
 
-type Reservation={id:string;groupId:string;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
+type Reservation={id:string;groupId:string;bookingId?:string|null;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
 type ProviderColumn={providerId:string;providerName:string;providerModel:string;reservations:Reservation[]};
 type Board={date:string;providers:ProviderColumn[];total:number};
 
@@ -92,8 +92,9 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
             <small>{row.serviceCode.replaceAll("_"," ")} · occ {row.occurrenceNumber} · {row.zoneId}</small>
             <small>customer {row.customerId}</small>
             <small className={styles.muted}>{row.groupId}</small>
+            {row.bookingId&&<small>Booking {row.bookingId} · provider changes require service recovery.</small>}
           </div>
-          <Button size="sm" variant="secondary" disabled={Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
+          <Button size="sm" variant="secondary" disabled={Boolean(row.bookingId)||Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
         </article>)}
       </section>)}</div>}
 

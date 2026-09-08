@@ -106,3 +106,14 @@ test("a cancelled old reservation is not actionable after its group has been rea
   await expect(actions.nth(1)).toBeEnabled();
   await expect(page.getByText("cancelled",{exact:true})).toBeVisible();
 });
+
+test("confirmed bookings disable generic reassignment and explain service recovery", async ({ page }) => {
+  await page.route("**/api/uat-scheduling?*",async route=>{
+    const date=new URL(route.request().url()).searchParams.get("date");
+    const row={id:"BOOKED-ROW",groupId:"BOOKED-GROUP",bookingId:"BOOKING-001",serviceCode:"grooming",zoneId:"blr-east",customerId:"E2E-CUS-UI-001",scheduledStart:`${date}T04:30:00Z`,scheduledEnd:`${date}T06:30:00Z`,occurrenceNumber:1,capacityUnits:1,status:"assigned",decisionStatus:"assigned"};
+    await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:{date,providers:[{providerId:"CURRENT",providerName:"Current provider",providerModel:"commission",reservations:[row]}],total:1}})});
+  });
+  await page.goto("/team/scheduling");
+  await expect(page.getByRole("button",{name:"Reassign",exact:true})).toBeDisabled();
+  await expect(page.getByText("Booking BOOKING-001 · provider changes require service recovery.",{exact:true})).toBeVisible();
+});

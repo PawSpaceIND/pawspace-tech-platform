@@ -53,7 +53,7 @@ test("verification and rollback are one atomic dispatch transaction", () => {
 
   assert.match(route, /scheduling_dispatch_assertions/);
   assert.match(route, /COUNT\(\*\) FROM scheduling_reservations WHERE attempt_id=\? AND status='assigned'/);
-  assert.match(route, /try\{await db\.batch\(statements\);\}/, "reservation rows and the completeness assertion commit in one D1 batch");
+  assert.match(route, /else await db\.batch\(statements\);/, "reservation rows and the completeness assertion commit in one D1 batch");
   assert.doesNotMatch(route, /SET status='cancelled' WHERE group_id=\? AND created_at=\?/,
     "a failed request must never clean up by a caller-controlled group/timestamp pair");
   assert.doesNotMatch(route, /FROM scheduling_reservations WHERE group_id=\? AND created_at=\?/,
