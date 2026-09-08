@@ -1,46 +1,78 @@
 "use client";
-import { useState } from "react";
+import {useCallback,useEffect,useState} from "react";
+import {schedulingRuleInput} from "../../lib/scheduling-rule-input";
 import styles from "./scheduling-control-panel.module.css";
 
-const verticals = [
-  {id:"grooming",name:"Grooming",mode:"Timed appointment",rules:["Published groomer roster","Skill, city and zone eligibility","120-minute service duration","30-minute travel buffer","Overlap and daily-job limits","Full-time auto-assign / partner offer"]},
-  {id:"training",name:"Training",mode:"Recurring series",rules:["Same trainer across the programme","1–12 sessions generated together","Single cadence or multi-day weekly pattern","Every occurrence checked and reserved","Travel buffer and overlap prevention","Series returned to Ops if one date fails"]},
-  {id:"boarding",name:"Boarding",mode:"Date-range capacity",rules:["Verified vaccination gate","Host city and zone eligibility","All stay dates checked","Pet capacity locked across date range","Concurrent stay overlap counted","Decline reroute and Ops override"]},
-  {id:"sitting",name:"Pet Sitting",mode:"Visit or overnight",rules:["Visit and overnight care modes","Sitter roster by date","Timed-visit travel buffer","Overnight capacity lock","Daily visit limit","Decline reroute and Ops override"]},
+const services=[['grooming','Grooming'],['dog_training','Training'],['boarding','Boarding'],['pet_sitting','Pet sitting']];
+type Rule={id:string;name:string;service_code?:string;city_id?:string;zone_id?:string;active:number};
+const scenarios=[
+ ['Grooming','Check availability, travel buffers and overlapping appointments.'],
+ ['Training','Check every session against the same trainer’s availability.'],
+ ['Boarding','Check capacity for every date of the stay.'],
+ ['Pet sitting','Check visit conflicts and overnight capacity.'],
+ ['Provider decline','Check rerouting and the no-replacement outcome.'],
+ ['Ops recovery','Check authorised reassignment, a recorded reason and the audit trail.'],
+ ['Concurrent requests','Check that competing requests cannot silently double-book a provider.'],
 ];
 
 export default function SchedulingControlPanel({notify}:{notify:(message:string)=>void}){
-  const [selected,setSelected]=useState(verticals[0]);
-  const [tab,setTab]=useState<"rules"|"custom"|"uat"|"exceptions">("rules");
-  const [assignmentMode,setAssignmentMode]=useState<"auto"|"admin_choice">("admin_choice");
-  const [ruleName,setRuleName]=useState("Whitefield peak-hour quality gate");
-  const [ruleField,setRuleField]=useState("rating");
-  const [ruleValue,setRuleValue]=useState("4.7");
-  const [savedRules,setSavedRules]=useState(["Boarding capacity by host and date range","Training same-trainer continuity"]);
-  const [deskStatus,setDeskStatus]=useState("Not created");
-  const [deskChoices,setDeskChoices]=useState([['groom_arun','Arun R.','96','Full-time · 2.8 km'],['groom_kiran','Kiran S.','92','Commission · repeat groomer'],['groom_sanjay','Sanjay P.','89','Full-time · 4.1 km']]);
-  const saveRule=async()=>{const response=await fetch("/api/scheduling-rules",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:ruleName,serviceCode:selected.id==="training"?"dog_training":selected.id==="sitting"?"pet_sitting":selected.id,cityId:"blr",zoneId:"blr-east",conditions:[{code:`custom_${ruleField}`,field:ruleField,operator:ruleField==="model"?"eq":"gte",value:ruleField==="model"?ruleValue:Number(ruleValue)}]})});if(response.ok){setSavedRules(current=>[ruleName,...current]);notify("Custom scheduling rule saved and activated");}else notify("Rule could not be saved");};
-  const createDeskOrder=async()=>{const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"reserve",assignmentStrategy:"admin_choice",clientRequestId:"admin-demo-PS-UAT-2408",customerId:"TST-OPS",petIds:["Bruno"],serviceCode:"grooming",zoneId:"blr-east",scheduledStart:"2026-08-30T03:30:00.000Z",scheduledEnd:"2026-08-30T05:30:00.000Z"})});const body=await response.json() as {data?:{status?:string;shortlist?:Array<{provider:{id:string;name:string};score:number}>}};if(response.ok&&body.data){if(body.data.shortlist)setDeskChoices(body.data.shortlist.map(item=>[item.provider.id,item.provider.name,String(item.score),'Eligible provider']));setDeskStatus(body.data.status??"awaiting_admin");notify("Test order created with three ranked choices");}else notify("Test shortlist could not be created");};
-  const deskAction=async(action:"assign"|"cancel"|"reassign"|"manual",providerId?:string)=>{const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,groupId:"admin-demo-PS-UAT-2408",clientRequestId:"admin-demo-PS-UAT-2408",providerId,reason:action==="manual"?"Ops selected provider after customer request":`${action} by Admin`,customerId:"TST-OPS",petIds:["Bruno"],serviceCode:"grooming",zoneId:"blr-east",scheduledStart:"2026-08-30T03:30:00.000Z",scheduledEnd:"2026-08-30T05:30:00.000Z"})});const body=await response.json() as {data?:{status?:string;provider?:{name:string}};error?:string};if(response.ok){setDeskStatus(body.data?.status??action);notify(body.data?.provider?`${body.data.provider.name} assigned`: `Order ${action} completed`);}else notify(body.error??"Assignment action failed");};
-  return <div className={styles.wrap}>
-    <section className={styles.hero}>
-      <div><span>COMMON ENGINE · FOUR RULE PACKS</span><h2>Auto-scheduling control</h2><p>One scheduling source of truth for provider rosters, live booking conflicts, capacity, recurring sessions, offers, rerouting and authorised Ops overrides.</p></div>
-      <div className={styles.release}><i>READY</i><strong>Scheduling UAT</strong><small>Executable backend rules</small></div>
-    </section>
-    <section className={styles.metrics}>
-      {[['Verticals connected','4/4'],['Rule checks','10'],['Scheduling tests','8/8'],['Assignment modes','3']].map(x=><article key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong></article>)}
-    </section>
-    <section className={styles.mode}><div><span>DEFAULT ASSIGNMENT MODE</span><strong>{assignmentMode==="auto"?"Auto-assign top provider":"Admin chooses from top 3"}</strong><p>Can be changed per order by authorised Admin/Ops.</p></div><button className={assignmentMode==="auto"?styles.on:""} onClick={()=>setAssignmentMode("auto")}>Auto-assign</button><button className={assignmentMode==="admin_choice"?styles.on:""} onClick={()=>setAssignmentMode("admin_choice")}>3 choices + Admin</button></section>
-    <div className={styles.tabs}>{(['rules','custom','uat','exceptions'] as const).map(x=><button key={x} className={tab===x?styles.active:""} onClick={()=>setTab(x)}>{x==='rules'?'Rule packs':x==='custom'?'Custom rules':x==='uat'?'UAT scenarios':'Order assignment desk'}</button>)}</div>
-    {tab==='rules'&&<section className={styles.grid}>
-      <aside>{verticals.map(v=><button key={v.id} onClick={()=>setSelected(v)} className={selected.id===v.id?styles.selected:""}><i>{v.name.charAt(0)}</i><div><strong>{v.name}</strong><small>{v.mode}</small></div><b>✓</b></button>)}</aside>
-      <div className={styles.panel}><header><div><span>ACTIVE RULE PACK</span><h3>{selected.name}</h3><p>{selected.mode}</p></div><em>Enabled</em></header>{selected.rules.map((rule,index)=><article key={rule}><i>{index+1}</i><span>{rule}</span><b>Enforced</b></article>)}<div className={styles.trace}><strong>Decision trace saved</strong><p>Each booking stores the schedule group, occurrence number, provider evaluation and assignment explanation for Ops review.</p></div></div>
-    </section>}
-    {tab==='custom'&&<section className={styles.two}><div className={styles.panel}><header><div><span>BUSINESS RULE BUILDER</span><h3>Add a scheduling constraint</h3><p>Rules are saved centrally and applied before providers are ranked.</p></div></header><label>Rule name<input value={ruleName} onChange={event=>setRuleName(event.target.value)}/></label><label>Vertical<select value={selected.id} onChange={event=>setSelected(verticals.find(item=>item.id===event.target.value)??verticals[0])}>{verticals.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Location<select><option>Bengaluru · East zone</option><option>Bengaluru · South zone</option><option>All Bengaluru</option></select></label><label>Constraint<select value={ruleField} onChange={event=>setRuleField(event.target.value)}><option value="rating">Minimum rating</option><option value="qualityScore">Minimum quality score</option><option value="capacity">Minimum capacity</option><option value="model">Provider model</option></select></label><label>Required value<input value={ruleValue} onChange={event=>setRuleValue(event.target.value)}/></label><button className={styles.save} onClick={saveRule}>Save & activate rule</button></div><div className={styles.panel}><header><div><span>ACTIVE CUSTOM RULES</span><h3>{savedRules.length} business constraints</h3></div></header>{savedRules.map((rule,index)=><article key={rule}><i>{index+1}</i><span>{rule}</span><b>Active</b></article>)}<div className={styles.trace}><strong>Future-extensible</strong><p>New city, zone, service, package, provider, rating, quality and capacity rules can be added without changing the booking screens.</p></div></div></section>}
-    {tab==='uat'&&<section className={styles.panel}><header><div><span>REQUIRED TEST SET</span><h3>Auto-scheduling sign-off journeys</h3><p>Run both success and failure paths before release approval.</p></div><button onClick={()=>notify('Scheduling UAT run created')}>Create UAT run</button></header>{[
-      ['Grooming','Available groomer is assigned; overlapping or travel-buffer slot is blocked.'],['Training','All recurring sessions reserve one trainer; any unavailable occurrence returns an exception.'],['Boarding','Capacity remains locked across check-in/check-out dates; excess pets are rejected.'],['Pet Sitting','Visit conflict and overnight capacity are checked separately.'],['Provider decline','Three-minute partner offer reroutes to the next eligible provider.'],['Ops recovery','Authorised reschedule or provider override requires a reason and creates an audit event.'],['Concurrency','Second request for the same resource must receive conflict/manual review, never a silent double booking.']
-    ].map((x,i)=><article className={styles.scenario} key={x[0]}><i>{i+1}</i><div><strong>{x[0]}</strong><p>{x[1]}</p></div><span>{i<6?'Automated check':'Production DB gate'}</span></article>)}</section>}
-    {tab==='exceptions'&&<><section className={styles.panel}><header><div><span>ORDER PS-UAT-2408 · GROOMING</span><h3>Choose one of 3 eligible providers</h3><p>All choices passed roster, location, skill, overlap, buffer and custom business rules.</p></div><em>{deskStatus}</em></header>{deskChoices.map((item,index)=><article className={styles.choice} key={item[0]}><i>{index+1}</i><div><strong>{item[1]}</strong><p>{item[3]} · score {item[2]}</p></div><button onClick={()=>deskAction("assign",item[0])}>Assign</button></article>)}<div className={styles.actions}><button onClick={createDeskOrder}>Create/reset test shortlist</button><button onClick={()=>deskAction("reassign")}>Next 3 choices</button><button onClick={()=>deskAction("manual","groom_kiran")}>Manual assign</button><button onClick={()=>deskAction("cancel")}>Cancel order</button></div></section><section className={styles.two}><div className={styles.panel}><header><div><span>AUTOMATIC RECOVERY</span><h3>Reroute order</h3></div></header>{['Exclude declined/expired provider','Recheck roster, conflicts and capacity','Rank next three eligible providers','Admin selects or system auto-assigns','Move to manual review when none pass'].map((x,i)=><article key={x}><i>{i+1}</i><span>{x}</span></article>)}</div><div className={styles.panel}><header><div><span>CONTROLLED OVERRIDE</span><h3>Ops safeguards</h3></div></header>{['Operations/Admin role required','Provider must still pass safety, skill and capacity rules','Minimum eight-character reason','Cancel, replace and reassign are retained','Decision and explanation added to audit trail'].map(x=><article key={x}><b>✓</b><span>{x}</span></article>)}</div></section></>}
-    <section className={styles.note}><strong>UAT boundary</strong><p>The scheduling logic is executable and ready for functional testing. Final simultaneous-booking protection still requires the production database transaction/unique-lock layer before public launch.</p></section>
-  </div>;
+ const[tab,setTab]=useState<'rules'|'custom'|'uat'|'exceptions'>('rules');
+ const[rules,setRules]=useState<Rule[]|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
+ const[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const[name,setName]=useState(''),[service,setService]=useState('grooming'),[zone,setZone]=useState('blr-east');
+ const[field,setField]=useState('rating'),[value,setValue]=useState('4.7');
+ const load=useCallback(async()=>{
+   setLoading(true);
+   try{
+     const response=await fetch('/api/scheduling-rules',{cache:'no-store'});
+     const body=await response.json();
+     if(!response.ok||!Array.isArray(body.data))throw new Error();
+     setRules(body.data);setError('');
+   }catch{setError('We couldn’t refresh scheduling rules. Check your access and connection, then try again.');}
+   finally{setLoading(false);}
+ },[]);
+ useEffect(()=>{void load();},[load]);
+
+ async function save(){
+   if(busy)return;
+   const input=schedulingRuleInput({name,service,zone,field,value});
+   if(!input){setError('Enter a rule name and a valid value for the selected constraint.');return;}
+   if(!window.confirm('Activate this rule for the selected service and location? This affects future provider eligibility.'))return;
+   setBusy(true);setError('');setNotice('');
+   try{
+     const response=await fetch('/api/scheduling-rules',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
+     if(!response.ok){setError(response.status===403?'Your role cannot change scheduling rules. Ask your operations lead for help.':'The rule was not confirmed. Refresh the saved rules before trying again.');return;}
+     setNotice('Rule saved and activated.');notify('Scheduling rule saved and activated.');setName('');
+     await load();
+   }catch{setError('We couldn’t confirm whether the rule was saved. Refresh the list and check for it before trying again.');}
+   finally{setBusy(false);}
+ }
+
+ return <div className={styles.wrap}>
+   <section className={styles.hero}><div><span>PAWSPACE · SCHEDULING</span><h2>The right care, at the right time</h2><p>Review saved eligibility rules or open an actual booking to manage its schedule. Provider availability and assignment remain checked by the server.</p></div></section>
+   <nav className={styles.actions} aria-label="Scheduling workspaces">
+     <a className={styles.workspaceLink} href="/team/operations/bookings">Open booking command center →</a>
+     <a className={styles.workspaceLink} href="/team/scheduling">Open provider day board →</a>
+   </nav>
+   <div className={styles.tabs} aria-label="Scheduling sections">{(['rules','custom','uat','exceptions'] as const).map(key=><button key={key} aria-pressed={tab===key} className={tab===key?styles.active:''} onClick={()=>setTab(key)}>{key==='rules'?'Saved rules':key==='custom'?'Add rule':key==='uat'?'Testing checklist':'Assignments'}</button>)}</div>
+   {error&&<div className={styles.note} role="alert">{error}</div>}
+   {notice&&<div className={styles.note} role="status">{notice}</div>}
+   {(tab==='rules'||tab==='custom')&&<section className={tab==='custom'?styles.two:undefined}>
+     {tab==='custom'&&<form className={styles.panel} onSubmit={event=>{event.preventDefault();void save();}}>
+       <h3>Add an eligibility rule</h3><p>Choose the service and location this rule should affect.</p>
+       <label>Rule name<input required maxLength={160} value={name} onChange={e=>setName(e.target.value)} disabled={busy}/></label>
+       <label>Service<select value={service} onChange={e=>setService(e.target.value)} disabled={busy}>{services.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
+       <label>Location<select value={zone} onChange={e=>setZone(e.target.value)} disabled={busy}><option value="blr-east">Bengaluru · East zone</option><option value="blr-south">Bengaluru · South zone</option><option value="all">All Bengaluru</option></select></label>
+       <label>Constraint<select value={field} onChange={e=>{setField(e.target.value);setValue('');}} disabled={busy}><option value="rating">Minimum rating (0–5)</option><option value="qualityScore">Minimum quality score (0–100)</option><option value="capacity">Minimum pet capacity</option><option value="model">Provider model</option></select></label>
+       <label>Required value{field==='model'?<select required value={value} onChange={e=>setValue(e.target.value)} disabled={busy}><option value="">Choose model</option><option value="full_time">Full time</option><option value="commission">Commission</option></select>:<input required type="number" min="0" step={field==='capacity'?'1':'any'} value={value} onChange={e=>setValue(e.target.value)} disabled={busy}/>}</label>
+       <button className={styles.save} disabled={busy||loading} type="submit">{busy?'Saving…':'Save & activate rule'}</button>
+     </form>}
+     <section className={styles.panel} aria-busy={loading}><header><div><span>SAVED ON SERVER</span><h3>Eligibility rules</h3></div><button type="button" disabled={loading||busy} onClick={()=>void load()}>{loading?'Loading…':'Refresh'}</button></header>
+       {rules===null?<p>Saved rules have not loaded yet.</p>:rules.length===0?<p>No custom rules have been saved. Core scheduling checks still apply.</p>:rules.map(rule=><article key={rule.id}><div><strong>{rule.name}</strong><p>{rule.service_code||'All services'} · {rule.city_id||'All cities'} · {rule.zone_id||'All zones'}</p></div><span>{Number(rule.active)===1?'Active':'Inactive'}</span></article>)}
+     </section>
+   </section>}
+   {tab==='exceptions'&&<section className={styles.panel}><h3>Start with the booking that needs help</h3><p>Open the booking command center to select a recorded booking, review its history and available actions. Use the provider day board for scheduled reservations and reassignment.</p><p>There are no preselected providers or sample bookings here. Opening either workspace does not change an assignment.</p><a className={styles.workspaceLink} href="/team/operations/bookings">Find a booking →</a><a className={styles.workspaceLink} href="/team/scheduling">Review provider schedule →</a></section>}
+   {tab==='uat'&&<section className={styles.panel}><h3>Scheduling test checklist</h3><p>These are scenarios to verify, not recorded pass results. Use synthetic test bookings only.</p>{scenarios.map(([title,description],i)=><article key={title} className={styles.scenario}><i>{i+1}</i><div><strong>{title}</strong><p>{description}</p></div><span>Needs verification</span></article>)}</section>}
+   <section className={styles.note}><strong>Internal testing only</strong><p>Role permissions, availability and capacity checks still apply. This screen does not certify production readiness or enable payments and external messaging.</p></section>
+ </div>;
 }
