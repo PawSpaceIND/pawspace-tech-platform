@@ -52,9 +52,6 @@ jobs:
           PAWSPACE_TEST_API_POLICY_OVERRIDE: 'false'
           PAWSPACE_PAYMENT_ENV: 'sandbox'
           PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
-          # Current release-phase waiver: IDfy may remain deferred for sign-off only. The deployment
-          # workflow intentionally does not set this flag and therefore remains strict about IDfy.
-          PAWSPACE_IDFY_DEFERRED_RELEASE: 'true'
           IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
           IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
           IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
