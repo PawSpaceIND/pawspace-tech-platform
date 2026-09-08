@@ -295,12 +295,12 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
       petCount: selectedPets.length,
       service: mode === "boarding" ? "Boarding" : "Pet Sitting",
       packageName:
-        mode === "boarding" ? "Home Boarding" : "Overnight Pet Sitting",
+        mode === "boarding" ? "Home Boarding" : careWindow === "24 hours" ? "Overnight Pet Sitting" : "Pet Sitting",
       area: caregiver.area,
       slot:
         careWindow === "24 hours"
           ? `${shortDate(start)}–${shortDate(end)}`
-          : `${shortDate(start)} · ${careWindow}`,
+          : `${shortDate(start)} · ${startTime} IST · ${careWindow}`,
       duration: careWindow === "24 hours" ? `${nights} nights` : careWindow,
       amount: governedBoardingQuote?.totalAmount ?? total,
       offerCode: undefined,
@@ -673,14 +673,14 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
       )}
       {stage === 4 && (
         <>
-          <Head title="Review and confirm" note="OTP · 4 of 4" />
-          <article className={styles.review}>
+          <Head title="Review and confirm" note="Review · 4 of 4" />
+          <article className={styles.review} aria-label="Review stay details">
             <span>
               Service
               <b>
                 {mode === "boarding"
                   ? "Home Boarding"
-                  : "Overnight Pet Sitting"}
+                  : careWindow === "24 hours" ? "Overnight Pet Sitting" : "Pet Sitting"}
               </b>
             </span>
             <span>
@@ -690,8 +690,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
               Dates
               <b>
                 {careWindow === "24 hours"
-                  ? `${shortDate(start)}–${shortDate(end)} · ${nights} nights`
-                  : `${shortDate(start)} · ${careWindow}`}
+                  ? `${shortDate(start)} 09:00–${shortDate(end)} 09:00 IST · ${nights} nights`
+                  : `${shortDate(start)} · ${startTime} IST · ${careWindow}`}
               </b>
             </span>
             <span>
@@ -701,7 +701,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
               </b>
             </span>
             <span>
-              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Accepted offer · final calendar approval required"}</b>
+              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Final assignment and partner approval are requested at confirmation"}</b>
             </span>
             <span>
               Care benefits<b>{selectedBenefits.join(" · ")}</b>
@@ -826,7 +826,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
             terms.
           </label>
           <p className={styles.hint}>
-            {mode === "boarding" ? "Production OTP is not connected; this UAT checkout records the server-quoted payment." : "OTP is requested only now."} {money(reserveAmount)} will be collected
+            {mode === "boarding" ? "Production OTP is not connected; this UAT checkout records the server-quoted payment." : "This checkout uses your signed-in customer account and a sandbox payment."} {money(reserveAmount)} will be collected
             in this test checkout. {balanceAmount > 0
               ? `${money(balanceAmount)} is due 24 hours before the booking starts.`
               : "No later balance remains."}
