@@ -24,6 +24,7 @@ try {
     try {
       const raw = typeof event.data === 'string' ? event.data : await event.data.text();
       const entry = JSON.parse(raw);
+      console.log(JSON.stringify({ traceReceived: true, fields: Object.keys(entry), outcome: entry.outcome }));
       if (!entry.event?.request?.url?.includes(probe)) return;
       console.log(JSON.stringify({ outcome: entry.outcome, exceptions: (entry.exceptions || []).map(error => ({ name: clean(error.name), message: clean(error.message) })) }));
     } catch { console.log('Trace message could not be decoded; raw data withheld'); }
@@ -33,12 +34,13 @@ try {
     socket.addEventListener('open', () => { clearTimeout(timer); socket.send(JSON.stringify({ debug: false })); resolve(); }, { once: true });
     socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Trace connection failed')); }, { once: true });
   });
+  await new Promise(resolve => setTimeout(resolve, 2000));
   const response = await fetch(`${origin}/api/customer-otp?uat_diagnostic=${probe}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
     body: JSON.stringify({ action: 'request', phone: '9999999998' }), signal: AbortSignal.timeout(15000),
   });
   console.log(JSON.stringify({ syntheticRequestStatus: response.status, contentType: response.headers.get('content-type') }));
-  await new Promise(resolve => setTimeout(resolve, 10000));
+  await new Promise(resolve => setTimeout(resolve, 30000));
 } finally {
   socket?.close();
   if (tail?.id) {
