@@ -25,7 +25,7 @@ async function expectOk(response: import("@playwright/test").APIResponse, label:
   return text ? JSON.parse(text) : {};
 }
 
-test("correlated journey: customer reserves/books -> assigned provider completes -> admin sees balanced completion finance", async ({ page, baseURL }) => {
+for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated journey (${assignmentMode}): customer reserves/books -> assigned provider completes -> admin sees balanced completion finance`, async ({ page, baseURL }) => {
   expect(baseURL).toBeTruthy();
   const origin = baseURL!;
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
@@ -42,14 +42,14 @@ test("correlated journey: customer reserves/books -> assigned provider completes
 
     const suffix = `${Date.now()}-${test.info().project.name}`.replace(/[^a-zA-Z0-9-]/g, "");
     const groupId = `E2E-MULTI-${suffix}`;
-    const deviceDayOffset = test.info().project.name === "mobile-chromium" ? 6 : 5;
+    const deviceDayOffset = (test.info().project.name === "mobile-chromium" ? 6 : 5)+(assignmentMode==="admin_choice"?2:0);
     const start = new Date(Date.now() + deviceDayOffset * 86_400_000);
     start.setUTCHours(4, 30, 0, 0);
     const end = new Date(start.getTime() + 2 * 60 * 60_000);
 
-    const scheduled = await customer.post("/api/uat-scheduling", {
-      data: {
+    const schedulePayload = {
         action: "reserve",
+        assignmentStrategy: assignmentMode,
         clientRequestId: groupId,
         customerId: CUSTOMER_ID,
         petIds: [PET_ID],
@@ -59,9 +59,26 @@ test("correlated journey: customer reserves/books -> assigned provider completes
         scheduledStart: start.toISOString(),
         scheduledEnd: end.toISOString(),
         preferredProviderId: PROVIDER_ID,
-      },
-    });
-    const scheduleBody = await expectOk(scheduled, "customer slot reservation");
+      };
+    const scheduled=await customer.post("/api/uat-scheduling",{data:schedulePayload});
+    let scheduleBody=await expectOk(scheduled,"customer slot reservation");
+    if(assignmentMode==="admin_choice"){
+      expect(scheduleBody.data.status).toBe("awaiting_admin");
+      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL});
+      await page.goto("/team/scheduling");
+      await page.getByLabel("Day (IST)",{exact:true}).fill(start.toISOString().slice(0,10));
+      const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
+      await expect(waiting).toBeVisible();await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
+      await waiting.getByLabel("Recommended provider",{exact:true}).selectOption(PROVIDER_ID);
+      await waiting.getByLabel("Reason",{exact:true}).fill("Customer requested this verified provider");
+      await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
+      await waiting.getByRole("button",{name:"Assign provider",exact:true}).click();
+      await expect(page.getByRole("status")).toContainText("Partner acceptance and customer booking confirmation are still pending.");
+      await expect(waiting).toHaveCount(0);
+      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":CUSTOMER_EMAIL});
+      scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
+      expect(scheduleBody.data.duplicatePrevented).toBe(true);
+    }
     expect(scheduleBody?.data?.provider?.id).toBe(PROVIDER_ID);
 
     const booked = await customer.post("/api/canonical-bookings", {
