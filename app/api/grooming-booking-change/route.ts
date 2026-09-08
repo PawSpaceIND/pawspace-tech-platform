@@ -126,8 +126,14 @@ export async function POST(request:Request){
       const reservedSessions=usage?Number(usage.sessions_reserved||0):0;
       const subscriptionId=usage?String(usage.plan_code):"";
       const subscription=subscriptionId?await db.prepare("SELECT * FROM customer_grooming_subscriptions WHERE id=?").bind(subscriptionId).first<Row>():null;
+      if(usage&&(!subscription||String(usage.customer_id)!==input.customerId||String(subscription.customer_id)!==input.customerId||!Number.isInteger(reservedSessions)||reservedSessions<0||Number(subscription.sessions_reserved)<reservedSessions))return json({error:"Subscription credits require review before cancellation."},409);
       const assertionId=crypto.randomUUID();
-      const statements=[
+      const usageGuard=usage?db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
+        EXISTS (SELECT 1 FROM booking_subscription_usage WHERE id=? AND booking_id=? AND customer_id=? AND plan_code=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND updated_at=?)
+        AND EXISTS (SELECT 1 FROM customer_grooming_subscriptions WHERE id=? AND customer_id=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND source_booking_id=? AND updated_at=?)
+        THEN 1 ELSE 0 END`).bind(`${assertionId}-credits`,usage.id,input.bookingId,input.customerId,usage.plan_code,usage.sessions_reserved,usage.sessions_consumed,usage.status,usage.updated_at,subscription!.id,input.customerId,subscription!.sessions_reserved,subscription!.sessions_consumed,subscription!.status,subscription!.source_booking_id,subscription!.updated_at)
+        :db.prepare("INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN NOT EXISTS (SELECT 1 FROM booking_subscription_usage WHERE booking_id=?) THEN 1 ELSE 0 END").bind(`${assertionId}-credits`,input.bookingId);
+      const statements=[usageGuard,
         db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
           EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id IS ? AND updated_at=?)
           AND EXISTS (SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id IS ? AND updated_at=?)
@@ -146,10 +152,10 @@ export async function POST(request:Request){
       statements.push(
         db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_cancelled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,referral:{status:"pending_evaluation"}}),now),
         securityAuditStatement(db,actor,"grooming.cancel","booking",input.bookingId,"completed",{customerId:input.customerId,refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,reservedSessions}),
-        db.prepare("DELETE FROM grooming_change_assertions WHERE id=?").bind(assertionId),
+        db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-credits`),
       );
       try{await db.batch(statements);}catch(error){
-        if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking, provider work or payment changed. Refresh before requesting cancellation."},409);
+        if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking, provider work, payment or subscription credits changed. Refresh before requesting cancellation."},409);
         throw error;
       }
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
