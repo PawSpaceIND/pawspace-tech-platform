@@ -57,7 +57,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
   }
 
   const providers=board?.providers||[];
-  const assigned=providers.reduce((sum,column)=>sum+column.reservations.filter(row=>row.decisionStatus==="assigned").length,0);
+  const assigned=providers.reduce((sum,column)=>sum+column.reservations.filter(row=>row.status!=="cancelled"&&row.decisionStatus==="assigned").length,0);
 
   const content=<>
     {error?<div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div>:null}
@@ -86,14 +86,14 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
         {column.reservations.map(row=><article key={row.id} className={styles.slot}>
           <div className={styles.recordHead}>
             <b>{istTime(row.scheduledStart)}–{istTime(row.scheduledEnd)}</b>
-            <Badge tone={statusTone(row.decisionStatus)}>{row.decisionStatus}</Badge>
+            <Badge tone={statusTone(row.status==="cancelled"?"cancelled":row.decisionStatus)}>{row.status==="cancelled"?"cancelled":row.decisionStatus}</Badge>
           </div>
           <div className={styles.stack}>
             <small>{row.serviceCode.replaceAll("_"," ")} · occ {row.occurrenceNumber} · {row.zoneId}</small>
             <small>customer {row.customerId}</small>
             <small className={styles.muted}>{row.groupId}</small>
           </div>
-          <Button size="sm" variant="secondary" disabled={Boolean(busyGroup)||loading||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
+          <Button size="sm" variant="secondary" disabled={Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
         </article>)}
       </section>)}</div>}
 

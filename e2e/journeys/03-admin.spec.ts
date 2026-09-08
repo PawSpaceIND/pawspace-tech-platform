@@ -91,3 +91,18 @@ test("Control scheduling reads real rules and saves the selected location", asyn
   expect(submitted?.cityId).toBe("blr");
   await expect(page.getByRole("button",{name:"Create/reset test shortlist"})).toHaveCount(0);
 });
+
+test("a cancelled old reservation is not actionable after its group has been reassigned", async ({ page }) => {
+  await page.route("**/api/uat-scheduling?*",async route=>{
+    const date=new URL(route.request().url()).searchParams.get("date");
+    const row={groupId:"REASSIGNED-GROUP",serviceCode:"grooming",zoneId:"blr-east",customerId:"E2E-CUS-UI-001",scheduledStart:`${date}T04:30:00Z`,scheduledEnd:`${date}T06:30:00Z`,occurrenceNumber:1,capacityUnits:1,decisionStatus:"assigned"};
+    const providers=[{providerId:"OLD",providerName:"Previous provider",providerModel:"commission",reservations:[{...row,id:"OLD-ROW",status:"cancelled"}]},{providerId:"CURRENT",providerName:"Current provider",providerModel:"commission",reservations:[{...row,id:"CURRENT-ROW",status:"assigned"}]}];
+    await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:{date,providers,total:2}})});
+  });
+  await page.goto("/team/scheduling");
+  const actions=page.getByRole("button",{name:"Reassign",exact:true});
+  await expect(actions).toHaveCount(2);
+  await expect(actions.nth(0)).toBeDisabled();
+  await expect(actions.nth(1)).toBeEnabled();
+  await expect(page.getByText("cancelled",{exact:true})).toBeVisible();
+});
