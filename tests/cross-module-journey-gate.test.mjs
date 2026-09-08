@@ -63,10 +63,35 @@ function makeD1(sqlite) {
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    batch: async (list) => {
+      sqlite.exec("BEGIN");
+      try {
+        const out = [];
+        for (const item of list) out.push(await item.run());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
     exec: async (sql) => { sqlite.exec(sql); },
   };
 }
+
+test("journey adapter rolls back earlier domain writes when a later batch statement fails", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  sqlite.exec("CREATE TABLE journey_events (id TEXT PRIMARY KEY, booking_id TEXT NOT NULL)");
+  await assert.rejects(db.batch([
+    db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1"),
+    db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1"),
+  ]), /UNIQUE/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM journey_events").get().count, 0);
+  await db.batch([db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1")]);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM journey_events").get().count, 1);
+  sqlite.close();
+});
 
 function applyOwnedDdl(sqlite, path) {
   const source = read(path);

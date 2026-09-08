@@ -1,5 +1,7 @@
 # PawSpace master QA: stabilization changes and open closure gates
 
+**Controlling acceptance standard:** [Connected-flow closure protocol](connected-flow-closure-protocol.md). Every flow requires frontend-through-recovery evidence; isolated module/API results do not close it.
+
 **Readiness verdict: 95% human-test readiness is not certified.** This report records implemented fixes, executable verification, and remaining work. A passing test suite is not a substitute for completing the requested business flows or deployed human UAT.
 
 Audit started from `origin/main` commit `ccfe2ee5`. Work is isolated on `codex/master-qa-module-closure`. No production deployment, live payment, customer message, policy activation, or production data migration was performed.
