@@ -236,7 +236,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await sandboxLogin(page,mode==="boarding"?"9000000943":"9000000944");await ensureCustomerPet(page);await page.goto(`/${mode}`);
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
- const date=new Date(Date.now()+5*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
+ const offset=5+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Verify map",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
@@ -277,7 +277,8 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();
   await expect(page.getByText(bookingId,{exact:true})).toBeVisible();
   const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
-  await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByLabel("Vet contact",{exact:true})).toHaveValue("UAT vet contact: 9000000951");
+  await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
+  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
   await page.screenshot({path:test.info().outputPath("customer-sitting-booked.png"),fullPage:true});
  }
 
