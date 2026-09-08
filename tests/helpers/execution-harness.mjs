@@ -9,6 +9,7 @@
  * runs its real SQL against a real database engine.
  */
 import { DatabaseSync } from "node:sqlite";
+import { enterWorkersDbScope } from "./module-hooks.mjs";
 
 /** Adapter from the D1 interface onto node:sqlite. Real SQL, real engine, no stubbed behaviour. */
 export function d1(sqlite) {
@@ -54,6 +55,10 @@ export function d1(sqlite) {
 export function world(dbGlobal, envGlobal, env = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = d1(sqlite);
+  // Bind first so every import/promise spawned by this node:test callback resolves env.DB from this
+  // async scope. The named global remains only as a compatibility fallback for code that executes
+  // outside an active test scope; it is no longer the active-world selector.
+  enterWorkersDbScope(db);
   globalThis[dbGlobal] = db;
   globalThis[envGlobal] = env;
   return { sqlite, db };
