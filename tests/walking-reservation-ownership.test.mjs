@@ -1,7 +1,15 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { setupJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
+import { setupJourney, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
+
+async function reserve(body, cookie) {
+  const route = await import("../app/api/uat-scheduling/route.ts");
+  const response = await route.POST(new Request("https://uat.pawspace.in/api/uat-scheduling", {
+    method: "POST", headers: {"content-type": "application/json", cookie}, body: JSON.stringify(body),
+  }));
+  return {status: response.status, body: await response.json()};
+}
 
 const customerId = "WALK-RESERVE-CUSTOMER";
 function count(sqlite, table) {
@@ -24,17 +32,17 @@ async function fixture(t) {
 
 test("Walking rejects a foreign dog before holding any provider capacity", async t => {
   const {sqlite, cookie, body} = await fixture(t);
-  const result = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {...body, petIds: ["FOREIGN-DOG"]}, cookie);
+  const result = await reserve({...body, petIds: ["FOREIGN-DOG"]}, cookie);
   assert.equal(result.status, 403, JSON.stringify(result.body));
   for (const table of ["scheduling_reservations", "scheduling_assignment_decisions", "provider_assignment_offers"]) assert.equal(count(sqlite, table), 0, table);
 });
 
 test("Walking reserves an owned saved dog and preserves the same reservation on retry", async t => {
   const {sqlite, cookie, body} = await fixture(t);
-  const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", body, cookie);
+  const first = await reserve(body, cookie);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   assert.equal(first.body.data.status, "assigned");
-  const retry = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", body, cookie);
+  const retry = await reserve(body, cookie);
   assert.equal(retry.status, 200, JSON.stringify(retry.body));
   assert.equal(retry.body.data.duplicatePrevented, true);
   assert.equal(count(sqlite, "scheduling_reservations"), 1);
@@ -50,17 +58,17 @@ for (const [label, petIds, expectedStatus] of [
   ["non-string pet ID", [42], 400],
 ]) test(`Walking rejects ${label} without reserving or dispatching`, async t => {
   const {sqlite, cookie, body} = await fixture(t);
-  const result = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {...body, petIds}, cookie);
+  const result = await reserve({...body, petIds}, cookie);
   assert.equal(result.status, expectedStatus, JSON.stringify(result.body));
   for (const table of ["scheduling_reservations", "scheduling_assignment_decisions", "provider_assignment_offers"]) assert.equal(count(sqlite, table), 0, table);
 });
 
 test("Walking cannot replay an existing reservation after changing to a foreign dog", async t => {
   const {sqlite, cookie, body} = await fixture(t);
-  const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", body, cookie);
+  const first = await reserve(body, cookie);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const before = sqlite.prepare("SELECT * FROM scheduling_reservations").all();
-  const rejected = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {...body, petIds: ["FOREIGN-DOG"]}, cookie);
+  const rejected = await reserve({...body, petIds: ["FOREIGN-DOG"]}, cookie);
   assert.equal(rejected.status, 403, JSON.stringify(rejected.body));
   assert.deepEqual(sqlite.prepare("SELECT * FROM scheduling_reservations").all(), before);
   assert.equal(count(sqlite, "scheduling_assignment_decisions"), 1);
@@ -69,11 +77,11 @@ test("Walking cannot replay an existing reservation after changing to a foreign 
 
 test("a second customer cannot replay another customer's scheduling group with their own dog", async t => {
   const {db, sqlite, cookie, body} = await fixture(t);
-  const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", body, cookie);
+  const first = await reserve(body, cookie);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const secondCookie = await sessionCookie(db, "customer", "OTHER-CUSTOMER", "customer:OTHER-CUSTOMER");
   const before = sqlite.prepare("SELECT * FROM scheduling_reservations").all();
-  const rejected = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {...body, customerId: "OTHER-CUSTOMER", petIds: ["FOREIGN-DOG"]}, secondCookie);
+  const rejected = await reserve({...body, customerId: "OTHER-CUSTOMER", petIds: ["FOREIGN-DOG"]}, secondCookie);
   assert.equal(rejected.status, 403, JSON.stringify(rejected.body));
   assert.equal(rejected.body.data, undefined, "no assignment details are returned to the other customer");
   assert.deepEqual(sqlite.prepare("SELECT * FROM scheduling_reservations").all(), before);
@@ -86,10 +94,10 @@ test("a competing customer that commits during dispatch is not exposed by the co
   db.beforeBatch = async statements => {
     if (!statements.some(statement => statement._sql.includes("INSERT INTO scheduling_reservations"))) return;
     db.beforeBatch = null;
-    competitor = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {...body, customerId: "OTHER-CUSTOMER", petIds: ["FOREIGN-DOG"]}, otherCookie);
+    competitor = await reserve({...body, customerId: "OTHER-CUSTOMER", petIds: ["FOREIGN-DOG"]}, otherCookie);
     assert.equal(competitor.status, 200, JSON.stringify(competitor.body));
   };
-  const loser = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", body, cookie);
+  const loser = await reserve(body, cookie);
   assert.ok(competitor, "the second customer must commit inside the dispatch window");
   assert.equal(loser.status, 403, JSON.stringify(loser.body));
   assert.equal(loser.body.data, undefined);
