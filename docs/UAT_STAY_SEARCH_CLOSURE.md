@@ -18,3 +18,7 @@ Eleven focused tests passed, including location/date/pet invalidation, missing a
 No complete boarding journey is claimed: maps integration prevented reaching a verified address, and no check-in/out or money movement occurred. This is partial C13 evidence. Configured integration and complete host/customer paths remain required.
 
 Code inspection also found static sitter profiles, ratings and simulated conversation copy in the shared Pet Sitting view. That is a separate unresolved customer-trust gap and must be replaced with governed provider discovery and actual communication state before certification. This patch does not claim to repair it.
+
+## Phone layout follow-up
+
+At 390x844 the service hero negative margins made the internal screen 14 pixels wider and scrolled it sideways, clipping headings. Confining the hero to its parent removed measured section/main horizontal overflow. Zone colors now render as decorative swatches instead of raw hex text, and the pincode input has an accessible name.
