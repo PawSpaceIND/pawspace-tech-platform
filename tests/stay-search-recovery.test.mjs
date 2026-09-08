@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {staySearchKey,canPlanStay,currentBoardingHost} from '../lib/stay-search-state.ts';
 import {loadBoardingCommercial,quoteBoarding} from '../lib/boarding-commercial-client.ts';
-const query={cityId:'blr',zoneId:'blr-east',start:'2026-09-20',end:'2026-09-22',careWindow:'24 hours',petIds:['p1','p2'],species:['dog','cat']};
+const query={cityId:'blr',zoneId:'blr-east',location:'doorstep-one',start:'2026-09-20',end:'2026-09-22',careWindow:'24 hours',petIds:['p1','p2'],species:['dog','cat']};
 test('stay planning cannot advance without verified, serviceable address, pets and dates',()=>{
  for(const serviceAvailable of [undefined,false])assert.equal(canPlanStay({datesValid:true,petCount:1,serviceAvailable}),false);
  assert.equal(canPlanStay({datesValid:false,petCount:1,serviceAvailable:true}),false);
@@ -11,7 +11,7 @@ test('stay planning cannot advance without verified, serviceable address, pets a
 });
 test('changing city, zone, dates, care duration or pet species invalidates a selected host',()=>{
  const loaded=staySearchKey(query),host={providerId:'h1',availabilityVerified:true};
- for(const change of [{cityId:'bom'},{zoneId:'blr-west'},{start:'2026-09-21'},{end:'2026-09-23'},{careWindow:'4 hours'},{petIds:['p1']},{species:['dog']}]){
+ for(const change of [{location:'doorstep-two'},{cityId:'bom'},{zoneId:'blr-west'},{start:'2026-09-21'},{end:'2026-09-23'},{careWindow:'4 hours'},{petIds:['p1']},{species:['dog']}]){
   assert.equal(currentBoardingHost([host],'h1',loaded,staySearchKey({...query,...change})),undefined,JSON.stringify(change));
  }
  assert.equal(currentBoardingHost([host],'h1',loaded,loaded),host);
