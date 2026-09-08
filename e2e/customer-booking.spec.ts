@@ -2,11 +2,11 @@ import { expect, test } from "@playwright/test";
 
 const phone = process.env.PW_CUSTOMER_PHONE || "9000000911";
 
-async function sandboxLogin(page: import("@playwright/test").Page) {
+async function sandboxLogin(page: import("@playwright/test").Page, loginPhone=phone) {
   await page.goto("/mobile-app");
   const account = page.locator("nav").getByRole("button", { name: /account/i }).last();
   await account.click();
-  await page.getByPlaceholder("10-digit phone number").fill(phone);
+  await page.getByPlaceholder("10-digit phone number").fill(loginPhone);
   await page.getByRole("button", { name: "Send OTP" }).click();
   const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
   await expect(sandbox).toBeVisible();
@@ -132,6 +132,15 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.goto("/grooming/manage?bookingId=NOT-ON-THIS-CUSTOMER-ACCOUNT");
   await expect(page.getByRole("heading",{name:"Booking unavailable",exact:true})).toBeVisible();
   await expect(page.getByRole("region",{name:"Booking details"})).toHaveCount(0);
+  await page.context().clearCookies();
+  await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("region",{name:"Booking details"})).toHaveCount(0);
+  await sandboxLogin(page,"9000000913");
+  await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
+  await expect(page.getByRole("heading",{name:"Booking unavailable",exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Booking details"})).toHaveCount(0);
+
 
 });
 
