@@ -3,9 +3,10 @@ import{useCallback,useEffect,useState}from"react";
 import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
+import RecoveryControl from "./recovery-control";
 import {apiSend} from "../../../lib/api-fetch";
 
-type Reservation={id:string;groupId:string;bookingId?:string|null;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
+type Reservation={id:string;groupId:string;bookingId?:string|null;bookingStatus?:string|null;canRecover?:boolean;canRetryNotifications?:boolean;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
 type ProviderColumn={providerId:string;providerName:string;providerModel:string;reservations:Reservation[]};
 type Board={date:string;providers:ProviderColumn[];total:number};
 
@@ -61,7 +62,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
 
   const content=<>
     {error?<div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div>:null}
-    {message?<div className={styles.panel}>{message}</div>:null}
+    {message?<div className={styles.panel} role="status">{message}</div>:null}
 
     <section className={styles.tiles}>
       <StatCard label="Reservations" value={board?.total??"—"} />
@@ -95,6 +96,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
             {row.bookingId&&<small>Booking {row.bookingId} · provider changes require service recovery.</small>}
           </div>
           <Button size="sm" variant="secondary" disabled={Boolean(row.bookingId)||Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
+          {row.bookingId&&(row.canRecover||row.canRetryNotifications)&&<RecoveryControl bookingId={row.bookingId} providerId={column.providerId} providerName={column.providerName} canRecover={row.canRecover===true} canRetryNotifications={row.canRetryNotifications===true} disabled={Boolean(busyGroup)||loading} onBusy={busy=>setBusyGroup(busy?row.groupId:"")} onResult={text=>{setMessage(text);refresh();}} onRefresh={refresh}/>}
         </article>)}
       </section>)}</div>}
 
