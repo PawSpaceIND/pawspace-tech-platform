@@ -24,3 +24,7 @@
 .copy h2{font-family:inherit;font-size:20px;line-height:1.25;color:var(--paw-text)}.copy p{color:var(--paw-muted);font-size:14px}
 .copy ul{gap:6px;margin-top:10px}.copy li{font-size:12px;white-space:normal;color:var(--paw-muted);background:var(--paw-bg);border-color:var(--paw-line);padding:4px 7px}
 @media(max-width:350px){.hero{grid-template-columns:72px minmax(0,1fr);gap:10px;padding:12px}.photo img{width:72px;height:72px}.copy h2{font-size:18px}}
+
+:global(html:not([data-paw-style="cartoon"])) .photo { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .hero { display:block; }
+:global(html:not([data-paw-style="cartoon"])) .card { width:100%; }

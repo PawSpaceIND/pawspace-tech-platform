@@ -55,3 +55,25 @@
 @media(min-width:800px){.home .cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:350px){.home .welcomePhoto{width:84px;height:84px}.home .welcomeHero>div{max-width:calc(100% - 84px);padding:14px}.home .welcomeHero h1{font-size:22px}.home .personalHero{flex-wrap:wrap}}
 @media(max-width:600px){.top{gap:8px}.home{gap:16px}.welcomeHero{min-height:210px}.welcomeHero h1{font-size:30px;margin:8px 0 14px}.welcomeHero>div{padding:20px 24px}.trustRow>span{gap:6px}.trustRow i{width:30px;height:30px;font-size:18px}.sectionHead h2{font-size:20px}.sectionHead small{display:none}}
+
+/* Professional is the default; both presentations share the exact same controls. */
+:global(html:not([data-paw-style="cartoon"])) .home { gap: 18px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .card { border-radius: 16px; padding-bottom: 8px; box-shadow: none; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto { padding: 14px 6px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto>img { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .serviceIcon { display:grid;place-items:center;width:40px;height:40px;border-radius:14px;background:var(--paw-raised);color:var(--paw-primary);font-size:24px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto b { font-size:14px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto small { display:block;font-size:12px;line-height:1.3; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .card>button>span { visibility:hidden; }
+:global(html:not([data-paw-style="cartoon"])) .artDisclosure { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .home .welcomePhoto { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div { max-width:none;padding:20px; }
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero { background:var(--paw-raised);min-height:120px; }
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero h1 { font-size:28px; }
+:global(html:not([data-paw-style="cartoon"])) .home .personalHero { flex-direction:row-reverse;min-height:96px;padding:16px; }
+:global(html:not([data-paw-style="cartoon"])) .home .personalHero h1 { font-size:24px; }
+:global(html:not([data-paw-style="cartoon"])) .home .petPortrait { width:64px;height:64px; }
+:global(html:not([data-paw-style="cartoon"])) .trustRow { order:4; }
+:global(html:not([data-paw-style="cartoon"])) .media { background:var(--paw-yellow); }
+@media(max-width:350px) { :global(html:not([data-paw-style="cartoon"])) .home .cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }

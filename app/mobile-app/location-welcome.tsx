@@ -79,6 +79,7 @@ export default function LocationWelcome({ onContinue, compact = false }: {
     {!compact && <>
       <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><span>PawSpace<small>Your Petter half</small></span></a>
       <img className={styles.art} src={SERVICE_ART.boarding.image} alt="Cartoon caregiver welcoming a happy dog, puppy and cat at home" fetchPriority="high" />
+      <img className={styles.professionalArt} src="/assets/breeds/golden-retriever-hero.jpg" alt="A happy Golden Retriever" fetchPriority="high" />
     </>}
     <div className={styles.content}>
       <small className={styles.eyebrow}>CARE, CLOSE TO HOME</small>

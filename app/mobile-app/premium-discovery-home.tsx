@@ -182,7 +182,7 @@ export default function PremiumDiscoveryHome({
         {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
           const featured = ["grooming", "dog_training"].includes(service.serviceCode);
-          const symbols: Record<string, string> = { boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
+          const symbols: Record<string, string> = { grooming: "✂", dog_training: "◎", boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
           return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
             <div className={styles.cardPhoto}>
               <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} width="96" height="96" loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>

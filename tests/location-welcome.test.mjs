@@ -37,3 +37,17 @@ test('stored discovery area is revalidated and is not a booking address',()=>{
  assert.doesNotMatch(source,/SELECTED_SERVICE_ADDRESS_KEY/);
  assert.match(source,/if \(showWelcome\) return <LocationWelcome/);
 });
+
+test('customer shell does not invent a city or unread notification count',()=>{
+ const source=readFileSync('app/mobile-app/page.tsx','utf8');
+ assert.doesNotMatch(source,/Bengaluru is your current service area|3 unread updates|📍 Bengaluru/);
+ assert.match(source,/aria-label="View booking activity" onClick=\{\(\)=>setTab\("activity"\)\}/);
+});
+
+test('grooming comparison and readable actions retain QA corrections',()=>{
+ const source=readFileSync('app/mobile-app/grooming-flow.tsx','utf8');
+ assert.match(source,/hygiene\|nail\|routine\|everything in bath & basic/);
+ const css=readFileSync('app/mobile-app/grooming-flow.module.css','utf8');
+ assert.match(css,/position: relative; bottom: auto; background: var\(--paw-primary\)/);
+ assert.match(css,/color: var\(--paw-on-primary\); box-shadow: none; font-size: 16px/);
+});
