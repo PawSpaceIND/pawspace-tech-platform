@@ -119,6 +119,20 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
   const rows=savedBody.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);
   expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("grooming");expect(rows[0].status).toBe("confirmed");
+  await page.getByRole("navigation",{name:"Customer navigation"}).getByRole("button",{name:/Activity/}).click();
+  const activity=page.locator("article").filter({hasText:bookingId});
+  await expect(activity).toHaveCount(1);
+  await activity.getByRole("link",{name:"View booking and care →",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`/grooming/manage[?]bookingId=${bookingId}$`));
+  await expect(page.getByRole("region",{name:"Booking details"})).toContainText(bookingId);
+  await page.reload();
+  await expect(page.getByRole("region",{name:"Booking details"})).toContainText(bookingId);
+  await expect(page.getByRole("region",{name:"Booking details"})).toContainText("confirmed");
+  await page.screenshot({path:test.info().outputPath("customer-grooming-persisted.png"),fullPage:true});
+  await page.goto("/grooming/manage?bookingId=NOT-ON-THIS-CUSTOMER-ACCOUNT");
+  await expect(page.getByRole("heading",{name:"Booking unavailable",exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Booking details"})).toHaveCount(0);
+
 });
 
 test("customer can select next month when grooming opens on the last evening of this month",async({page})=>{
