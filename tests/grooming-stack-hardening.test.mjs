@@ -37,8 +37,11 @@ const partnerJobsUi = read("app/partner-app/canonical-grooming-jobs.tsx");
 const routeCardUi = read("app/partner-app/grooming-route-card.tsx");
 const recoveryRoute = read("app/api/provider-assignment-recovery/route.ts");
 
+// Statement-level legacy tests execute extracted SQL outside the canonical lifecycle transaction.
+// Replace only the interpolated lifecycle predicate in that isolated harness; provider-lifecycle-d1
+// separately executes and proves the real guard, assertion and rollback contract end to end.
 const statementsOf = (source) =>
-  [...source.matchAll(/\.prepare\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)].map((m) => m[2].replace(/\\(["'`\\])/g, "$1"));
+  [...source.matchAll(/\.prepare\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)].map((m) => m[2].replace(/\\(["'`\\])/g, "$1").replaceAll("${ctx.guardSql}", "1=1"));
 const findStatement = (source, marker) => {
   const hit = statementsOf(source).find((sql) => sql.includes(marker));
   assert.ok(hit, `expected a prepared statement containing: ${marker}`);
@@ -123,42 +126,26 @@ function seedSubscription(sqlite, { id = "SUB-1", customerId = "CUS-G-1", total 
     .run(id, `SRC-${id}`, "blr", "blr-east", "6", "v1", JSON.stringify({ pauseDays, graceDays, renewalWindowDays: 15, familyWallet: true }), NOW);
 }
 
-// ---------------------------------------------------------------------------
-// 1. Wallet: purchase -> reserve -> consume -> pause/resume; never negative,
-//    never double-consumed. Real execution of the unmodified lib.
-// ---------------------------------------------------------------------------
 test("real execution: subscription credits reserve, consume once, pause and resume correctly", async () => {
   const { sqlite, db } = groomingDb();
   const wallet = await import("../lib/subscription-wallet.ts");
   seedBookingChain(sqlite, { bookingId: "BK-W-1", status: "confirmed" });
   seedSubscription(sqlite, { id: "SUB-W", total: 6 });
-
   const afterReserve = await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "reserve", idempotencyKey: "w-res-1", bookingId: "BK-W-1", credits: 2, actorId: "cust@test" });
   assert.deepEqual(afterReserve.wallet.balances, { total: 6, reserved: 2, consumed: 0, available: 4 });
-
-  // Replay of the same idempotency key is a no-op.
   const replay = await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "reserve", idempotencyKey: "w-res-1", bookingId: "BK-W-1", credits: 2, actorId: "cust@test" });
   assert.equal(replay.duplicatePrevented, true);
-
-  // Consume requires canonical completion.
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "consume", idempotencyKey: "w-con-0", bookingId: "BK-W-1", actorId: "staff@test" }), /after canonical service completion/);
   sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id='BK-W-1'").run();
   const afterConsume = await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "consume", idempotencyKey: "w-con-1", bookingId: "BK-W-1", actorId: "staff@test" });
   assert.deepEqual(afterConsume.wallet.balances, { total: 6, reserved: 0, consumed: 2, available: 4 });
-
-  // Never double-consumed.
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "consume", idempotencyKey: "w-con-2", bookingId: "BK-W-1", actorId: "staff@test" }), /already consumed/);
-  // Consumed credits can never be released back.
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "release", idempotencyKey: "w-rel-1", bookingId: "BK-W-1", actorId: "staff@test" }), /cannot be released/);
-
-  // Pause within entitlement, blocked movements while paused, then resume.
   await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "pause", idempotencyKey: "w-pause-1", pauseDays: 5, reason: "Travelling", actorId: "cust@test" });
   seedBookingChain(sqlite, { bookingId: "BK-W-2", groupId: "GRP-W2" });
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "reserve", idempotencyKey: "w-res-2", bookingId: "BK-W-2", credits: 1, actorId: "cust@test" }), /paused and cannot move/);
   const resumed = await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "resume", idempotencyKey: "w-resume-1", actorId: "cust@test" });
   assert.equal(String(resumed.wallet.subscription.status), "active");
-
-  // Never negative / never over-reserved: 5 credits on a 4-available wallet is refused with no usage row.
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-W", action: "reserve", idempotencyKey: "w-res-3", bookingId: "BK-W-2", credits: 5, actorId: "cust@test" }), /not have enough available credits/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM booking_subscription_usage WHERE booking_id='BK-W-2'").get().c, 0, "a refused reserve leaves no phantom usage row");
   const row = sqlite.prepare("SELECT sessions_reserved,sessions_consumed,total_sessions FROM customer_grooming_subscriptions WHERE id='SUB-W'").get();
@@ -175,22 +162,15 @@ test("regression: reserve claims idempotency, credits and usage in one guarded b
   assert.match(reserveBlock, /results\[0\].*results\[1\].*results\[2\]/s, "every statement must report exactly one persisted mutation");
 });
 
-// ---------------------------------------------------------------------------
-// 2. Lifecycle complete settles credits even for paused subscriptions (drift fix)
-//    and mirrors completion to the customer account.
-// ---------------------------------------------------------------------------
 test("regression: completing a service settles reserved credits even when the subscription is paused", async () => {
   const { sqlite, db } = groomingDb();
   seedBookingChain(sqlite, { bookingId: "BK-P-1", status: "in_service" });
   seedSubscription(sqlite, { id: "SUB-P", total: 6, reserved: 1, status: "paused" });
   sqlite.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
     .run("USE-P-1", "BK-P-1", "CUS-G-1", "SUB-P", 1, 0, "reserved", NOW, NOW);
-
-  // The route's own complete-time statements (extracted verbatim).
   assert.doesNotMatch(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?"), /status IN \('active','exhausted'\)/, "the consume update no longer skips paused/grace subscriptions");
   await db.prepare(findStatement(lifecycleRoute, "UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved")).bind(NOW, "BK-P-1").run();
-  await db.prepare(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?")).bind(1, 1, 1, NOW, "SUB-P").run();
-
+  await db.prepare(findStatement(lifecycleRoute, "sessions_consumed=sessions_consumed+?")).bind(1, 1, 1, NOW, "SUB-P", "BK-P-1").run();
   const sub = sqlite.prepare("SELECT sessions_reserved,sessions_consumed,status FROM customer_grooming_subscriptions WHERE id='SUB-P'").get();
   assert.equal(sub.sessions_reserved, 0, "reserved credits are released at completion");
   assert.equal(sub.sessions_consumed, 1, "consumed count is recorded at completion");
@@ -201,26 +181,19 @@ test("regression: completing a service settles reserved credits even when the su
 test("real execution: booking -> accept -> travel -> proof -> complete mirrors into the customer account", async () => {
   const { sqlite, db } = groomingDb();
   seedBookingChain(sqlite, { bookingId: "BK-C-1", status: "confirmed" });
-  // Transition map is the single source of state law in the route.
   assert.match(lifecycleRoute, /accept:\{awaiting_acceptance:"assigned",confirmed:"assigned"\}/);
   assert.match(lifecycleRoute, /complete:\{in_service:"completed"\}/, "complete is only reachable from in_service");
   assert.match(lifecycleRoute, /Before photo, after photo and completion checklist are required/, "completion demands full proof");
-
   const statusPair = (status) => {
     sqlite.prepare("UPDATE canonical_bookings SET status=? WHERE id='BK-C-1'").run(status);
     sqlite.prepare("UPDATE provider_work_orders SET status=? WHERE booking_id='BK-C-1'").run(status);
   };
   for (const step of ["assigned", "on_the_way", "arrived", "in_service"]) statusPair(step);
-
-  // Proof upsert via the route's own SQL.
   await db.prepare(findStatement(lifecycleRoute, "INSERT INTO grooming_service_proof")).bind("BK-C-1", "uat://proof/BK-C-1/before", "uat://proof/BK-C-1/after", JSON.stringify(["Coat check", "Finish review"]), "done", NOW, NOW).run();
-  // Complete-time writes via the route's own SQL.
-  await db.prepare(findStatement(lifecycleRoute, "UPDATE canonical_bookings SET status='completed'")).bind(NOW, "BK-C-1").run();
-  await db.prepare(findStatement(lifecycleRoute, "UPDATE provider_work_orders SET status='completed'")).bind(NOW, "BK-C-1").run();
+  await db.prepare(findStatement(lifecycleRoute, "UPDATE canonical_bookings SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun").run();
+  await db.prepare(findStatement(lifecycleRoute, "UPDATE provider_work_orders SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun", "in_service").run();
   await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO booking_invoices")).bind("INV-1", "BK-C-1", "CUS-G-1", "PS-2026-0001", "issued", "INR", 1899, 0, 1899, NOW, NOW, NOW).run();
   await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO repeat_booking_tasks")).bind("RPT-1", "BK-C-1", "CUS-G-1", "grooming", NOW + 21 * 86_400_000, NOW, NOW).run();
-
-  // Customer mirror: the canonical account read (the customer surface) sees the completed booking.
   const { readCustomerAccount } = await import("../lib/customer-account.ts");
   const account = await readCustomerAccount(db, "CUS-G-1");
   assert.equal(account.bookings[0].id, "BK-C-1");
@@ -228,30 +201,19 @@ test("real execution: booking -> accept -> travel -> proof -> complete mirrors i
   assert.equal(sqlite.prepare("SELECT status FROM booking_invoices WHERE booking_id='BK-C-1'").get().status, "issued");
 });
 
-// ---------------------------------------------------------------------------
-// 3. Reschedule: TOCTOU-safe slot move, future-only, server-priced.
-// ---------------------------------------------------------------------------
 test("regression: the reschedule reservation move is atomic — an overlapping reservation blocks it at write time", async () => {
   const { sqlite, db } = groomingDb();
   seedBookingChain(sqlite, { bookingId: "BK-R-1", groupId: "GRP-R1", start: "2026-08-20T04:30:00.000Z", end: "2026-08-20T06:30:00.000Z" });
   seedProviderAuthority(sqlite);
-  // Another customer's reservation with the same provider, 08:00-09:30 (this is the reservation
-  // that "lands between the pre-check and the write" in the TOCTOU scenario).
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run("RES-OTHER", "GRP-OTHER", "groom_arun", "grooming", "blr", "blr-east", "CUS-OTHER", "[]", "2026-08-20T08:00:00.000Z", "2026-08-20T09:30:00.000Z", 1, 1, null, "assigned", "{}", NOW);
-
   const guarded = findStatement(changeRoute, "NOT EXISTS (SELECT 1 FROM scheduling_reservations other");
-  // Attempt to move into the overlap: the guarded write itself must refuse.
   const conflicted = await db.prepare(guarded).bind(...rescheduleMoveBinds("2026-08-20T08:30:00.000Z", "2026-08-20T10:30:00.000Z")).run();
   assert.equal(conflicted.meta.changes, 0, "overlapping move is refused atomically at write time");
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-R1'").get().scheduled_start, "2026-08-20T04:30:00.000Z", "the reservation did not move");
-
-  // A free slot moves cleanly.
   const moved = await db.prepare(guarded).bind(...rescheduleMoveBinds("2026-08-20T11:00:00.000Z", "2026-08-20T13:00:00.000Z")).run();
   assert.equal(moved.meta.changes, 1);
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-R1'").get().scheduled_start, "2026-08-20T11:00:00.000Z");
-
-  // Route-level guarantees around the guard.
   assert.match(changeRoute, /start\.getTime\(\)<=now/, "reschedule to a past time is rejected");
   assert.match(changeRoute, /moved\.meta\?\.changes/, "the route checks the guarded write's result");
 });
@@ -259,15 +221,9 @@ test("regression: the reschedule reservation move is atomic — an overlapping r
 test("reschedule and cancel are server-priced: no client price fields, fee/refund from the frozen policy", async () => {
   assert.doesNotMatch(changeRoute, /type Input=\{[^}]*(amount|price|total)/i, "the change API accepts no client-submitted money");
   assert.match(changeRoute, /parsePolicySnapshot\(pricing\.commercialPolicy\)\?\?await resolveGroomingPolicy/, "policy comes from the frozen snapshot, else the server policy");
-  // The refund amount moved from `policyEvaluation.refundPercent` to the approved cancellation policy's
-  // `refundEvaluation.customerRefundAmount` (PTJA W1-F24), which is governed configuration resolved per
-  // service and city rather than a single grooming percentage. What this line asserts - that the refund
-  // is computed SERVER-side from a policy and never from the request body - is unchanged and stronger:
-  // the route now binds an amount the server derived, not a percentage applied to a client-visible one.
   assert.match(changeRoute, /refundEvaluation\.customerRefundAmount/);
   assert.match(changeRoute, /resolveRefundPolicy\(db,\{serviceCode/, "the refund policy is resolved for this service and city");
   assert.match(changeRoute, /policyEvaluation\.feeAmount/);
-  // Real execution of the policy: completed bookings are change-locked.
   const { sqlite, db } = groomingDb();
   void sqlite;
   const policyLib = await import("../lib/grooming-policy-governance.ts");
@@ -282,58 +238,45 @@ test("real execution: cancellation releases reserved subscription credits and ne
   seedSubscription(sqlite, { id: "SUB-X", total: 6, reserved: 2 });
   sqlite.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
     .run("USE-X-1", "BK-X-1", "CUS-G-1", "SUB-X", 2, 0, "reserved", NOW, NOW);
-
   await db.prepare(findStatement(changeRoute, "UPDATE booking_subscription_usage SET sessions_reserved=0")).bind(NOW, "BK-X-1").run();
   const release = findStatement(changeRoute, "status=CASE WHEN source_booking_id=? THEN ? ELSE status END");
   await db.prepare(release).bind(2, "BK-X-1", "cancelled", NOW, "SUB-X").run();
   let sub = sqlite.prepare("SELECT sessions_reserved,status FROM customer_grooming_subscriptions WHERE id='SUB-X'").get();
   assert.equal(sub.sessions_reserved, 0, "cancellation returns the reserved credits");
   assert.equal(sub.status, "active", "cancelling a normal booking never cancels the subscription itself");
-  // Re-running the release can never drive the wallet negative.
   await db.prepare(release).bind(2, "BK-X-1", "cancelled", NOW, "SUB-X").run();
   sub = sqlite.prepare("SELECT sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB-X'").get();
   assert.equal(sub.sessions_reserved, 0);
   assert.equal(sqlite.prepare("SELECT status FROM booking_subscription_usage WHERE booking_id='BK-X-1'").get().status, "reversed");
 });
 
-// ---------------------------------------------------------------------------
-// 4. Partner surface: PII minimisation and button-to-API trace.
-// ---------------------------------------------------------------------------
 test("partner payloads carry first name + masked phone only — never full contact data", () => {
   assert.match(partnerJobsRoute, /partnerFirstName\(row\.customer_name\)/, "customer name is reduced to first name");
   assert.doesNotMatch(partnerJobsRoute, /name:String\(row\.customer_name\)/, "the raw full name is no longer forwarded");
   assert.match(partnerJobsRoute, /maskedPhone:maskPhone\(row\.primary_phone\)/, "phone is masked");
   assert.doesNotMatch(partnerJobsRoute, /phone:String\(row\.primary_phone\)|email:String\(|customerEmail/, "no raw phone or email fields in the partner payload");
-  // The masking helpers behave as declared.
   const firstName = (value) => String(value || "").trim().split(/\s+/)[0] || "Customer";
   assert.equal(firstName("Ananya Rao Sharma"), "Ananya");
   assert.equal(firstName("  "), "Customer");
 });
 
 test("every partner-app grooming button maps to a live API action", () => {
-  // Commission accept/decline go to assignment recovery, which supports both actions.
   assert.match(partnerJobsUi, /\/api\/provider-assignment-recovery/);
   assert.match(recoveryRoute, /"accept"/);
   assert.match(recoveryRoute, /"decline"/);
-  // Lifecycle buttons map 1:1 onto the route's action vocabulary.
   for (const action of ["accept", "on_the_way", "arrived", "start_service", "add_proof", "complete"]) {
     assert.ok(partnerJobsUi.includes(`"${action}"`), `partner UI offers ${action}`);
     assert.ok(lifecycleRoute.includes(`"${action}"`), `lifecycle route handles ${action}`);
   }
   assert.match(partnerJobsUi, /\/api\/grooming-lifecycle/);
   assert.match(partnerJobsUi, /\/api\/partner-grooming-jobs/);
-  // The route card's tracking buttons hit the grooming-route API, which serves both verbs.
   assert.match(routeCardUi, /\/api\/grooming-route/);
   assert.match(groomingRouteApi, /export async function GET/);
   assert.match(groomingRouteApi, /export async function POST/);
-  // Route sharing is provider-owned and travel-state gated.
   assert.match(groomingRouteApi, /requireProviderOwnership/);
   assert.match(groomingRouteApi, /activeTravelStates/);
 });
 
-// ---------------------------------------------------------------------------
-// 5. Permission posture across the stack.
-// ---------------------------------------------------------------------------
 test("grooming stack permission mapping stays enforced in-route", () => {
   assert.match(lifecycleRoute, /if\(input\.action==="mark_paid"\)requirePermission\(actorIdentity,"payments\.manage"\);else requirePermission\(actorIdentity,"bookings\.view"\)/);
   assert.match(lifecycleRoute, /requireProviderOwnership\(db,actorIdentity,String\(work\.provider_id\)\)/, "providers can only act on their own work orders");

@@ -43,7 +43,9 @@ async function world() {
   globalThis.__BOOKING_COMMAND_ENV__ = {};
 
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  const { ensurePeopleTables } = await import("../lib/people-foundation.ts");
   await ensureSecurityTables(db);
+  await ensurePeopleTables(db);
   const now = Date.now();
   for (const [id, email, role] of [
     ["USR-COMMAND-MANAGER", MANAGER_EMAIL, "manager"],
@@ -52,8 +54,11 @@ async function world() {
     sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?)")
       .run(id, email, role, role, now, now);
   }
+  sqlite.prepare("INSERT INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'active',?,?,?)")
+    .run("EMP-COMMAND-MANAGER",MANAGER_EMAIL,"EMP-OPS-MGR","Ops Manager",MANAGER_EMAIL,"9999999999",now-86400000,now,now);
+  sqlite.prepare("INSERT INTO employee_employment_versions (id,employee_id,version,effective_from,effective_until,employment_type,probation_status,title,team_code,manager_employee_id,cost_centre_code,location_code,reason,actor_id,created_at) VALUES (?,?,1,?,NULL,'full_time','confirmed','Operations Manager','operations',NULL,'CC-OPERATIONS','BLR','Scoped operations manager','test',?)")
+    .run("EEV-COMMAND-MANAGER","EMP-COMMAND-MANAGER",now-86400000,now);
 
-  // An authorized manager initializes the route-owned schema before the privacy assertions.
   const initialized = await call(MANAGER_EMAIL);
   assert.equal(initialized.reachedRoute, true);
   assert.equal(initialized.response.status, 200);
@@ -114,13 +119,10 @@ test("service_provider cannot open the platform-wide Booking Command Center", as
   const { sqlite } = await world();
   const before = businessCounts(sqlite);
   const result = await call(PROVIDER_EMAIL);
-
   assert.equal(result.reachedRoute, false, "assigned-job access must not open the platform-wide command center");
   assert.equal(result.response.status, 403);
   const body = await result.response.text();
-  for (const secret of [BOOKING_ID, CUSTOMER_ID, PROVIDER_ID, "Private Customer Name", "+919999111122", "private.customer@example.test", "PAY-COMMAND-1"]) {
-    assert.ok(!body.includes(secret), `the refusal must not disclose ${secret}`);
-  }
+  for (const secret of [BOOKING_ID, CUSTOMER_ID, PROVIDER_ID, "Private Customer Name", "+919999111122", "private.customer@example.test", "PAY-COMMAND-1"]) assert.ok(!body.includes(secret), `the refusal must not disclose ${secret}`);
   assert.deepEqual(businessCounts(sqlite), before, "a denied read must not mutate business persistence");
 });
 
@@ -129,7 +131,6 @@ test("the route independently refuses service_provider access if gateway composi
   const before = businessCounts(sqlite);
   const route = await import("../app/api/booking-command-center/route.ts");
   const response = await route.GET(requestFor(PROVIDER_EMAIL));
-
   assert.equal(response.status, 403);
   const body = await response.text();
   assert.ok(!body.includes(BOOKING_ID));
@@ -137,15 +138,17 @@ test("the route independently refuses service_provider access if gateway composi
   assert.deepEqual(businessCounts(sqlite), before);
 });
 
-test("manager retains the complete Booking Command Center view", async () => {
+test("operations manager retains only their provisioned city scope", async () => {
   const { sqlite } = await world();
   const result = await call(MANAGER_EMAIL);
-
   assert.equal(result.reachedRoute, true);
   assert.equal(result.response.status, 200);
   const body = await result.response.json();
   assert.equal(body.bookings.length, 1);
   assert.equal(body.bookings[0].id, BOOKING_ID);
   assert.equal(body.bookings[0].customer_name, "Private Customer Name");
+  assert.equal(body.organizationalScope.cityId,"blr");
+  assert.equal(body.organizationalScope.teamCode,"operations");
+  assert.equal(body.organizationalScope.departmentCode,"cc-operations");
   assert.equal(businessCounts(sqlite).bookings, 1);
 });

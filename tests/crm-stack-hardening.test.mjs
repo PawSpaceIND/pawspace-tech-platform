@@ -40,6 +40,10 @@ const DDL_SOURCES = [
   read("lib/grooming-payment-reconciliation.ts"), // payment_reconciliation_records (leaderboard collections/refunds)
 ];
 
+// crm_contacts is extended after its legacy CREATE TABLE statement. Keep this SQLite fixture in
+// lock-step with the production extension list by extracting the column names from the route itself.
+const crmContactExtendedColumns = [...crmRoute.matchAll(/\["([a-z_]+)","TEXT"\]/g)].map((match) => match[1]);
+
 function schemaDb() {
   const db = new DatabaseSync(":memory:");
   for (const source of DDL_SOURCES) {
@@ -47,6 +51,7 @@ function schemaDb() {
       if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) db.exec(sql);
     }
   }
+  for (const column of crmContactExtendedColumns) db.exec(`ALTER TABLE crm_contacts ADD COLUMN ${column} TEXT`);
   return db;
 }
 
@@ -80,7 +85,9 @@ test("no query in the CRM stack references a column missing from the owning DDL"
   let checked = 0;
   for (const source of [crmRoute, revenueRoute, c360Route, c360Lib]) {
     for (const sql of statementsOf(source)) {
-      if (/^\s*CREATE /i.test(sql)) continue;
+      // Schema mutation uses interpolated identifiers; replacing identifiers with SQLite value
+      // placeholders creates invalid SQL (for example ADD COLUMN ? ?). DML queries remain audited.
+      if (/^\s*(CREATE|ALTER)\b/i.test(sql)) continue;
       const variants = sql.includes("${field}")
         ? ["call_attempts", "whatsapp_attempts"].map((field) => sql.replaceAll("${field}", field))
         : [sql];
@@ -112,7 +119,8 @@ test("real execution: /api/crm create persists a contact + lead work item that t
   const db = schemaDb();
   const now = Date.now();
   db.prepare(findStatement(crmRoute, "INSERT INTO crm_contacts")).run(
-    "CU-77001", "Test Customer", "9999977001", null, null, "Bengaluru", "Rex", "Labrador · 2 years", "New lead", "Neha", "Website", 0, "Call within 10 minutes", "Grooming", now, now
+    "CU-77001", "Test Customer", "9999977001", null, null, "Bengaluru", "Rex", "Labrador · 2 years", "New lead", "Neha", "Website", 0, "Call within 10 minutes", "Grooming",
+    "blr", "sales", "cc-sales", null, null, null, null, null, null, null, null, null, null, null, now, now
   );
   db.prepare(findStatement(crmRoute, "INSERT INTO crm_activities")).run(`ACT-${now}`, "CU-77001", "lead_created", "Lead created", "Source: Website", now);
   db.prepare(findStatement(crmRoute, "INSERT INTO crm_tasks")).run(`TASK-${now}`, "CU-77001", "First response to new lead", "Neha", now + 600000, "High", "Open", now);
@@ -237,7 +245,10 @@ test("real execution: duplicate customers by phone are flagged in data quality",
 test("real execution: revenue-crm lead list joins CRM contact names and log_attempt updates the lead", () => {
   const db = schemaDb();
   const now = Date.now();
-  db.prepare(findStatement(crmRoute, "INSERT INTO crm_contacts")).run("CRM-R9001", "Join Test", "9999912345", null, null, "Bengaluru", "Rex", "Rex · profile", "Follow-up", "Neha", "Website", 0, "Work lead", "Grooming", now, now);
+  db.prepare(findStatement(crmRoute, "INSERT INTO crm_contacts")).run(
+    "CRM-R9001", "Join Test", "9999912345", null, null, "Bengaluru", "Rex", "Rex · profile", "Follow-up", "Neha", "Website", 0, "Work lead", "Grooming",
+    "blr", "sales", "cc-sales", null, null, null, null, null, null, null, null, null, null, null, now, now
+  );
   db.prepare(findStatement(crmRoute, "INSERT INTO lead_work_items")).run("LEAD-9001", "CRM-R9001", "Website", "Grooming", "Neha", "Sales Manager", now, now + 600000, now + 1800000, 0, 0, now + 600000, now, now);
 
   const leads = db.prepare(findStatement(revenueRoute, "FROM lead_work_items l LEFT JOIN crm_contacts c")).all();
