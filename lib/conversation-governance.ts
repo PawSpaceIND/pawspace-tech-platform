@@ -36,15 +36,41 @@ async function conversationStaffContext(db:D1Database,thread:Row){
  ]);
  return {...thread,customer_name:customer?.name??null,primary_phone:customer?.primary_phone??null,booking:booking??null,ticket:ticket??null};
 }
-export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
+export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor;query?:string;channel?:string;ownership?:string;before?:{at:number;id:string}}){
+ const limit=input.limit??100;
+ if(!Number.isInteger(limit)||limit<1||limit>201)throw new Response("Invalid conversation limit",{status:400});
+ if(input.status&&!["open","pending_customer","resolved","closed"].includes(input.status))throw new Response("Invalid conversation status filter",{status:400});
+ if(input.channel&&!["whatsapp","sms","email","push","chat","voice"].includes(input.channel))throw new Response("Invalid conversation channel",{status:400});
+ if(input.ownership&&!["unassigned","human"].includes(input.ownership))throw new Response("Invalid ownership filter",{status:400});
+ if(input.query&&input.query.length>200)throw new Response("Conversation search is too long",{status:400});
+ if(input.before&&(!Number.isSafeInteger(input.before.at)||input.before.at<0||typeof input.before.id!=="string"||!input.before.id||input.before.id.length>100))throw new Response("Invalid conversation cursor",{status:400});
+ await ensureConversationGovernance(db);
+ let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";
+ const binds:unknown[]=[],where:string[]=[];
+ if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}
+ if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}
+ if(input.status){where.push("t.status=?");binds.push(input.status);}
+ if(input.channel){where.push("EXISTS (SELECT 1 FROM communication_messages channel_message WHERE channel_message.thread_id=t.id AND channel_message.channel=?)");binds.push(input.channel);}
+ if(input.ownership==="unassigned")where.push("COALESCE(trim(t.assigned_to),'')=''");
+ if(input.ownership==="human")where.push("COALESCE(trim(t.assigned_to),'') NOT IN ('','ai-orchestrator')");
+ if(input.query?.trim()){
+  where.push("instr(lower(t.id||' '||t.customer_id||' '||COALESCE(t.booking_id,'')||' '||COALESCE(t.lead_id,'')||' '||COALESCE(c.name,'')||' '||COALESCE(c.primary_phone,'')),lower(?))>0");
+  binds.push(input.query.trim());
+ }
+ if(input.before){where.push("(t.updated_at<? OR (t.updated_at=? AND t.id<?))");binds.push(input.before.at,input.before.at,input.before.id);}
+ if(where.length)query+=` WHERE ${where.join(" AND ")}`;
+ query+=" ORDER BY t.updated_at DESC,t.id DESC LIMIT ?";binds.push(limit);
+ let result:{results:Row[]};
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
-  // The customer name is a convenience join onto another module's table. A deployment that has not
-  // created canonical_customers yet used to fail the whole CX queue with a raw D1 error, so the
-  // screen showed nothing at all rather than the threads it does have.
   if(!/no such table: canonical_customers/i.test(error instanceof Error?error.message:String(error)))throw error;
-  result=await db.prepare(query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t")).bind(...binds).all<Row>();
- }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>(),linkedConversationTicket(db,row)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}return threads;}
+  const fallback=query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t").replaceAll("COALESCE(c.name,'')","''").replaceAll("COALESCE(c.primary_phone,'')","''");
+  result=await db.prepare(fallback).bind(...binds).all<Row>();
+ }
+ const threads:Row[]=[];
+ for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC,id DESC LIMIT 1").bind(row.id).first<Row>(),linkedConversationTicket(db,row)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}
+ return threads;
+}
 
 export async function getConversation(db:D1Database,threadId:string,scope:ConversationScope){await ensureConversationGovernance(db);const thread=await db.prepare("SELECT * FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread)return null;const [participants,messages,assignments]=await Promise.all([db.prepare("SELECT participant_type,participant_id,display_ref,role,created_at FROM communication_participants WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,created_by,created_at,updated_at FROM communication_messages WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,assigned_to,assigned_by,status,reason,created_at,ended_at FROM conversation_assignments WHERE thread_id=? ORDER BY created_at DESC").bind(threadId).all<Row>()]);
  const visibleParticipants=participants.results.filter(item=>scope==="staff"||String(item.participant_type)!=="provider");

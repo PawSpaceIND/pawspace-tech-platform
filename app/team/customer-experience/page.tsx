@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
 import styles from "./whatsapp-inbox.module.css";
 
+type Cursor = { at: number; id: string };
 type Row = Record<string, unknown>;
 type Thread = Row & {
   id: string;
@@ -60,6 +61,9 @@ export default function CustomerExperiencePage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [cursorHistory, setCursorHistory] = useState<Cursor[]>([]);
+  const [nextCursor, setNextCursor] = useState<Cursor | null>(null);
+  const currentCursor = cursorHistory.at(-1);
   const [filter, setFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("open");
   const [reply, setReply] = useState("");
@@ -69,13 +73,19 @@ export default function CustomerExperiencePage() {
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
   const loadThreads = useCallback(async (shouldApply: () => boolean = () => true) => {
-    const response = await fetch(`/api/conversations${statusFilter === "all" ? "" : `?status=${encodeURIComponent(statusFilter)}`}`, { cache: "no-store" });
-    const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
+    const params = new URLSearchParams({limit: "50"});
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (query.trim()) params.set("q", query.trim());
+    if (filter === "whatsapp") params.set("channel", filter);
+    if (filter === "unassigned" || filter === "human") params.set("ownership", filter);
+    if (currentCursor) params.set("cursor", JSON.stringify(currentCursor));
+    const response = await fetch(`/api/conversations?${params}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[]; nextCursor?: Cursor | null }; error?: string };
     if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
     const next = payload.data?.threads || [];
-    if (shouldApply()) setThreads(next);
+    if (shouldApply()) { setThreads(next); setNextCursor(payload.data?.nextCursor || null); }
     return next;
-  }, [statusFilter]);
+  }, [statusFilter, query, filter, currentCursor]);
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return;
@@ -224,14 +234,7 @@ export default function CustomerExperiencePage() {
     }
   }
 
-  const visible = useMemo(() => threads.filter((row) => {
-    const hay = `${text(row.customer_name, "")} ${text(row.customer_id, "")} ${text(row.primary_phone, "")} ${text(row.lastMessage?.channel, "")}`.toLowerCase();
-    if (!hay.includes(query.toLowerCase())) return false;
-    if (filter === "unassigned") return !text(row.assigned_to, "");
-    if (filter === "whatsapp") return text(row.lastMessage?.channel, "") === "whatsapp";
-    if (filter === "human") return Boolean(text(row.assigned_to, "")) && text(row.assigned_to, "") !== "ai-orchestrator";
-    return true;
-  }), [threads, query, filter]);
+  const visible = threads;
 
   const thread = conversation?.thread || null;
   const messages = conversation?.messages || [];
@@ -248,8 +251,6 @@ export default function CustomerExperiencePage() {
       && serviceWindowCheckedAt > 0
       && serviceWindowCheckedAt - Number(lastInbound.created_at || 0) <= 24 * 60 * 60_000,
   );
-  const whatsappCount = threads.filter((row) => text(row.lastMessage?.channel, "") === "whatsapp").length;
-  const unassigned = threads.filter((row) => !text(row.assigned_to, "")).length;
   const lastMessage = messages[messages.length - 1];
   const customerName = text(thread?.customer_name || thread?.customer_id, "Customer");
   const phone = text(thread?.primary_phone, "Masked by role");
@@ -290,9 +291,9 @@ export default function CustomerExperiencePage() {
         <aside className={styles.list}>
           <div className={styles.listTop}>
             <h2>Shared Inbox</h2>
-            <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads or conversations..." />
+            <input className={styles.search} value={query} maxLength={200} onChange={(event) => { setQuery(event.target.value); setCursorHistory([]); setNextCursor(null); }} placeholder="Search leads or conversations..." />
             <label>Conversation status
-              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setReply(""); setReplyRequestId(""); setInternalNote(""); setNoteRequestId(""); setSelected(""); setConversation(null); setControl(null); setThreads([]); }}>
+              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setCursorHistory([]); setNextCursor(null); setReply(""); setReplyRequestId(""); setInternalNote(""); setNoteRequestId(""); setSelected(""); setConversation(null); setControl(null); setThreads([]); }}>
                 <option value="open">Open</option><option value="pending_customer">Awaiting customer</option><option value="resolved">Resolved</option><option value="closed">Closed</option><option value="all">All statuses</option>
               </select>
             </label>
@@ -303,13 +304,18 @@ export default function CustomerExperiencePage() {
                   type="button"
                   size="sm"
                   variant={filter === key ? "primary" : "secondary"}
-                  onClick={() => setFilter(key)}
+                  onClick={() => { setFilter(key); setCursorHistory([]); setNextCursor(null); }}
                   className={`${styles.filter} ${filter === key ? styles.filterActive : ""}`}
                 >
-                  {label}{key === "whatsapp" ? ` ${whatsappCount}` : key === "unassigned" ? ` ${unassigned}` : ""}
+                  {label}
                 </Button>
               ))}
             </div>
+          </div>
+          <div className={styles.filters}>
+            <span>Showing {threads.length} conversations on this page</span>
+            <Button size="sm" disabled={busy || cursorHistory.length === 0} onClick={() => { setCursorHistory(history => history.slice(0, -1)); setNextCursor(null); }}>Previous page</Button>
+            <Button size="sm" disabled={busy || !nextCursor} onClick={() => { if (nextCursor) setCursorHistory(history => [...history, nextCursor]); setNextCursor(null); }}>Next page</Button>
           </div>
           <div className={styles.rows}>
             {visible.length === 0 ? (

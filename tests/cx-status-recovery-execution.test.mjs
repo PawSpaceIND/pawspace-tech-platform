@@ -92,3 +92,24 @@ test('concurrent note retries create one note; a failed thread update rolls back
  w.sqlite.exec('DROP TRIGGER fail_note_thread');assert.equal((await conversation.recordConversationInternalNote(w.db,{...input,idempotencyKey:'failed-note'})).duplicatePrevented,false);
  for(const body of ['', 'x'.repeat(4097)])await assert.rejects(()=>conversation.recordConversationInternalNote(w.db,{...input,body}),error=>error instanceof Response&&error.status===400);
 });
+
+
+test('CX global search and filters precede stable cursor pagination and reject malformed inputs',async()=>{
+ const w=await world();
+ for(let index=0;index<6;index++){
+  await inboundMessage(w.sqlite,w.db,{threadId:`THREAD-PAGE-${index}`,customerId:'CUS-CX',text:'Pagination fixture',idempotencyKey:`page-${index}`});
+ }
+ w.sqlite.exec("UPDATE communication_threads SET updated_at=100; UPDATE communication_threads SET booking_id='BOOK-100%_LITERAL',assigned_to='human@pawspace.in' WHERE id='THREAD-PAGE-0'");
+ const get=async params=>route.GET(new Request(`https://app.pawspace.in/api/conversations?${new URLSearchParams(params)}`,{headers:{'oai-authenticated-user-email':'cx@pawspace.in'}}));
+ const ids=[];let cursor;
+ do {const response=await get({limit:'2',...(cursor?{cursor:JSON.stringify(cursor)}:{})});assert.equal(response.status,200);const {data}=await response.json();ids.push(...data.threads.map(row=>row.id));cursor=data.nextCursor;}while(cursor);
+ assert.equal(ids.length,7);assert.equal(new Set(ids).size,7);assert.deepEqual(ids,[...ids].sort().reverse());
+ for(const params of [{q:'100%_LITERAL'},{ownership:'human'},{q:'THREAD-PAGE-0'}]){
+  const {data}=await (await get({limit:'1',...params})).json();assert.deepEqual(data.threads.map(row=>row.id),['THREAD-PAGE-0']);assert.equal(data.nextCursor,null);
+ }
+ assert.equal((await (await get({q:'CX customer'})).json()).data.threads.length,7);
+ for(const params of [{limit:'0'},{limit:'201'},{limit:'NaN'},{cursor:'bad'},{cursor:'{}'},{cursor:'null'},{status:'bad'},{channel:'bad'},{ownership:'bad'},{q:'x'.repeat(201)}])assert.equal((await get(params)).status,400,JSON.stringify(params));
+ w.sqlite.exec("INSERT INTO app_users(id,email,name,role_code,status,created_at,updated_at) VALUES ('SEARCH-ASSOC','search@pawspace.in','Search','associate','active',1,1)");
+ const restricted=await route.GET(new Request('https://app.pawspace.in/api/conversations?q=100%25_LITERAL',{headers:{'oai-authenticated-user-email':'search@pawspace.in'}}));
+ assert.equal(restricted.status,200);assert.deepEqual((await restricted.json()).data.threads,[]);
+});
