@@ -130,11 +130,12 @@ export default function AdminPage() {
     window.setTimeout(() => setToast(""), 2600);
   }
 
+  if(overviewError)return <main className={styles.accessError}><section><h1>Operations overview unavailable</h1><p role="alert">{overviewError}</p><p>Sign in with an authorized staff account, or try again if you already have access.</p><button className={styles.primaryButton} onClick={()=>window.location.reload()}>Try again</button><p><Link href="/team">Team sign-in</Link> · <Link href="/mobile-app">Customer app</Link></p></section></main>;
   return (
     <main className={styles.adminShell}>
       <aside className={styles.sidebar}>
         <div className={styles.brand}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span>Operations</span></div>
-        <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
+        <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)} aria-label={item.label}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
         <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/customer-experience">◎ Communications Desk</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/finance">₹ Finance & People OS</Link><Link href="/team/sales">⚡ Advanced CRM</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
       </aside>
 

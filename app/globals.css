@@ -331,7 +331,9 @@ main[style*="font-family"] dd { margin: 2px 0 0; font-weight: 700; font-variant-
    booking at all.
    Where the bar is on screen, the FAB moves above it. :has() is the whole modern baseline; the
    media-query fallback below keeps the button reachable on anything older. */
-body:has(.checkout-bar) .ps-order-fab { bottom: 104px; }
+.ps-order-fab { bottom: 18px; }
+body:has(.checkout-bar) .ps-order-fab,
+body:has(nav[aria-label="Customer navigation"]) .ps-order-fab { bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
 @supports not selector(body:has(.checkout-bar)) {
   /* The overlap range is wider than the bar's own 920px cap. The bar is centred, so its right edge is
      vw/2 + W/2 with W = min(920, vw - 30); the FAB occupies [vw-70, vw-18]. They collide while
