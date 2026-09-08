@@ -1,3 +1,4 @@
+import{groomingChangePreview}from"../../../lib/grooming-change-preview";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
@@ -28,6 +29,16 @@ async function event(db:Db,bookingId:string,eventType:string,actorId:string,deta
 const shiftIso=(value:string,ms:number)=>new Date(new Date(value).getTime()+ms).toISOString();
 const minutesOfLocalDay=(value:string,offsetMinutes:number)=>{const local=new Date(new Date(value).getTime()+offsetMinutes*60_000);return{date:local.toISOString().slice(0,10),minutes:local.getUTCHours()*60+local.getUTCMinutes()};};
 const rosterWindowCovers=(window:string,startMinutes:number,endMinutes:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]),to=Number(match[3])*60+Number(match[4]);return startMinutes>=from&&endMinutes<=to;};
+
+export async function GET(request:Request){try{
+ const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);
+ const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const db=await database();
+ const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);
+ await requireCustomerOwnership(db,actor,String(booking.customer_id));
+ const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>(),payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>();
+ if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
+ return json({data:await groomingChangePreview(db,booking,work,payment)});
+}catch(error){return authError(error,"Unable to preview Grooming booking changes");}}
 
 export async function POST(request:Request){
   try{

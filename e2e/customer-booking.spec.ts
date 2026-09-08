@@ -138,6 +138,10 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.reload();
   await expect(page.getByRole("region",{name:"Booking details"})).toContainText(bookingId);
   await expect(page.getByRole("region",{name:"Booking details"})).toContainText("assigned");
+  const policy=page.getByRole("region",{name:"Booking change policy",exact:true});
+  await expect(policy.getByRole("heading",{name:"Rescheduling available",exact:true})).toBeVisible();
+  await expect(policy.getByRole("heading",{name:"Cancellation eligible",exact:true})).toBeVisible();
+  await expect(policy).toContainText("Estimated refund: ₹0.00");
   await page.screenshot({path:test.info().outputPath("customer-grooming-persisted.png"),fullPage:true});
   await page.goto("/grooming/manage?bookingId=NOT-ON-THIS-CUSTOMER-ACCOUNT");
   await expect(page.getByRole("heading",{name:"Booking unavailable",exact:true})).toBeVisible();
