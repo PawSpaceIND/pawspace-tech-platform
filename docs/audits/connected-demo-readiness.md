@@ -33,7 +33,7 @@ The native desktop browser rendered CX and retained the entered search across a 
 
 ## Delivery gap exposed, not concealed
 
-The scheduled dispatcher moved **13 chat messages to DLQ** with `unsupported_outbox_channel`. Their in-app notifications remain visible. The external chat adapter is not implemented in that generic dispatcher's execution path; a successful cron response must not be interpreted as successful external delivery. The corrected notification API now exposes this failure instead of stale `queued` status.
+The scheduled dispatcher moved **13 chat messages to DLQ** with `unsupported_outbox_channel`. Their in-app notifications remain visible. At that candidate, the external chat adapter was not routed by the generic dispatcher (see `notification-recovery-followup.md` for the subsequent fix); a successful cron response must not be interpreted as successful external delivery. The corrected notification API now exposes this failure instead of stale `queued` status.
 
 No Razorpay/RazorpayX receipt, WhatsApp/SMS/email/push delivery receipt, IDfy result, or storage-provider result was obtained. Full external delivery and recovery require an approved sandbox deployment and its configured providers.
 

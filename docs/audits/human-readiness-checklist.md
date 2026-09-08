@@ -43,7 +43,7 @@ Demo lifecycle rows contain the booking ID, actor, timestamp and from/to changes
 
 ## 3. External Integrations
 
-All new demo financial events were synthetic sandbox events; in-app notifications are visible, but 13 chat outbox messages reached DLQ with `unsupported_outbox_channel` during the real scheduler probe. External chat delivery remains unimplemented in that dispatcher. No real provider callback, payout, push, email, KYC or external-message delivery is certified.
+All new demo financial events were synthetic sandbox events; in-app notifications are visible, but 13 chat outbox messages reached DLQ with `unsupported_outbox_channel` during the real scheduler probe. The follow-up now routes chat through the configured UAT bridge and verifies retry/signed-callback recovery locally; real provider delivery and controlled replay of historical DLQ entries remain open. No real provider callback, payout, push, email, KYC or external-message delivery is certified.
 
 - [ ] Razorpay
 - [ ] RazorpayX

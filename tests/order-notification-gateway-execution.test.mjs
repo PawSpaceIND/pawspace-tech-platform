@@ -15,6 +15,13 @@ test('completed booking notifications reach their customer through the real gate
   const result = await runCompletedJourney(ctx, { customerId, customerName: 'Demo Customer', phone: '+919900000909',
     petSourceId: 'PET-NOTIFY', petName: 'Bruno', cityId: 'blr', zoneId: 'blr-east', pincode: '560038',
     latitude: 12.9716, longitude: 77.5946, preferredProviderId: 'groom_arun', groupId: 'NOTIFY-GATE', start: start.toISOString() });
+  const other = await runCompletedJourney(ctx, { customerId:'CUST-OTHER-NOTIFY', customerName:'Other Customer', phone:'+919900000910',
+    petSourceId:'PET-OTHER-NOTIFY', petName:'Max', cityId:'blr', zoneId:'blr-east', pincode:'560038',
+    latitude:12.9716, longitude:77.5946, preferredProviderId:'groom_arun', groupId:'NOTIFY-OTHER',
+    start:new Date(start.getTime()+86400000).toISOString() });
+  const { ensureOrderNotificationTables, runOrderNotificationSweep } = await import('../lib/order-notification-governance.ts');
+  await ensureOrderNotificationTables(ctx.db);
+  const otherBefore = ctx.sqlite.prepare('SELECT COUNT(*) count FROM order_notifications WHERE booking_id=?').get(other.bookingId).count;
   const customerCookie = await sessionCookie(ctx.db, 'customer', customerId, `customer:${customerId}`);
   async function call(method, cookie, body, queryCustomer = customerId) {
     const req = new Request(`${origin}/api/order-notifications?customerId=${queryCustomer}`, {method,
@@ -23,9 +30,15 @@ test('completed booking notifications reach their customer through the real gate
     if (access instanceof Response) return access;
     return route[method](req);
   }
-  const response = await call('GET', customerCookie);
+  const [response, parallelResponse] = await Promise.all([call('GET', customerCookie),call('GET', customerCookie)]);
+  const parallelPayload = await parallelResponse.json();
+  assert.equal(parallelPayload.data?.sweep?.ok, true, JSON.stringify(parallelPayload));
   assert.equal(response.status, 200, await response.clone().text());
   const payload = await response.json();
+  assert.equal(payload.data.sweep.ok, true, JSON.stringify(payload));
+  assert.equal(payload.data.sweep.canonicalOrders.scanned, 1, 'customer reads must not scan all bookings');
+  assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) count FROM order_notifications WHERE booking_id=?').get(other.bookingId).count, otherBefore,
+    'customer reads must not create notifications for another customer');
   const items = payload.data.items.filter(item => item.booking_id === result.bookingId);
   assert.ok(items.some(item => item.event_type === 'payment_captured'), JSON.stringify(payload));
   assert.ok(items.some(item => /completed/.test(item.event_type)));
@@ -39,6 +52,11 @@ test('completed booking notifications reach their customer through the real gate
   assert.equal(failedDelivery.delivery_status, 'dead_letter');
   assert.equal(failedDelivery.delivery_error, 'unsupported_outbox_channel');
   assert.equal(failedDelivery.status, 'unread', 'external dispatch does not mark the in-app notice read');
+  const globalSweep = await runOrderNotificationSweep(ctx.db);
+  assert.equal(globalSweep.ok, true, JSON.stringify(globalSweep));
+  assert.equal(globalSweep.canonicalOrders.scanned, 2, 'cron retains global generation');
+  assert.ok(ctx.sqlite.prepare('SELECT COUNT(*) count FROM order_notifications WHERE booking_id=?').get(other.bookingId).count > otherBefore);
+  await assert.rejects(runOrderNotificationSweep(ctx.db, {customerId:'  '}), /scope cannot be empty/);
   const notificationId = items[0].id;
   assert.equal((await call('POST', customerCookie, {customerId, notificationId, action:'mark_read'})).status, 200);
   const stranger = await sessionCookie(ctx.db, 'customer', 'CUST-STRANGER', 'customer:CUST-STRANGER');
