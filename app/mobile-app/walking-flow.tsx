@@ -144,7 +144,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
         <i>✓</i>
         <small>CANONICAL BOOKING · {booking.bookingId}</small>
         <h3>{pet?.name ?? "Your dog"}&apos;s walks are booked.</h3>
-        <p style={{ margin: "4px 0 0", fontSize: 14 }}>{quote ? `${quote.packageName} · ${quote.walkCount} walk${quote.walkCount === 1 ? "" : "s"} · ${money(quote.perWalkAmount)} after each completed walk · ${money(0)} due today` : "Pay after each completed walk."}</p>
+        <p style={{ margin: "4px 0 0", fontSize: 14 }}>{`${booking.packageName} · ${booking.sessions.length} walk${booking.sessions.length === 1 ? "" : "s"} · ${booking.perWalkAmount===null?"Per-walk price unavailable":`${money(booking.perWalkAmount)} after each completed walk`} · ${money(booking.amountDueNow)} due today · ${money(booking.totalAmount)} total`}</p>
       </article>
       <span className={styles.label}>Your walker</span>
       <article className={styles.walker}>

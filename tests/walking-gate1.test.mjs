@@ -318,9 +318,10 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
     assert.deepEqual(rows[0].ownerCare,care,'customer and assigned provider read the persisted instructions');
     assert.deepEqual(rows[0].pets.map(pet=>pet.name),['Bruno'],'only the dog attached to the booking reaches the handoff');
   }
-  const replay=await post({ownerCare:{...care,instructions:'Changed after first commit'},idempotencyKey:'walking-care-replay'});
+  const replay=await post({totalAmount:quote.totalAmount+1000,ownerCare:{...care,instructions:'Changed after first commit'},idempotencyKey:'walking-care-replay'});
   assert.equal(replay.status,200);
   const replayed=(await replay.json()).data;
+  assert.equal(replayed.totalAmount,quote.totalAmount,"replay keeps the booked price, not the new submitted amount");
   assert.deepEqual({...replayed,duplicatePrevented:false},bundle,'retry returns the same complete client contract as initial creation');
   for(const table of ['canonical_bookings','provider_work_orders','booking_payments','walking_sessions']) assert.equal(Number((await db.prepare(`SELECT COUNT(*) n FROM ${table}`).first()).n),1,`${table} is not duplicated by retry`);
   const unchanged=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
