@@ -93,6 +93,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
   await page.getByLabel("Pincode",{exact:true}).fill("560038");
   await page.getByRole("button",{name:"Verify map",exact:true}).click();
+  await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();
   await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
 
   // Separate project slots while exercising the dates actually offered by the customer UI.
@@ -131,4 +132,42 @@ test("customer can select next month when grooming opens on the last evening of 
  const lastDate=page.getByRole("button",{name:"Fri, 30 Oct",exact:true});
  await lastDate.click();await expect(lastDate).toHaveAttribute("aria-pressed","true");
  await expect(tomorrow).toHaveAttribute("aria-pressed","false");
+});
+
+
+test("address choice: customer can recover from a wrong map match and editing clears verification",async({page})=>{
+ await sandboxLogin(page);await ensureCustomerPet(page);
+ await page.goto("/mobile-app");
+ await serviceCard(page,"Grooming").getByRole("button",{name:/book now/i}).click();
+ await page.getByRole("button",{name:/Choose a package/i}).click();
+ await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
+ // Controlled external Maps responses exercise selection/recovery; this case does not certify Google.
+ const resolved:string[]=[];
+ await page.route("**/api/address-autocomplete?*",async route=>{
+  const query=new URL(route.request().url()).searchParams;
+  if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[
+   {placeId:"area",mainText:"Indiranagar",secondaryText:"Bengaluru",fullText:"Indiranagar, Bengaluru"},
+   {placeId:"doorstep",mainText:"42 Double Road",secondaryText:"Bengaluru 560038",fullText:"42 Double Road, Indiranagar, Bengaluru 560038"}
+  ]}}});
+  resolved.push(query.get("placeId")||"");
+  await route.fulfill({json:{data:{status:"configured",address:query.get("placeId")==="doorstep"?"42 Double Road, Indiranagar, Bengaluru 560038":"Indiranagar, Bengaluru",latitude:12.978,longitude:77.641}}});
+ });
+ await page.getByLabel("Complete doorstep address",{exact:true}).fill("42 Double Road, Indiranagar, Bengaluru");
+ await page.getByLabel("Pincode",{exact:true}).fill("560038");
+ await page.getByRole("button",{name:"Verify map",exact:true}).click();
+ const matches=page.getByRole("region",{name:"Matching map addresses",exact:true});
+ await expect(matches.getByRole("button")).toHaveCount(2);
+ expect(resolved).toEqual([]);
+ await matches.getByRole("button",{name:"Indiranagar, Bengaluru",exact:true}).click();
+ await expect(page.getByRole("alert")).toContainText("Choose another match");
+ await expect(page.getByRole("button",{name:"Verify service address",exact:true})).toBeDisabled();
+ await page.screenshot({path:test.info().outputPath("customer-address-choice.png"),fullPage:true});
+ await matches.getByRole("button",{name:"42 Double Road, Indiranagar, Bengaluru 560038",exact:true}).click();
+ await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ expect(resolved).toEqual(["area","doorstep"]);
+ await expect(page.getByRole("button",{name:"Review booking",exact:true})).toBeEnabled();
+ await page.getByLabel("Pincode",{exact:true}).fill("560034");
+ await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
+ await expect(page.getByRole("button",{name:"Verify service address",exact:true})).toBeDisabled();
+ await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
 });
