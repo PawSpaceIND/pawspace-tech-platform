@@ -155,8 +155,8 @@ for(const outcome of ["full_time","commission","cancel","conflict","incomplete"]
  });
  await page.goto("/team/scheduling");await page.getByRole("button",{name:"Manage request",exact:true}).click();
  const form=page.getByRole("form",{name:"Manage request WAITING-GROUP"});
- if(outcome==="cancel")await form.getByLabel("Action",{exact:true}).selectOption("cancel");
- else await form.getByLabel("Recommended provider",{exact:true}).selectOption("WAITING-PROVIDER");
+ if(outcome==="cancel")await form.getByRole("combobox",{name:"Action",exact:true}).selectOption("cancel");
+ else await form.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption("WAITING-PROVIDER");
  const submit=form.getByRole("button",{name:outcome==="cancel"?"Cancel request":"Assign provider",exact:true});await expect(submit).toBeDisabled();
  await form.getByLabel("Reason",{exact:true}).fill("Reviewed the customer request");
  if(outcome==="full_time")await page.screenshot({path:test.info().outputPath("employee-assignment-form.png"),fullPage:true});

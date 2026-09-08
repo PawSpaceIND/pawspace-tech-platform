@@ -69,7 +69,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       await page.getByLabel("Day (IST)",{exact:true}).fill(start.toISOString().slice(0,10));
       const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
       await expect(waiting).toBeVisible();await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
-      await waiting.getByLabel("Recommended provider",{exact:true}).selectOption(PROVIDER_ID);
+      await waiting.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption(PROVIDER_ID);
       await waiting.getByLabel("Reason",{exact:true}).fill("Customer requested this verified provider");
       await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
       await waiting.getByRole("button",{name:"Assign provider",exact:true}).click();
