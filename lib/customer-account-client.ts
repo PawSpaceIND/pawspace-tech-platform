@@ -21,9 +21,9 @@ async function payload<T>(response: Response, fallback: string): Promise<T> {
 
 /** The customer identity is resolved server-side from the platform session (with ownership checks);
  *  customerId is passed only as an explicit hint for signed-in components. */
-export async function loadCustomerAccount(customerId?: string) {
+export async function loadCustomerAccount(customerId?: string, options?: {signal?: AbortSignal}) {
   const query = customerId ? `?customerId=${encodeURIComponent(customerId)}` : "";
-  const response = await fetch(`/api/customer-account${query}`, { cache: "no-store" });
+  const response = await fetch(`/api/customer-account${query}`, { cache: "no-store", ...(options?.signal ? {signal:options.signal} : {}) });
   return payload<CustomerAccountRecord>(response, "Unable to load your account");
 }
 
