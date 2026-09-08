@@ -4,7 +4,7 @@ import type {SittingCarePlan} from '../../lib/sitting-lifecycle';
 import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation,type SittingCustomerView} from '../../lib/sitting-customer-view';
 const fields=[['feeding','Food and water routine'],['medication','Medication instructions from your vet'],['emergencyContact','Emergency contact'],['vet','Vet contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const;
 const label=(text:string)=>text.replaceAll('_',' ');
-const when=(value:string|number)=>{const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('en-IN'):'Time unavailable';};
+const when=(value:string|number)=>{const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',timeZoneName:'short'}):'Time unavailable';};
 export default function SittingCustomerPanel({bookingId,children,initialCarePlan,initialError}:{bookingId:string;initialCarePlan?:SittingCarePlan;initialError?:string;children?:(booking:SittingCustomerView)=>ReactNode}){
  const[data,setData]=useState<SittingCustomerView|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(initialError||''),[message,setMessage]=useState(''),[plan,setPlan]=useState<SittingCarePlan>({}),[reason,setReason]=useState(''),[busy,setBusy]=useState(false);
  const readVersion=useRef(0);
