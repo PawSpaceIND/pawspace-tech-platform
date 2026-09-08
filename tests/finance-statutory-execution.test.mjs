@@ -395,7 +395,7 @@ test("invoice replay preserves immutable tax-ledger row identity and repeated se
   sqlite.prepare("INSERT INTO finance_document_series (id,entity_id,document_type,prefix,next_number,padding,policy_id,status,updated_at) VALUES ('series_invoice',?,'invoice','TEST-INV-',1,4,'policy_test','active',?)")
     .run(ENTITY, now);
 
-  const request = { action: "issue_invoice", entityId: ENTITY, customerId: "customer_test", sourceType: "booking", sourceId: "booking_test", sourceEventKey: "invoice-event-test", issueDate: "2026-07-15", currency: "INR", reason: "T4 immutable invoice issue", lines: [
+  const request = { action: "issue_invoice", entityId: ENTITY, customerId: "customer_test", sourceType: "booking", sourceId: "booking_test", sourceEventKey: "invoice-event-test", issueDate: "2026-07-15", currency: "INR", serviceState: "29", reason: "T4 immutable invoice issue", lines: [
     { lineKey: "line-a", description: "Configured test line A", serviceCode: "grooming", taxableAmount: 1000 },
     { lineKey: "line-b", description: "Configured test line B", serviceCode: "grooming", taxableAmount: 500 },
   ] };
