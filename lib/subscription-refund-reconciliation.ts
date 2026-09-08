@@ -20,6 +20,8 @@ export async function processSubscriptionRefundEvent(db: Db, payload: Row, event
   if (t(payload.event) !== "refund.processed") return { handled: false };
   const refund = entity(payload, "refund"), refundId = t(refund.id), paymentId = t(refund.payment_id), amount = n(refund.amount);
   if (!refundId || !paymentId || !Number.isSafeInteger(amount) || amount <= 0) return { handled: false };
+  const schema = await db.prepare("SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name IN ('subscription_refund_cases','subscription_billing_cycles','subscription_billing_contracts')").first<Row>();
+  if (n(schema?.count) !== 3) return { handled: false };
   await db.prepare("CREATE TABLE IF NOT EXISTS subscription_provider_refunds (id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,gateway_refund_id TEXT NOT NULL UNIQUE,provider_event_id TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL,kind TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
   const refundCase = await db.prepare("SELECT r.*,cy.finance_invoice_id,c.source_booking_id FROM subscription_refund_cases r JOIN subscription_billing_cycles cy ON cy.id=r.cycle_id JOIN subscription_billing_contracts c ON c.id=r.contract_id WHERE r.gateway_refund_id=?").bind(refundId).first<Row>();
   let cycle: Row | null, kind = "maker_checker";
