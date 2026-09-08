@@ -293,9 +293,11 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
   const assignment=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
   assert.deepEqual(JSON.parse(assignment.assignment_json).ownerCare,care);
   const lifecycle=await import('../lib/walking-lifecycle.ts');
+  sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,created_at,updated_at) VALUES (?,?,?,'dog',?,?)").run('UNBOOKED-DOG',CUSTOMER,'Luna',Date.now(),Date.now());
   for (const scope of [{customerId:CUSTOMER},{providerId:'walker_dev'}]) {
     const rows=await lifecycle.listWalkingBookings(db,{...scope,bookingId:bundle.bookingId});
     assert.deepEqual(rows[0].ownerCare,care,'customer and assigned provider read the persisted instructions');
+    assert.deepEqual(rows[0].pets.map(pet=>pet.name),['Bruno'],'only the dog attached to the booking reaches the handoff');
   }
   const replay=await post({ownerCare:{...care,instructions:'Changed after first commit'},idempotencyKey:'walking-care-replay'});
   assert.equal(replay.status,200);
