@@ -141,3 +141,28 @@ test("waiting requests remain visible when no provider holds a reservation",asyn
  await expect(page.getByText(/Nothing scheduled for/)).toHaveCount(0);
  await expect(waiting.getByText(/no confirmed provider assignment/)).toBeVisible();
 });
+
+for(const outcome of ["full_time","commission","cancel","conflict","incomplete"])test(`staff manages a waiting request with an honest ${outcome} outcome`,async({page})=>{
+ const revision="a".repeat(64);let submitted:Record<string,unknown>|undefined;
+ await page.route("**/api/uat-scheduling**",async route=>{
+  if(route.request().method()==="POST"){
+   submitted=route.request().postDataJSON();
+   const data=outcome==="cancel"?{groupId:"WAITING-GROUP",status:"cancelled"}:outcome==="incomplete"?{groupId:"WAITING-GROUP",status:"assigned"}:{groupId:"WAITING-GROUP",status:"assigned",provider:{id:"WAITING-PROVIDER",name:"Available groomer",model:outcome},offer:outcome==="commission"?{expiresAt:Date.now()+180000}:null};
+   await route.fulfill({status:outcome==="conflict"?409:200,contentType:"application/json",body:JSON.stringify(outcome==="conflict"?{error:"This request changed since you opened it."}:{data})});return;
+  }
+  const date=new URL(route.request().url()).searchParams.get("date");
+  await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:{date,providers:[],total:0,pendingRequests:[{groupId:"WAITING-GROUP",status:"awaiting_admin",customerId:"WAITING-CUSTOMER",serviceCode:"grooming",zoneId:"blr-east",petCount:1,revision,candidates:[{providerId:"WAITING-PROVIDER",providerName:"Available groomer",providerModel:outcome==="commission"?"commission":"full_time"}],occurrences:[{start:`${date}T05:30:00.000Z`,end:`${date}T07:30:00.000Z`,occurrenceNumber:1}]}]}})});
+ });
+ await page.goto("/team/scheduling");await page.getByRole("button",{name:"Manage request",exact:true}).click();
+ const form=page.getByRole("form",{name:"Manage request WAITING-GROUP"});
+ if(outcome==="cancel")await form.getByLabel("Action",{exact:true}).selectOption("cancel");
+ else await form.getByLabel("Recommended provider",{exact:true}).selectOption("WAITING-PROVIDER");
+ const submit=form.getByRole("button",{name:outcome==="cancel"?"Cancel request":"Assign provider",exact:true});await expect(submit).toBeDisabled();
+ await form.getByLabel("Reason",{exact:true}).fill("Reviewed the customer request");
+ if(outcome==="full_time")await page.screenshot({path:test.info().outputPath("employee-assignment-form.png"),fullPage:true});
+ await submit.click();
+ expect(submitted).toEqual({groupId:"WAITING-GROUP",expectedRevision:revision,action:outcome==="cancel"?"cancel":"assign",...(outcome==="cancel"?{}:{providerId:"WAITING-PROVIDER"}),reason:"Reviewed the customer request"});
+ if(outcome==="conflict"||outcome==="incomplete"){
+  await expect(form.getByLabel("Reason",{exact:true})).toHaveValue("Reviewed the customer request");await expect(submit).toBeDisabled();await expect(page.getByRole("alert")).toBeVisible();await expect(page.getByRole("status")).toHaveCount(0);await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Manage request",exact:true})).toBeVisible();
+ }else await expect(page.getByRole("status")).toContainText(outcome==="cancel"?"Request WAITING-GROUP cancelled.":outcome==="commission"?"Partner acceptance and customer booking confirmation are still pending.":"Customer booking confirmation is still pending.");
+});

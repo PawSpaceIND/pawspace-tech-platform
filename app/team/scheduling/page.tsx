@@ -4,11 +4,12 @@ import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 import RecoveryControl from "./recovery-control";
+import AssignmentControl from "./assignment-control";
 import {apiSend} from "../../../lib/api-fetch";
 
 type Reservation={id:string;groupId:string;bookingId?:string|null;bookingStatus?:string|null;canRecover?:boolean;canRetryNotifications?:boolean;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
 type ProviderColumn={providerId:string;providerName:string;providerModel:string;reservations:Reservation[]};
-type PendingRequest={groupId:string;status:"awaiting_admin";customerId:string;serviceCode:string;zoneId:string;petCount:number;occurrences:{start:string;end:string;occurrenceNumber:number}[]};
+type PendingRequest={revision?:string;candidates?:{providerId:string;providerName:string;providerModel:string}[];groupId:string;status:"awaiting_admin";customerId:string;serviceCode:string;zoneId:string;petCount:number;occurrences:{start:string;end:string;occurrenceNumber:number}[]};
 type Board={pendingRequests?:PendingRequest[];date:string;providers:ProviderColumn[];total:number};
 
 const istToday=()=>new Date(Date.now()+330*60_000).toISOString().slice(0,10);
@@ -30,7 +31,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
   const fetchBoard=useCallback(async(day:string)=>{
     const data=await apiSend<Board>(`/api/uat-scheduling?date=${encodeURIComponent(day)}`,{cache:"no-store"});
     if(data.date!==day||!Array.isArray(data.providers)||typeof data.total!=="number"||data.providers.some(column=>!column||typeof column.providerId!=="string"||!Array.isArray(column.reservations)))throw new Error("The scheduling response was incomplete. Refresh to try again.");
-    if(data.pendingRequests!==undefined&&(!Array.isArray(data.pendingRequests)||data.pendingRequests.some(row=>!row||typeof row.groupId!=="string"||row.status!=="awaiting_admin"||!Array.isArray(row.occurrences))))throw new Error("The waiting request list was incomplete. Refresh to try again.");
+    if(data.pendingRequests!==undefined&&(!Array.isArray(data.pendingRequests)||data.pendingRequests.some(row=>!row||typeof row.groupId!=="string"||row.status!=="awaiting_admin"||!Array.isArray(row.occurrences)||(row.revision!==undefined&&typeof row.revision!=="string")||(row.candidates!==undefined&&(!Array.isArray(row.candidates)||row.candidates.some(candidate=>!candidate||typeof candidate.providerId!=="string"||typeof candidate.providerName!=="string"||typeof candidate.providerModel!=="string"))))))throw new Error("The waiting request list was incomplete. Refresh to try again.");
     return data;
   },[]);
   useEffect(()=>{
@@ -89,6 +90,7 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
         <small>Customer {row.customerId} · {row.zoneId}</small>
         <small>Request {row.groupId}</small>
         {row.occurrences.map(occ=><small key={occ.occurrenceNumber}>Visit {occ.occurrenceNumber}: {new Date(occ.start).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})} {istTime(occ.start)}–{new Date(occ.end).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})} {istTime(occ.end)} IST</small>)}
+        {row.revision&&row.candidates&&<AssignmentControl groupId={row.groupId} revision={row.revision} candidates={row.candidates} disabled={Boolean(busyGroup)||loading} onBusy={busy=>setBusyGroup(busy?row.groupId:"")} onResult={text=>{setMessage(text);refresh();}} onRefresh={refresh}/>}
       </article>)}
     </section>}
 

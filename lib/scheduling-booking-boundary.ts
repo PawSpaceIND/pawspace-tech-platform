@@ -26,3 +26,9 @@ export async function mutateUnbookedSchedulingGroup(db:Db,groupId:string,stateme
     return results.slice(1,-1);
   }catch(error){await requireUnbookedSchedulingGroup(db,groupId);if(snapshot)await requirePendingSchedulingDecision(db,groupId,snapshot);throw error;}
 }
+
+/** Opaque revision binds a staff screen to the complete saved decision, including its request. */
+export async function schedulingDecisionRevision(row:{group_id:unknown;status:unknown;selected_provider_id?:unknown;updated_at:unknown;shortlist_json:unknown}){
+  const bytes=new TextEncoder().encode(JSON.stringify([row.group_id,row.status,row.selected_provider_id??null,row.updated_at,row.shortlist_json]));
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),byte=>byte.toString(16).padStart(2,"0")).join("");
+}
