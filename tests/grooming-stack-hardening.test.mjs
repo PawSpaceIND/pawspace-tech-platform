@@ -4,8 +4,6 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
-// Test-only resolve hook (same pattern as tests/customer-offers.test.mjs) so real libs with
-// extensionless relative imports execute directly under --experimental-strip-types.
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -37,9 +35,6 @@ const partnerJobsUi = read("app/partner-app/canonical-grooming-jobs.tsx");
 const routeCardUi = read("app/partner-app/grooming-route-card.tsx");
 const recoveryRoute = read("app/api/provider-assignment-recovery/route.ts");
 
-// Statement-level legacy tests execute extracted SQL outside the canonical lifecycle transaction.
-// Replace only the interpolated lifecycle predicate in that isolated harness; provider-lifecycle-d1
-// separately executes and proves the real guard, assertion and rollback contract end to end.
 const statementsOf = (source) =>
   [...source.matchAll(/\.prepare\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)].map((m) => m[2].replace(/\\(["'`\\])/g, "$1").replaceAll("${ctx.guardSql}", "1=1"));
 const findStatement = (source, marker) => {
@@ -274,13 +269,13 @@ test("every partner-app grooming button maps to a live API action", () => {
   assert.match(groomingRouteApi, /export async function GET/);
   assert.match(groomingRouteApi, /export async function POST/);
   assert.match(groomingRouteApi, /requireProviderOwnership/);
-  assert.match(groomingRouteApi, /activeTravelStates/);
+  assert.match(groomingRouteApi, /GPS_CAPTURE_STATES/);
 });
 
 test("grooming stack permission mapping stays enforced in-route", () => {
   assert.match(lifecycleRoute, /if\(input\.action==="mark_paid"\)requirePermission\(actorIdentity,"payments\.manage"\);else requirePermission\(actorIdentity,"bookings\.view"\)/);
   assert.match(lifecycleRoute, /requireProviderOwnership\(db,actorIdentity,String\(work\.provider_id\)\)/, "providers can only act on their own work orders");
-  assert.match(partnerJobsRoute, /requireProviderOwnership\(actor\?.|requireProviderOwnership\(db,actor,providerId\)/, "partners can only list their own jobs");
+  assert.match(partnerJobsRoute, /requireProviderOwnership\(actor\?\.|requireProviderOwnership\(db,actor,providerId\)/, "partners can only list their own jobs");
   assert.match(changeRoute, /requirePermission\(actor,"scheduling\.book"\)/);
   assert.match(changeRoute, /requireCustomerOwnership\(db,actor,input\.customerId\)/, "customers can only change their own bookings");
   assert.match(walletRoute, /customerActions=new Set<SubscriptionWalletAction>\(\["reserve","pause","resume"\]\)/);

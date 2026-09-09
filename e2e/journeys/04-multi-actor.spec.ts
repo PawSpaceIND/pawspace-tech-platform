@@ -64,11 +64,24 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     let scheduleBody=await expectOk(scheduled,"customer slot reservation");
     if(assignmentMode==="admin_choice"){
       expect(scheduleBody.data.status).toBe("awaiting_admin");
+      const day=start.toISOString().slice(0,10);
+      const boardApi=await expectOk(await admin.get(`/api/uat-scheduling?date=${encodeURIComponent(day)}`),"admin waiting-request board API");
+      expect(boardApi.data.pendingRequests.some((row:{groupId:string})=>row.groupId===groupId)).toBe(true);
       await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL});
       await page.goto("/team/scheduling");
-      await page.getByLabel("Day (IST)",{exact:true}).fill(start.toISOString().slice(0,10));
+      // Wait for client hydration before changing the controlled date input. On mobile Chromium the
+      // server-rendered input can accept a Playwright fill before React attaches onChange, then hydration
+      // restores today's value and the browser journey observes the wrong day even though the API is sound.
+      const refresh=page.getByRole("button",{name:/Refresh|Refreshing/});
+      await expect(refresh).toBeEnabled({timeout:15000});
+      const dayInput=page.getByLabel("Day (IST)",{exact:true});
+      await dayInput.fill(day);
+      await expect(dayInput).toHaveValue(day);
       const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
-      await expect(waiting).toBeVisible();await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
+      await expect(waiting).toBeVisible({timeout:15000});
+      await expect(refresh).toBeEnabled({timeout:15000});
+      await refresh.click();
+      await expect(waiting).toBeVisible({timeout:15000});await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
       await waiting.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption(PROVIDER_ID);
       await waiting.getByRole("textbox",{name:"Reason",exact:true}).fill("Customer requested this verified provider");
       await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
@@ -191,9 +204,21 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(adminBody?.data?.booking?.id).toBe(bookingId);
     expect(adminBody?.data?.booking?.status).toBe("completed");
     expect(adminBody?.data?.invoice?.status).toBe("issued");
-    expect(adminBody?.data?.taxReadiness?.tax_rule_status).toBe("resolved");
+    expect(adminBody?.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
     expect(adminBody?.data?.payoutReadiness?.status).toBe("accrued");
-    expect(String(adminBody?.data?.payoutReadiness?.reason || "")).toMatch(/ledger balanced/i);
+    expect(Number(adminBody?.data?.payoutReadiness?.payoutAmount)).toBeGreaterThan(0);
+
+    // Completion only returns 200 after service-completion-finance proves the journal balances.
+    // Verify the separately authorized Finance surface also observes the captured/invoiced transaction,
+    // rather than re-exposing raw finance rows on the provider-safe lifecycle response.
+    const financeBody=await expectOk(await finance.get("/api/grooming-finance"),"finance completed transaction view");
+    const financeItem=financeBody.items.find((item:{booking_id:string})=>item.booking_id===bookingId);
+    expect(financeItem).toBeTruthy();
+    expect(financeItem.invoice_status).toBe("issued");
+    expect(Number(financeItem.gross_amount)).toBe(1899);
+    expect(Number(financeItem.captured_amount)).toBe(1899);
+    expect(financeItem.reconciliation_status).toBe("matched");
+    expect(Number(financeItem.open_reconciliation_exceptions)).toBe(0);
 
     // Exchange a real local sandbox OTP for a customer session; provider/admin headers are removed.
     await page.setExtraHTTPHeaders({});await page.context().clearCookies();await page.goto("/mobile-app");
@@ -205,8 +230,8 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     // Read through the actual browser session, without manually copying or weakening cookies.
     const ownAccount=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(ownAccount.status).toBe(200);expect(ownAccount.body.data.customerId).toBe(CUSTOMER_ID);
     await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
-    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoice_number));
-    const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(adminBody.data.invoice.gross_amount);expect(summary.body.data.invoice.tax).toBe(adminBody.data.invoice.tax_amount);expect(summary.body.data).not.toHaveProperty("payoutReadiness");
+    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoiceNumber));
+    const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(Number(financeItem.gross_amount));expect(summary.body.data.invoice.tax).toBe(Number(financeItem.tax_amount));expect(summary.body.data).not.toHaveProperty("payoutReadiness");
     await page.reload();await expect(care).toContainText("Persona E2E completed safely");await page.screenshot({path:test.info().outputPath(`customer-completed-care-${assignmentMode}.png`),fullPage:true});
     await page.goto("/mobile-app");
     await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();

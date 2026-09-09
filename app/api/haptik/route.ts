@@ -3,15 +3,23 @@ import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHapti
 import{recordBotCallDisposition}from"../../../lib/bot-call-disposition";
 import{bridgeHaptikVoiceOutcomeToWhatsApp,persistHaptikVoiceOptOut}from"../../../lib/haptik-whatsapp-journey-bridge";
 import{classifyCrmInquiry,queueForCrmInquiry,recommendGroomingPackage}from"../../../lib/crm-inquiry-classification";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const encoder=new TextEncoder();
+const MAX_HAPTIK_BYTES=65_536;
 async function runtime(){const {env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 async function database(){const {env}=await import("cloudflare:workers");return (env as unknown as {DB:D1Database}).DB;}
 function safeEqual(expected:string,provided:string){if(expected.length!==provided.length)return false;let diff=0;for(let i=0;i<expected.length;i++)diff|=expected.charCodeAt(i)^provided.charCodeAt(i);return diff===0;}
 async function assertHaptik(env:Record<string,unknown>,request:Request,rawBody:string){const secret=String(env.HAPTIK_API_KEY||"").trim();if(!secret)throw new Response(JSON.stringify({error:"Haptik integration is not connected (HAPTIK_API_KEY not configured)"}),{status:503});const provided=String(request.headers.get("x-hub-signature")||"").trim().toLowerCase();if(!/^sha1=[a-f0-9]{40}$/.test(provided))throw new Response(JSON.stringify({error:"Invalid Haptik credentials"}),{status:401});const key=await crypto.subtle.importKey("raw",encoder.encode(secret),{name:"HMAC",hash:"SHA-1"},false,["sign"]);const bytes=new Uint8Array(await crypto.subtle.sign("HMAC",key,encoder.encode(rawBody)));const expected=`sha1=${Array.from(bytes).map(byte=>byte.toString(16).padStart(2,"0")).join("")}`;if(!safeEqual(expected,provided))throw new Response(JSON.stringify({error:"Invalid Haptik credentials"}),{status:401});}
 
-export async function POST(request:Request){try{const env=await runtime();const rawBody=await request.text();await assertHaptik(env,request,rawBody);const db=await database();let body:Record<string,unknown>;try{body=JSON.parse(rawBody)as Record<string,unknown>}catch{return json({error:"Malformed Haptik request body"},400)}const action=String(body.action||"").trim(),actorId="haptik_voice";
+export async function POST(request:Request){try{const env=await runtime();
+ let rawBody:string;
+ try{rawBody=await readBoundedRequestText(request,MAX_HAPTIK_BYTES);}catch(error){
+  if(error instanceof VoiceFetchRefused)return json({error:"Haptik request body is too large"},413);
+  throw error;
+ }
+ await assertHaptik(env,request,rawBody);const db=await database();let body:Record<string,unknown>;try{body=JSON.parse(rawBody)as Record<string,unknown>}catch{return json({error:"Malformed Haptik request body"},400)}const action=String(body.action||"").trim(),actorId="haptik_voice";
  if(action==="classify_inquiry"){const category=classifyCrmInquiry({service:body.service,message:body.message});return json({data:{category,handoffQueue:queueForCrmInquiry(category)}});}
  if(action==="recommend_grooming_package")return json({data:recommendGroomingPackage({species:body.species,size:body.size,coat:body.coat,lastGroomingDays:body.lastGroomingDays,shedding:body.shedding,skinSensitivity:body.skinSensitivity,matting:body.matting,requestedService:body.requestedService})});
  if(action==="capture_lead"){const category=classifyCrmInquiry({service:body.service,message:body.message});return json({data:{...(await captureHaptikLead(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,service:category,city:body.city as string,source:body.source as string,qualification:{...(body.qualification as Record<string,unknown>||{}),inquiryCategory:category,handoffQueue:queueForCrmInquiry(category)},actorId})),inquiryCategory:category,handoffQueue:queueForCrmInquiry(category)}},201);}

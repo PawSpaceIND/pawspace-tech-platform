@@ -22,11 +22,11 @@ export function cityIdFromZoneId(zoneId: string): string {
   return cityId;
 }
 
-export async function resolveServiceCoverage(pincodeInput: string): Promise<ResolvedServiceCoverage> {
+export async function resolveServiceCoverage(pincodeInput: string, signal?: AbortSignal): Promise<ResolvedServiceCoverage> {
   const pincode = pincodeInput.replace(/\D/g, "").slice(0, 6);
   if (pincode.length !== 6) throw new Error("Enter a valid six-digit service PIN code.");
 
-  const response = await fetch(`/api/service-zone?pincode=${encodeURIComponent(pincode)}`, { cache: "no-store" });
+  const response = await fetch(`/api/service-zone?pincode=${encodeURIComponent(pincode)}`, { cache: "no-store", signal });
   const body = await response.json() as {
     data?: {
       zone?: { zoneId?: string; zoneName?: string; description?: string; color?: string; serviceAvailable?: boolean };
