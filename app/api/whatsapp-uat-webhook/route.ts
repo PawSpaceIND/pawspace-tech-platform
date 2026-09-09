@@ -2,12 +2,14 @@ import{authError,database,type AuthenticatedActor}from"../../../lib/server-auth"
 import{orchestrateAiTurn}from"../../../lib/ai-conversation-orchestrator";
 import{recordWhatsAppUatDelivery,recordWhatsAppUatInbound,whatsappUatProviders,type WhatsAppUatProvider}from"../../../lib/whatsapp-uat-adapter";
 import{captureInboundWebhook,runInboundWebhookAttempt}from"../../../lib/gateway-inbound-queue";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 type Payload=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 const deliveryEvents=new Set(["accepted","sent","delivered","read","failed"]);
 const systemActor:AuthenticatedActor={email:"whatsapp-uat@pawspace.system",name:"WhatsApp UAT Adapter",roleCode:"system_adapter",permissions:["communications.message","customers.manage"],developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:"whatsapp-uat@pawspace.system"};
 const text=(value:unknown)=>String(value??"").trim();
+const MAX_WEBHOOK_BYTES=262_144;
 function hex(bytes:ArrayBuffer){return Array.from(new Uint8Array(bytes)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 function safeEqual(a:string,b:string){if(a.length!==b.length)return false;let result=0;for(let i=0;i<a.length;i++)result|=a.charCodeAt(i)^b.charCodeAt(i);return result===0;}
 async function hmac(secret:string,body:string){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);return hex(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(body)));}
@@ -34,7 +36,12 @@ export async function POST(request:Request){
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>,environment=text(runtime.PAWSPACE_WHATSAPP_ENV||"uat").toLowerCase();if(!["uat","sandbox"].includes(environment))return json({error:"WhatsApp Gate 5 webhook is locked to UAT/sandbox until production launch approval"},503);
   const secret=text(runtime.PAWSPACE_WHATSAPP_UAT_WEBHOOK_SECRET);if(!secret)return json({error:"WhatsApp UAT webhook secret is not configured"},503);
   const signature=text(request.headers.get("x-pawspace-signature")).toLowerCase(),eventId=text(request.headers.get("x-pawspace-event-id")),provider=text(request.headers.get("x-pawspace-whatsapp-provider")||"sandbox_simulator") as WhatsAppUatProvider;if(!signature||!eventId)return json({error:"WhatsApp UAT signature and event ID are required"},400);if(!whatsappUatProviders.includes(provider))return json({error:"Unsupported WhatsApp UAT provider"},400);
-  const raw=await request.text(),expected=await hmac(secret,raw);if(!safeEqual(expected,signature))return json({error:"Invalid WhatsApp UAT webhook signature"},401);let payload:Payload;try{payload=JSON.parse(raw)as Payload;}catch{return json({error:"Invalid WhatsApp UAT webhook JSON"},400);}
+  let raw:string;
+  try{raw=await readBoundedRequestText(request,MAX_WEBHOOK_BYTES);}catch(error){
+    if(error instanceof VoiceFetchRefused)return json({error:"WhatsApp UAT webhook payload is too large"},413);
+    throw error;
+  }
+  const expected=await hmac(secret,raw);if(!safeEqual(expected,signature))return json({error:"Invalid WhatsApp UAT webhook signature"},401);let payload:Payload;try{payload=JSON.parse(raw)as Payload;}catch{return json({error:"Invalid WhatsApp UAT webhook JSON"},400);}
   const eventType=text(payload.type)||"inbound_message",messageId=eventType==="delivery_event"?text(payload.messageId)||null:text(payload.providerMessageId)||null,db=await database();if(eventType==="delivery_event"&&!messageId)return json({error:"Canonical messageId is required"},400);
   const captured=await captureInboundWebhook(db,{provider,routeKey:"whatsapp-uat-webhook",environment:environment==="sandbox"?"sandbox":"uat",eventId,messageId,rawBody:raw,headers:request.headers});const status=text(captured.row.status);if(status==="PROCESSED")return json({ok:true,duplicatePrevented:true,status,environment:"uat",externalDelivery:false});if(status==="DEAD_LETTER")return json({ok:false,duplicatePrevented:true,status,environment:"uat",externalDelivery:false},503);
   const attempt=await runInboundWebhookAttempt(db,{queueId:text(captured.row.id),workerId:`whatsapp-uat:${crypto.randomUUID()}`,handler:async({rawBody})=>processUat(db,provider,eventId,rawBody)});if(!attempt.claimed)return json({ok:true,queued:true,duplicatePrevented:true,status,environment:"uat",externalDelivery:false},202);if(!attempt.ok){const code=attempt.error instanceof Response?attempt.error.status:503,error=await publicAttemptError(attempt.error);return json({ok:false,queued:true,status:attempt.failure.status,error,environment:"uat",externalDelivery:false},code>=400&&code<500?code:503);}

@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
 
-const LEASE_MS = 15 * 60_000;
+const LEASE_MS = 5 * 60_000;
 
 async function leaseGovernance() {
   return import("../lib/scheduling-reservation-leases.ts");
