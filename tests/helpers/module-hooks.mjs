@@ -170,7 +170,21 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
             // resolves only with its extension. Reached ONLY after the real resolution has already failed,
             // so it can never change an import that works. Absolute paths and file: URLs are handled above.
             if (!pathname.startsWith(".") && !isAbsolute(pathname) && !pathname.startsWith("file:") && !pathname.endsWith(".js")) {
-              return nextResolve(`${pathname}.js${suffix}`, context);
+              try {
+                return nextResolve(`${pathname}.js${suffix}`, context);
+              } catch {
+                /* Report the ORIGINAL failure, not the .js-suffixed retry.
+                 *
+                 * This fallback used to let its own retry throw, so a package that is simply NOT
+                 * INSTALLED surfaced as `Cannot find package '@capacitor/core.js'` - a specifier that
+                 * appears nowhere in the codebase. That reads exactly like an extension typo in the
+                 * source, and it was reported and escalated as one. The source said
+                 * `from "@capacitor/core"` all along; the missing `.js` was invented here.
+                 *
+                 * Re-throwing the original error names the real specifier, so the next person sees a
+                 * missing dependency for what it is. */
+                throw error;
+              }
             }
             throw error;
           }
