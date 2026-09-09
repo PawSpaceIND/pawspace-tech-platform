@@ -15,10 +15,6 @@ function makeD1(sqlite) {
       return { success: true, meta: { changes: Number(info.changes || 0) } };
     },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    // A read returns rows; anything else reports changes. Executed exactly once either way.
-    batchResult: async () => (/^\s*(?:select|with)\b/i.test(sql) || /\breturning\b/i.test(sql)
-      ? { success: true, results: sqlite.prepare(sql).all(...args), meta: { changes: 0 } }
-      : (() => { const info = sqlite.prepare(sql).run(...args); return { success: true, results: [], meta: { changes: Number(info.changes || 0) } }; })()),
   });
   const db = {
     beforeBatch: null,
@@ -29,9 +25,15 @@ function makeD1(sqlite) {
       try {
         const results = [];
         // Real D1 batch() returns a full D1Result per statement, so a SELECT inside a
-        // batch carries its rows in .results. Model that: run() alone reports only
-        // changes, which made batched reads look like they returned nothing.
-        for (const item of items) results.push(await item.batchResult());
+        // batch carries its rows in .results, which run() alone does not report.
+        // run() stays the call that executes each statement, so a test that swaps in
+        // its own run() to inject a failure still fires.
+        for (const item of items) {
+          const outcome = (await item.run()) ?? {};
+          const text = String(item._sql ?? "");
+          const reads = /^\s*(?:select|with)\b/i.test(text) || /\breturning\b/i.test(text);
+          results.push({ results: reads ? (await item.all()).results : [], ...outcome });
+        }
         sqlite.exec("COMMIT");
         return results;
       } catch (error) {

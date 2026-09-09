@@ -39,7 +39,16 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 //
 // All three sabotages leave the OLD regex assertions satisfied - the point being that the previous
 // versions could not have caught the regression the new ones do.
-const STATIC_FILE_BUDGET = 169;
+//
+// 169 -> 171: the unified staging merge restored 19 test files that rc1's consolidation merge had
+// deleted (they were never authored here, and their product code was restored alongside them).
+// Measured with this file's own detector: 168 static before the restoration, 3 of the 19 restored
+// files are source-text-only - handoff-ui-safety, professional-appearance and
+// training-customer-declarations - and 168 + 3 = 171, the number the ratchet now reports. This
+// raise is a merge accounting entry, NOT a licence to add static tests: origin/main measures
+// exactly 169, so the ratchet was at its floor before this and is at its floor again. Convert one
+// of those three and lower this number.
+const STATIC_FILE_BUDGET = 171;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
