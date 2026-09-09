@@ -338,7 +338,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const refundAlreadyCounted=Boolean(priorRefundFact||priorReconciledRefund);
     if(event.eventType==="refund.processed"&&alreadyProcessed&&refundAlreadyCounted){
       const posted=await db.prepare("SELECT group_key FROM collection_ledger_postings WHERE group_key=?").bind(`COLL-refund_completed-${event.gatewayRefundId??event.eventId}`).first<Row>().catch(()=>null);
-      if(["refunded","partially_refunded"].includes(String(payment.status))&&refundedCurrent>=expectedRefund&&posted){await finish("processed","Duplicate logical refund ignored");return{duplicate:false,status:"processed",ignored:true,reason:"refund_already_processed"};}
+      if(["refunded","partially_refunded"].includes(String(payment.status))&&refundedCurrent>=expectedRefund&&posted){await finish("processed","Duplicate logical refund ignored");return{duplicate:Boolean(existing),status:"processed",ignored:true,reason:"refund_already_processed"};}
     }
     if(event.eventType!=="refund.failed"&&Math.abs(amount-expectedRefund)>0.009){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_amount_mismatch",detail:{expected:expectedRefund,received:amount}});await finish("exception","Refund amount mismatch");return{duplicate:false,status:"exception",reason:"refund_amount_mismatch"};}
     if(event.eventType==="refund.created"&&!alreadyProcessed)await db.prepare("UPDATE booking_refund_cases SET status='processing',gateway_reference=?,updated_at=? WHERE id=?").bind(event.gatewayRefundId??null,now,refund.id).run();
@@ -372,7 +372,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
         ...(!priorRefundFact?[lifecycleStatement("refund_processed",{gateway:event.provider,eventId:event.eventId,gatewayRefundId:event.gatewayRefundId,amount})]:[]),
         finishStatement("processed"),
       ]);
-      return{duplicate:false,status:"processed",bookingId,paymentId,refundPosted:true};
+      return{duplicate:Boolean(existing),status:"processed",bookingId,paymentId,refundPosted:true};
     }
   }else{await upsert(gatewayCurrent||event.eventType,"ignored",capturedCurrent,refundedCurrent,varianceCurrent);}
   await finish("processed");return{duplicate:false,status:"processed",bookingId,paymentId};

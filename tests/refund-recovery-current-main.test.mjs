@@ -110,7 +110,7 @@ test("exact refund webhook retry repairs a ledger failure without recounting the
  await assert.rejects(()=>recon.processGatewayEvent(db,event),/injected refund ledger failure/);
  sqlite.exec("DROP TRIGGER fail_refund_posting");
  const retry=await recon.processGatewayEvent(db,event);
- assert.equal(retry.status,"processed");assert.ok(ledgerRow(sqlite),"same-event replay must restore the missing ledger posting");
+ assert.equal(retry.status,"processed");assert.equal(retry.duplicate,true);assert.ok(ledgerRow(sqlite),"same-event replay must restore the missing ledger posting");
  assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='refund_completed'").get().n,2);
 });
