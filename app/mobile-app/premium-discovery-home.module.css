@@ -61,12 +61,12 @@
 :global(html:not([data-paw-style="cartoon"])) .home .cards { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .card { border-radius: 16px; padding-bottom: 8px; box-shadow: none; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto { padding: 14px 6px; }
-:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto>img { display:block;position:static;width:72px;height:72px;object-fit:cover;border-radius:18px;margin:0 auto 8px; }
-:global(html:not([data-paw-style="cartoon"])) .serviceIcon { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto>img { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .serviceIcon { display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:var(--paw-raised);color:var(--paw-primary);font-size:24px;order:0;margin-bottom:6px; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto b { font-size:14px; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto small { display:block;font-size:12px;line-height:1.3; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .card>button>span { visibility:hidden; }
-:global(html:not([data-paw-style="cartoon"])) .artDisclosure { display:block;font-size:12px;line-height:1.5; }
+:global(html:not([data-paw-style="cartoon"])) .artDisclosure { display:none; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomePhoto { display:none; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div { max-width:none;padding:20px; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomeHero { background:var(--paw-raised);min-height:120px; }
@@ -74,6 +74,28 @@
 :global(html:not([data-paw-style="cartoon"])) .home .personalHero { flex-direction:row-reverse;min-height:96px;padding:16px; }
 :global(html:not([data-paw-style="cartoon"])) .home .personalHero h1 { font-size:24px; }
 :global(html:not([data-paw-style="cartoon"])) .home .petPortrait { width:64px;height:64px; }
-:global(html:not([data-paw-style="cartoon"])) .trustRow { order:4; }
+:global(html:not([data-paw-style="cartoon"])) .trustRow { order:0; }
 :global(html:not([data-paw-style="cartoon"])) .media { background:var(--paw-yellow); }
 @media(max-width:350px) { :global(html:not([data-paw-style="cartoon"])) .home .cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* Professional: compact care navigation, separate from the illustrated alternative. */
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero{min-height:0;background:var(--paw-surface);border-radius:16px}
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px}
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero h1{font-size:20px;line-height:1.25;margin:0}
+:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero button{flex-shrink:0;min-height:48px}
+:global(html:not([data-paw-style="cartoon"])) .home .top{gap:10px}
+:global(html:not([data-paw-style="cartoon"])) .home .brand small{display:none}
+:global(html:not([data-paw-style="cartoon"])) .home .search{border-radius:12px;min-height:48px}
+:global(html:not([data-paw-style="cartoon"])) .home .trustRow{border:0;background:transparent;padding:0;gap:8px}
+:global(html:not([data-paw-style="cartoon"])) .home .trustRow>span{flex-direction:row;justify-content:center;gap:5px}
+:global(html:not([data-paw-style="cartoon"])) .home .trustRow i{width:22px;height:22px;font-size:14px;background:none}
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto{padding:12px 6px 4px}
+:global(html:not([data-paw-style="cartoon"])) .home .cards .card{border-radius:14px;box-shadow:0 2px 8px #00000004}
+:global(html:not([data-paw-style="cartoon"])) .home .card:nth-child(3n+2) .serviceIcon{background:var(--paw-mint)}
+:global(html:not([data-paw-style="cartoon"])) .home .card:nth-child(3n) .serviceIcon{background:var(--paw-yellow)}
+:global(html:not([data-paw-style="cartoon"])) .home .media{padding:16px;gap:6px;background:linear-gradient(120deg,var(--paw-yellow),var(--paw-surface));border-radius:16px}
+:global(html:not([data-paw-style="cartoon"])) .home .media h2{font-size:20px;max-width:25ch}
+:global(html:not([data-paw-style="cartoon"])) .home .media p{font-size:14px;max-width:40ch}
+:global(html:not([data-paw-style="cartoon"])) .home .media nav{position:absolute;bottom:12px;right:12px;margin:0}
+:global(html:not([data-paw-style="cartoon"])) .home .media>button{margin-top:6px;max-width:calc(100% - 140px)}
+@media(max-width:370px){:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div{flex-wrap:wrap}:global(html:not([data-paw-style="cartoon"])) .home .media nav{position:static}:global(html:not([data-paw-style="cartoon"])) .home .media>button{max-width:100%}}

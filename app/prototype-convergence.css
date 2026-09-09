@@ -49,3 +49,5 @@ html[data-paw-mode="dark"]{--paw-danger:#ffabbc}
  .route-mobile-app main[data-theme] [class*="_screen"]>section{animation:paw-screen-enter .2s ease-out both}
  @keyframes paw-screen-enter{from{opacity:.7;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
 }
+html:not([data-paw-style="cartoon"]) .route-mobile-app main[data-theme] [class*="_phone"]{max-width:520px!important}
+html:not([data-paw-style="cartoon"]) .route-mobile-app main[data-theme] [class*="_phone"]>nav{width:min(100%,520px)!important}
