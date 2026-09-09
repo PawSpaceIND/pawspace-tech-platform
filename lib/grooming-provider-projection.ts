@@ -132,6 +132,7 @@ export function projectProviderLifecycleBundle(data: LifecycleBundle | null) {
       totalAmount: Number(b.total_amount || 0),
       currency: String(b.currency || "INR"),
       providerId: String(b.provider_id || ""),
+      provider_id: String(b.provider_id || ""),
       workOrderId: b.work_order_id ? String(b.work_order_id) : null,
       workOrderStatus,
       // snake_case aliases retained for existing journey tests / clients
