@@ -80,21 +80,11 @@ jobs:
         run: npm run build
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Run exact cancellation/refund E2E with governed seeded actors
+      - name: Run exact cancellation/refund E2E with hardened governed bootstrap
         shell: bash
         run: |
           set -euo pipefail
-          export PW_PORT=4173
-          bash scripts/e2e/serve.sh > /tmp/wrangler-e2e.log 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            if curl -fsS "http://127.0.0.1:${PW_PORT}/mobile-app" >/dev/null; then break; fi
-            sleep 1
-          done
-          curl -fsS "http://127.0.0.1:${PW_PORT}/mobile-app" >/dev/null
-          node scripts/e2e/seed-identities.mjs | tee remote-finance-seed.log
-          PW_BASE_URL="http://127.0.0.1:${PW_PORT}" npx playwright test e2e/journeys/08-http-cancellation-demo.spec.ts --project=chromium 2>&1 | tee remote-finance-playwright.log
+          bash scripts/e2e/run-finance-closure.sh
       - name: Reassert sandbox invariants after E2E
         shell: bash
         run: |
@@ -130,9 +120,11 @@ jobs:
           name: remote-finance-closure-evidence
           path: |
             remote-finance-focused.tap
-            remote-finance-seed.log
+            remote-finance-seed-pass1.log
+            remote-finance-seed-pass2.log
             remote-finance-playwright.log
             playwright-report/
             test-results/
+            /tmp/finance-closure-serve.log
             /tmp/wrangler-e2e.log
           if-no-files-found: warn
