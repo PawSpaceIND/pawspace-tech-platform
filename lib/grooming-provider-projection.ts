@@ -83,7 +83,7 @@ export function projectProviderLifecycleEvent(row: Row) {
   };
 }
 
-export function projectProviderLifecycleBundle(data: {
+type LifecycleBundle = {
   booking: Row;
   proof: Row | null;
   invoice: Row | null;
@@ -92,8 +92,13 @@ export function projectProviderLifecycleBundle(data: {
   taxReadiness: Row | null;
   payoutReadiness: Row | null;
   events: Row[];
-}) {
+};
+
+export function projectProviderLifecycleBundle(data: LifecycleBundle | null) {
+  if (!data) return null;
   const b = data.booking;
+  const workOrderStatus = b.work_order_status != null ? String(b.work_order_status) : null;
+  const paymentStatus = b.payment_status != null ? String(b.payment_status) : null;
   return {
     booking: {
       id: String(b.id),
@@ -109,8 +114,12 @@ export function projectProviderLifecycleBundle(data: {
       currency: String(b.currency || "INR"),
       providerId: String(b.provider_id || ""),
       workOrderId: b.work_order_id ? String(b.work_order_id) : null,
-      workOrderStatus: b.work_order_status ? String(b.work_order_status) : null,
-      paymentStatus: b.payment_status ? String(b.payment_status) : null,
+      workOrderStatus,
+      // snake_case aliases retained for existing journey tests / clients
+      work_order_status: workOrderStatus,
+      work_order_id: b.work_order_id ? String(b.work_order_id) : null,
+      paymentStatus,
+      payment_status: paymentStatus,
       paymentMethod: b.payment_method ? String(b.payment_method) : null,
       paymentMode: b.payment_mode ? String(b.payment_mode) : null,
       amount: Number(b.amount || 0),
