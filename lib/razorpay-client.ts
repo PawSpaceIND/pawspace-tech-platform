@@ -16,6 +16,9 @@ export type OrderResult =
 export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
+export type RefundResult =
+  | { connected: true; environment: PaymentEnvironment; refund: Record<string, unknown> }
+  | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
 
 export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
   return parsePaymentEnvironment(env);
@@ -146,6 +149,57 @@ export async function createPaymentOrder(env: RazorEnv, input: { bookingId: stri
     return { connected: false, environment: paymentEnvironment(env), reason: error instanceof Error ? error.message : String(error) };
   }
   return createPaymentOrderPaise(env, { bookingId: input.bookingId, paymentId: input.paymentId, amountPaise, currency: input.currency });
+}
+
+/**
+ * Environment-aware Razorpay Payments refund. Refund identity is the durable booking refund case, so
+ * retries reuse one provider idempotency key and can never fall through to the RazorpayX payout path.
+ */
+export async function createPaymentRefund(env: RazorEnv, input: {
+  bookingId: string;
+  paymentId: string;
+  gatewayPaymentId: string;
+  refundCaseId: string;
+  amount: number;
+  currency: string;
+}): Promise<RefundResult> {
+  const resolved = resolveCredentials(env);
+  if (!resolved.declared) return { connected: false, environment: "unconfigured", reason: resolved.reason };
+  const { environment, keyId, keySecret } = resolved;
+  if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") {
+    return { connected: false, environment, reason: "Live Razorpay refunds are not approved (PAWSPACE_PAYMENT_LIVE_APPROVED must equal exactly \"true\")" };
+  }
+  const pilot = enforcePilotBooking(env, environment, input.bookingId);
+  if (!pilot.ok) return { connected: false, environment, reason: pilot.reason };
+  if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - refund is not connected yet` };
+  if (!String(input.gatewayPaymentId || "").startsWith("pay_")) return { connected: false, environment, reason: "A captured Razorpay payment id is required for refund" };
+  let amountPaise: number;
+  try { amountPaise = assertPositivePaise(exactRupeesToPaise(input.amount)); }
+  catch (error) { return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) }; }
+  try {
+    const { response, body } = await providerRequest(env, environment, `/v1/payments/${encodeURIComponent(input.gatewayPaymentId)}/refund`, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`,
+        "content-type": "application/json",
+        "X-Refund-Idempotency": `refund-${input.refundCaseId}`.replace(/[^A-Za-z0-9_-]/g,"_").slice(0,64),
+      },
+      body: JSON.stringify({
+        amount: amountPaise,
+        notes: {
+          booking_id: input.bookingId,
+          payment_id: input.paymentId,
+          refund_case_id: input.refundCaseId,
+          pawspace_environment: environment,
+        },
+      }),
+    });
+    if (!response.ok) return { connected: false, environment, reason: `Razorpay ${environment} refund failed (${response.status}): ${String((body.error as Record<string, unknown> | undefined)?.description || "request failed")}` };
+    if (!String(body.id || "").startsWith("rfnd_")) return { connected: false, environment, reason: "Razorpay did not return a refund id" };
+    return { connected: true, environment, refund: body };
+  } catch (error) {
+    return { connected: false, environment, reason: `Razorpay refund request failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId: string; paymentId: string; referenceId: string; customerId: string; amount: number; currency: string; expiresAt: number }): Promise<PaymentLinkResult> {
