@@ -395,7 +395,8 @@ export default function CustomerExperiencePage() {
               ) : messages.map((message) => (
                 <div key={text(message.id)} className={`${styles.bubble} ${text(message.direction, "") === "outbound" ? styles.bubbleOut : ""}`}>
                   <small>{pretty(message.direction)} · {pretty(message.channel)} · {pretty(message.status)}</small>
-                  <p>{text(message.payload?.text || message.payload?.message || message.template_key, "Message")}</p>
+                  <p>{message.payload?.mediaPending ? "Attachment not yet available" : text(message.payload?.text || message.payload?.message || message.template_key, "Message")}</p>
+                  {Boolean(message.payload?.media) && !Boolean(message.payload?.mediaPending) && <a href={`/api/conversation-media?messageId=${encodeURIComponent(text(message.id))}`} target="_blank" rel="noreferrer">Open attachment</a>}
                   <small>{dateTime(message.created_at)}</small>
                 </div>
               ))}

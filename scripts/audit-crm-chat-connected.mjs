@@ -23,6 +23,8 @@ const now=Date.now(),actor='crm-browser-audit@pawspace.test';
 seedCustomer(sqlite,'CUS-BROWSER','Browser Customer','9876500099');
 sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-BROWSER',?,'Browser Operator','admin','active',?,?)").run(actor,now,now);
 await inboundMessage(sqlite,db,{threadId:'THREAD-BROWSER',customerId:'CUS-BROWSER',text:'Booking question',channel:'whatsapp',idempotencyKey:'browser-inbound'});
+const {recordInboundMessage:recordAuditInboundMessage}=await import('../lib/conversation-governance.ts');
+await recordAuditInboundMessage(db,{threadId:'THREAD-BROWSER',customerId:'CUS-BROWSER',channel:'whatsapp',payload:{text:'[image]',metaMessageType:'image',providerMediaId:'audit-pending-media',mediaPending:true},provider:'meta_whatsapp',providerReference:'wamid.audit.pending-media',eventId:'audit-pending-media',createdBy:'audit-fixture'});
 sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,whatsapp_consent,updated_by,updated_at) VALUES ('CUS-BROWSER',1,'test',?)").run(now);
 sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at) VALUES ('CUS-BROWSER','meta_whatsapp',?)").run(now);
 if(cx)sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at) VALUES ('CUS-BROWSER','sandbox_simulator',?)").run(now);
@@ -95,6 +97,7 @@ try{
  const page=await browser.newPage({extraHTTPHeaders:{'oai-authenticated-user-email':actor}});
  await page.goto(`http://127.0.0.1:${server.address().port}`);
  if(cx){
+  await page.getByText('Attachment not yet available',{exact:true}).waitFor();
   const composer=page.getByPlaceholder('Reply as PawSpace CX...');
   await composer.fill('Reply retained across customer activity');
   db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit fails after committed outbound');});
@@ -118,6 +121,7 @@ try{
   console.log(JSON.stringify({result:'passed',flow:'cx-event-draft-retry',attempts:2,outboundMessages:1,outboxRows:1,frontendRetryKeyStable:true,externalDelivery:false}));
  }else{
  await page.getByText('24h Session Open',{exact:true}).click();
+ await page.getByText('Attachment not yet available',{exact:true}).waitFor();
  const composer=page.getByPlaceholder('Type WhatsApp message...');
  await composer.fill('Your booking request is received');
  db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit fails after committed outbound');});

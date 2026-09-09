@@ -30,12 +30,19 @@ function missingLedgerOnly(error:unknown,table:string):null {
 /** 1 point = Rs.0.50 off. */
 export const REDEEM_RUPEE_PER_POINT=0.5;
 
-/** Rupee value of the credit already applied to this booking, from every instrument. */
-export async function creditsAppliedToBooking(db:Db,bookingId:string){
- const wallet=await db.prepare("SELECT COALESCE(SUM(applied_value),0) total FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_type='booking' AND source_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"pawspace_wallet_ledger"));
- const points=await db.prepare("SELECT COALESCE(SUM(-points),0) points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"paw_points_ledger"));
- return round2(Number(wallet?.total||0)+Number(points?.points||0)*REDEEM_RUPEE_PER_POINT);
+/** Funding value already applied to this booking, split by instrument. */
+export async function creditBreakdownAppliedToBooking(db:Db,bookingId:string){
+ const [wallet,points]=await Promise.all([
+  db.prepare("SELECT COALESCE(SUM(applied_value),0) total FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_type='booking' AND source_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"pawspace_wallet_ledger")),
+  db.prepare("SELECT COALESCE(SUM(-points),0) points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"paw_points_ledger")),
+ ]);
+ const walletApplied=round2(Math.max(0,Number(wallet?.total||0)));
+ const pawPointsApplied=round2(Math.max(0,Number(points?.points||0))*REDEEM_RUPEE_PER_POINT);
+ return{walletApplied,pawPointsApplied,totalApplied:round2(walletApplied+pawPointsApplied)};
 }
+
+/** Rupee value of the credit already applied to this booking, from every instrument. */
+export async function creditsAppliedToBooking(db:Db,bookingId:string){return(await creditBreakdownAppliedToBooking(db,bookingId)).totalApplied;}
 
 /** What is still payable on a booking after the credit already applied to it. Never negative. */
 export async function remainingPayableForCredit(db:Db,bookingId:string,bookingTotal:number){

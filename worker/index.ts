@@ -26,6 +26,8 @@ import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-har
 import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
 import{secureApiResponse}from"../lib/api-security-headers";
 import{requestForAuthorization}from"../lib/trusted-workspace-identity";
+import{drainGatewayInboundQueue,purgeExpiredInboundPayloads}from"../lib/gateway-inbound-queue";
+import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
 
 interface Env {
   ASSETS: Fetcher;
@@ -135,8 +137,10 @@ const worker = {
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
+      const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
+        gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runServiceRecoveryAudioBotSweep(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,env:env as unknown as Record<string,unknown>}),
@@ -154,6 +158,7 @@ const worker = {
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
+      if(gatewayInbound.status==="rejected")errors.push(`gateway inbound retry: ${gatewayInbound.reason instanceof Error?gatewayInbound.reason.message:String(gatewayInbound.reason)}`);else if(gatewayInbound.value.deadLettered||gatewayInbound.value.purge.deadLettered)errors.push(`gateway inbound retry: ${gatewayInbound.value.deadLettered+gatewayInbound.value.purge.deadLettered} event(s) dead-lettered`);
       if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);
       if(outboxDispatch.status==="rejected")errors.push(`communication outbox dispatcher: ${outboxDispatch.reason instanceof Error?outboxDispatch.reason.message:String(outboxDispatch.reason)}`);else if(outboxDispatch.value.errors.length)errors.push(...outboxDispatch.value.errors.map(error=>`communication outbox dispatcher: ${error}`));
       if(voiceRecovery.status==="rejected")errors.push(`service recovery audio bot: ${voiceRecovery.reason instanceof Error?voiceRecovery.reason.message:String(voiceRecovery.reason)}`);

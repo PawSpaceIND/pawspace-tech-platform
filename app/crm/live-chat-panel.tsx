@@ -29,6 +29,8 @@ interface MessageItem {
   payload?: {
     text?: string;
     internalNote?: string;
+    mediaPending?: boolean;
+    media?: { ref?: string; type?: string; mimeType?: string; fileName?: string; sizeBytes?: number };
   };
 }
 
@@ -336,6 +338,8 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                 )}
                 {threadDetail.messages.map((m) => {
                   const isInbound = m.direction === "inbound";
+                  const media = m.payload?.media;
+                  const mediaUrl = media ? `/api/conversation-media?messageId=${encodeURIComponent(m.id)}` : "";
                   return (
                     <div
                       key={m.id}
@@ -351,8 +355,21 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                       }}
                     >
                       <div style={{ fontSize: 13, lineHeight: 1.45, wordBreak: "break-word" }}>
-                        {m.payload?.text || JSON.stringify(m.payload || "")}
+                        {m.payload?.mediaPending ? "Attachment not yet available" : (m.payload?.text || JSON.stringify(m.payload || ""))}
                       </div>
+                      {media && !m.payload?.mediaPending && (
+                        <div style={{ marginTop: 8 }}>
+                          {(media.type === "image" || media.type === "sticker") ? (
+                            <object data={mediaUrl} type={media.mimeType || "image/jpeg"} aria-label={media.fileName || "WhatsApp attachment"} style={{ width: "100%", maxWidth: 360, maxHeight: 280, borderRadius: 8 }} />
+                          ) : media.type === "video" ? (
+                            <video controls preload="metadata" src={mediaUrl} style={{ width: "100%", maxWidth: 360, maxHeight: 280, borderRadius: 8 }} />
+                          ) : media.type === "audio" ? (
+                            <audio controls preload="metadata" src={mediaUrl} style={{ width: "100%", maxWidth: 360 }} />
+                          ) : (
+                            <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: isInbound ? "#4b168c" : "#ffffff", textDecoration: "underline" }}>{media.fileName || "Open attachment"}</a>
+                          )}
+                        </div>
+                      )}
                       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4, fontSize: 10, color: isInbound ? "#8c8299" : "#d8c7ef" }}>
                         <span>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                         <span>·</span>
