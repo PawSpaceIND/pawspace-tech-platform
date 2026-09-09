@@ -1,0 +1,120 @@
+name: Repair release preview D1 scheduling governance
+
+# Manual, preview-only maintenance for the dedicated release-preview database.
+# It never targets production or shared staging, and it never weakens the scheduling constraint.
+# Historical preview-gate reservations created before active-slot uniqueness was introduced can
+# prevent the candidate from creating the unique index on first booking POST. This workflow only
+# neutralizes the old gate-owned rows, then requires the exact product unique index to be creatable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "repair-preview-d1" to repair only the isolated release-preview D1'
+        required: true
+        default: ''
+
+concurrency:
+  group: pawspace-release-preview
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    if: ${{ github.event.inputs.confirm == 'repair-preview-d1' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-release-preview
+    steps:
+      - name: Checkout infrastructure tools
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install repository dependencies
+        run: npm run install:ci
+
+      - name: Verify preview D1 isolation
+        env:
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_PREVIEW_D1_ID:-}" ] || [ -z "${PRODUCTION_D1_ID:-}" ] || [ -z "${SHARED_STAGING_D1_ID:-}" ]; then
+            echo "All three D1 identifiers must be configured before preview maintenance." >&2
+            exit 1
+          fi
+          if [ "$RELEASE_PREVIEW_D1_ID" = "$PRODUCTION_D1_ID" ]; then
+            echo "Preview D1 matches production — refusing any maintenance." >&2
+            exit 1
+          fi
+          if [ "$RELEASE_PREVIEW_D1_ID" = "$SHARED_STAGING_D1_ID" ]; then
+            echo "Preview D1 matches shared staging — refusing any maintenance." >&2
+            exit 1
+          fi
+          echo "preview_d1_isolated=true"
+
+      - name: Neutralize stale gate fixtures and enforce active-slot uniqueness
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+        run: |
+          set -euo pipefail
+
+          PROBE="$(mktemp)"
+          OUT="$(mktemp)"
+          trap 'rm -f "$PROBE" "$OUT"' EXIT
+
+          # A brand-new preview D1 may not have the scheduling table yet. Treat ONLY that exact
+          # condition as a no-op. Authentication/network/Cloudflare failures remain hard failures.
+          set +e
+          npx wrangler d1 execute "$PREVIEW_D1" --remote \
+            --command "SELECT 1 FROM scheduling_reservations LIMIT 1" >"$PROBE" 2>&1
+          PROBE_RC=$?
+          set -e
+          if [ "$PROBE_RC" -ne 0 ]; then
+            if grep -Eqi 'no such table[^[:alnum:]_]*scheduling_reservations' "$PROBE"; then
+              echo "No scheduling_reservations table exists yet; no historical preview repair is required."
+              exit 0
+            fi
+            echo "Preview D1 probe failed for a reason other than a missing scheduling table; no mutation attempted." >&2
+            exit "$PROBE_RC"
+          fi
+
+          # These predicates match only release-preview gate fixtures. created_at=1 is deliberately
+          # part of the ownership proof; real application reservations are never manufactured that way.
+          # Keep the rows for evidence/history but make them inactive so the product's unique index can
+          # be established. Do not delete the index, broaden its predicate, or ignore uniqueness errors.
+          if ! npx wrangler d1 execute "$PREVIEW_D1" --remote --command \
+            "UPDATE scheduling_reservations
+             SET status='cancelled'
+             WHERE status!='cancelled'
+               AND id LIKE 'RES-preview-%'
+               AND group_id LIKE 'preview-%'
+               AND provider_id LIKE 'preview-%-PRV'
+               AND customer_id LIKE 'preview-%-CUS%'
+               AND service_code='pet_sitting'
+               AND created_at=1" >"$OUT" 2>&1; then
+            echo "Scoped preview scheduling-fixture neutralization failed." >&2
+            exit 1
+          fi
+
+          # This is the exact product invariant from lib/scheduling-reservation-leases.ts.
+          # If any remaining active collision exists, SQLite/D1 rejects this and the workflow stops.
+          if ! npx wrangler d1 execute "$PREVIEW_D1" --remote --command \
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduling_reservations_active_provider_window
+             ON scheduling_reservations(provider_id,scheduled_start,scheduled_end)
+             WHERE status!='cancelled'
+               AND service_code!='boarding'
+               AND care_mode IS NOT 'overnight'" >"$OUT" 2>&1; then
+            echo "Active provider-window uniqueness is still blocked after scoped preview cleanup." >&2
+            exit 1
+          fi
+
+          echo "release_preview_scheduling_governance_repaired=true"
+          echo "The product active-slot unique index is now enforceable on the isolated preview D1."
