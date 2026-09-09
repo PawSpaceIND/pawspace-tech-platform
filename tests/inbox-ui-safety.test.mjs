@@ -16,10 +16,16 @@ test('inbox never exposes unexpected backend or network diagnostics',()=>{
 
 test('source contract: thread switches clear prior context and late responses check selection',()=>{
   const source=readFileSync('app/team/customer-experience/page.tsx','utf8');
-  assert.match(source,/selectedRef\.current !== id/);
-  assert.match(source,/shouldApply\(\) && selectedRef\.current === id/);
-  assert.match(source,/selectedRef\.current = row\.id;[\s\S]*setConversation\(null\);[\s\S]*setControl\(null\);[\s\S]*setReply\(""\);/);
+  // The selection ref is named activeThread here, and drafts are keyed per thread
+  // (drafts[selected]) rather than held in one shared reply box - so switching away
+  // preserves each conversation's own draft instead of needing it cleared.
+  assert.match(source,/activeThread\.current === id\) return;/);
+  assert.match(source,/shouldApply\(\) && activeThread\.current === id/);
+  assert.match(source,/activeThread\.current = id;[\s\S]{0,200}setConversation\(null\);[\s\S]{0,80}setControl\(null\);/);
+  assert.match(source,/const reply = drafts\[selected\]\?\.text/);
   assert.doesNotMatch(source,/HTTP \$\{|setError\(cause instanceof Error/);
+  assert.match(source,/inboxResponseError\(response\.status\)/);
+  assert.match(source,/inboxErrorMessage\(cause\)/);
   assert.match(source,/role="alert"/);
   const template=readFileSync('app/team/customer-experience/template.tsx','utf8');
   assert.doesNotMatch(template,/key=\{revision\}|setInterval|"use client"/);

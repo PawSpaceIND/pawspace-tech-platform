@@ -16,8 +16,12 @@ test('invalid constraints cannot be submitted by the rule builder',()=>{
 test('control panel routes real booking actions and does not advertise fictitious results',()=>{
  const source=readFileSync('app/control/scheduling-control-panel.tsx','utf8');
  assert.doesNotMatch(source,/admin-demo-PS|TST-OPS|groom_arun|8\/8|Scheduling UAT run created|setAssignmentMode/);
- assert.match(source,/href="\/team\/operations\/bookings"/);
- assert.match(source,/href="\/team\/scheduling"/);
- assert.match(source,/fetch\('\/api\/scheduling-rules',\{cache:'no-store'\}\)/);
- assert.match(source,/window.confirm/);
+ // The panel now embeds the real surfaces instead of linking out to them, so the
+ // routing, the live rules read and the destructive-action gate live in those.
+ assert.match(source,/import \{ SchedulingDayBoard \} from "\.\.\/team\/scheduling\/page"/);
+ assert.match(source,/import SchedulingRulesPanel from "\.\/scheduling-rules-panel"/);
+ assert.match(source,/<SchedulingDayBoard embedded\/>[\s\S]*<SchedulingRulesPanel notify=\{notify\}\/>/);
+ const rules=readFileSync('app/control/scheduling-rules-panel.tsx','utf8');
+ assert.match(rules,/"\/api\/scheduling-rules",\{cache:"no-store"\}/);
+ assert.match(rules,/window\.confirm/);
 });

@@ -2,6 +2,7 @@
 import{FormEvent,useEffect,useRef,useState}from"react";
 import Link from"next/link";
 import styles from"./page.module.css";
+import{customerChatResponseError,customerChatErrorMessage}from"../../lib/communication-ui-state";
 type Reply={knowledge?:Array<{title?:string;excerpt?:string}>;duplicatePrevented?:boolean;ai?:{turn?:{output?:string;outcome?:string}};callback?:{matched?:boolean}};
 type Turn={question:string;reply:Reply};
 type Identity="checking"|"customer"|"guest"|"unavailable";
@@ -18,11 +19,11 @@ export default function AiChatPage(){
   const controller=new AbortController();request.current=controller;const timer=setTimeout(()=>controller.abort(),20000);setBusy(true);setError('');
   try{const body=mode==='public'?{mode,query:question}:{mode,message:question,idempotencyKey:'web-'+pending.current.key};
    const response=await fetch('/api/ai-web-chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
-   const payload=await response.json().catch(()=>null) as {data?:Reply;error?:string}|null;
-   if(!response.ok){if(response.status===401)setIdentity('guest');throw new Error(payload?.error||'Chat is temporarily unavailable. Please try again.');}
-   if(!payload?.data)throw new Error('Chat returned an incomplete response. Please try again.');
+   const payload=await response.json().catch(()=>null) as {data?:Reply}|null;
+   if(!response.ok){if(response.status===401)setIdentity('guest');throw customerChatResponseError(response.status);}
+   if(!payload?.data)throw customerChatResponseError(response.status);
    setTurns(current=>[...current,{question,reply:payload.data!}]);setMessage('');pending.current=null;
-  }catch(cause){setError(controller.signal.aborted?'The reply is taking too long. Your message is saved here; try sending it again.':cause instanceof Error?cause.message:'Chat is temporarily unavailable. Please try again.');}
+  }catch(cause){setError(controller.signal.aborted?'The reply is taking too long. Your message is saved here; try sending it again.':customerChatErrorMessage(cause));}
   finally{clearTimeout(timer);setBusy(false);request.current=null;}
  }
  return <main className={styles.page}><Link href="/mobile-app">← PawSpace</Link><h1>How can we help?</h1><p>Ask about our services, or sign in for help with your account.</p>

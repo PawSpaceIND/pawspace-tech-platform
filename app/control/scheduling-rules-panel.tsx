@@ -27,7 +27,11 @@ export default function SchedulingRulesPanel({notify}:{notify:(message:string)=>
     }catch(problem){setError(problem instanceof Error?problem.message:"The save could not be confirmed. Refresh before retrying.");}finally{setBusy(false);}
   }
   async function toggle(rule:Rule){
-    if(busy||loading)return;setBusy(true);setError("");
+    if(busy||loading)return;
+    // Disabling takes a constraint out of live provider matching straight away, so
+    // confirm that direction. Re-enabling only restores a constraint and needs no gate.
+    if(rule.active===1&&typeof window!=="undefined"&&!window.confirm(`Disable "${rule.name}"? Future provider matching will stop applying it.`))return;
+    setBusy(true);setError("");
     try{await apiSend("/api/scheduling-rules",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({id:rule.id,active:rule.active!==1})});notify(rule.active===1?"Rule disabled.":"Rule enabled.");await refresh();}
     catch(problem){setError(problem instanceof Error?problem.message:"Rule update could not be confirmed. Refresh before retrying.");}finally{setBusy(false);}
   }

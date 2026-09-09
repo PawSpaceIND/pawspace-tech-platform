@@ -2,9 +2,14 @@ import type { CustomerAccountRecord } from "./customer-account";
 import type { PetProfile } from "./pet-profile-options";
 
 export type CustomerPet = CustomerAccountRecord["pets"][number];
+/** A 401 from the account API means the phone session lapsed, not that the request was
+ *  malformed. Callers recover by re-verifying rather than showing a generic failure. */
+export class CustomerSessionExpiredError extends Error {
+  constructor() { super("Please verify your phone again to continue. Your session has expired."); }
+}
 export type PetProfileInput = { id?: string; name: string; species: string; breed?: string | null; vaccinationStatus: string; ageYears?: number | null; weightKg?: number | null; profile?: PetProfile };
 
-async function payload<T>(response: Response, fallback: string): Promise<T> { const body=(await response.json().catch(()=>({}))) as {data?:T;error?:string}; if(!response.ok||body.data===undefined)throw new Error(body.error||fallback); return body.data; }
+async function payload<T>(response: Response, fallback: string): Promise<T> { if(response.status===401)throw new CustomerSessionExpiredError(); const body=(await response.json().catch(()=>({}))) as {data?:T;error?:string}; if(!response.ok||body.data===undefined)throw new Error(body.error||fallback); return body.data; }
 
 /** The customer identity is resolved server-side from the platform session (with ownership checks); customerId is only an explicit hint for signed-in components. */
 export async function loadCustomerAccount(customerId?: string, options?: {signal?: AbortSignal}) { const query=customerId?`?customerId=${encodeURIComponent(customerId)}`:""; const response=await fetch(`/api/customer-account${query}`,{cache:"no-store",...(options?.signal?{signal:options.signal}:{})}); return payload<CustomerAccountRecord>(response,"Unable to load your account"); }

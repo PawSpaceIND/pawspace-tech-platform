@@ -41,35 +41,40 @@ export type MobileRazorpayResult = MobileRazorpaySuccessResult | MobileRazorpayF
  * Validate that sandbox security locks are strictly held.
  * Prevents any accidental or malicious activation of live payment gateways.
  */
+/**
+ * The three sandbox locks, and the only values that satisfy them.
+ *
+ * A release-gating lock has to be PROVEN, not assumed. The previous version
+ * defaulted every absent value to its safe setting (|| "sandbox", || "true",
+ * || "false"), so a build that simply never set the locks inherited a
+ * safe-looking result and passed - and an unrecognised value such as
+ * "unexpected" fell through the equality checks entirely. Both now fail closed.
+ *
+ * Exact string comparison only: no defaults, no aliases, no trimming, no case
+ * folding. This is deliberately the same posture as lib/payment-environment.ts,
+ * which accepts only the exact strings "sandbox" and "live".
+ */
+const SANDBOX_LOCKS = {
+  PAWSPACE_PAYMENT_ENV: "sandbox",
+  FORBID_PRODUCTION: "true",
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+} as const;
+
 export function assertSandboxPaymentLocks(env?: Record<string, unknown>): void {
-  const paymentEnv = String(
-    env?.PAWSPACE_PAYMENT_ENV || (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_ENV : "") || "sandbox"
-  ).toLowerCase();
+  // When an environment is supplied, it is the whole truth: falling back to
+  // process.env would let ambient values satisfy a lock the caller did not set.
+  const source: Record<string, unknown> = env
+    ?? (typeof process !== "undefined" && process.env ? (process.env as Record<string, unknown>) : {});
 
-  const forbidProd = String(
-    env?.FORBID_PRODUCTION || (typeof process !== "undefined" ? process.env.FORBID_PRODUCTION : "") || "true"
-  ).toLowerCase();
-
-  const liveApproved = String(
-    env?.PAWSPACE_PAYMENT_LIVE_APPROVED || (typeof process !== "undefined" ? process.env.PAWSPACE_PAYMENT_LIVE_APPROVED : "") || "false"
-  ).toLowerCase();
-
-  if (paymentEnv !== "sandbox") {
-    throw new Error(
-      `PAWSPACE PAYMENT SECURITY LOCK VIOLATION: Expected PAWSPACE_PAYMENT_ENV='sandbox', received '${paymentEnv}'`
-    );
-  }
-
-  if (forbidProd !== "true") {
-    throw new Error(
-      `PAWSPACE PAYMENT SECURITY LOCK VIOLATION: FORBID_PRODUCTION must be 'true', received '${forbidProd}'`
-    );
-  }
-
-  if (liveApproved === "true") {
-    throw new Error(
-      "PAWSPACE PAYMENT SECURITY LOCK VIOLATION: PAWSPACE_PAYMENT_LIVE_APPROVED must remain false in sandbox runtime"
-    );
+  for (const [name, expected] of Object.entries(SANDBOX_LOCKS)) {
+    const value = source[name];
+    if (value !== expected) {
+      throw new Error(
+        `PAWSPACE PAYMENT SECURITY LOCK VIOLATION: ${name} must be exactly '${expected}', received ${
+          value === undefined ? "no value" : JSON.stringify(value)
+        }`
+      );
+    }
   }
 }
 

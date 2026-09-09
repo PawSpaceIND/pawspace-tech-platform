@@ -96,7 +96,7 @@ export default function CustomerExperiencePage() {
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
     if (epoch !== accessEpoch.current) return [];
     if ([401, 403].includes(response.status)) clearAccess();
-    if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
+    if (!response.ok) throw inboxResponseError(response.status);
     const next = payload.data?.threads || [];
     setThreads(next);
     return next;
@@ -109,7 +109,7 @@ export default function CustomerExperiencePage() {
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
     if (!shouldApply() || epoch !== accessEpoch.current) return;
     if ([401, 403, 404].includes(response.status)) clearAccess(response.status === 401 ? undefined : id);
-    if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
+    if (!response.ok) throw inboxResponseError(response.status);
     if (!shouldApply() || activeThread.current !== id) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
@@ -126,7 +126,7 @@ export default function CustomerExperiencePage() {
       if (shouldApply() && activeThread.current === id) setControl(null);
       return null;
     }
-    if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
+    if (!response.ok) throw inboxResponseError(response.status);
     const next = payload.data || null;
     if (shouldApply() && activeThread.current === id) setControl(next);
     return next;
@@ -154,7 +154,7 @@ export default function CustomerExperiencePage() {
         }
         if (active) setError("");
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(inboxErrorMessage(cause));
       } finally {
         refreshing = false;
       }
@@ -181,7 +181,7 @@ export default function CustomerExperiencePage() {
         await Promise.all([loadConversation(selected, () => active), loadControl(selected, () => active)]);
         if (active) setError("");
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(inboxErrorMessage(cause));
       } finally {
         refreshing = false;
       }
@@ -211,11 +211,11 @@ export default function CustomerExperiencePage() {
         body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
+      if (!response.ok) throw inboxResponseError(response.status);
       await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(inboxErrorMessage(cause));
       return false;
     } finally {
       mutationInFlight.current = false;
@@ -237,11 +237,11 @@ export default function CustomerExperiencePage() {
         body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(body.error || `WhatsApp control failed (HTTP ${response.status})`);
+      if (!response.ok) throw inboxResponseError(response.status);
       await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(inboxErrorMessage(cause));
       return false;
     } finally {
       mutationInFlight.current = false;
@@ -307,7 +307,7 @@ export default function CustomerExperiencePage() {
       description="WhatsApp AI Shared Inbox — WATI-style customer operations on PawSpace canonical conversations. UAT/sandbox only; production WhatsApp delivery stays disabled until release certification."
       actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge></>}
     >
-      {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
+      {error ? <div role="alert" className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
       {notice ? <div className={teamStyles.panel}><b>{notice}</b></div> : null}
       <div className={styles.shell}>
         <aside className={styles.rail}>

@@ -15,9 +15,13 @@ test("chat errors never expose raw provider or transport details",()=>{
 });
 test("chat guards overlapping submits and uses safe error mapping",()=>{
   const source=readFileSync(new URL("../app/chat/page.tsx",import.meta.url),"utf8");
-  assert.ok(source.includes("if(sending.current"));
-  assert.ok(source.includes("sending.current=true"));
-  assert.ok(source.includes("setReply(null)"));
-  assert.doesNotMatch(source,/payload.error|cause.message/);
+  // The overlapping-submit guard here is a busy flag plus an abortable in-flight
+  // request, rather than a sending ref; both halves have to stay.
+  assert.match(source,/if\(busy\|\|/);
+  assert.match(source,/setBusy\(true\)/);
+  assert.match(source,/request\.current=controller/);
+  // Safe error mapping: no server-provided text may reach the screen.
+  assert.doesNotMatch(source,/payload\??\.error|cause\.message/);
   assert.ok(source.includes("customerChatResponseError(response.status)"));
+  assert.ok(source.includes("customerChatErrorMessage(cause)"));
 });
