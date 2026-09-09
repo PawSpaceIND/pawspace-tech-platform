@@ -287,3 +287,16 @@ test("Pet Sitting operations API is a guarded route", async () => {
   const booking = await world.db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
   assert.equal(booking.provider_id, SITTER, "a refused request must not have reassigned the sitter");
 });
+
+test("Sitting Operations retry keys cannot replay a different booking or action", async () => {
+  const world = await opsWorld();
+  const idempotencyKey = nextKey("SG5-SCOPE");
+  const first = await world.opsAct("add_note", { idempotencyKey, note: "Customer asked Operations to call before arrival." });
+  const replay = await world.opsAct("add_note", { idempotencyKey, note: "Customer asked Operations to call before arrival." });
+  assert.equal(replay.noteId, first.noteId);
+  assert.equal(replay.duplicatePrevented, true);
+  for (const change of [{ bookingId: "ANOTHER-SITTING-BOOKING" }, { action: "close_recovery" }]) {
+    const rejected = await refusal(world.opsAct("add_note", { idempotencyKey, note: "Must not return the earlier success.", ...change }));
+    assert.equal(rejected?.status, 409, "a key belongs to exactly one booking and action");
+  }
+});
