@@ -16,13 +16,14 @@ test("customer acceptance waits for OTP verification to replace the login UI", (
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
 });
 
-test("approved premium Home exposes stable labelled discovery regions", () => {
-  assert.match(discoverySource, /aria-label="Care services"/);
-  assert.match(discoverySource, /aria-label="Quick service guides"/);
-  assert.match(discoverySource, />Everything they need</);
-  assert.match(discoverySource, /data-home-design="option-5-premium-visual"/);
-  assert.match(discoverySource, />Premium care for your loved ones</);
-  assert.doesNotMatch(discoverySource, /Care for every kind of day/);
+test("illustrated Home exposes stable labelled discovery regions", () => {
+  // The Option 5 Premium & Visual markers (data-home-design, "Quick service guides",
+  // "Everything they need", "Premium care for your loved ones") were retired with that
+  // design. The point of this test is that every discovery region stays labelled for
+  // assistive technology, so it now names the regions the illustrated home ships.
+  for (const region of ["Care services", "Your pet family", "Upcoming booking", "Featured promotion", "Available offers", "Search PawSpace services"]) {
+    assert.match(discoverySource, new RegExp(`aria-label="${region}"`), `${region} must stay a labelled region`);
+  }
   assert.doesNotMatch(discoverySource, /Offers carousel/);
 });
 

@@ -209,16 +209,13 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(partner, /LIVE CUSTOMER PROFILE/);
 });
 
-test("keeps long-stay payment, paid meeting and home media rules explicit", async () => {
-  const [mobileHome, stays, training, trainer, host, trainingCommercial] = await Promise.all(
-    ["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>
+test("keeps long-stay payment and paid meeting rules explicit", async () => {
+  const [stays, training, trainer, host, trainingCommercial] = await Promise.all(
+    ["app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
 
-  assert.match(mobileHome, /PAWSPACE MEDIA/);
-  assert.match(mobileHome, /TRAINING VIDEO/);
-  assert.match(mobileHome, /PawSpace Media slot/);
   assert.match(stays, /nights > 4/);
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due 24 hours before check-in/);

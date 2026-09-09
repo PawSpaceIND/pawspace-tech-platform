@@ -22,8 +22,12 @@ test("the real five-minute scheduler runs the order notification sweep",async()=
 test("customer notification API is ownership guarded and supports read acknowledgement",async()=>{
  const source=await read("app/api/order-notifications/route.ts");
  assert.match(source,/requireCustomerOwnership/);
- // Reading one customer inbox must not enqueue work across all customers. The scheduler owns sweeping.
- assert.doesNotMatch(source,/runOrderNotificationSweep/);
+ // Retired: main forbade any sweep on the read path. We now run the finance branch's
+ // sweep, scoped to the caller's own customer, so the read stays ownership-bounded.
+ // order-notification-gateway-execution proves the scope (canonicalOrders.scanned===1
+ // and no notification created for another customer); the */5 scheduler still sweeps
+ // globally, covered by the test above.
+ assert.match(source,/runOrderNotificationSweep\(db,\{actorId:actor\.email,customerId\}\)/);
  assert.match(source,/listOrderNotifications/);
  assert.match(source,/markOrderNotificationRead/);
  assert.match(source,/action!=="mark_read"/);

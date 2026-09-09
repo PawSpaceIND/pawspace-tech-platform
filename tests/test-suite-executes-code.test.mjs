@@ -48,7 +48,11 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 // raise is a merge accounting entry, NOT a licence to add static tests: origin/main measures
 // exactly 169, so the ratchet was at its floor before this and is at its floor again. Convert one
 // of those three and lower this number.
-const STATIC_FILE_BUDGET = 171;
+//
+// 171 -> 170: retiring the Option 5 design contracts removed
+// premium-discovery-style-contract.test.mjs, which was source-text-only. Lowered to the
+// measured count rather than left as headroom, so the ratchet stays at its floor.
+const STATIC_FILE_BUDGET = 170;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
