@@ -31,3 +31,12 @@ for (const key of ["rzp_live_example", "rzp_test_placeholder"]) {
 for (const amount of ["0", "1.5", "9007199254740992"]) {
   test(`sandbox probe refuses invalid paise ${amount}`, () => assert.match(runSandboxProbe({ RAZORPAY_SANDBOX_AMOUNT_PAISE: amount }), /positive safe integer/));
 }
+
+// Existing CI live-key guard intentionally omits all other runtime settings.
+// Its non-zero result must identify the live-key rejection, not accidentally pass for another reason.
+test("live-key safety check remains specific when other configuration is absent", () => {
+  const stderr = runSandboxProbe({ RAZORPAY_KEY_ID_SANDBOX: "rzp_live_forbidden", RAZORPAY_KEY_SECRET_SANDBOX: "not-a-secret",
+    RAZORPAY_WEBHOOK_SECRET_SANDBOX: "", PAWSPACE_PAYMENT_ENV: "", PAWSPACE_PAYMENT_LIVE_APPROVED: "", FORBID_PRODUCTION: "" });
+  assert.match(stderr, /requires an rzp_test_ key id/);
+  assert.doesNotMatch(stderr, /not-a-secret/);
+});

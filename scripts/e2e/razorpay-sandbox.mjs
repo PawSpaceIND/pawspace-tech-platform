@@ -13,12 +13,14 @@ function blocked(reason) {
   console.error("No order, capture, refund or webhook verification was executed.");
   process.exit(2);
 }
+// Reject an explicitly supplied live/placeholder key even when other configuration is absent.
+// Keep the established CI guard diagnostic; never print the key or secret value.
+if (keyId && (!/^rzp_test_[A-Za-z0-9]+$/.test(keyId) || /placeholder/i.test(keyId))) {
+  blocked("requires an rzp_test_ key id; live and placeholder keys are refused");
+}
 if (missing.length) blocked(`missing ${missing.join(", ")}`);
 for (const [name, required] of Object.entries({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", FORBID_PRODUCTION: "true" })) {
   if (process.env[name] !== required) blocked(`${name} must be explicitly ${required}`);
-}
-if (!/^rzp_test_[A-Za-z0-9]+$/.test(keyId) || /placeholder/i.test(keyId)) {
-  blocked("a configured rzp_test_ key is required; live and placeholder keys are refused");
 }
 if (!Number.isSafeInteger(amount) || amount <= 0) blocked("RAZORPAY_SANDBOX_AMOUNT_PAISE must be a positive safe integer");
 console.log("SCOPE Razorpay order/refund API probe only; inbound webhook delivery and the cross-app journey are NOT verified by this script.");
