@@ -58,7 +58,7 @@ async function compressImage(file: File): Promise<string> {
  *  gender, age band + optional DOB, vaccination, temperament, weight band and a photo — validated by the
  *  same pure functions the server runs. All reads/writes go through the customer-account client lib;
  *  ownership stays server-side via the platform session. */
-export default function PetManager({ customer, onPetsChanged }: { customer: LoggedInCustomer; onPetsChanged?: (pets: CustomerPet[]) => void }) {
+export default function PetManager({ customer, onPetsChanged, draftPets = [] }: { customer: LoggedInCustomer | null; onPetsChanged?: (pets: CustomerPet[]) => void; draftPets?: CustomerPet[] }) {
   const [pets, setPets] = useState<CustomerPet[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -70,6 +70,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
 
   useEffect(() => {
     let active = true;
+    if (!customer) { setPets(draftPets); setLoading(false); return; }
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
@@ -85,7 +86,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     return () => {
       active = false;
     };
-  }, [customer.customerId]);
+  }, [customer?.customerId]);
 
   const openAdd = () => {
     setIssues([]);
@@ -163,6 +164,12 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     }
     setSaving(true);
     setIssues([]);
+    if (!customer) {
+      const draft: CustomerPet = { ...candidate, id: form.id || `draft:${crypto.randomUUID()}`, sourceId: null, breed: profile.breed || null, profile };
+      const updated = [...pets.filter(pet => pet.id !== draft.id), draft];
+      setPets(updated); onPetsChanged?.(updated); setForm(null); setSaving(false);
+      return;
+    }
     try {
       await upsertCustomerPet({
         customerId: customer.customerId,
@@ -215,6 +222,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
             Name
             <input value={form.name} maxLength={60} placeholder="Pet name" onChange={(event) => setField({ name: event.target.value })} />
           </label>
+          {!form.id && form.name.trim() && <div className={styles.full} aria-label="Matching saved pets">{pets.filter(pet => pet.name.toLocaleLowerCase().includes(form.name.trim().toLocaleLowerCase())).map(pet => <button key={pet.id} type="button" className={styles.secondary} onClick={() => openEdit(pet)}>Use {pet.name} · {pet.breed || pet.species}</button>)}</div>}
           <label>
             Species
             <select value={form.species} onChange={(event) => setField({ species: event.target.value, breed: "" })}>
@@ -234,12 +242,12 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
           </label>
           <label className={styles.full}>
             Breed
-            <select value={form.breed} onChange={(event) => setField({ breed: event.target.value })}>
-              <option value="">Select a breed…</option>
+            <input list="pet-breed-options" value={form.breed} placeholder="Start typing a breed" autoComplete="off" onChange={(event) => setField({ breed: event.target.value })} />
+            <datalist id="pet-breed-options">
               {breedsFor(form.species === "cat" ? "cat" : "dog").map((breed) => (
                 <option key={breed} value={breed}>{breed}</option>
               ))}
-            </select>
+            </datalist>
           </label>
           <label>
             Age
