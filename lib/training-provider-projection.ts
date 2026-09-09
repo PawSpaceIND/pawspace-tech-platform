@@ -7,7 +7,7 @@ const SAFE_EVENT_DETAIL_KEYS = new Set([
   "caseId", "consumption", "newStart", "newEnd", "scheduledStart", "scheduledEnd", "geofence",
   "reportSaved",
 ]);
-const PII_VALUE = /(?:\+?91[\s-]?)?\d{10}|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
+const PII_VALUE = /(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
 const SENSITIVE_KEY = /(?:email|phone|mobile|address|street|contact|staff|actor|internal|note)/i;
 
 function safeString(value: unknown, max = 240): string | null {
@@ -30,9 +30,9 @@ function sanitizeOperationalObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Row = {};
   for (const [key, raw] of Object.entries(value as Row)) {
-    if (SENSITIVE_KEY.test(key)) continue;
+    if (SENSITIVE_KEY.test(key) || PII_VALUE.test(key)) continue;
     if (typeof raw === "string") { const s = safeString(raw); if (s !== null) out[key] = s; continue; }
-    if (typeof raw === "number" && Number.isFinite(raw)) { out[key] = raw; continue; }
+    if (typeof raw === "number" && Number.isFinite(raw)) { if (!PII_VALUE.test(String(raw))) out[key] = raw; continue; }
     if (typeof raw === "boolean" || raw === null) { out[key] = raw; continue; }
     if (Array.isArray(raw)) { out[key] = raw.map(item => safeString(item)).filter((item): item is string => item !== null); }
   }
@@ -56,14 +56,14 @@ function sanitizeProgress(value: unknown): Record<string, number> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, number> = {};
   for (const [key, raw] of Object.entries(value as Row)) {
-    if (SENSITIVE_KEY.test(key) || !/^[A-Za-z0-9 _-]{1,60}$/.test(key)) continue;
+    if (SENSITIVE_KEY.test(key) || PII_VALUE.test(key) || !/^[A-Za-z0-9 _-]{1,60}$/.test(key)) continue;
     if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 10) out[key] = raw;
   }
   return out;
 }
 function safeEvidenceRefs(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.map(item => safeString(item, 180)).filter((item): item is string => item !== null && item.startsWith("media://asset/"))
+    ? value.map(item => safeString(item, 180)).filter((item): item is string => item !== null && /^media:\/\/asset\/[A-Za-z0-9_-]+$/.test(item))
     : [];
 }
 

@@ -38,3 +38,13 @@ test("provider GET masks the customer name before applying the explicit projecti
   assert.match(source,/projectTrainerSession/);
   assert.match(source,/projectTrainerSession\(\{\.\.\.item,customer_name:maskName\(/);
 });
+
+
+test("formatted phone numbers and contact-shaped nested keys never leave the trainer projection",()=>{
+ const out=projectTrainerSession({requirements:["Practice recall","+91 98765 43210"],homework:{text:"Use 98765-43210"},progress:{"9876543210":4,sit:8},events:[{event_type:"complete",detail_json:JSON.stringify({programme:{"owner@example.com":true,reference:9876543210,status:"completed"}})}]});
+ assert.deepEqual(out.requirements,["Practice recall"]);assert.deepEqual(out.homework,{});assert.deepEqual(out.progress,{sit:8});assert.deepEqual(out.events[0].detail.programme,{status:"completed"});
+});
+
+test("secure Training evidence references do not expose query strings or nested paths",()=>{
+ assert.deepEqual(projectTrainerSession({evidenceRefs:["media://asset/SAFE1","media://asset/SAFE1?token=private","media://asset/SAFE1/nested"]}).evidenceRefs,["media://asset/SAFE1"]);
+});
