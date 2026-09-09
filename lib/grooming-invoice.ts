@@ -12,16 +12,19 @@ export async function ensureGroomingInvoiceTables(db:Db){await db.batch([
  * Default is 18% GST inclusive — placeholder only, not final business policy.
  * Production cities must still go through saveGroomingTaxPolicy with an explicit reason.
  */
-const taxPolicySeeded=new WeakSet<Db>();
+const taxPolicySeeded=new WeakMap<Db,Set<string>>();
 export async function seedDefaultGroomingTaxPolicy(db:Db,cityId="blr"){
-  if(taxPolicySeeded.has(db))return;
+  const seeded=taxPolicySeeded.get(db)??new Set<string>();
+  if(seeded.has(cityId))return;
   await ensureGroomingInvoiceTables(db);
   const existing=await db.prepare("SELECT city_id,status FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first<Row>();
-  if(existing&&String(existing.status)==="published"){taxPolicySeeded.add(db);return;}
+  if(existing&&String(existing.status)==="published"){
+    seeded.add(cityId);taxPolicySeeded.set(db,seeded);return;
+  }
   const now=Date.now();
   await db.prepare("INSERT INTO grooming_tax_policies (city_id,tax_mode,tax_rate,status,version,effective_from,effective_to,updated_by,reason,updated_at) VALUES (?,?,?,'published',1,?,?,?,?,?) ON CONFLICT(city_id) DO NOTHING")
     .bind(cityId,"inclusive",18,"2026-01-01",null,"uat_seed","UAT default GST inclusive seed until finance publishes the final city policy",now).run();
-  taxPolicySeeded.add(db);
+  seeded.add(cityId);taxPolicySeeded.set(db,seeded);
 }
 
 function invoiceAmounts(total:number,policy:Row|null){
