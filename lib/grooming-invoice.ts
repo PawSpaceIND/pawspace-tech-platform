@@ -7,6 +7,26 @@ export async function ensureGroomingInvoiceTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);}
 
+/**
+ * Explicit UAT/test seed for a city tax policy. Does not overwrite an existing published policy.
+ * Default is 18% GST inclusive — placeholder only, not final business policy.
+ * Must NOT be called from issueGroomingInvoice (fail-closed without a published policy).
+ */
+const taxPolicySeeded=new WeakMap<Db,Set<string>>();
+export async function seedDefaultGroomingTaxPolicy(db:Db,cityId="blr"){
+  const seeded=taxPolicySeeded.get(db)??new Set<string>();
+  if(seeded.has(cityId))return;
+  await ensureGroomingInvoiceTables(db);
+  const existing=await db.prepare("SELECT city_id,status FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first<Row>();
+  if(existing&&String(existing.status)==="published"){
+    seeded.add(cityId);taxPolicySeeded.set(db,seeded);return;
+  }
+  const now=Date.now();
+  await db.prepare("INSERT INTO grooming_tax_policies (city_id,tax_mode,tax_rate,status,version,effective_from,effective_to,updated_by,reason,updated_at) VALUES (?,?,?,'published',1,?,?,?,?,?) ON CONFLICT(city_id) DO NOTHING")
+    .bind(cityId,"inclusive",18,"2026-01-01",null,"uat_seed","UAT default GST inclusive seed until finance publishes the final city policy",now).run();
+  seeded.add(cityId);taxPolicySeeded.set(db,seeded);
+}
+
 function invoiceAmounts(total:number,policy:Row|null){
   if(!policy||String(policy.status)!=="published"||policy.tax_rate===null||policy.tax_rate===undefined||!policy.tax_mode)return null;
   const rate=Number(policy.tax_rate),mode=String(policy.tax_mode);
@@ -34,7 +54,8 @@ export async function issueGroomingInvoice(db:Db,input:{bookingId:string;reason:
   if(!booking)throw new Response("Canonical Grooming booking not found",{status:404});
   const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(!payment||String(payment.status)!=="captured")throw new Response("Grooming invoice cannot be issued until the sandbox payment is captured",{status:409});
-  const cityId=String(booking.city_id),policy=await db.prepare("SELECT * FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first<Row>();
+  const cityId=String(booking.city_id);
+  const policy=await db.prepare("SELECT * FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first<Row>();
   const amounts=invoiceAmounts(Number(booking.total_amount||0),policy);
   if(!amounts)throw new Response("Grooming invoice is blocked until a published tax policy is configured for this city",{status:409});
   const now=Date.now(),date=new Date(now),year=date.getUTCMonth()>=3?date.getUTCFullYear():date.getUTCFullYear()-1,financialYear=`${String(year).slice(-2)}-${String(year+1).slice(-2)}`,cityCode=cityId.toUpperCase();
