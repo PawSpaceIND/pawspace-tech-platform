@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
+import { setupJourney, runCompletedJourney, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
 
 function config() {
   const start = new Date(Date.now() + 9 * 86400000);
@@ -11,8 +11,12 @@ function config() {
     preferredProviderId: "groom_kiran", groupId: "OPS-CLOSURE-GROUP", start: start.toISOString(), stopAfterCapture: true };
 }
 async function recovery(job, cookie, action, reason) {
-  return routeCall("../../app/api/provider-assignment-recovery/route.ts", "POST", "/api/provider-assignment-recovery",
-    { bookingId: job.bookingId, providerId: job.provider.id, action, reason }, cookie);
+  const { POST } = await import("../app/api/provider-assignment-recovery/route.ts");
+  const response = await POST(new Request("https://uat.pawspace.in/api/provider-assignment-recovery", {
+    method: "POST", headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ bookingId: job.bookingId, providerId: job.provider.id, action, reason }),
+  }));
+  return { status: response.status, body: await response.json() };
 }
 async function fixture(t) {
   const ctx = await setupJourney(); t.after(ctx.close);
