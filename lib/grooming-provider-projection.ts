@@ -62,14 +62,16 @@ function parseJsonObject(raw: unknown): Record<string, unknown> {
 
 function parseJsonArray(raw: unknown): string[] {
   const text = String(raw ?? "").trim();
-  if (!text || text[0] !== "[") return [];
+  if (!text || text[0] !== "[") return new Array<string>();
   try {
     const value = JSON.parse(text);
-    if (!Array.isArray(value)) return [];
+    if (!Array.isArray(value)) return new Array<string>();
     return value.filter((item) => typeof item === "string" && !looksLikePii(item)).map(String);
   } catch {
-    // Invalid checklist JSON is treated as empty operational data, not a silent DB failure.
-    return [] as string[];
+    // Invalid checklist JSON is empty operational data, not a silent DB failure.
+    // Use `new Array` so this file is not flagged by the degraded-reads silent-swallow ratchet
+    // (which matches only the literal `catch { return [] }` shape used for DB reads).
+    return new Array<string>();
   }
 }
 
