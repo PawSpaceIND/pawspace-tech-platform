@@ -7,6 +7,7 @@ import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayC
 import{ensureSubscriptionBillingTables,isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
 import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
+import{claimWebhookInbox,markWebhookInbox,rejectUnclaimedWebhookInbox}from"../../../lib/webhook-inbox-lease";
 
 type RazorEntity=Record<string,unknown>;
 type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{entity?:RazorEntity}>};
@@ -112,10 +113,10 @@ export async function POST(request:Request){
     }
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
-    if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    if(!eventType){await rejectUnclaimedWebhookInbox(db,{inboxId:String(accepted.row.id),reason:"missing_event_type"});return json({error:"Webhook event type is required"},400);}
     if(gate.environment==="live"){
       const verifiedNonBooking=await knownNonBookingSubscriptionEvent(db,payload,eventType);
-      if(!verifiedNonBooking){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await markInbox(db,accepted.row,"REJECTED",eventType,"outside_payment_pilot");return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
+      if(!verifiedNonBooking){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await rejectUnclaimedWebhookInbox(db,{inboxId:String(accepted.row.id),eventType,reason:"outside_payment_pilot"});return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
     }
     /*
      * NO TIMESTAMP CHECK HERE. Replay is bounded by IDENTITY, not by age: acceptRazorpayWebhook
@@ -124,45 +125,56 @@ export async function POST(request:Request){
      * genuine Razorpay retry arriving twenty hours late is recognised as the redelivery it is rather
      * than refused. A clock-based window would have had to choose between those two.
      */
-    const recoveringFailedInbox=String(accepted.row.processing_status||"").toUpperCase()==="FAILED";
-    if(!(await claimInbox(db,accepted.row,eventType))){
-      /*
-       * `accepted.row.event_id`, NOT the header's eventId, and that distinction is new.
-       *
-       * The post-commit capture effects are keyed on the event id they were enqueued under, which is the
-       * id of the event as RECORDED. Since the inbox now dedupes on the payload digest, a redelivery can
-       * arrive carrying a different id in the header - a gateway retry, or a replay - and resolve to the
-       * original row. Looking the outbox up by the header id would then find nothing, silently answer
-       * 200, and strand a pending capture effect that the retry existed to finish.
-       */
-      const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
-      if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
-      return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
+    const captureEvent=targetFor(eventType)==="CAPTURED";
+    let recoveringInbox=false;
+    let inboxClaimToken:string|null=null;
+    if(captureEvent){
+      if(!(await claimInbox(db,accepted.row,eventType))){
+        const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
+        if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
+        return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
+      }
+    }else{
+      const claim=await claimWebhookInbox(db,{inboxId:String(accepted.row.id),eventType});
+      recoveringInbox=claim.recovered;
+      inboxClaimToken=claim.claimToken;
+      if(!claim.claimed){
+        if(claim.currentStatus.toUpperCase()==="PROCESSING")return json({ok:false,environment:gate.environment,duplicate:true,status:"PROCESSING",reason:"webhook_processing_in_progress"},503);
+        return json({ok:true,environment:gate.environment,duplicate:true,status:claim.currentStatus});
+      }
     }
+    const finishInbox=async(status:"PROCESSED"|"DEFERRED"|"REJECTED"|"FAILED",type?:string,reason?:string)=>{
+      if(inboxClaimToken){
+        const result=await markWebhookInbox(db,{inboxId:String(accepted.row.id),claimToken:inboxClaimToken,status,eventType:type,reason});
+        if(!result.marked)throw new Error("webhook_inbox_claim_lost");
+        return;
+      }
+      await markInbox(db,accepted.row,status,type,reason);
+    };
     try{
       if(eventType==="refund.processed"){
         const entitlement=await prepareSubscriptionRefundEntitlementForWebhook(db,payload as unknown as Row);
         const refundResult=await processSubscriptionRefundEvent(db,payload as unknown as Row,eventId);
-        if(refundResult.handled){if(entitlement.handled)await finalizeSubscriptionRefundEntitlement(db,entitlement.allocationKey);await markInbox(db,accepted.row,"PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscriptionRefund:refundResult});}
+        if(refundResult.handled){if(entitlement.handled)await finalizeSubscriptionRefundEntitlement(db,entitlement.allocationKey);await finishInbox("PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscriptionRefund:refundResult});}
       }
       if(eventType.startsWith("subscription.")||isPawSpaceSubscriptionPayload(payload as unknown as Row)){
         const subscriptionResult=await processSubscriptionProviderEvent(db,payload as unknown as Row,eventId);
-        if(subscriptionResult.handled){const entitlement=eventType==="subscription.charged"?await grantSubscriptionRenewalEntitlement(db,{eventId}):null;await markInbox(db,accepted.row,"PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscription:subscriptionResult,entitlement});}
+        if(subscriptionResult.handled){const entitlement=eventType==="subscription.charged"?await grantSubscriptionRenewalEntitlement(db,{eventId}):null;await finishInbox("PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscription:subscriptionResult,entitlement});}
       }
 
       const event=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);
       const target=targetFor(eventType);const intent=target?await matchedIntent(db,event):null;
       if(intent&&target&&transitionWouldDefer(intent,target)){
-        await markInbox(db,accepted.row,"DEFERRED",eventType,`payment_state_${String(intent.state).toLowerCase()}_awaits_prior_transition`);
+        await finishInbox("DEFERRED",eventType,`payment_state_${String(intent.state).toLowerCase()}_awaits_prior_transition`);
         return json({ok:true,environment:gate.environment,deferred:true,state:String(intent.state),target});
       }
 
       if(target==="CAPTURED"){
         await ensurePaymentReconciliationTables(db);
         const linked=intent?{bookingId:String(intent.booking_id),paymentId:String(intent.payment_id)}:await linkedPayment(db,event);
-        if(!linked){await markInbox(db,accepted.row,"FAILED",eventType,"capture_has_no_canonical_payment_link");return json({error:"Razorpay capture has no canonical payment link",code:"capture_atomic_link_missing"},409);}
-        if(event.bookingId&&event.bookingId!==linked.bookingId){await markInbox(db,accepted.row,"FAILED",eventType,"gateway_order_booking_mismatch");return json({error:"Razorpay capture booking does not own its gateway reference",code:"gateway_order_booking_mismatch"},409);}
-        const amountPaise=Number(event.amountSubunits||0);if(!Number.isSafeInteger(amountPaise)||amountPaise<=0){await markInbox(db,accepted.row,"FAILED",eventType,"invalid_capture_amount");return json({error:"Captured Razorpay amount must be positive integer paise"},400);}
+        if(!linked){await finishInbox("FAILED",eventType,"capture_has_no_canonical_payment_link");return json({error:"Razorpay capture has no canonical payment link",code:"capture_atomic_link_missing"},409);}
+        if(event.bookingId&&event.bookingId!==linked.bookingId){await finishInbox("FAILED",eventType,"gateway_order_booking_mismatch");return json({error:"Razorpay capture booking does not own its gateway reference",code:"gateway_order_booking_mismatch"},409);}
+        const amountPaise=Number(event.amountSubunits||0);if(!Number.isSafeInteger(amountPaise)||amountPaise<=0){await finishInbox("FAILED",eventType,"invalid_capture_amount");return json({error:"Captured Razorpay amount must be positive integer paise"},400);}
         let atomic;
         try{
           atomic=await commitRazorpayCaptureAtomic(db,{
@@ -172,8 +184,8 @@ export async function POST(request:Request){
           });
         }catch(error){
           if(!(error instanceof RazorpayCaptureAmountMismatchError))throw error;
-          const governed=await processGatewayEvent(db,event,{allowRecovery:recoveringFailedInbox});
-          await markInbox(db,accepted.row,"FAILED",eventType,String(governed.reason||"capture_amount_mismatch"));
+          const governed=await processGatewayEvent(db,event,{allowRecovery:recoveringInbox});
+          await finishInbox("FAILED",eventType,String(governed.reason||"capture_amount_mismatch"));
           return json({ok:true,environment:gate.environment,...governed});
         }
         const effects=atomic.effectsOutboxId?await executeRazorpayCapturePostCommit(db,{outboxId:atomic.effectsOutboxId,workerId:`razorpay-webhook:${crypto.randomUUID()}`}):null;
@@ -181,16 +193,16 @@ export async function POST(request:Request){
         return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
       }
 
-      const result=await processGatewayEvent(db,event,{allowRecovery:recoveringFailedInbox});
+      const result=await processGatewayEvent(db,event,{allowRecovery:recoveringInbox});
       const failed=String(result.status||"")==="exception";
-      if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
+      if(failed){await finishInbox("FAILED",eventType,String(result.reason||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
 
       let transition:Awaited<ReturnType<typeof advancePaymentState>>|null=null;
       if(intent&&target)transition=await advancePaymentState(db,{intentId:String(intent.id),target,gatewayPaymentId:event.gatewayPaymentId});
-      await markInbox(db,accepted.row,"PROCESSED",eventType);
-      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null});
+      await finishInbox("PROCESSED",eventType);
+      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null,processingRecovered:recoveringInbox});
     }catch(error){
-      await markInbox(db,accepted.row,"FAILED",eventType,error instanceof Error?error.message:"domain_processing_failed").catch(()=>null);
+      await finishInbox("FAILED",eventType,error instanceof Error?error.message:"domain_processing_failed").catch(()=>null);
       throw error;
     }
   }catch(error){return authError(error,"Unable to process Razorpay webhook");}
