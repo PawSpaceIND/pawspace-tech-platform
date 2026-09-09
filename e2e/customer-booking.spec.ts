@@ -306,6 +306,9 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    const persisted=await partner.evaluate(async id=>{const response=await fetch(`/api/sitting-lifecycle?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});if(!response.ok)throw new Error("Unable to read recovery");return(await response.json()).data[0];},bookingId);expect(persisted.id).toBe(bookingId);expect(persisted.status).toBe("reassignment_needed");expect(JSON.parse(persisted.recovery.detail_json).reason).toBe(reason);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("reassignment needed");await expect(page.getByRole("textbox",{name:"Food and water routine",exact:true})).toHaveValue("Use the labelled food container. Refresh water after the meal.");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-recovery.png"),fullPage:true});
+   // This sandbox Operations surface uses the existing local-preview staff context; it does not certify staff login.
+   const ops=await browser.newPage({baseURL:new URL(page.url()).origin});try{await ops.goto("/team/operations/sitting");await ops.getByRole("button",{name:new RegExp(bookingId)}).click();const recoveryCard=ops.getByRole("article").filter({has:ops.getByRole("heading",{name:"Sitter recovery",exact:true})});await expect(recoveryCard).toContainText(reason);await expect(recoveryCard.getByRole("textbox",{name:"Operations replacement reason",exact:true})).toBeVisible();await ops.screenshot({path:test.info().outputPath("sitting-operations-recovery.png"),fullPage:true});}finally{await ops.close();}
+
 
 
   }finally{await partner.close();}
