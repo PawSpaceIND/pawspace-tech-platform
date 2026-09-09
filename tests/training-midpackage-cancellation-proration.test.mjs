@@ -71,7 +71,8 @@ async function world({ publishPolicy = true, noShowTreatment = "refundable", com
   const now = Date.now();
   sqlite.exec(`CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);
-    CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);`);
+    CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);
+    CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT,provider_id TEXT,service_code TEXT,city_id TEXT,zone_id TEXT,customer_id TEXT,pet_ids_json TEXT,scheduled_start TEXT,scheduled_end TEXT,care_mode TEXT,status TEXT,created_at INTEGER);`);
 
   sqlite.prepare(`INSERT INTO canonical_bookings VALUES (?,?,?,'blr-indiranagar','dog_training',?, 'in_progress',?,'INR',?,?)`)
     .run(BOOKING, CUSTOMER, CITY, TRAINER, PACKAGE_TOTAL, now, now);
@@ -123,6 +124,10 @@ test("TRAIN-CANCEL-1: 4 of 10 sessions used - refund is the remaining 6, prorate
   assert.equal(Number(c.used_value) + Number(c.calculated_refund), Number(c.captured_amount),
     "used + refunded does not equal captured - money is unaccounted for");
   assert.equal(Number(c.outstanding_service_value), 0, "a fully captured package should leave nothing outstanding");
+  // The live policy is a ZERO cancellation fee, so assert the computed fee directly - not merely
+  // that a fee cannot be configured (TRAIN-CANCEL-3). If a penalty were ever introduced, the refund
+  // above would shrink and this would be the line that says why.
+  assert.equal(Number(c.cancellation_fee), 0, "a cancellation fee was applied against live policy");
 });
 
 test("TRAIN-CANCEL-2: the session in flight is NOT charged - only delivered sessions are", async () => {
@@ -253,4 +258,44 @@ test("TRAIN-CANCEL-9: the cancellation is recorded in the audit ledger with an a
   assert.ok(requested, `no 'requested' event: ${events.map((e) => e.event_type).join(",")}`);
   assert.equal(String(requested.actor_id), CUSTOMER, "the event does not record who cancelled");
   assert.ok(String(requested.reason).length >= 8, "the event carries no meaningful reason");
+});
+
+test("TRAIN-CANCEL-10: approval cascades cancelled through programme, booking and work order", async () => {
+  /* Phase 2 of the closure protocol: assert the status cascade the system actually performs. The
+   * cascade fires on APPROVAL, not on request - approveTrainingCancellation is what writes
+   * 'cancelled' to all three tables in one batch. Driving only the request, as the earlier tests do,
+   * never reaches it. */
+  const { sqlite, db, cancel } = await world();
+  const requested = await cancel.requestTrainingCancellation(db, {
+    bookingId: BOOKING, reason: "Customer relocating out of the city", idempotencyKey: "IDEM-CASCADE", actorId: CUSTOMER,
+  });
+  const caseId = String(requested?.caseId || caseRow(sqlite).id);
+
+  const before = {
+    programme: sqlite.prepare("SELECT status FROM training_programmes WHERE id=?").get(PROGRAMME).status,
+    booking: sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status,
+    workOrder: sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id=?").get(BOOKING).status,
+  };
+  assert.notEqual(before.programme, "cancelled", "the programme was already cancelled - the cascade would prove nothing");
+  assert.notEqual(before.booking, "cancelled", "the booking was already cancelled");
+  assert.notEqual(before.workOrder, "cancelled", "the work order was already cancelled");
+
+  await cancel.approveTrainingCancellation(db, {
+    caseId, reason: "Relocation confirmed by operations", actorId: STAFF,
+  });
+
+  const after = {
+    programme: sqlite.prepare("SELECT status FROM training_programmes WHERE id=?").get(PROGRAMME).status,
+    booking: sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status,
+    workOrder: sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id=?").get(BOOKING).status,
+  };
+  assert.deepEqual(after, { programme: "cancelled", booking: "cancelled", workOrder: "cancelled" },
+    `the cascade did not reach every record: ${JSON.stringify({ before, after })}`);
+
+  // The trainer's assignment is what the directive wanted a websocket to halt. There is no push
+  // channel (see the PR description), so the durable truth is this: the work order is cancelled, so
+  // any partner-app read of assigned work no longer returns this job.
+  const stillAssigned = sqlite.prepare(
+    "SELECT COUNT(*) n FROM provider_work_orders WHERE provider_id=? AND status NOT IN ('cancelled','completed')").get(TRAINER).n;
+  assert.equal(Number(stillAssigned), 0, "the trainer still holds an active work order for a cancelled programme");
 });
