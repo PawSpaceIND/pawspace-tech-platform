@@ -109,7 +109,7 @@ test("resilience: render failure reaches route error boundary and reset recovers
   });
 
   await page.goto("/booking-command-center");
-  await expect(page.getByRole("alert")).toContainText("Our servers are taking a quick walk. We're on it.");
+  await expect(page.getByRole("alert")).toContainText("This page didn't load");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 
   // Vinext's development diagnostics intentionally overlay uncaught render failures. In E2E we still

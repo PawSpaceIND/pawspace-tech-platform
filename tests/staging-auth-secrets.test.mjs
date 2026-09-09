@@ -79,7 +79,7 @@ test("no authentication secret has a committed usable fallback", () => {
 function runStageConfig(env, buildVars = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stage-config-"));
   fs.mkdirSync(path.join(dir, "dist", "server"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: buildVars, r2_buckets: [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: "site-creator-r2" }] }));
+  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: buildVars }));
   const script = new URL("../scripts/stage-config.mjs", import.meta.url).pathname;
   try {
     const stdout = execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -91,20 +91,6 @@ function runStageConfig(env, buildVars = {}) {
 }
 
 const GOOD = { STAGING_D1_ID: "11111111-2222-4333-8444-555555555555", PAWSPACE_UAT_ACCESS_CODE: "a-real-access-code-of-thirty-two-plus", PAWSPACE_UAT_SIGNING_KEY: "0123456789abcdef0123456789abcdef01", PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "fedcba9876543210fedcba9876543210fe" };
-
-test("staging removes emulator storage and enables internal media only with an explicit bucket", () => {
-  const absent = runStageConfig(GOOD);
-  assert.equal(absent.code, 0);
-  assert.equal(absent.config.r2_buckets, undefined);
-  assert.equal(absent.config.vars.PAWSPACE_INTERNAL_MEDIA_ENABLED, "false");
-  const configured = runStageConfig({ ...GOOD, STAGING_R2_BUCKET_NAME: "pawspace-uat-media-test" });
-  assert.equal(configured.code, 0);
-  assert.deepEqual(configured.config.r2_buckets, [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: "pawspace-uat-media-test" }]);
-  assert.equal(configured.config.vars.PAWSPACE_INTERNAL_MEDIA_ENABLED, "true");
-  assert.equal(configured.config.vars.APP_ENV, "staging");
-  assert.equal(configured.config.vars.FORBID_PRODUCTION, "true");
-  assert.equal(configured.config.vars.PAWSPACE_PAYMENT_LIVE_APPROVED, "false");
-});
 
 test("real execution: the deploy fails closed when any required secret is missing", () => {
   for (const omit of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {

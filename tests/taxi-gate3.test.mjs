@@ -346,11 +346,9 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   assert.equal(refunded.settlementState, "not_due", "a cancelled trip owes the driver nothing");
 
   // Each reconciliation is a new immutable row, so the history is auditable.
-  const rows = sqlite.prepare("SELECT id,paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=?").all(bookingId);
+  const rows = sqlite.prepare("SELECT paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at,id").all(bookingId);
   assert.equal(rows.length, 2);
-  // Operations can share a millisecond; random UUID order is not event order.
-  // Verify each immutable snapshot by the identity returned by its operation.
-  assert.deepEqual([unpaid.reconciliationId, paid.reconciliationId].map(id => Number(rows.find(row => row.id === id)?.net_paid_total)), [0, 449]);
+  assert.deepEqual(rows.map((row) => Number(row.net_paid_total)), [0, 449]);
   assert.deepEqual([...new Set(rows.map((row) => String(row.checked_by)))], [FINANCE_CHECKER], "the checker recorded is the acting identity");
   assert.deepEqual(JSON.parse(String(sqlite.prepare("SELECT detail_json FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").get(bookingId).detail_json)).productionPaymentTimingPolicy, "pending");
 });

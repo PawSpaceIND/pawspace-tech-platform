@@ -26,7 +26,6 @@ function trainingCaptureKey(quoteId:string){const existing=trainingCaptureKeys.g
 async function attestTrainingProgramme(input:CanonicalLifecycleInput){const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return input;const capture=await apiSend<TrainingSandboxCapture>("/api/training-payment-sandbox",{method:"POST",headers:{"content-type":"application/json","x-payment-capture-key":trainingCaptureKey(quoteId)},body:JSON.stringify({quoteId,amount:input.amountDueNow})},"Training sandbox capture failed");return{...input,payment:{...input.payment,status:"captured" as const,detail:`Server-attested Training UAT sandbox capture · ${capture.reference}`}};}
 
 export async function createCanonicalLifecycle(input:CanonicalLifecycleInput){
-  if(input.serviceCode==="dog_training")await apiSend("/api/training-eligibility",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({customerId:input.customer.id,petIds:input.pets.map(pet=>pet.sourceId),packageCode:input.packageCode})},"Please review your dogs' training eligibility before payment.");
   /*
    * The client's own payment label is NOT evidence that a payment happened, so it cannot decide
    * whether the capture that label stands for gets performed. This gate used to include

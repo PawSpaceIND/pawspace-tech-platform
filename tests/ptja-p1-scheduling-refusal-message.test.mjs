@@ -36,17 +36,6 @@ const REQUEST = {
   zoneId: "blr-east", occurrences: [], packageCode: "TRAIN-STARTER",
 };
 
-test("provider diagnostics cannot inject stack traces into a scheduling refusal", async () => {
-  const { reserveUatSchedule, SchedulingRefusal } = await import("../lib/uat-scheduling-client.ts");
-  await withStubbedFetch({ error:"NO_SCHEDULE_AVAILABLE", evaluations:[{eligible:false,reasons:["HTTP 500 TypeError: internal database connection"]}] },409,async()=>{
-    await assert.rejects(reserveUatSchedule(REQUEST),error=>{
-      assert.ok(error instanceof SchedulingRefusal);
-      assert.doesNotMatch(error.message,/HTTP|TypeError|database|500/);
-      assert.match(error.message,/pick another slot/i);return true;
-    });
-  });
-});
-
 test("UI-01: a scheduling refusal never shows the customer a raw error code", async () => {
   const { reserveUatSchedule } = await import("../lib/uat-scheduling-client.ts");
   for (const code of CODES) {

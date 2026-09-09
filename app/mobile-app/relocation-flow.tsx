@@ -5,7 +5,6 @@
 // /api/relocation-enquiry route; the server re-validates every field. No booking or money here —
 // relocation is quoted by the ops team after triage (staff list at /team/relocation-enquiries).
 import { useState } from "react";
-import AddressAutofill from "./address-autofill";
 import styles from "./relocation-flow.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 
@@ -93,8 +92,8 @@ export default function RelocationFlow({ customer }: { customer: LoggedInCustome
         <label className={styles.field}>Pickup date<input type="date" value={pickupDate} onChange={e => setPickupDate(e.target.value)} /></label>
         <label className={styles.field}>Approx. time<input type="time" value={pickupTime} onChange={e => setPickupTime(e.target.value)} /></label>
       </div>
-      <label className={styles.field}>Pickup location<AddressAutofill value={pickupLocation} placeholder={kind === "domestic" ? "e.g. Indiranagar, Bengaluru" : "e.g. Bengaluru, India"} onChange={setPickupLocation} required /></label>
-      <label className={styles.field}>Drop location<AddressAutofill value={dropLocation} placeholder={kind === "domestic" ? "e.g. Andheri West, Mumbai" : "e.g. Singapore"} onChange={setDropLocation} required /></label>
+      <label className={styles.field}>Pickup location<input value={pickupLocation} placeholder={kind === "domestic" ? "e.g. Indiranagar, Bengaluru" : "e.g. Bengaluru, India"} onChange={e => setPickupLocation(e.target.value)} required /></label>
+      <label className={styles.field}>Drop location<input value={dropLocation} placeholder={kind === "domestic" ? "e.g. Andheri West, Mumbai" : "e.g. Singapore"} onChange={e => setDropLocation(e.target.value)} required /></label>
       <label className={styles.field}>Expected travel date<input type="date" value={travelDate} onChange={e => setTravelDate(e.target.value)} /></label>
 
       {error && <p role="alert" className={styles.error}>{error}</p>}

@@ -1,5 +1,4 @@
 "use client";
-import AddressAutofill from "./address-autofill";
 import { useEffect, useState } from "react";
 import styles from "./taxi-flow.module.css";
 import { loadTaxiRouteClasses, createTaxiQuote, type TaxiRouteClass, type TaxiQuote } from "../../lib/taxi-commercial-client";
@@ -169,9 +168,9 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
         <section>
           <div className={styles.head}><h3>Where are we going?</h3><small>Trip · 2 of 4</small></div>
           <span className={styles.label}>Pickup location</span>
-          <AddressAutofill aria-label="Pickup location" className={styles.input} value={originLabel} onChange={setOriginLabel} placeholder="e.g. Indiranagar, 100 Feet Road" maxLength={120} />
+          <input className={styles.input} value={originLabel} onChange={event => setOriginLabel(event.target.value)} placeholder="e.g. Indiranagar, 100 Feet Road" maxLength={120} />
           <span className={styles.label}>Drop-off location</span>
-          <AddressAutofill aria-label="Drop-off location" className={styles.input} value={destinationLabel} onChange={setDestinationLabel} placeholder="e.g. Whitefield vet clinic" maxLength={120} />
+          <input className={styles.input} value={destinationLabel} onChange={event => setDestinationLabel(event.target.value)} placeholder="e.g. Whitefield vet clinic" maxLength={120} />
           {!locationsValid && (origin.length > 0 || destination.length > 0) && <p className={styles.note}>Pickup and drop-off need at least 3 characters each and must be different places.</p>}
           <span className={styles.label}>Pickup date</span>
           <div className={styles.chipRow}>

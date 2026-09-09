@@ -178,8 +178,7 @@ test("the UI validator is the server's validator — one shared pure function", 
 // ---------------------------------------------------------------------------
 test("pet manager is embeddable with the required props and performs no direct fetches", () => {
   assert.match(component, /"use client"/);
-  assert.match(component, /customer: LoggedInCustomer \| null; onPetsChanged\?/);
-  assert.match(component, /if \(!customer\) \{\s+const draft:/, "guests save drafts without account writes");
+  assert.match(component, /\{ customer, onPetsChanged \}: \{ customer: LoggedInCustomer; onPetsChanged\?/);
   assert.doesNotMatch(component, /fetch\(/, "all IO goes through the customer-account client lib");
   assert.match(component, /from "\.\.\/\.\.\/lib\/customer-account-client"/);
   assert.match(component, /onPetsChanged\?\.\(refreshed\)/, "flows are told when the pet list changes");
@@ -319,5 +318,5 @@ test("the account route keeps ownership server-side via the platform session", (
   assert.match(accountRoute, /resolvePlatformSession/, "customer identity resolves from the session when not supplied");
   assert.match(accountRoute, /requireCustomerOwnership/, "explicit customer IDs still pass the ownership check");
   assert.match(accountRoute, /sameOrigin\(request\)/, "writes carry the cross-origin guard");
-  assert.match(clientLib, /idempotencyKey: input.idempotencyKey \?\? `pet-manager:\$\{crypto\.randomUUID\(\)\}`/, "guest retries keep the stable key; ordinary saves receive a new key");
+  assert.match(clientLib, /idempotencyKey: `pet-manager:\$\{crypto\.randomUUID\(\)\}`/, "every save is idempotency-keyed");
 });

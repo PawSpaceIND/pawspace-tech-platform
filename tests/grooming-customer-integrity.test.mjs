@@ -60,7 +60,7 @@ test("confirmation proof is derived from the public provider profile", () => {
 
 test("booking submission is guarded against concurrent double clicks", () => {
   assert.match(source, /confirm=async\(\)=>\{if\(scheduling\)return;/);
-  assert.match(source, /disabled=\{scheduling\|\|savingDrafts\|\|!serviceLocation\}/);
+  assert.match(source, /disabled=\{scheduling\|\|!serviceLocation\}/);
 });
 
 test("provider preview never reserves capacity before confirmation", () => {

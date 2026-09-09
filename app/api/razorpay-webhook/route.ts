@@ -131,6 +131,13 @@ export async function POST(request:Request){
       if(!verifiedNonBooking){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await markInbox(db,accepted.row,"REJECTED",eventType,"outside_payment_pilot");return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
     }
     if(!(await claimInbox(db,accepted.row,eventType))){
+      // Replay accounting only for an already reconciled booking refund. A subscription refund
+      // has its own ledger, and a concurrently PROCESSING event is not completion evidence.
+      if(eventType==="refund.processed"&&String(accepted.row.processing_status)==="PROCESSED"
+        &&!(await knownNonBookingSubscriptionEvent(db,payload,eventType))){
+        const replay=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);
+        await postVerifiedBookingRefund(db,replay);
+      }
       const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
       if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
       return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
@@ -179,15 +186,17 @@ export async function POST(request:Request){
 
       const result=await processGatewayEvent(db,event);
       const failed=String(result.status||"")==="exception";
-      if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason ||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
+      if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
 
       // Complete accounting before acknowledging a booking refund. The persisted refund identity
       // makes a verified inbox retry repair an absent journal without posting a second reversal.
-      if(eventType==="refund.processed")await postVerifiedBookingRefund(db,event);
+      const refundCollectionReversal=eventType==="refund.processed"
+        ?{handled:true,posted:await postVerifiedBookingRefund(db,event)}
+        :null;
       let transition:Awaited<ReturnType<typeof advancePaymentState>>|null=null;
       if(intent&&target)transition=await advancePaymentState(db,{intentId:String(intent.id),target,gatewayPaymentId:event.gatewayPaymentId});
       await markInbox(db,accepted.row,"PROCESSED",eventType);
-      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null});
+      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null,refundCollectionReversal});
     }catch(error){
       await markInbox(db,accepted.row,"FAILED",eventType,error instanceof Error?error.message:"domain_processing_failed").catch(()=>null);
       throw error;

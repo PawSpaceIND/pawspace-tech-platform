@@ -69,9 +69,16 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       expect(boardApi.data.pendingRequests.some((row:{groupId:string})=>row.groupId===groupId)).toBe(true);
       await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL});
       await page.goto("/team/scheduling");
-      await page.getByLabel("Day (IST)",{exact:true}).fill(day);
-      const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
+      // Wait for client hydration before changing the controlled date input. On mobile Chromium the
+      // server-rendered input can accept a Playwright fill before React attaches onChange, then hydration
+      // restores today's value and the browser journey observes the wrong day even though the API is sound.
       const refresh=page.getByRole("button",{name:/Refresh|Refreshing/});
+      await expect(refresh).toBeEnabled({timeout:15000});
+      const dayInput=page.getByLabel("Day (IST)",{exact:true});
+      await dayInput.fill(day);
+      await expect(dayInput).toHaveValue(day);
+      const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
+      await expect(waiting).toBeVisible({timeout:15000});
       await expect(refresh).toBeEnabled({timeout:15000});
       await refresh.click();
       await expect(waiting).toBeVisible({timeout:15000});await waiting.getByRole("button",{name:"Manage request",exact:true}).click();

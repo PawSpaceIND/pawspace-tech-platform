@@ -11,8 +11,7 @@ test("keeps the provider Partner app mobile-first and canonical", async () => {
     "app/partner-app/partner.module.css",
   ].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")));
 
-  assert.match(page, /YOUR CARE DAY/);
-  assert.match(page, /Hello, care partner\./);
+  assert.match(page, /PAWSPACE PARTNER MOBILE/);
   for (const label of ["Home", "Jobs", "GPS", "Earnings", "More"]) assert.match(page, new RegExp(`\\"${label}\\"`));
   assert.match(page, /\/api\/identity-session/);
   assert.match(page, /\/api\/partner-grooming-jobs/);

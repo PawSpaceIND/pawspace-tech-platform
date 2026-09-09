@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
 import styles from "./partner.module.css";
-import { PHOTO_UPLOADS_DEFERRED, PHOTO_UAT_NOTICE, isDeferredPhotoAction } from "../../lib/mobile/human-uat-scope";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
@@ -71,7 +70,7 @@ export default function PartnerMobileApp() {
         return body.data;
       })
       .then((data) => { if (!cancelled) { setIdentity(data); setError(""); } })
-      .catch(() => { if (!cancelled) setError("Please sign in with your partner account to see your assigned jobs."); });
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); });
     return () => { cancelled = true; };
   }, []);
 
@@ -90,7 +89,7 @@ export default function PartnerMobileApp() {
         setSelectedId((current) => current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? ""));
         setError("");
       })
-      .catch(() => { if (!cancelled) setError("Your jobs could not load. Please check your connection and refresh."); });
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
     return () => { cancelled = true; };
   }, [identity?.subjectId, refreshKey, paymentPollKey]);
 
@@ -111,10 +110,9 @@ export default function PartnerMobileApp() {
                 : null
     : null;
   const actionLabel = nextAction === "accept" ? "Accept job" : nextAction === "on_the_way" ? "Start journey" : nextAction === "arrived" ? "Mark arrived" : nextAction === "start_service" ? "Start service" : nextAction === "add_proof" ? "Add service proof" : nextAction === "complete" ? "Complete job" : "No action";
-  const photoActionDeferred = isDeferredPhotoAction(nextAction, selected?.proof);
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
 
-  useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }).catch(() => { if (active) setError("Payment status is temporarily unavailable. Refresh before requesting another payment."); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
+  useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
   useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
   useEffect(() => { if (tab !== "earnings") return; void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); setEarnings(body.data?.earnings ?? null); }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings")); }, [tab, refreshKey]);
 
@@ -151,7 +149,7 @@ export default function PartnerMobileApp() {
   };
 
   const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete") => {
-    if (!selected || busy || isDeferredPhotoAction(action, selected.proof)) return;
+    if (!selected || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -174,8 +172,8 @@ export default function PartnerMobileApp() {
         if (!response.ok) throw new Error(body.error || "Unable to update job");
       }
       setRefreshKey((value) => value + 1);
-    } catch {
-      setError("We couldn't update this job. Refresh to check its latest status before trying again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update job");
     } finally {
       setBusy(false);
     }
@@ -189,15 +187,14 @@ export default function PartnerMobileApp() {
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <div className={styles.identityPill}><i>{identity?.subjectId ? "✓" : "○"}</i><span>{identity?.subjectId ? "Verified" : error ? "Sign in required" : "Checking"}</span></div>
+        <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
       </header>
 
       <section className={styles.content}>
-        {error && <div className={styles.error} role="alert">{error}</div>}
-        {!identity?.subjectId && error && <p><Link href="/partner/onboarding">Sign in to your partner account →</Link></p>}
+        {error && <div className={styles.error}>{error}</div>}
 
         {tab === "home" && <>
-          <div className={styles.greeting}><div><small>YOUR CARE DAY</small><h1>{identity?.subjectId ? providerName : "Hello, care partner."}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "A little care makes their whole day."}</p></div><button aria-label="Refresh jobs" disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          <div className={styles.greeting}><div><small>PAWSPACE PARTNER MOBILE</small><h1>{providerName}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "Identity-scoped UAT workspace"}</p></div><button aria-label="Refresh jobs" disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
 
           <section className={styles.heroCard}>
             <div className={styles.heroTop}><span>NEXT ASSIGNMENT</span>{selected && <em>{label(selected.status)}</em>}</div>
@@ -206,10 +203,10 @@ export default function PartnerMobileApp() {
               <p>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.zoneId}</p>
               <div className={styles.heroMeta}><span>◷ {when(selected.scheduledStart)}</span><span>◉ {selected.customer.name}</span></div>
               <div className={styles.primaryActions}>
-                {nextAction && <button disabled={busy || photoActionDeferred} onClick={() => void act(nextAction)}>{photoActionDeferred ? "Photo proof · later test round" : busy ? "Updating…" : actionLabel}</button>}
+                {nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, canTrack ? "tracking" : "jobs")}>{canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : <><h2>{identity?.subjectId ? "Ready for your next pet visit" : "Your next tail-wag starts here"}</h2><p>{identity?.subjectId ? "Your assigned visits will appear here, with each pet’s needs and your next step." : "Sign in to see your assigned pets, visit details and care instructions."}</p></>}
+            </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
           </section>
 
           <div className={styles.stats}>
@@ -218,11 +215,11 @@ export default function PartnerMobileApp() {
             <article><span>GPS</span><small>tap to start</small></article>
           </div>
 
-          <h3 className={styles.sectionTitle}>Your care essentials</h3>
+          <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
             <button onClick={() => setTab("tracking")}><i>⌖</i><b>GPS & ETA</b><small>Foreground tracking</small></button>
-            <button onClick={() => setTab("earnings")}><i>₹</i><b>Earnings</b><small>Visits, payments & totals</small></button>
+            <button onClick={() => setTab("earnings")}><i>₹</i><b>Earnings</b><small>Settlement-safe view</small></button>
             <button onClick={() => setTab("more")}><i>☰</i><b>More</b><small>Onboarding & support</small></button>
           </div>
 
@@ -242,7 +239,7 @@ export default function PartnerMobileApp() {
               <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
             </div>
             <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
-            {!PHOTO_UPLOADS_DEFERRED && selected.status === "in_service" && !selected.proof?.beforePhotoRef && <section className={styles.notice}><b>Secure before / after proof</b><p>Choose real UAT images. Registration never marks them complete: private storage confirmation and a clean malware scan are required first.</p><label>Before photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "before_service"); }} /></label><label>After photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "after_service"); }} /></label>{mediaMessage && <p>{mediaMessage}</p>}</section>}
+            {selected.status === "in_service" && !selected.proof?.beforePhotoRef && <section className={styles.notice}><b>Secure before / after proof</b><p>Choose real UAT images. Registration never marks them complete: private storage confirmation and a clean malware scan are required first.</p><label>Before photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "before_service"); }} /></label><label>After photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "after_service"); }} /></label>{mediaMessage && <p>{mediaMessage}</p>}</section>}
             {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}><b>Payment due after service</b>{!paymentRequest ? <><p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p><button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button></> : <><p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>{paymentRequest.collectable ? <><p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p><p><code>{paymentRequest.qrPayload}</code></p></> : <p>This payment request is no longer collectable. Refresh or create a governed replacement request.</p>}<small>Razorpay ref {paymentRequest.providerReference}. Payment remains unpaid until a signature-verified gateway capture is reconciled.</small></>}</section>}
             <section className={styles.notice}>
               <b>Live order impact</b>
@@ -260,7 +257,7 @@ export default function PartnerMobileApp() {
               </div>
               {operationResult && <p><b>✓ Order timeline updated</b> — {operationResult.notificationsQueued} push/WhatsApp message{operationResult.notificationsQueued === 1 ? "" : "s"} queued · {operationResult.impactedBookings.length} later booking{operationResult.impactedBookings.length === 1 ? "" : "s"} affected.{operationResult.rebookingAvailable && <> Delay is 30+ minutes, so protected customer rebooking is available. <button disabled={operationBusy} onClick={() => void reportOperation("rebook_requested")}>Open protected rebooking</button></>}</p>}
             </section>
-            <div className={styles.primaryActions}>{nextAction && <button disabled={busy || photoActionDeferred} onClick={() => void act(nextAction)}>{photoActionDeferred ? "Photo proof · later test round" : busy ? "Updating…" : actionLabel}</button>}{canTrack && <button className={styles.secondary} onClick={() => setTab("tracking")}>GPS & route</button>}{canDecline && <button className={styles.danger} disabled={busy} onClick={() => void act("decline")}>Decline</button>}</div>
+            <div className={styles.primaryActions}>{nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}{canTrack && <button className={styles.secondary} onClick={() => setTab("tracking")}>GPS & route</button>}{canDecline && <button className={styles.danger} disabled={busy} onClick={() => void act("decline")}>Decline</button>}</div>
           </section>}
         </>}
 
@@ -289,7 +286,6 @@ export default function PartnerMobileApp() {
         </>}
       </section>
 
-      {PHOTO_UPLOADS_DEFERRED && <section className={styles.notice} style={{margin:"0 20px 110px"}}><b>Internal human test · photos deferred</b><p>{PHOTO_UAT_NOTICE}</p></section>}
       <nav className={styles.bottomNav} aria-label="Partner mobile navigation">
         {([[
           "home", "⌂", "Home"

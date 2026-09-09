@@ -1,8 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
-import{staffWorkspace}from"../../lib/staff-workspace";
 
-const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",line:"var(--paw-line)",orange:"var(--paw-gold)",gold:"var(--paw-primary)",green:"#207545"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
 // Seeded identities a tester can jump in as. Sign-in resolves the role from the staff directory, so
 // only an ACTIVE seeded staff email works — an unrecognised email is refused (lib/uat-staging-auth.ts).
 const QUICK=[
@@ -15,9 +14,8 @@ const QUICK=[
 
 export default function StagingLoginPage(){
   const[enabled,setEnabled]=useState<boolean|null>(null),[signedIn,setSignedIn]=useState<string|null>(null);
-  const[workspace,setWorkspace]=useState("/team");
   const[code,setCode]=useState(""),[email,setEmail]=useState(""),[busy,setBusy]=useState(false),[msg,setMsg]=useState("");
-  useEffect(()=>{let a=true;void fetch("/api/staging-login",{cache:"no-store"}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!a)return;setEnabled(ok&&j.enabled);setSignedIn(j?.signedInAs?.email||null);setWorkspace(staffWorkspace(j?.signedInAs?.role));}).catch(()=>{if(a)setEnabled(false);});return()=>{a=false;};},[]);
+  useEffect(()=>{let a=true;void fetch("/api/staging-login",{cache:"no-store"}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!a)return;setEnabled(ok&&j.enabled);setSignedIn(j?.signedInAs?.email||null);}).catch(()=>{if(a)setEnabled(false);});return()=>{a=false;};},[]);
 
   async function login(useEmail:string){
     if(!code.trim()){setMsg("Enter the access code first.");return;}
@@ -26,10 +24,7 @@ export default function StagingLoginPage(){
     try{const r=await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:code.trim(),email:useEmail.trim()})});
       const j=await r.json() as{error?:string;email?:string};
       if(!r.ok)throw new Error(j.error||"Sign-in failed");
-      const session=await fetch("/api/staging-login",{cache:"no-store"});
-      const identity=await session.json();
-      if(!session.ok||!identity.signedInAs)throw new Error("We couldn't confirm your sign-in. Please try again.");
-      window.location.assign(staffWorkspace(identity.signedInAs.role));
+      window.location.assign("/me");
     }catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
   async function logout(){setBusy(true);try{await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"logout"})});setSignedIn(null);setMsg("Signed out.");}finally{setBusy(false);}}
@@ -40,20 +35,18 @@ export default function StagingLoginPage(){
 
   return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif",display:"flex",alignItems:"center",padding:"40px 20px"}}>
     <div style={{width:"100%"}}>
-      <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:12,marginBottom:24}}><img src="/assets/pawspace-icon.jpeg" alt="" width={44} height={44} style={{borderRadius:12}}/><b style={{fontSize:28,letterSpacing:-1}}>PawSpace</b></div>
       <p style={{textAlign:"center",fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12}}>PAWSPACE · STAGING UAT SIGN-IN</p>
       <div style={card}>
-        <h1 style={{fontSize:28,letterSpacing:-1,margin:"0 0 12px"}}>Hello, care team.</h1>
-        {enabled===false?<p style={{color:"var(--paw-danger)",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
+        {enabled===false?<p style={{color:"#ff9a9a",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
         {enabled===null?<p style={{color:C.dim,margin:0}}>Checking…</p>:null}
         {enabled?<>
-          {signedIn?<p style={{color:C.green}}>Signed in as <b>{signedIn}</b>. <a href={workspace} style={{color:C.gold}}>Go to my workspace →</a> · <button onClick={()=>void logout()} disabled={busy} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",textDecoration:"underline"}}>sign out</button></p>:null}
+          {signedIn?<p style={{color:C.green}}>Signed in as <b>{signedIn}</b>. <a href="/me" style={{color:C.gold}}>Go to my workspace →</a> · <button onClick={()=>void logout()} disabled={busy} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",textDecoration:"underline"}}>sign out</button></p>:null}
           <label style={{fontSize:13,color:C.dim}}>Access code<input style={inp} value={code} type="password" placeholder="shared UAT access code" onChange={e=>setCode(e.target.value)}/></label>
           <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>Jump in as a seeded identity:</p>
           <div style={{display:"grid",gap:8}}>{QUICK.map(q=><button key={q.email} disabled={busy} onClick={()=>void login(q.email)} style={{...btn,background:"transparent",color:C.ink,border:`1px solid ${C.line}`,textAlign:"left"}}><b>{q.label}</b><br/><small style={{color:C.dim}}>{q.email}</small></button>)}</div>
           <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>…or another seeded staff email (must be an active staff identity — an unrecognised email is refused):</p>
           <div style={{display:"flex",gap:8}}><input style={{...inp,marginTop:0}} value={email} placeholder="seeded staff email (e.g. founder@pawspace.in)" onChange={e=>setEmail(e.target.value)}/><button disabled={busy} style={btn} onClick={()=>void login(email)}>{busy?"…":"Sign in"}</button></div>
-          {msg?<p style={{color:msg.includes("out")?C.green:"var(--paw-danger)",marginTop:12}}>{msg}</p>:null}
+          {msg?<p style={{color:msg.includes("out")?C.green:"#ff9a9a",marginTop:12}}>{msg}</p>:null}
           <p style={{fontSize:12,color:C.dim,marginTop:18}}>Staging only · synthetic test data · sandbox payments. This sign-in does not exist on production.</p>
         </>:null}
       </div>

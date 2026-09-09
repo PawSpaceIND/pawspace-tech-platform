@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import styles from "./pet-manager.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
@@ -57,7 +57,12 @@ async function compressImage(file: File): Promise<string> {
  *  leaving the flow. Captures the full pet profile — species, breed (from a curated popular-first list),
  *  gender, age band + optional DOB, vaccination, temperament, weight band and a photo — validated by the
  *  same pure functions the server runs. All reads/writes go through the customer-account client lib;
- *  ownership stays server-side via the platform session. */
+ *  ownership stays server-side via the platform session.
+ *
+ *  The signed-in overload preserves the long-standing embeddable contract. The second overload extends
+ *  the same editor for the guest grooming draft without weakening signed-in ownership rules. */
+export default function PetManager({ customer, onPetsChanged }: { customer: LoggedInCustomer; onPetsChanged?: (pets: CustomerPet[]) => void }): ReactElement;
+export default function PetManager({ customer, onPetsChanged, draftPets }: { customer: LoggedInCustomer | null; onPetsChanged?: (pets: CustomerPet[]) => void; draftPets?: CustomerPet[] }): ReactElement;
 export default function PetManager({ customer, onPetsChanged, draftPets = [] }: { customer: LoggedInCustomer | null; onPetsChanged?: (pets: CustomerPet[]) => void; draftPets?: CustomerPet[] }) {
   const [pets, setPets] = useState<CustomerPet[]>([]);
   const [loading, setLoading] = useState(true);

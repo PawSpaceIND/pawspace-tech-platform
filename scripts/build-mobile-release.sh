@@ -23,7 +23,12 @@ if [ "$PAWSPACE_PAYMENT_ENV" != "sandbox" ] || [ "$FORBID_PRODUCTION" != "true" 
   exit 1
 fi
 
-echo "✔ Safety locks confirmed."
+target="${CAPACITOR_TARGET:-${APP_TARGET:-customer}}"
+case "$target" in
+  customer|partner) export CAPACITOR_TARGET="$target" ;;
+  *) echo "FATAL: CAPACITOR_TARGET must be customer or partner" >&2; exit 1 ;;
+esac
+echo "✔ Safety locks confirmed. Target: $CAPACITOR_TARGET"
 
 # 2. Synchronize web assets to native Capacitor platforms
 echo "Synchronizing Next.js assets to Capacitor platforms..."
@@ -40,7 +45,7 @@ if command -v java >/dev/null 2>&1 && java -version >/dev/null 2>&1; then
   (cd android && ./gradlew bundleRelease)
   echo "✔ Android AAB build complete: android/app/build/outputs/bundle/release/app-release.aab"
 else
-  echo "NOTICE: Java JDK 17+ is required to execute ./gradlew bundleRelease locally."
+  echo "NOTICE: Java JDK 21+ is required to execute ./gradlew bundleRelease locally."
   echo "In CI or environments with JDK, run:"
   echo "  export ANDROID_KEYSTORE_FILE=\"\${ANDROID_KEYSTORE_FILE:-pawspace-release.jks}\""
   echo "  export ANDROID_KEYSTORE_PASSWORD=\"\${ANDROID_KEYSTORE_PASSWORD:-<secure_password>}\""
@@ -57,14 +62,14 @@ echo "--------------------------------------------------------"
 if command -v xcodebuild >/dev/null 2>&1 && xcodebuild -version >/dev/null 2>&1; then
   echo "xcodebuild detected: $(xcodebuild -version | head -n 1)"
   echo "Building iOS release archive..."
-  (cd ios/App && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive -archivePath build/PawSpace.xcarchive)
+  (cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Release archive -archivePath build/PawSpace.xcarchive "PRODUCT_BUNDLE_IDENTIFIER=com.pawspace.${CAPACITOR_TARGET}")
   echo "✔ iOS release archive complete: ios/App/build/PawSpace.xcarchive"
 else
   echo "NOTICE: Full Xcode IDE application is required to execute xcodebuild locally."
   echo "To open in Xcode and configure provisioning profiles:"
   echo "  npx cap open ios"
   echo "Or in macOS CI with full Xcode:"
-  echo "  cd ios/App && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive -archivePath build/PawSpace.xcarchive && cd ../.."
+  echo "  cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Release archive -archivePath build/PawSpace.xcarchive && cd ../.."
 fi
 
 echo "========================================================"

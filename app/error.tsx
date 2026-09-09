@@ -17,8 +17,8 @@ export default function AppError({
 
   return (
     <RecoveryScreen
-      title="Our servers are taking a quick walk. We're on it."
-      detail="We couldn't finish loading this screen. Please try again. If you were paying, check your booking before making another payment."
+      title="This page didn't load"
+      detail="Something went wrong while preparing this screen. Trying again usually works — the rest of PawSpace is unaffected."
       digest={error.digest}
       onRetry={reset}
     />

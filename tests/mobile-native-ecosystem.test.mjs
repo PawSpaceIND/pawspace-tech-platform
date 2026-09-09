@@ -426,7 +426,8 @@ test("GitHub Actions mobile beta distribution workflow enforces sandbox locks an
   assert.match(workflow, /distribute-android:/);
   assert.match(workflow, /runs-on:\s*ubuntu-latest/);
   assert.match(workflow, /setup-java@v4/);
-  assert.match(workflow, /java-version:\s*['"]17['"]/);
+  assert.match(workflow, /java-version:\s*['"]21['"]/);
+  assert.match(readFileSync(resolve("android/app/capacitor.build.gradle"), "utf-8"), /JavaVersion\.VERSION_21/);
   assert.match(workflow, /ruby\/setup-ruby@v1/);
   assert.match(workflow, /bundle exec fastlane android/);
 

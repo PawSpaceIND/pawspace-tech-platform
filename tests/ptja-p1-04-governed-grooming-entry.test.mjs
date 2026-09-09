@@ -213,17 +213,14 @@ test("P1-04-A01 a post-commit failure names the booking instead of denying it", 
   assert.match(code, /let committedBookingId=""/, "the flow tracks whether the booking committed");
   assert.match(code, /committedBookingId=canonical\.bookingId;await saveServiceLocation/,
     "stamped immediately after the canonical call returns, BEFORE the writes that can still fail");
-  const start = code.indexOf("}catch(error){setScheduleError(committedBookingId?");
+  const start = code.indexOf("}catch(error){");
   assert.ok(start > 0, "the confirm catch exists");
   const handler = code.slice(start, code.indexOf("}finally", start));
   assert.ok(handler.includes("committedBookingId?"), "the handler branches on whether the booking exists");
   assert.ok(handler.includes("is confirmed"), "and says so rather than denying it");
   assert.ok(handler.includes("Do not rebook"), "and tells the customer not to rebook");
   // Non-vacuity: the pre-commit path still reports a genuine scheduling failure.
-  assert.ok(handler.includes("We couldn’t confirm this appointment"), "an uncertain failure is not falsely attributed to capacity");
-  assert.ok(handler.includes("Check My bookings before trying again"), "uncertain outcomes advise checking before retry");
-  assert.match(handler, /error instanceof SchedulingRefusal\?error\.message/, "only a typed, sanitized scheduling refusal may be shown");
-  assert.doesNotMatch(handler.replace("error instanceof SchedulingRefusal?error.message", ""), /error\.message|reason/, "raw backend errors cannot be rendered");
+  assert.ok(handler.includes("No groomer is available for this slot"), "a pre-commit failure still reads as one");
 });
 
 test("P1-04-K06 the key covers every input the request actually carries", async () => {

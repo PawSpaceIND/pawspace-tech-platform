@@ -54,7 +54,6 @@ export default function MyPortalPage(){
       {data&&!data.linked?<section style={{...card,marginTop:16}}>
         <h1 style={{marginTop:0}}>No employee record linked yet</h1>
         <p style={{color:C.dim}}>Your identity <b>{data.email}</b> is signed in, but it is not yet linked to an active employee record. Ask People Ops to link your work email to your employee profile — then your salary, payslips, incentives, leave and ranking appear here automatically.</p>
-        <a href="/team" style={{display:"inline-flex",alignItems:"center",minHeight:48,color:C.gold}}>Open team workspace →</a>
       </section>:null}
 
       {e?<>

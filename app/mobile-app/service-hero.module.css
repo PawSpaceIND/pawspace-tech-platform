@@ -6,7 +6,6 @@
 .card { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 12px; margin: -26px 14px 0; border: 1px solid var(--ps-border, #e8e2d8); border-radius: 18px; padding: 14px 15px; background: var(--ps-surface, #fff); box-shadow: 0 14px 30px rgba(0,0,0,.10); }
 .badge { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 13px; background: var(--ps-primary, #01261f); color: var(--ps-accent, #e6b34e); font-size: 19px; line-height: 1; }
 .copy { min-width: 0; }
-.artNote{position:absolute;bottom:8px;left:10px;right:10px;z-index:1;width:fit-content;max-width:calc(100% - 20px);padding:5px 8px;border-radius:8px;background:#20152be6;color:#fff;font-size:12px;line-height:1.4}
 .copy h2 { margin: 0; color: var(--ps-text, #21201e); font-size: 18px; font-weight: 800; line-height: 1.2; }
 .copy p { margin: 3px 0 0; color: var(--ps-muted, #6f6a63); font-size: 12.5px; line-height: 1.45; }
 .copy ul { display: flex; flex-wrap: wrap; gap: 5px 6px; margin: 8px 0 0; padding: 0; list-style: none; }
@@ -14,17 +13,3 @@
 .copy li::before { content: "✓ "; color: var(--ps-accent, #b8860b); font-weight: 700; }
 @media (max-height: 720px) { .photo { height: 152px; } }
 @media (max-width: 360px) { .copy h2 { font-size: 17px; } .copy li { padding: 3px 8px; font-size: 9.5px; } }
-.hero{margin:0 0 20px}.photo{height:150px;border-radius:20px}.card{box-shadow:none;border-radius:18px;background:var(--paw-surface);color:var(--paw-text)}.copy p{font-size:14px}.copy li{font-size:12px}.copy li:before{color:var(--paw-primary)}
-/* Keep package choices close to the top; character art is a supporting thumbnail. */
-.hero{display:grid;grid-template-columns:96px minmax(0,1fr);gap:14px;align-items:center;padding:14px;border:1px solid var(--paw-line);border-radius:18px;background:var(--paw-surface);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.hero .photo{height:auto;overflow:visible;border-radius:14px;background:transparent}
-.photo img{width:96px;height:96px;object-fit:contain;border-radius:14px}.photo:after{display:none}
-.artNote{position:static;display:block;margin-top:4px;padding:0;max-width:none;background:transparent;color:var(--paw-muted);text-align:center;font-size:12px}
-.card{margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;min-width:0}.badge{display:none}
-.copy h2{font-family:inherit;font-size:20px;line-height:1.25;color:var(--paw-text)}.copy p{color:var(--paw-muted);font-size:14px}
-.copy ul{gap:6px;margin-top:10px}.copy li{font-size:12px;white-space:normal;color:var(--paw-muted);background:var(--paw-bg);border-color:var(--paw-line);padding:4px 7px}
-@media(max-width:350px){.hero{grid-template-columns:72px minmax(0,1fr);gap:10px;padding:12px}.photo img{width:72px;height:72px}.copy h2{font-size:18px}}
-
-:global(html:not([data-paw-style="cartoon"])) .photo { display:none; }
-:global(html:not([data-paw-style="cartoon"])) .hero { display:block; }
-:global(html:not([data-paw-style="cartoon"])) .card { width:100%; }

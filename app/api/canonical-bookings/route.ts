@@ -19,7 +19,6 @@ import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
 import {postCollectionEvent} from "../../../lib/collection-ledger";
 import {cityBookingVerdict} from "../../../lib/city-status-authority";
-import {assertTrainingPetEligibility} from "../../../lib/training-pet-eligibility";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -309,8 +308,6 @@ export async function POST(request:Request){try{const db=await database();await 
     const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Training booking window does not match the first reserved session"},409);
     trainingCommercial=await governTrainingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length});governed={packageCode:trainingCommercial.packageCode,packageName:trainingCommercial.packageName,catalogueVersion:trainingCommercial.catalogueVersion,petCount:trainingCommercial.petCount,totalAmount:trainingCommercial.totalAmount,amountDueNow:trainingCommercial.amountDueNow};
   }
-  // Preserve reservation and quote refusals first; saved-pet eligibility must still pass before any booking/payment ledger write.
-  if(input.serviceCode==="dog_training")await assertTrainingPetEligibility(db,{customerId:input.customer.id,petIds:input.pets.map(pet=>pet.sourceId),packageCode:input.packageCode});
   let boardingCommercial:Awaited<ReturnType<typeof governBoardingBooking>>|null=null;
   if(input.serviceCode==="boarding"){
     const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Boarding booking window does not match the continuous stay reservation"},409);

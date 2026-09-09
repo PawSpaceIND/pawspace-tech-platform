@@ -10,6 +10,5 @@
  * viewport.  The shell hid the overflow, clipping every control in the inspector.
  * Collapse before the *inner* workspace becomes narrower than the inbox instead.
  */
-.navItem{min-height:44px;box-sizing:border-box;text-decoration:none}.navItem:focus-visible{outline:3px solid var(--paw-primary);outline-offset:2px}.composer input{min-width:0}.bubble,.kv b{overflow-wrap:anywhere}.send:not(:disabled){opacity:1}
-@media(max-width:1600px){.shell{grid-template-columns:minmax(240px,300px) minmax(0,1fr)}.connection,.operator{display:none}.rail{grid-column:1/-1;padding:12px}.rail .brand{display:none}.nav{display:flex;flex-wrap:wrap}.inspector{grid-column:1/-1;border-top:1px solid #e5eaf0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;max-height:none}.card{margin:0}}
-@media(max-width:900px){.shell{grid-template-columns:minmax(0,1fr)}.list{border-right:0}.chat{min-height:650px}.inspector{grid-column:auto;display:block}.bubble{max-width:88%}.chatHead,.aiBar{flex-wrap:wrap}.rows{max-height:340px}}
+@media(max-width:1600px){.shell{grid-template-columns:72px 300px minmax(420px,1fr)}.rail .brand div,.navItem span:first-child,.connection,.operator{display:none}.rail{padding:16px 9px}.inspector{grid-column:2/4;border-top:1px solid #e5eaf0;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-height:none}.card{margin:0}}
+@media(max-width:900px){.shell{grid-template-columns:1fr}.rail{display:none}.list{border-right:0}.chat{min-height:650px}.inspector{grid-column:auto;display:block}.bubble{max-width:88%}}

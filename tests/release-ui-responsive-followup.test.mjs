@@ -44,7 +44,7 @@ test("provider training source grid can shrink at the 768px tablet closure viewp
 test("CX inspector collapses before the Operations shell clips it on desktop", () => {
   assert.match(customerExperienceCss, /@media\(max-width:1600px\)/, "the inbox must account for the outer Operations sidebar and workspace padding");
   assert.doesNotMatch(customerExperienceCss, /@media\(max-width:1320px\)/, "the old viewport-only breakpoint clipped the inspector at 1440px");
-  assert.match(customerExperienceCss, /\.inspector\{grid-column:1\/-1;[^}]*max-height:none\}/, "the collapsed inspector must span the two-column inbox without creating a phantom third column");
+  assert.match(customerExperienceCss, /\.inspector\{grid-column:2\/4;[^}]*max-height:none\}/, "the collapsed inspector must move below the conversation columns without clipping controls");
 });
 
 test("CX status controls cannot advertise an action without a selected conversation", () => {

@@ -26,7 +26,7 @@ async function chooseServiceArea(page: import("@playwright/test").Page) {
 
 test("pet-first guest home: search and accessible area sheet preserve service entry", async ({page}) => {
   await openDiscovery(page);
-  await expect(page.getByRole('heading',{name:'Welcome to your Petter half.'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Premium care for your loved ones'})).toBeVisible();
   await chooseServiceArea(page);
   await page.getByRole('textbox',{name:'Search PawSpace services'}).fill('grooming');
   const book=page.getByRole('button',{name:'Book now · Grooming',exact:true});
@@ -41,7 +41,7 @@ test("pet-first guest home: search and accessible area sheet preserve service en
 
 test("shared appearance: three collections persist across customer and partner entry", async ({ page }) => {
   await openDiscovery(page);
-  await expect(page.getByRole("heading", {name: "Welcome to your Petter half."})).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Premium care for your loved ones"})).toBeVisible();
   await page.getByRole("button", {name:"Change PawSpace appearance"}).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.locator('input[name="paw-theme"]')).toHaveCount(3);
@@ -116,7 +116,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
   await home.click();
-  await expect(page.getByText("Care for every little need", { exact: true })).toBeVisible();
+  await expect(page.getByText("Everything they need", { exact: true })).toBeVisible();
 
   const grooming = serviceCard(page, "Grooming");
   const training = serviceCard(page, "Training");
@@ -130,7 +130,11 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
 
   const location = page.locator("[data-discovery]").getByRole("button", { name: "Choose your service location", exact: true });
   if (await location.isVisible().catch(() => false)) {
-    await chooseServiceArea(page);
+    await location.click();
+    const locationDialog = page.getByRole("dialog", { name: "Choose your service area" });
+    await expect(locationDialog).toBeVisible();
+    await locationDialog.getByRole("button", { name: "Browse without location", exact: true }).click();
+    await expect(locationDialog).toBeHidden();
   }
 
   await grooming.getByRole("button", { name: /book now/i }).click();
