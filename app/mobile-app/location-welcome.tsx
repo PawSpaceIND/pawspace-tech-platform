@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
-import { SERVICE_ART } from "./service-art";
 import styles from "./location-welcome.module.css";
 import type { AddressSuggestion, AutocompleteResult, ResolvedAddress } from "../../lib/address-autocomplete";
 
 export const DISCOVERY_PIN_KEY = "pawspace.discovery.pin";
-export const WELCOME_SEEN_KEY = "pawspace.welcome.seen";
+export const WELCOME_SEEN_KEY = "pawspace.welcome.seen.v2";
 
 /** A discovery preference, never a verified doorstep or a booking/price authority. */
 export default function LocationWelcome({ onContinue, compact = false }: {
@@ -102,13 +101,11 @@ export default function LocationWelcome({ onContinue, compact = false }: {
 
   return <section className={`${styles.welcome} ${compact ? styles.compact : ""}`} data-location-welcome={compact ? undefined : "true"} aria-labelledby={compact ? "location-edit-title" : "location-welcome-title"}>
     {!compact && <>
-      <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><span>PawSpace<small>Your Petter half</small></span></a>
-      <img className={styles.art} src={SERVICE_ART.boarding.image} alt="Cartoon caregiver welcoming a happy dog, puppy and cat at home" fetchPriority="high" />
-      <img className={styles.professionalArt} src="/assets/breeds/golden-retriever-hero.jpg" alt="A happy Golden Retriever" fetchPriority="high" />
+      <div className={styles.splash}><span className={styles.locationMark} aria-hidden="true">⌖</span><p>{coverage ? `${coverage.area}, ${coverage.city}` : busy ? "Finding your neighbourhood…" : "Care starts at your doorstep"}</p><img src="/assets/pawspace-official-lockup.png" alt="PawSpace — Your Petter Half" fetchPriority="high" /></div>
     </>}
     <div className={styles.content}>
       <small className={styles.eyebrow}>CARE, CLOSE TO HOME</small>
-      <h1 id={compact ? "location-edit-title" : "location-welcome-title"}>{compact ? "Where is home?" : <>Happy pets.<br />Happier lives.</>}</h1>
+      <h1 id={compact ? "location-edit-title" : "location-welcome-title"}>{compact ? "Where is home?" : "Where does your pet call home?"}</h1>
       <p>Find your city and service area. Your complete doorstep address and final price are confirmed during booking.</p>
       <button className={styles.primary} onClick={() => void locate()} disabled={busy}>{busy ? "Finding care near you…" : "Use my location"}</button>
       <small className={styles.privacy}>Only when you allow it. Your location is sent to our map service to find your area; we don’t continuously track you.</small>

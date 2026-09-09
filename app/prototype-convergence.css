@@ -6,10 +6,13 @@
  --paw-lilac:#ece0ff;--paw-yellow:#fff0b9;--paw-pink:#ffe3df;--paw-mint:#d9f8ea;
 }
 html[data-paw-theme="emerald"]{--paw-bg:#f4f8f3;--paw-surface:#fff;--paw-raised:#e1eee6;--paw-text:#173c31;--paw-muted:#4c665b;--paw-line:#c5d8cc;--paw-primary:#164a3c;--paw-on-primary:#fff;--paw-gold:#eac36c;--paw-hero:#164a3c;--paw-lilac:#e4e8f2;--paw-yellow:#f7e8b8;--paw-pink:#f4e4dc;--paw-mint:#dceee0}
-html[data-paw-theme="rose"]{--paw-bg:#fff3f6;--paw-surface:#fff;--paw-raised:#fae0e9;--paw-text:#392532;--paw-muted:#705265;--paw-line:#e6becf;--paw-primary:#72284b;--paw-on-primary:#fff;--paw-gold:#ffd16b;--paw-hero:#72284b;--paw-lilac:#efdef5;--paw-yellow:#ffebc0;--paw-pink:#ffdce8;--paw-mint:#e3f1df}
+html[data-paw-theme="rose"]{--paw-bg:#f1fcfa;--paw-surface:#fff;--paw-raised:#d9f3ef;--paw-text:#153b40;--paw-muted:#49656a;--paw-line:#b7dcd6;--paw-primary:#075e66;--paw-on-primary:#fff;--paw-gold:#ff8d77;--paw-hero:#075e66;--paw-lilac:#e8e6fc;--paw-yellow:#fff0bd;--paw-pink:#ffe3db;--paw-mint:#d9f3ef}
 html[data-paw-mode="dark"]{--paw-bg:#19151f;--paw-surface:#251f2d;--paw-raised:#352b42;--paw-text:#fcf5ff;--paw-muted:#d0bfdc;--paw-line:#655174;--paw-primary:#d2acff;--paw-on-primary:#251039;--paw-lilac:#352b42;--paw-yellow:#443b24;--paw-pink:#422a39;--paw-mint:#243d35;color-scheme:dark}
 html[data-paw-mode="dark"][data-paw-theme="emerald"]{--paw-bg:#0e2923;--paw-surface:#163a31;--paw-raised:#214b3e;--paw-text:#f5f8ee;--paw-muted:#c5d7cd;--paw-line:#527165;--paw-primary:#eac36c;--paw-on-primary:#173c31;--paw-hero:#214b3e}
-html[data-paw-mode="dark"][data-paw-theme="rose"]{--paw-bg:#2e1724;--paw-surface:#3b2332;--paw-raised:#503246;--paw-text:#fff5f8;--paw-muted:#e7bdd1;--paw-line:#845b70;--paw-primary:#ffd16b;--paw-on-primary:#392532}
+html[data-paw-mode="dark"][data-paw-theme="rose"]{--paw-bg:#0d292e;--paw-surface:#16383e;--paw-raised:#234a50;--paw-text:#f1fffc;--paw-muted:#bddcd5;--paw-line:#517b7b;--paw-primary:#ffad97;--paw-on-primary:#17373d}
+:root{--paw-welcome:#ffe49a;--paw-welcome-text:#332341}
+html[data-paw-theme="emerald"]{--paw-welcome:#123f33;--paw-welcome-text:#ffe4a0}
+html[data-paw-theme="rose"]{--paw-welcome:#b7ece3;--paw-welcome-text:#153b40}
 :root{--psu-emerald:var(--paw-primary);--psu-emerald-2:var(--paw-primary);--psu-emerald-3:var(--paw-primary);--psu-emerald-soft:var(--paw-raised);--psu-gold:var(--paw-gold);--psu-gold-soft:var(--paw-yellow);--psu-ivory:var(--paw-bg);--psu-surface:var(--paw-surface);--psu-border:var(--paw-line);--psu-text:var(--paw-text);--psu-muted:var(--paw-muted);--psu-hero:var(--paw-hero)}
 body{background:var(--paw-bg);color:var(--paw-text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>nav{display:none!important}

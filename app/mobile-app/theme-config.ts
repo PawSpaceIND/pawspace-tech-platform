@@ -6,7 +6,7 @@ export const APPEARANCE_STORAGE_KEY="pawspace.customer.appearance";
 export const themes:ThemeOption[]=[
 {id:"signature",label:"PawSpace Brand",tagline:"Joyful purple, saffron and warm ivory",swatches:["#6730b9","#ffaf00","#fffcf1"]},
 {id:"emerald",label:"Emerald & Gold",tagline:"Forest greens and warm golden details",swatches:["#164a3c","#eac36c","#f4f8f3"]},
-{id:"rose",label:"Berry & Sunshine",tagline:"Rich berry, blush and sunny yellow",swatches:["#72284b","#ffd16b","#fff3f6"]},
+{id:"rose",label:"Lagoon & Coral",tagline:"Joyful teal, coral and soft sunshine",swatches:["#075e66","#ff8d77","#f1fcfa"]},
 ];
 const themeIds=new Set(themes.map(theme=>theme.id));
 const appearanceModes=new Set<AppearanceMode>(["system","light","dark"]);

@@ -61,12 +61,12 @@
 :global(html:not([data-paw-style="cartoon"])) .home .cards { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .card { border-radius: 16px; padding-bottom: 8px; box-shadow: none; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto { padding: 14px 6px; }
-:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto>img { display:none; }
-:global(html:not([data-paw-style="cartoon"])) .serviceIcon { display:grid;place-items:center;width:40px;height:40px;border-radius:14px;background:var(--paw-raised);color:var(--paw-primary);font-size:24px; }
+:global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto>img { display:block;position:static;width:72px;height:72px;object-fit:cover;border-radius:18px;margin:0 auto 8px; }
+:global(html:not([data-paw-style="cartoon"])) .serviceIcon { display:none; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto b { font-size:14px; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .cardPhoto small { display:block;font-size:12px;line-height:1.3; }
 :global(html:not([data-paw-style="cartoon"])) .home .cards .card>button>span { visibility:hidden; }
-:global(html:not([data-paw-style="cartoon"])) .artDisclosure { display:none; }
+:global(html:not([data-paw-style="cartoon"])) .artDisclosure { display:block;font-size:12px;line-height:1.5; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomePhoto { display:none; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div { max-width:none;padding:20px; }
 :global(html:not([data-paw-style="cartoon"])) .home .welcomeHero { background:var(--paw-raised);min-height:120px; }

@@ -25,7 +25,7 @@ export default function CareersPage(){
         <p>Join PawSpace and be part of a team that makes a real difference in pets&apos; lives every day - flexible hours, real training, and pay you can rely on.</p>
         <div className={styles.actions}><a className={styles.primary} href="#apply">Explore openings</a><a className={styles.secondary} href="#apply">Apply now</a></div>
       </div>
-      <div className={styles.heroVisual}><img src="/assets/banners/sitter-hug-golden.jpg" alt="A PawSpace caregiver embracing a golden retriever"/></div>
+      <div className={styles.heroVisual}><img src="/assets/pawspace-sitting-cartoon.webp" alt="A PawSpace caregiver embracing a golden retriever"/></div>
     </section>
     <ProofStrip/>
     <section className={styles.section}>

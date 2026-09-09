@@ -10,35 +10,35 @@ type HeroSpec = { photo: string; alt: string; badge: string; promise: string; pr
 
 const HERO: Record<string, HeroSpec> = {
   Grooming: {
-    photo: "/assets/pawspace-doorstep.png", alt: "PawSpace grooming care in a pet family's home", badge: "✁",
+    photo: "/assets/pawspace-boarding-cartoon.webp", alt: "PawSpace grooming care in a pet family's home", badge: "✁",
     promise: "Salon-grade grooming at home", proofs: ["Coat care", "At home", "Gentle handling"],
   },
   Training: {
-    photo: "/assets/pawspace-home.png", alt: "Pet parent and Golden Retriever at home", badge: "◎",
+    photo: "/assets/pawspace-boarding-cartoon.webp", alt: "Pet parent and Golden Retriever at home", badge: "◎",
     promise: "Build everyday confidence together", proofs: ["Positive methods", "Structured", "Report card"],
   },
   Boarding: {
-    photo: "/assets/banners/boarding-puppy-hug.jpg", alt: "Host hugging a boarding puppy", badge: "⌂",
+    photo: "/assets/pawspace-boarding-cartoon.webp", alt: "Host hugging a boarding puppy", badge: "⌂",
     promise: "Verified homes, not cages", proofs: ["Host home", "Care routine", "Stay updates"],
   },
   "Pet Sitting": {
-    photo: "/assets/banners/sitting-woman-cat.jpg", alt: "Pet sitter caring for a cat at home", badge: "♡",
+    photo: "/assets/pawspace-sitting-cartoon.webp", alt: "Pet sitter caring for a cat at home", badge: "♡",
     promise: "Loving care in your own home", proofs: ["Trusted sitters", "Care plan", "Every visit logged"],
   },
   "Dog Walking": {
-    photo: "/assets/banners/walking-husky-forest.jpg", alt: "Dog walker with a husky on a forest trail", badge: "◌",
+    photo: "/assets/pawspace-walking-cartoon.webp", alt: "Dog walker with a husky on a forest trail", badge: "◌",
     promise: "Walks they'll wait at the door for", proofs: ["Doorstep pickup", "Walk routine", "Booking updates"],
   },
   "Pet Taxi": {
-    photo: "/assets/banners/taxi-car-window.jpg", alt: "Dog looking out of a pet taxi window", badge: "⇥",
+    photo: "/assets/pawspace-taxi-cartoon.webp", alt: "Dog looking out of a pet taxi window", badge: "⇥",
     promise: "Safe rides, door to door", proofs: ["Trained drivers", "Crate-secured", "Live status"],
   },
   "Fresh Food": {
-    photo: "/assets/banners/food-prep-bowl.jpg", alt: "Fresh pet food being prepared", badge: "❋",
+    photo: "/assets/pawspace-food-cartoon.webp", alt: "Fresh pet food being prepared", badge: "❋",
     promise: "Fresh meals, thoughtfully prepared", proofs: ["Meal choices", "Portion details", "Delivery plan"],
   },
   Relocation: {
-    photo: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel crate ready for relocation", badge: "✈",
+    photo: "/assets/pawspace-relocation-cartoon.webp", alt: "Pet travel crate ready for relocation", badge: "✈",
     promise: "Domestic & international moves", proofs: ["Airline paperwork", "IATA crates", "Door-to-door"],
   },
 };

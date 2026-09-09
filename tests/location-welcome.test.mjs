@@ -27,6 +27,8 @@ test('location welcome requests optional one-shot location only from an action',
  assert.match(source,/request !== generation.current/);
  assert.doesNotMatch(source,/setNote\(error.message\)/);
  assert.match(source,/Continue in \{coverage.city\}/);
+ assert.match(source,/pawspace-official-lockup.png/);
+ assert.doesNotMatch(source,/professionalArt|golden-retriever-hero|SERVICE_ART/);
 });
 
 test('coverage forwards cancellation and uses server city rather than hardcoded Bengaluru',async()=>{
