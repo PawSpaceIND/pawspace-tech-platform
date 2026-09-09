@@ -109,6 +109,29 @@ done
 stop_server
 node scripts/e2e/seed-identities.mjs
 
-# One clean owner of the D1 file for the whole browser suite.
-start_server
-npx playwright test --config playwright.e2e.config.ts
+# Wrangler/workerd can lose its local proxy connection after repeated Playwright browser-project
+# contexts even when the route itself correctly returns a governed response. Keep the same persisted
+# Miniflare D1 state, but give every journey/project pair a fresh built-worker process. This is not a
+# retry and does not weaken any assertion: each Desktop Chrome and Pixel 7 execution still runs once.
+journeys=(
+  e2e/journeys/00-identity.spec.ts
+  e2e/journeys/01-customer.spec.ts
+  e2e/journeys/02-partner.spec.ts
+  e2e/journeys/03-admin.spec.ts
+  e2e/journeys/04-multi-actor.spec.ts
+)
+projects=(chromium mobile-chromium)
+
+for journey in "${journeys[@]}"; do
+  for project in "${projects[@]}"; do
+    echo "[e2e] running ${journey} (${project}) with a fresh built-worker server"
+    start_server
+    if ! npx playwright test --config playwright.e2e.config.ts --project="$project" --output="test-results/$(basename "$journey" .spec.ts)/$project" "$journey"; then
+      echo "[e2e] journey failed: ${journey} (${project})" >&2
+      log_tail
+      stop_server || true
+      exit 1
+    fi
+    stop_server
+  done
+done

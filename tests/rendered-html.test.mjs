@@ -201,9 +201,9 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(training, /training-plans\.module\.css/);
   assert.match(training, /data-testid="training-plan-grid"/);
   assert.match(training, /<article/);
-  assert.match(stays, /TEST PARTNER PROFILE/);
-  assert.match(stays, /Live availability/);
-  assert.match(stays, /What pet parents say/);
+  assert.match(stays, /previewSitters/);
+  assert.match(stays, /Available sitters for your care window/);
+  assert.doesNotMatch(stays, /TEST PARTNER PROFILE|What pet parents say/);
   assert.match(host, /GOVERNED BOARDING HOST PROFILE/);
   assert.match(host, /Canonical Care Card/);
   assert.match(partner, /LIVE CUSTOMER PROFILE/);
@@ -226,7 +226,8 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /2-hour sitter Meet & Greet · ₹500/);
   assert.match(stays, /4 hours/);
   assert.match(stays, /12 hours/);
-  assert.match(stays, /15 km service radius/);
+  assert.match(stays, /serviceAddress:serviceLocation.address/);
+  assert.doesNotMatch(stays, /15 km service radius/);
   assert.match(stays, /loadBoardingCommercial/);
   assert.match(stays, /AddressPicker/);
   assert.match(stays, /Three walks/);
@@ -280,8 +281,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, tracking, grooming, stays] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx"].map((path) =>
+  const [training, trainer, tracking, grooming, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -295,7 +296,9 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(grooming, /role="Groomer"/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);
-  assert.match(stays, /role="Sitter"/);
+  assert.match(stays, /<SittingCustomerPanel/);
+  assert.match(sittingCare, /Live location and sitter messaging are currently unavailable/);
+  assert.match(sittingCare, /loadSittingCustomerView/);
 });
 
 test("keeps coupon and referral management as separate full control modules", async () => {

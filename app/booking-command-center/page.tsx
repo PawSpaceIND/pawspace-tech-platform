@@ -85,7 +85,7 @@ export default function BookingCommandCenter() {
     </aside>
 
     <section className={styles.workspace}>
-      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
+      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
       <section className={styles.metrics}>
         <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
         <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
@@ -101,7 +101,7 @@ export default function BookingCommandCenter() {
 
       {!loading && !error && bookings.length > 0 && <section className={styles.commandGrid}>
         <div className={styles.listPanel}>
-          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>Live from shared UAT database</small></header>
+          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>Snapshot from shared UAT database · refresh to update</small></header>
           <div className={styles.listHead}><span>Booking</span><span>Customer & service</span><span>Provider</span><span>Payment</span><span>Risk</span></div>
           <div className={styles.rows}>{visible.map(booking => {
             const petNames = booking.pets.map(pet => pet.name).join(", ") || "Pet not recorded";

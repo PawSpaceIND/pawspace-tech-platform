@@ -36,6 +36,11 @@ if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
 fi
 export PAWSPACE_PAYMENT_ENV="sandbox"
 export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
+export PAWSPACE_SCHEDULING_ENV="uat"
+export PAWSPACE_MEDIA_ENV="uat"
+# Server-owned deterministic service-discovery evidence for the local hardened journey only.
+# resolveGovernedServiceAddress refuses this fixture unless payment is sandbox and runtime is test/UAT.
+export PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="on"
 
 # Wrangler's terminal output can collapse a fatal Miniflare/workerd exception to a bare [ERROR] and
 # write the useful detail only to its own log. Pin that log to an artifact-friendly location so a
@@ -47,12 +52,26 @@ if [ "${E2E_SKIP_BUILD:-}" != "1" ]; then
   npm run build
 fi
 
+# Customer OTP uses the normal UAT challenge/session exchange. Generate disposable signing
+# material for this local server; keep preview OFF and never enable live SMS delivery.
+E2E_OTP_SIGNING_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 mkdir -p "$PERSIST_DIR"
 echo "[e2e] starting wrangler dev --local on 127.0.0.1:${PORT} (preview superuser DISABLED, payments SANDBOX)"
+# The hardened browser fixtures deliberately inject oai-authenticated-user-email to simulate the
+# OpenAI Sites dispatch layer. This explicit trust marker is LOCAL E2E simulation only; the standalone
+# staging worker intentionally does not set it, so raw external identity headers fail closed there.
 exec npx wrangler dev \
   --config dist/server/wrangler.json \
   --local --persist-to "$PERSIST_DIR" --ip 127.0.0.1 --port "$PORT" \
   --var PAWSPACE_DEPLOYMENT_ENV:e2e \
   --var PAWSPACE_LOCAL_PREVIEW:off \
+  --var PAWSPACE_UAT_LOGIN:on \
+  --var PAWSPACE_UAT_SIGNING_KEY:"$E2E_OTP_SIGNING_KEY" \
+  --var PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT:"$E2E_OTP_SIGNING_KEY" \
+  --var PAWSPACE_IDENTITY_ENV:sandbox \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
-  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false
+  --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
+  --var PAWSPACE_SCHEDULING_ENV:uat \
+  --var PAWSPACE_MEDIA_ENV:uat \
+  --var PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE:on \
+  --var PAWSPACE_WORKSPACE_IDENTITY_TRUST:openai-dispatch

@@ -4,25 +4,37 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const STALE_ERROR = "Unable to update lifecycle. Invalid or stale state.";
 
-const modules = [
+const canonicalModules = [
   "lib/sitting-lifecycle.ts",
-  "lib/taxi-lifecycle.ts",
   "lib/walking-lifecycle.ts",
   "lib/boarding-stay-lifecycle.ts",
   "lib/training-session-lifecycle.ts",
 ];
 
-for (const path of modules) {
-  test(`P0-4: ${path} rejects a zero-row lifecycle claim as HTTP 409`, async () => {
+test("P0-4: shared provider lifecycle engine rejects lost canonical claims as HTTP 409", async () => {
+  const source = await read("lib/provider-lifecycle.ts");
+  assert.match(source, /meta\?\.changes/);
+  assert.match(source, /status:409/);
+  assert.match(source, /lifecycleConflict/);
+  assert.match(source, /runAtomicProviderLifecycleTransition/);
+  assert.match(source, /finalizeProviderLifecycleLease/);
+});
+
+for (const path of canonicalModules) {
+  test(`P0-4: ${path} delegates lifecycle claims to the canonical CAS engine`, async () => {
     const source = await read(path);
-    assert.match(source, /meta\?\.changes/);
-    assert.match(source, /status:409/);
-    assert.ok(source.includes(STALE_ERROR), `${path} must expose the canonical stale-state conflict`);
-    assert.match(source, /assertLifecycleClaim/);
+    assert.match(source, /runAtomicProviderLifecycleTransition|acquireProviderLifecycleLease/);
+    assert.match(source, /providerLifecycleAssertionStatement/);
   });
 }
+
+test("P0-4: Taxi retains its direct zero-row lifecycle claim guard", async () => {
+  const source = await read("lib/taxi-lifecycle.ts");
+  assert.match(source, /meta\?\.changes/);
+  assert.match(source, /status:409/);
+  assert.match(source, /assertLifecycleClaim/);
+});
 
 test("P0-4: Sitting canonical booking transitions are conditional", async () => {
   const source = await read("lib/sitting-lifecycle.ts");

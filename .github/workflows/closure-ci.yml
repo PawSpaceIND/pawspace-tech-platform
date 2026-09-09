@@ -41,6 +41,10 @@ jobs:
       NODE_ENV: test
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
@@ -74,9 +78,9 @@ jobs:
           test "${#certification_tests[@]}" -eq 2
           status=0
           set +e
-          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test --test-concurrency=1 "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
-          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test --test-concurrency=1 "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
           certification_status=${PIPESTATUS[0]}
           if [ "$certification_status" -ne 0 ]; then
             status="$certification_status"
@@ -317,6 +321,10 @@ jobs:
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
       PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -338,18 +346,27 @@ jobs:
       - name: registerHooks path (Node >= 22.15)
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}" 2>&1 | tee register-hooks.tap
       - name: Loader-hook fallback compatibility path
         shell: bash
         env:
           PAWSPACE_FORCE_LOADER_HOOK: '1'
         run: |
-          set -euo pipefail
+          set -o pipefail
           mapfile -t suites < harness-suites.txt
-          node --experimental-strip-types --test "${suites[@]}"
+          node --experimental-strip-types --test --test-concurrency=1 "${suites[@]}" 2>&1 | tee loader-hooks.tap
+      - name: Upload hook-path TAP diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook-path-tap
+          path: |
+            register-hooks.tap
+            loader-hooks.tap
+          if-no-files-found: warn
 
   backend:
     name: Backend
@@ -372,3 +389,23 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  uat-integrity-d1:
+    name: UAT integrity recovery D1
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Verify approval and subscription failure recovery against isolated D1
+        run: node scripts/run-uat-integrity-d1.mjs

@@ -17,6 +17,7 @@ function sameOriginWrite(request: Request) {
 }
 function failure(error: unknown) {
   if (error instanceof Response) return error;
+  if(error instanceof Error&&/PAWSPACE_IDENTITY_ASSERTION_SECRET/.test(error.message))return unavailable();
   return json({ error: error instanceof Error ? error.message : "Request failed" }, 500);
 }
 

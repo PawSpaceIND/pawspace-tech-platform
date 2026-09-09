@@ -16,13 +16,29 @@ import { fileURLToPath } from "node:url";
 
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
 // `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
-// AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
+// Keep one shared AsyncLocalStorage container on globalThis so every cached shim reads the same
+// async-context store. The DB value itself is never stored process-globally: concurrent suites can
+// therefore bind independent D1 instances without one async scope overriding another.
 export const WORKERS_DB_ALS_KEY = "__PAWSPACE_SCOPED_WORKERS_DB__";
-const workersDbAls = new AsyncLocalStorage();
-globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
+const existingWorkersDbAls = globalThis[WORKERS_DB_ALS_KEY];
+const workersDbAls = existingWorkersDbAls && typeof existingWorkersDbAls.run === "function" && typeof existingWorkersDbAls.getStore === "function"
+  ? existingWorkersDbAls
+  : new AsyncLocalStorage();
+if (!existingWorkersDbAls) globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
 
 export function runWithWorkersDb(db, callback) {
-  return workersDbAls.run(db, callback);
+  const als = globalThis[WORKERS_DB_ALS_KEY] ?? workersDbAls;
+  return als.run(db, callback);
+}
+
+// `world()` is created from inside a node:test callback. enterWith() attaches that world's D1
+// adapter to the current test async resource, and every promise/import spawned by the test inherits
+// the same store. When the test callback completes, Node returns to the runner's parent async
+// resource, so another test cannot overwrite this binding the way a process-global active DB did.
+export function enterWorkersDbScope(db) {
+  const als = globalThis[WORKERS_DB_ALS_KEY] ?? workersDbAls;
+  als.enterWith(db);
+  return db;
 }
 
 // Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
@@ -154,7 +170,21 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
             // resolves only with its extension. Reached ONLY after the real resolution has already failed,
             // so it can never change an import that works. Absolute paths and file: URLs are handled above.
             if (!pathname.startsWith(".") && !isAbsolute(pathname) && !pathname.startsWith("file:") && !pathname.endsWith(".js")) {
-              return nextResolve(`${pathname}.js${suffix}`, context);
+              try {
+                return nextResolve(`${pathname}.js${suffix}`, context);
+              } catch {
+                /* Report the ORIGINAL failure, not the .js-suffixed retry.
+                 *
+                 * This fallback used to let its own retry throw, so a package that is simply NOT
+                 * INSTALLED surfaced as `Cannot find package '@capacitor/core.js'` - a specifier that
+                 * appears nowhere in the codebase. That reads exactly like an extension typo in the
+                 * source, and it was reported and escalated as one. The source said
+                 * `from "@capacitor/core"` all along; the missing `.js` was invented here.
+                 *
+                 * Re-throwing the original error names the real specifier, so the next person sees a
+                 * missing dependency for what it is. */
+                throw error;
+              }
             }
             throw error;
           }

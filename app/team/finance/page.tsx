@@ -1,6 +1,7 @@
 "use client";
 
 import Link from"next/link";
+import{readReportJson}from"../../../lib/read-report-json";
 import{useEffect,useState}from"react";
 
 type LedgerItem=Record<string,unknown>;
@@ -12,23 +13,23 @@ export default function TeamFinance(){
   const[data,setData]=useState<LedgerResponse|null>(null);
   const[error,setError]=useState("");
   const[loading,setLoading]=useState(true);
-  const load=async()=>{setLoading(true);setError("");try{const response=await fetch("/api/grooming-finance",{cache:"no-store"});const body=await response.json() as LedgerResponse;if(!response.ok)throw new Error(body.error||"Unable to load finance ledger");setData(body);}catch(err){setError(err instanceof Error?err.message:"Unable to load finance ledger");}finally{setLoading(false);}};
-  useEffect(()=>{let active=true;fetch("/api/grooming-finance",{cache:"no-store"}).then(async response=>{const body=await response.json() as LedgerResponse;if(!response.ok)throw new Error(body.error||"Unable to load finance ledger");if(active)setData(body);}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load finance ledger");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
+  const load=async()=>{setLoading(true);setError("");setData(null);try{const body=await readReportJson<LedgerResponse>("/api/grooming-finance");if(!body.summary||!Array.isArray(body.items))throw new Error("Finance ledger response is incomplete");setData(body);}catch(err){setError(err instanceof Error?err.message:"Unable to load finance ledger");}finally{setLoading(false);}};
+  useEffect(()=>{let active=true;readReportJson<LedgerResponse>("/api/grooming-finance").then(body=>{if(!body.summary||!Array.isArray(body.items))throw new Error("Finance ledger response is incomplete");if(active)setData(body);}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load finance ledger");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
 
   return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:"32px",fontFamily:"Arial, sans-serif",color:"#24133f"}}>
     <div style={{maxWidth:1420,margin:"0 auto"}}>
-      <header style={{display:"flex",justifyContent:"space-between",gap:20,alignItems:"center",marginBottom:24}}>
+      <header style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:20,alignItems:"center",marginBottom:24}}>
         <div><small style={{fontWeight:800,letterSpacing:1.4,color:"#6c39a8"}}>PAWSPACE TEAM · FINANCE</small><h1 style={{fontSize:36,margin:"8px 0"}}>Service finance & reconciliation</h1><p style={{margin:0,color:"#6d6379"}}>Canonical service ledgers, reconciliation, invoices and settlement readiness from one Team Finance shell.</p></div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700}}>Refresh</button><Link href="/team/finance/training" style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700,textDecoration:"none",color:"#4b168c"}}>Training finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"#4b168c",color:"white",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:10}}><button disabled={loading} onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700}}>Refresh</button><Link href="/team/finance/training" style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700,textDecoration:"none",color:"#4b168c"}}>Training finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"#4b168c",color:"white",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
       </header>
 
       {error&&<section style={{padding:18,borderRadius:12,background:"#fff1f1",border:"1px solid #efc2c2",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"white",borderRadius:14}}>Loading canonical Grooming ledger…</section>}
-      {data&&!loading&&<>
-        <section style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:12}}>
+      {data&&!loading&&!error&&<>
+        <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}}>
           {[["Bookings",data.summary.bookings],["Reconciled",data.summary.reconciled],["Unreconciled",data.summary.unreconciled],["Open exceptions",data.summary.exceptions]].map(([name,value])=><article key={String(name)} style={{background:"white",border:"1px solid #e5dcef",borderRadius:14,padding:18}}><small style={{color:"#746b7d"}}>{name}</small><strong style={{display:"block",fontSize:25,marginTop:7}}>{value}</strong></article>)}
         </section>
-        <section style={{display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:12,marginBottom:22}}>
+        <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:22}}>
           {[["Completed",data.summary.completed],["Invoiced",money(data.summary.invoiced)],["Captured",money(data.summary.collected)],["Refunded",money(data.summary.refunded)],["Receivable",money(data.summary.receivable)]].map(([name,value])=><article key={String(name)} style={{background:"white",border:"1px solid #e5dcef",borderRadius:14,padding:18}}><small style={{color:"#746b7d"}}>{name}</small><strong style={{display:"block",fontSize:23,marginTop:7}}>{value}</strong></article>)}
         </section>
         {Number(data.summary.exceptions)>0&&<section style={{padding:16,borderRadius:12,background:"#fff7e8",border:"1px solid #efd4a5",marginBottom:18}}><b>{data.summary.exceptions} payment reconciliation exception(s) require Finance review.</b><div style={{fontSize:13,marginTop:5}}>Amount/currency mismatch, unmatched gateway event, orphan refund, refund failure or refund overage must be cleared before production reconciliation sign-off.</div></section>}

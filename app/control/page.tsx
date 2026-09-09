@@ -233,6 +233,8 @@ export default function Control() {
           {visibleNav.map((n) => (
             <button
               key={n.id}
+              aria-label={n.label}
+              aria-current={view===n.id?"page":undefined}
               className={view === n.id ? styles.active : ""}
               onClick={() => setView(n.id)}
             >

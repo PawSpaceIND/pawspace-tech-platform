@@ -25,7 +25,9 @@ test("Haptik integration: the 4 voice-agent APIs, capture-and-request only", () 
 test("Haptik webhook is fail-closed and authenticates the raw body with HMAC", () => {
   assert.match(route, /HAPTIK_API_KEY/);
   assert.match(route, /request\.headers\.get\("x-hub-signature"\)/);
-  assert.match(route, /request\.text\(\)/, "signature verification must use the raw request body");
+  // Raw body is still used for HMAC, but streamed through a size bound (P1-7).
+  assert.match(route, /readBoundedRequestText/, "signature verification must use a bounded raw request body");
+  assert.match(route, /413/);
   assert.match(route, /crypto\.subtle\.importKey/);
   assert.match(route, /hash:"SHA-1"/);
   assert.match(route, /crypto\.subtle\.sign\("HMAC"/);

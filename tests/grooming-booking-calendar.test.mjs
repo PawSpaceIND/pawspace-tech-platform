@@ -52,3 +52,14 @@ test("invalid grooming dates, slots and durations fail closed", () => {
   assert.throws(() => groomingSlotWindow("2026-08-19", 5, 120));
   assert.throws(() => groomingSlotWindow("2026-08-19", 0, 0));
 });
+
+for(const [at,first,last] of [
+ ["2026-09-30T18:00:00Z","2026-09-30","2026-10-30"],
+ ["2026-12-31T18:00:00Z","2026-12-31","2027-01-30"],
+ ["2028-02-28T18:00:00Z","2028-02-28","2028-03-29"],
+])test(`the full customer calendar remains available across ${first}`,()=>{
+ const dates=groomingBookingDates(Date.parse(at),31);
+ assert.equal(dates.length,31);assert.equal(dates[0].isoDate,first);assert.equal(dates.at(-1).isoDate,last);assert.equal(new Set(dates.map(day=>day.isoDate)).size,31);
+ for(let i=1;i<dates.length;i++)assert.equal(Date.parse(dates[i].isoDate)-Date.parse(dates[i-1].isoDate),86400000);
+ assert.equal(dates.filter(day=>day.isoDate>first).length,30);
+});

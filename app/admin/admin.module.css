@@ -70,3 +70,5 @@
 .slotAvailable b, .slotBooked b, .slotCompleted b { font-size: 14px; font-weight: 700; }
 .slotAvailable small, .slotBooked small, .slotCompleted small { font-size: 12.5px; color: #6d6577; }
 .slotAvailable b { color: #14724c; }
+
+.accessError{min-height:100svh;display:grid;place-items:center;padding:24px;background:#f5f3f9;color:#20242b}.accessError section{width:100%;max-width:480px;background:#fff;border:1px solid #e3dfea;border-radius:20px;padding:28px}.accessError h1{font-size:24px;font-weight:700;line-height:1.2;margin:0 0 16px}.accessError p{font-size:16px;line-height:1.5;margin:12px 0}.accessError a{text-decoration:underline}

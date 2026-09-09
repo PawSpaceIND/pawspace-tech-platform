@@ -1,8 +1,9 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
 
-const LEASE_MS = 15 * 60_000;
+const LEASE_MS = 5 * 60_000;
 
 async function leaseGovernance() {
   return import("../lib/scheduling-reservation-leases.ts");
@@ -90,6 +91,8 @@ test("a forged session token cannot claim or release another customer's reservat
 test("an active session cannot confirm after its lease expires at the atomic booking boundary", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
   const customerId = "CUST-LEASE-BOUNDARY", groupId = "GROOM-LEASE-BOUNDARY";
+  await seedOwnedPet(ctx.db,customerId,"PET-LEASE-BOUNDARY");
+  const savedPetsBefore=ctx.sqlite.prepare("SELECT * FROM canonical_pets").all();
   const session = await customerSession(ctx, customerId);
   const startDate = new Date(Date.now() + 9 * 86_400_000); startDate.setUTCHours(5, 30, 0, 0);
   const start = startDate.toISOString(), end = new Date(startDate.getTime() + 2 * 60 * 60_000).toISOString();
@@ -126,9 +129,10 @@ test("an active session cannot confirm after its lease expires at the atomic boo
   assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId).status, "expired");
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(groupId).n, 1);
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM booking_reservation_confirmation_guards WHERE group_id=?").get(groupId).n, 0, "the rejected guard insert rolls back with the booking batch");
-  for (const table of ["canonical_customers", "canonical_pets", "canonical_bookings", "booking_payments", "provider_work_orders", "booking_lifecycle_events"]) {
+  for (const table of ["canonical_customers", "canonical_bookings", "booking_payments", "provider_work_orders", "booking_lifecycle_events"]) {
     assert.equal(ctx.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0, `${table} must remain empty after atomic lease expiry`);
   }
+  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets").all(),savedPetsBefore,"pre-existing owned pet is unchanged by the failed confirmation");
 });
 
 test("a replacement login preserves the superseded session's reservation until lease timeout", async (t) => {
@@ -153,13 +157,15 @@ test("a replacement login preserves the superseded session's reservation until l
 test("expired reservation cleanup restores real scheduler capacity", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
   const firstCustomer = "CUST-MAA-LEASE-A", secondCustomer = "CUST-MAA-LEASE-B", firstGroup = "GROOM-MAA-LEASE-A", secondGroup = "GROOM-MAA-LEASE-B";
+  await seedOwnedPet(ctx.db,firstCustomer,"PET-MAA-LEASE");
+  await seedOwnedPet(ctx.db,secondCustomer,"PET-MAA-LEASE-B");
   const firstSession = await customerSession(ctx, firstCustomer), secondCookie = await sessionCookie(ctx.db, "customer", secondCustomer, `customer:${secondCustomer}`);
   const startDate = new Date(Date.now() + 7 * 86_400_000); startDate.setUTCHours(10, 0, 0, 0);
   const start = startDate.toISOString(), end = new Date(startDate.getTime() + 2 * 60 * 60_000).toISOString();
-  const payload = { petIds: ["PET-MAA-LEASE"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" };
+  const payload = { petIds: ["PET-MAA-LEASE"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", serviceAddress: "Chennai lease capacity service address", servicePincode: "600001", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_maa" };
   const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: firstGroup, customerId: firstCustomer }, firstSession.cookie);
   assert.equal(first.status, 200, JSON.stringify(first.body));
-  const blocked = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: secondGroup, customerId: secondCustomer }, secondCookie);
+  const blocked = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: secondGroup, customerId: secondCustomer, petIds: ["PET-MAA-LEASE-B"] }, secondCookie);
   assert.equal(blocked.status, 409);
   assert.equal(blocked.body.error, "NO_SCHEDULE_AVAILABLE", "Chennai has one seeded groomer, so the occupied lease must consume the slot");
 
@@ -170,7 +176,7 @@ test("expired reservation cleanup restores real scheduler capacity", async (t) =
   ctx.sqlite.prepare("UPDATE platform_identity_sessions SET expires_at=? WHERE id=?").run(now - 1, firstSession.sessionId);
   assert.deepEqual(await governance.cleanupExpiredReservationLeases(ctx.db, now), { groups: 1, reservations: 1 });
 
-  const restored = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: secondGroup, customerId: secondCustomer }, secondCookie);
+  const restored = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...payload, clientRequestId: secondGroup, customerId: secondCustomer, petIds: ["PET-MAA-LEASE-B"] }, secondCookie);
   assert.equal(restored.status, 200, JSON.stringify(restored.body));
   assert.equal(restored.body.data.provider.id, "groom_maa");
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(firstGroup).n, 0);

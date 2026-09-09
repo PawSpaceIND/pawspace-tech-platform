@@ -1,0 +1,42 @@
+name: Notifications Outbox Sandbox Gate
+
+on:
+  pull_request:
+    paths:
+      - "app/api/communication-provider-callback/**"
+      - "lib/communication-*.ts"
+      - "lib/interakt-*.ts"
+      - "lib/meta-whatsapp-uat-dispatch.ts"
+      - "lib/whatsapp-production-runtime.ts"
+      - "lib/order-notification-governance.ts"
+      - "tests/notifications-outbox-closure.test.mjs"
+      - "tests/communication-outbox-hardening.test.mjs"
+      - "tests/interakt-whatsapp.test.mjs"
+      - "tests/meta-whatsapp-uat-dispatch.test.mjs"
+      - "package.json"
+      - ".github/workflows/notifications-outbox.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notifications-outbox:
+    name: Sandbox notifications outbox
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_COMMUNICATION_ENV: sandbox
+      FORBID_PRODUCTION: "true"
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+      - run: npm ci
+      - name: Run notifications and outbox closure suite
+        run: npm run test:notifications-outbox

@@ -2,8 +2,12 @@ type Db=D1Database;
 type PerformanceInput={providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown;createdAt?:number;attemptNo?:number};
 
 const clean=(value:string|undefined)=>String(value??"").trim();
-const attempt=(value:number|undefined)=>Number.isFinite(value)?String(value):"";
-const eventId=(input:PerformanceInput)=>`PPE:${clean(input.providerId)}:${clean(input.groupId)}:${clean(input.bookingId)}:${clean(input.eventType)}:${attempt(input.attemptNo)}`;
+const attempt=(value:number|undefined)=>{
+ if(value===undefined)return ""; // Keep historical no-attempt keys byte-identical on replay.
+ if(!Number.isInteger(value)||value<1)throw new Error("Assignment attempt must be a positive integer");
+ return `:${value}`;
+};
+const eventId=(input:PerformanceInput)=>`PPE:${clean(input.providerId)}:${clean(input.groupId)}:${clean(input.bookingId)}:${clean(input.eventType)}${attempt(input.attemptNo)}`;
 
 /** Ensure retry-safe provider telemetry. Existing duplicate historical rows are left untouched. */
 export async function ensureProviderPerformanceTelemetry(db:Db){

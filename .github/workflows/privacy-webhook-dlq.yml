@@ -1,0 +1,47 @@
+name: Privacy Webhook DLQ Certification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "lib/dpdp-erasure.ts"
+      - "lib/gateway-inbound-queue.ts"
+      - "lib/payout-beneficiary-verification.ts"
+      - "app/api/privacy-erasure/**"
+      - "app/api/email-provider-webhook/**"
+      - "app/api/whatsapp/meta-webhook/**"
+      - "app/api/whatsapp-uat-webhook/**"
+      - "app/api/communication-provider-callback/**"
+      - "app/api/voice-provider-webhook/**"
+      - "app/api/partner-finance/**"
+      - "drizzle/0030_privacy_webhook_beneficiary.sql"
+      - "scripts/run-privacy-webhook-dlq-audit.test.ts"
+      - "package.json"
+      - ".github/workflows/privacy-webhook-dlq.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-webhook-dlq:
+    name: Privacy webhook DLQ sandbox audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      FORBID_PRODUCTION: "true"
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - name: Execute privacy, webhook DLQ and beneficiary audit
+        run: npm run test:privacy-webhook-dlq
+      - name: TypeScript check
+        run: npm run typecheck

@@ -1,0 +1,53 @@
+name: CRM Control Center Audit
+
+on:
+  pull_request:
+    paths:
+      - "app/api/crm/**"
+      - "app/api/public-contact/**"
+      - "app/api/booking-command-center/**"
+      - "app/api/people-foundation/**"
+      - "app/booking-command-center/**"
+      - "backend/src/app.ts"
+      - "backend/src/scheduling.ts"
+      - "backend/src/booking-status-governance.ts"
+      - "backend/test/**"
+      - "lib/lead-intake-ad-attribution.ts"
+      - "lib/organizational-scope.ts"
+      - "lib/people-foundation.ts"
+      - "scripts/run-crm-control-center-audit.test.ts"
+      - "tests/crm-control-center-audit.test.mjs"
+      - "tests/booking-command-center-authorization-boundary.test.mjs"
+      - "package.json"
+      - ".github/workflows/crm-control-center-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crm-control-center-audit:
+    name: CRM Control Center audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      PAWSPACE_MARKETING_EXTERNAL_WRITES_ENABLED: "false"
+      FORBID_PRODUCTION: "true"
+      NODE_ENV: test
+      APP_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install audit TypeScript loader without mutating the lockfile
+        run: npm install --no-save --package-lock=false tsx@4.21.0
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+      - name: Run CRM Control Center audit
+        run: npm run test:crm-control-center-audit

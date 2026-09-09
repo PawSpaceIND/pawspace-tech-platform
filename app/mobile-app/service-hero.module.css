@@ -1,5 +1,5 @@
 /* Option 5 service page hero recovered from PR #148: full photo + lifted proof card. */
-.hero { display: flex; flex-direction: column; margin: -14px -14px 12px; }
+.hero { display: flex; flex-direction: column; margin: 0 0 12px; min-width: 0; }
 .photo { position: relative; height: 186px; overflow: hidden; background: var(--ps-surface-2, #efe9df); }
 .photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.34), transparent 55%); }

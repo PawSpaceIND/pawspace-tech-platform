@@ -1,24 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-test("admin: booking command center -> refund/dispute visibility", async ({ page, request }) => {
+test("admin: booking command center renders governed booking data", async ({ page, request }) => {
   const response = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
   expect(response?.status() ?? 500).toBeLessThan(500);
-  await expect(page.locator("body")).toContainText(/One place to control every booking|booking/i);
+  await expect(page.getByRole("heading", { name: "Booking Command Center" })).toBeVisible();
+  await expect(page.locator("body")).toContainText(/One place to control every booking/i);
 
   const api = await request.get("/api/booking-command-center");
-  expect(api.status()).toBeLessThan(500);
-  if (api.ok()) {
-    const payload = await api.json();
-    expect(Array.isArray(payload?.bookings)).toBeTruthy();
-  }
-
-  const refundText = page.getByText(/Refund cases|refund requested|refund/i).first();
-  if (await refundText.count()) {
-    await expect(refundText).toBeVisible();
-  } else {
-    test.info().annotations.push({
-      type: "data",
-      description: "Command center loaded through the triple-gated local preview actor but the isolated DB has no refund/dispute fixture.",
-    });
-  }
+  expect(api.ok(), `command center API must succeed (${api.status()})`).toBeTruthy();
+  const payload = await api.json();
+  expect(Array.isArray(payload?.bookings), "command center must return a booking array").toBeTruthy();
 });

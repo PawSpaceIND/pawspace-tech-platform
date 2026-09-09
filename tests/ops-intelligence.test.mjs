@@ -84,3 +84,23 @@ test("unit economics utilization uses authored roster, city and capacity units",
   const result=await buildUnitEconomics(db,{from:"2026-09-07",to:"2026-09-07",cityId:"blr"});
   assert.equal(result.company.utilisationPct,50,"4 booked capacity-hours / 8 authored roster capacity-hours");
 });
+
+
+test("telemetry without an attempt preserves the historical idempotency key",async t=>{
+ const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);t.after(()=>sqlite.close());
+ await ensureProviderPerformanceTelemetry(db);
+ const input={providerId:"P1",groupId:"G1",bookingId:"B1",eventType:"assignment_decline",impactScore:-2,createdAt:2};
+ sqlite.prepare("INSERT INTO provider_performance_events(id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES ('PPE:P1:G1:B1:assignment_decline','P1','G1','B1','assignment_decline',-2,'{}',1)").run();
+ await providerPerformanceStatement(db,input).run();
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_performance_events").get().n,1);
+ assert.equal(sqlite.prepare("SELECT created_at FROM provider_performance_events").get().created_at,1);
+});
+
+test("malformed explicit telemetry attempt numbers fail before writes",async t=>{
+ const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);t.after(()=>sqlite.close());
+ await ensureProviderPerformanceTelemetry(db);
+ for(const attemptNo of [0,-1,1.5,NaN,Infinity,"1",null]){
+  assert.throws(()=>providerPerformanceStatement(db,{providerId:"P1",eventType:"assignment_decline",impactScore:-2,attemptNo}),/positive integer/);
+ }
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_performance_events").get().n,0);
+});

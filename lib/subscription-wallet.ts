@@ -60,13 +60,17 @@ export async function mutateSubscriptionWallet(db:Db,input:SubscriptionWalletMut
   return{duplicatePrevented:false,wallet:await readSubscriptionWallet(db,input.subscriptionId)};}
 
  const usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=? AND plan_code=?").bind(input.bookingId,input.subscriptionId).first<Row>();if(!usage)throw new Error("Booking has no reservation against this subscription");if(input.action==="consume"){if(String(booking.status)!=="completed")throw new Error("Credits can only be consumed after canonical service completion");if(String(usage.status)==="consumed")throw new Error("Booking credits are already consumed");if(String(usage.status)!=="reserved")throw new Error(`Booking credit status ${String(usage.status)} cannot be consumed`);const reserved=Number(usage.sessions_reserved||0);
-  // The guarded usage flip runs FIRST and the subscription counters only move when this call actually
-  // won it (meta.changes>0). Previously both statements sat in one batch, so a lost race still ran the
-  // unconditional counter update and double-counted the consumption.
-  const flipped=await db.prepare("UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved,status='consumed',updated_at=? WHERE booking_id=? AND status='reserved'").bind(now,input.bookingId).run();
-  if(!Number(flipped.meta?.changes||0))throw new Error("Booking credits are already consumed");
-  await db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=?").bind(reserved,reserved,reserved,now,input.subscriptionId).run();
-  const current=await activeSubscription(db,input.subscriptionId);await addEvent(db,input,"consumed",reserved,balance(current),{bookingStatus:booking.status});return{duplicatePrevented:false,wallet:await readSubscriptionWallet(db,input.subscriptionId)};}
+  if(!Number.isInteger(reserved)||reserved<1)throw new Error("Reserved credits must be a positive integer");
+  const eventId=crypto.randomUUID();
+  // Usage, wallet counters and the idempotency event commit together. The event's
+  // NOT NULL subscription_id also rejects stale state inside the transaction.
+  await db.batch([
+   db.prepare("INSERT INTO subscription_wallet_events (id,subscription_id,booking_id,event_type,credits,balance_after,idempotency_key,actor_id,detail_json,created_at) VALUES (?,(SELECT s.id FROM customer_grooming_subscriptions s JOIN booking_subscription_usage u ON u.plan_code=s.id JOIN canonical_bookings b ON b.id=u.booking_id WHERE s.id=? AND u.booking_id=? AND u.status='reserved' AND u.sessions_reserved=? AND s.sessions_reserved>=u.sessions_reserved AND b.status='completed' AND b.customer_id=s.customer_id),?,'consumed',?,(SELECT total_sessions-sessions_reserved-sessions_consumed FROM customer_grooming_subscriptions WHERE id=?),?,?,?,?)").bind(eventId,input.subscriptionId,input.bookingId,reserved,input.bookingId,reserved,input.subscriptionId,input.idempotencyKey,input.actorId,JSON.stringify({bookingStatus:booking.status}),now),
+   db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=sessions_reserved-?,sessions_consumed=sessions_consumed+?,status=CASE WHEN sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM subscription_wallet_events WHERE id=?)").bind(reserved,reserved,reserved,now,input.subscriptionId,eventId),
+   db.prepare("UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved,status='consumed',updated_at=? WHERE booking_id=? AND plan_code=? AND status='reserved' AND EXISTS (SELECT 1 FROM subscription_wallet_events WHERE id=?)").bind(now,input.bookingId,input.subscriptionId,eventId),
+  ]);
+  return{duplicatePrevented:false,wallet:await readSubscriptionWallet(db,input.subscriptionId)};}
+
 
  if(input.action==="release"){if(String(booking.status)==="completed")throw new Error("Consumed/completed service credits cannot be released");if(String(usage.status)!=="reserved")throw new Error(`Only reserved credits can be released; current status is ${String(usage.status)}`);const reserved=Number(usage.sessions_reserved||0),eventId=crypto.randomUUID(),claimStatus=`release_claimed:${eventId}`,detail={bookingStatus:booking.status,reason:releaseReason};try{const results=await db.batch([
    db.prepare("UPDATE booking_subscription_usage SET status=?,updated_at=? WHERE booking_id=? AND plan_code=? AND status='reserved' AND EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status<>'completed')").bind(claimStatus,now,input.bookingId,input.subscriptionId,input.bookingId),

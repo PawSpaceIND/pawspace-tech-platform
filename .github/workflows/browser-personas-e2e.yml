@@ -1,4 +1,4 @@
-name: Browser E2E (personas, vite dev server)
+name: Browser E2E (personas, sandbox locked)
 
 on:
   pull_request:
@@ -10,20 +10,24 @@ permissions:
   contents: read
 
 concurrency:
-  group: browser-e2e-${{ github.ref }}
+  group: browser-personas-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   playwright-personas:
-    name: Playwright customer partner admin
+    name: Browser E2E personas
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       NODE_ENV: test
       APP_ENV: staging
       FORBID_PRODUCTION: 'true'
       PAWSPACE_LOCAL_PREVIEW: 'on'
       PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+      PAWSPACE_SCHEDULING_ENV: uat
+      PAWSPACE_MEDIA_ENV: uat
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,16 +37,57 @@ jobs:
       - run: npm ci
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
-      - name: Run real browser personas against local Miniflare/Vite
-        run: npx playwright test e2e/customer-booking.spec.ts e2e/partner-journey.spec.ts e2e/admin-operations.spec.ts --project=chromium
+      - name: Configure server-side UAT Maps for local checkout
+        env:
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: |
+          python3 - <<'PYMAPS'
+          import json, os, secrets
+          from pathlib import Path
+          key = os.environ.get("GOOGLE_MAPS_SERVER_API_KEY_UAT", "").strip()
+          if not key:
+              raise SystemExit("Customer checkout requires the Google Maps UAT repository secret.")
+          access_code = secrets.token_hex(24)
+          signing_key = secrets.token_hex(32)
+          print("::add-mask::" + access_code)
+          with open(os.environ["GITHUB_ENV"], "a") as handle:
+              handle.write("PW_STAFF_UAT_ACCESS_CODE=" + access_code + "\n")
+          bindings = {
+              "PAWSPACE_UAT_LOGIN": "on",
+              "PAWSPACE_UAT_ACCESS_CODE": access_code,
+              "PAWSPACE_UAT_SIGNING_KEY": signing_key,
+              "GOOGLE_MAPS_SERVER_API_KEY_UAT": key,
+              "PAWSPACE_MAPS_ENV": "sandbox",
+              "PAWSPACE_DEPLOYMENT_ENV": "e2e",
+              "PAWSPACE_LOCAL_PREVIEW": "on",
+              "PAWSPACE_SCHEDULING_ENV": "uat",
+              "PAWSPACE_MEDIA_ENV": "uat",
+              "PAWSPACE_VOICE_TRANSPORT": "local_simulator_non_production",
+              "PAWSPACE_PAYMENT_ENV": "sandbox",
+              "PAWSPACE_PAYMENT_LIVE_APPROVED": "false",
+              "NODE_ENV": "test",
+              "APP_ENV": "staging",
+              "FORBID_PRODUCTION": "true",
+          }
+          target = Path(".dev.vars")
+          with target.open("x") as handle:
+              os.chmod(target, 0o600)
+              handle.write("".join(name + "=" + json.dumps(value) + "\n" for name, value in bindings.items()))
+          PYMAPS
+      - name: Run sandbox-locked desktop and Pixel 7 persona certification
+        run: npm run test:e2e-personas
+      - name: Remove local secret bindings
+        if: always()
+        run: rm -f .dev.vars
       - name: Upload Playwright evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-e2e-evidence
+          name: playwright-persona-e2e-evidence
           path: |
             playwright-report/
             test-results/
+            /tmp/wrangler-e2e.log
           if-no-files-found: warn
 
   razorpay-sandbox:

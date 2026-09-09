@@ -5,13 +5,13 @@ import fs from "node:fs";
 const workerSource=fs.readFileSync("worker/index.ts","utf8");
 
 test("API pre-route inspection cannot consume the request body delivered to the route",async()=>{
-  assert.match(workerSource,/const inspectionRequest=request\.clone\(\)/,
-    "worker must clone once before authorization/service inspection");
+  assert.match(workerSource,/const inspectionRequest=requestForAuthorization\(request,/,
+    "worker must derive a sanitized authorization request before gateway inspection");
   assert.match(workerSource,/authorizePlatformSessionRequest\(inspectionRequest,env\.DB\)/);
   assert.match(workerSource,/authorizeApiRequest\(inspectionRequest, env\)/);
   assert.match(workerSource,/blockDisabledServiceRequest\(inspectionRequest,env\.DB\)/);
   assert.match(workerSource,/handler\.fetch\(request, env, ctx\)/,
-    "application route must receive the original request, not the inspected clone");
+    "application route must receive the original request, not the inspected/sanitized request");
   assert.doesNotMatch(workerSource,/handler\.fetch\(inspectionRequest/);
 
   const payload={mode:"public",sessionKey:"p0-452",message:"Please call me about grooming",phone:"+919900000001"};
@@ -20,7 +20,35 @@ test("API pre-route inspection cannot consume the request body delivered to the 
     headers:{origin:"https://app.pawspace.in","content-type":"application/json"},
     body:JSON.stringify(payload),
   });
-  const inspection=original.clone();
-  assert.deepEqual(await inspection.json(),payload,"authorization clone must be readable");
+  const {requestForAuthorization}=await import("../lib/trusted-workspace-identity.ts");
+  const inspection=requestForAuthorization(original,{PAWSPACE_DEPLOYMENT_ENV:"e2e"});
+  assert.equal(original.bodyUsed,false);
+  assert.equal(original.body.locked,false);
+  assert.deepEqual(await inspection.json(),payload,"an independent inspection request must be readable");
   assert.deepEqual(await original.json(),payload,"route request body must remain independently readable");
 });
+
+for(const deployment of ["e2e","uat","production"]){
+ test(`untrusted ${deployment} POST sanitization preserves OTP route body and session headers`,async()=>{
+  const {requestForAuthorization}=await import("../lib/trusted-workspace-identity.ts");
+  const payload={action:"request",phone:"+919900000001"};
+  const original=new Request("https://app.pawspace.in/api/customer-otp",{method:"POST",headers:{
+   "content-type":"application/json",origin:"https://app.pawspace.in",cookie:"customer_session=test-only",
+   "oai-authenticated-user-email":"spoofed@pawspace.in","oai-authenticated-user-full-name":"Spoofed",
+   "oai-authenticated-user-full-name-encoding":"percent-encoded-utf-8"
+  },body:JSON.stringify(payload)});
+  const inspection=requestForAuthorization(original,{PAWSPACE_DEPLOYMENT_ENV:deployment});
+  for(const header of ["oai-authenticated-user-email","oai-authenticated-user-full-name","oai-authenticated-user-full-name-encoding"]){
+   assert.equal(inspection.headers.get(header),null);
+  }
+  assert.equal(inspection.headers.get("cookie"),"customer_session=test-only");
+  assert.equal(inspection.headers.get("origin"),"https://app.pawspace.in");
+  assert.deepEqual(await inspection.clone().json(),payload);
+  assert.equal(original.bodyUsed,false);
+  assert.equal(original.body.locked,false);
+  // The router reconstructs the request with middleware headers before invoking the OTP handler.
+  const routed=new Request(original,{headers:new Headers(original.headers)});
+  assert.deepEqual(await routed.json(),payload);
+  assert.deepEqual(await inspection.json(),payload);
+ });
+}

@@ -1,4 +1,6 @@
-import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governance";
+import{groomingChangePreview}from"../../../lib/grooming-change-preview";
+import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
 import{evaluateCancellationRefund,resolveRefundPolicy}from"../../../lib/refund-policy-governance";
@@ -8,11 +10,12 @@ import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authori
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
-type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;reasonCategory?:string;scheduledStart?:string;scheduledEnd?:string};
+type Input={expectedConsentRevision?:string;bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;reasonCategory?:string;scheduledStart?:string;scheduledEnd?:string};
 
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
-async function ensureTables(db:Db){await db.batch([
+async function ensureTables(db:Db){await ensureProviderCapacityTables(db);await db.batch([
+  db.prepare("CREATE TABLE IF NOT EXISTS grooming_change_assertions (id TEXT PRIMARY KEY,ok INTEGER NOT NULL CONSTRAINT grooming_change_assertion CHECK(ok=1))"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS customer_grooming_subscriptions (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,service_package_code TEXT NOT NULL,total_sessions INTEGER NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 0,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'active',started_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,source_booking_id TEXT NOT NULL UNIQUE,catalogue_version TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -27,6 +30,17 @@ async function event(db:Db,bookingId:string,eventType:string,actorId:string,deta
 const shiftIso=(value:string,ms:number)=>new Date(new Date(value).getTime()+ms).toISOString();
 const minutesOfLocalDay=(value:string,offsetMinutes:number)=>{const local=new Date(new Date(value).getTime()+offsetMinutes*60_000);return{date:local.toISOString().slice(0,10),minutes:local.getUTCHours()*60+local.getUTCMinutes()};};
 const rosterWindowCovers=(window:string,startMinutes:number,endMinutes:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]),to=Number(match[3])*60+Number(match[4]);return startMinutes>=from&&endMinutes<=to;};
+
+export async function GET(request:Request){try{
+ const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
+ const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);
+ const db=await database();
+ const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);
+ await requireCustomerOwnership(db,actor,String(booking.customer_id));
+ const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>(),payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>();
+ if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
+ return json({data:await groomingChangePreview(db,booking,work,payment)});
+}catch(error){return authError(error,"Unable to preview Grooming booking changes");}}
 
 export async function POST(request:Request){
   try{
@@ -46,6 +60,10 @@ export async function POST(request:Request){
     const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
     if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
+    if(input.expectedConsentRevision!==undefined){
+      const current=await groomingChangePreview(db,booking,work,payment);
+      if(input.expectedConsentRevision!==current.consentRevision)return json({error:"Booking change terms have changed. Review the latest preview before confirming.",code:"booking_change_terms_changed"},409);
+    }
     const now=Date.now(),auditActor=actor.email;
 
     /*
@@ -103,6 +121,7 @@ export async function POST(request:Request){
     if(!policyEvaluation.allowed)return json({error:`Booking change is blocked by policy ${policyEvaluation.policyVersion}`,policy:policyEvaluation},409);
 
     if(input.action==="cancel"){
+      if(!["confirmed","assigned","awaiting_acceptance"].includes(String(work.status)))return json({error:"Provider work has progressed or changed. Refresh the booking and contact support for cancellation review."},409);
       const reason=(input.reason||"Customer cancelled from PawSpace").trim();
       if(!refundEvaluation)return json({error:"The cancellation refund policy could not be evaluated"},409);
       const refundAmount=refundEvaluation.customerRefundAmount;
@@ -111,26 +130,49 @@ export async function POST(request:Request){
       const reservedSessions=usage?Number(usage.sessions_reserved||0):0;
       const subscriptionId=usage?String(usage.plan_code):"";
       const subscription=subscriptionId?await db.prepare("SELECT * FROM customer_grooming_subscriptions WHERE id=?").bind(subscriptionId).first<Row>():null;
-      const statements=[
+      if(usage&&(!subscription||String(usage.customer_id)!==input.customerId||String(subscription.customer_id)!==input.customerId||!Number.isInteger(reservedSessions)||reservedSessions<0||Number(subscription.sessions_reserved)<reservedSessions))return json({error:"Subscription credits require review before cancellation."},409);
+      const assertionId=crypto.randomUUID();
+      const usageGuard=usage?db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
+        EXISTS (SELECT 1 FROM booking_subscription_usage WHERE id=? AND booking_id=? AND customer_id=? AND plan_code=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND updated_at=?)
+        AND EXISTS (SELECT 1 FROM customer_grooming_subscriptions WHERE id=? AND customer_id=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND source_booking_id=? AND updated_at=?)
+        THEN 1 ELSE 0 END`).bind(`${assertionId}-credits`,usage.id,input.bookingId,input.customerId,usage.plan_code,usage.sessions_reserved,usage.sessions_consumed,usage.status,usage.updated_at,subscription!.id,input.customerId,subscription!.sessions_reserved,subscription!.sessions_consumed,subscription!.status,subscription!.source_booking_id,subscription!.updated_at)
+        :db.prepare("INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN NOT EXISTS (SELECT 1 FROM booking_subscription_usage WHERE booking_id=?) THEN 1 ELSE 0 END").bind(`${assertionId}-credits`,input.bookingId);
+      const statements=[usageGuard,
+        db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
+          EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id IS ? AND updated_at=?)
+          AND EXISTS (SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id IS ? AND updated_at=?)
+          AND EXISTS (SELECT 1 FROM booking_payments WHERE id=? AND booking_id=? AND status=? AND amount=? AND updated_at=?)
+          THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,booking.scheduled_start,booking.scheduled_end,booking.provider_id??null,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,work.provider_id??null,work.updated_at,payment.id,input.bookingId,payment.status,payment.amount,payment.updated_at),
         db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=?").bind(now,input.bookingId),
         db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
         db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").bind(booking.schedule_group_id),
+        db.prepare("UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending'").bind(now,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(json_set(detail_json,'$.cancelReason',?),'$.commercialPolicyEvaluation',json(?)),updated_at=? WHERE booking_id=?").bind(refundAmount>0?"refund_pending":"cancelled",reason,JSON.stringify(policyEvaluation),now,input.bookingId),
         db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN 'reversed' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
       ];
       if(subscriptionId&&reservedSessions>0)statements.push(db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),status=CASE WHEN source_booking_id=? THEN ? ELSE status END,updated_at=? WHERE id=?").bind(reservedSessions,input.bookingId,refundAmount>0?"refund_pending":"cancelled",now,subscriptionId));
       if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,policy_json,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?,?)").bind(refundId,input.bookingId,payment.id,refundAmount,reason,auditActor,JSON.stringify(refundEvaluation),now,now));
-      await db.batch(statements);
+      statements.push(
+        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_cancelled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,referral:{status:"pending_evaluation"}}),now),
+        securityAuditStatement(db,actor,"grooming.cancel","booking",input.bookingId,"completed",{customerId:input.customerId,refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,reservedSessions}),
+        db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-credits`),
+      );
+      try{await db.batch(statements);}catch(error){
+        if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking, provider work, payment or subscription credits changed. Refresh before requesting cancellation."},409);
+        throw error;
+      }
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
-      await event(db,input.bookingId,"booking_cancelled",auditActor,{customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,subscriptionStatus:subscription?refundAmount>0?"refund_pending":"cancelled":null,referral},now);
-      await securityAudit(db,actor,"grooming.cancel","booking",input.bookingId,"completed",{customerId:input.customerId,refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,reservedSessions,referral});
       return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,referral}});
     }
 
+    if(!["confirmed","assigned","awaiting_acceptance"].includes(status)||!["confirmed","assigned","awaiting_acceptance"].includes(String(work.status)))return json({error:"This Grooming service has progressed and cannot be rescheduled directly"},409);
     if(!input.scheduledStart||!input.scheduledEnd)return json({error:"New start and end times are required"},400);
     const start=new Date(input.scheduledStart),end=new Date(input.scheduledEnd);
     if(Number.isNaN(start.getTime())||Number.isNaN(end.getTime())||end<=start||start.getTime()<=now)return json({error:"A valid future time range is required"},400);
+    const bookedDuration=Date.parse(String(booking.scheduled_end))-Date.parse(String(booking.scheduled_start));
+    if(!Number.isFinite(bookedDuration)||bookedDuration<=0||String(work.scheduled_start)!==String(booking.scheduled_start)||String(work.scheduled_end)!==String(booking.scheduled_end))return json({error:"The existing booking schedule requires review before it can be moved"},409);
+    if(end.getTime()-start.getTime()!==bookedDuration)return json({error:"Rescheduling must preserve the booked service duration"},400);
     const providerId=String(work.provider_id),cityId=String(booking.city_id),zoneId=String(booking.zone_id),offsetMinutes=cityOffsetMinutes(cityId);
     const profile=await db.prepare("SELECT travel_buffer_minutes,max_daily_jobs,live,status,effective_from,effective_to FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
     if(!profile||Number(profile.live)!==1||String(profile.status)!=="active")return json({error:"The assigned provider is no longer available for that slot"},409);
@@ -158,22 +200,35 @@ export async function POST(request:Request){
     // and provider unavailability are all rechecked by the same guarded UPDATE that moves the reservation.
     const groupRows=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id).first<Row>(),expectedRows=Number(groupRows?.count||0);
     if(expectedRows<1)return json({error:"The booking has no active scheduling reservation to move"},409);
-    const moved=await db.prepare(`UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned'
+    const moveStatement=db.prepare(`UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned'
       WHERE group_id=? AND status!='cancelled'
         AND NOT EXISTS (SELECT 1 FROM scheduling_reservations other WHERE other.provider_id=scheduling_reservations.provider_id AND other.group_id!=? AND other.status!='cancelled' AND other.scheduled_start<? AND other.scheduled_end>?)
         AND (SELECT COUNT(*) FROM scheduling_reservations other WHERE other.provider_id=scheduling_reservations.provider_id AND other.group_id!=? AND other.status!='cancelled' AND substr(datetime(other.scheduled_start,?),1,10)=?)<?
         AND EXISTS (SELECT 1 FROM provider_capacity_profiles p WHERE p.id=scheduling_reservations.provider_id AND p.live=1 AND p.status='active' AND (p.effective_from IS NULL OR p.effective_from<=?) AND (p.effective_to IS NULL OR p.effective_to>=?))
         AND EXISTS (SELECT 1 FROM scheduling_availability a,json_each(a.windows_json) w WHERE a.provider_id=scheduling_reservations.provider_id AND a.city_id=? AND a.zone_id=? AND a.date=? AND (a.source IN ('partner_app','operations','roster') OR NOT EXISTS (SELECT 1 FROM scheduling_availability authored WHERE authored.provider_id=a.provider_id AND authored.date=a.date AND authored.source IN ('partner_app','operations','roster'))) AND (CAST(substr(w.value,1,2) AS INTEGER)*60+CAST(substr(w.value,4,2) AS INTEGER))<=? AND (CAST(substr(w.value,7,2) AS INTEGER)*60+CAST(substr(w.value,10,2) AS INTEGER))>=?)
         AND NOT EXISTS (SELECT 1 FROM provider_unavailability u WHERE u.provider_id=scheduling_reservations.provider_id AND u.status='active' AND u.starts_at<? AND u.ends_at>?)`)
-      .bind(start.toISOString(),end.toISOString(),booking.schedule_group_id,booking.schedule_group_id,bufferedEnd,bufferedStart,booking.schedule_group_id,offsetModifier,localStart.date,maxDailyJobs,localStart.date,localStart.date,cityId,zoneId,localStart.date,localStart.minutes,localEnd.minutes,localDayEndUtc,localDayStartUtc).run();
-    if(Number(moved.meta?.changes||0)!==expectedRows)return json({error:"The assigned provider is no longer available for that slot"},409);
-    await db.batch([
-      db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
-      db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
+      .bind(start.toISOString(),end.toISOString(),booking.schedule_group_id,booking.schedule_group_id,bufferedEnd,bufferedStart,booking.schedule_group_id,offsetModifier,localStart.date,maxDailyJobs,localStart.date,localStart.date,cityId,zoneId,localStart.date,localStart.minutes,localEnd.minutes,localDayEndUtc,localDayStartUtc);
+    const awaitingAcceptance=String(work.status)==="awaiting_acceptance",nextBookingStatus=awaitingAcceptance?status:"assigned",nextWorkStatus=awaitingAcceptance?"awaiting_acceptance":"assigned";
+    const assertionId=crypto.randomUUID();
+    try{await db.batch([
+      db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
+        EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
+        AND EXISTS (SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
+        AND EXISTS (SELECT 1 FROM provider_capacity_profiles WHERE id=? AND travel_buffer_minutes IS ? AND max_daily_jobs IS ?)
+        AND (SELECT COUNT(*) FROM scheduling_reservations WHERE group_id=? AND status!='cancelled')=?
+        THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,oldStart,oldEnd,providerId,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,providerId,work.updated_at,providerId,profile.travel_buffer_minutes??null,profile.max_daily_jobs??null,booking.schedule_group_id,expectedRows),
+      moveStatement,
+      db.prepare("INSERT INTO grooming_change_assertions (id,ok) VALUES (?,CASE WHEN changes()=? THEN 1 ELSE 0 END)").bind(`${assertionId}-move`,expectedRows),
+      db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),nextBookingStatus,now,input.bookingId),
+      db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),nextWorkStatus,now,input.bookingId),
       db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
-    ]);
-    await event(db,input.bookingId,"booking_rescheduled",auditActor,{customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount},now);
-    await securityAudit(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date});
-    return json({data:{bookingId:input.bookingId,status:"assigned",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
+      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_rescheduled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}),now),
+      securityAuditStatement(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date}),
+      db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-move`),
+    ]);}catch(error){
+      if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking or provider availability changed. Refresh before requesting another time."},409);
+      throw error;
+    }
+    return json({data:{bookingId:input.bookingId,status:nextBookingStatus,workOrderStatus:nextWorkStatus,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
   }catch(error){return authError(error,"Unable to change Grooming booking");}
 }

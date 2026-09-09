@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./saved-pet-fixture.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./module-hooks.mjs";
 import { installFinancialLifecycleSchema } from "./financial-lifecycle-schema.mjs";
@@ -66,22 +67,28 @@ export async function setupJourney() {
    // PAWSPACE_MEDIA_ENV is declared because media release is now environment-aware: an absent value
   // reads as PRODUCTION, the strict default, where unscanned media stays quarantined. These are the UAT
   // journeys. [PTJA-W3-SC]
- globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
+ globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on" };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
   const { seedDefaultGroomingPolicy } = await import("../../lib/grooming-policy-governance.ts");
+  const { seedDefaultGroomingTaxPolicy } = await import("../../lib/grooming-invoice.ts");
   const { ensureSecurityTables } = await import("../../lib/server-auth.ts");
+  const { ensureUniversalLocationTables } = await import("../../lib/universal-location-recovery.ts");
   await ensureSecurityTables(db);
   await seedDefaultZones(db);
   await seedProviderCapacityDefaults(db);
   await seedDefaultGroomingPolicy(db);
+  await seedDefaultGroomingTaxPolicy(db, "blr");
+  await seedDefaultGroomingTaxPolicy(db, "maa");
+  await ensureUniversalLocationTables(db);
   const now = Date.now();
   await db.batch([
     db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-GROOM-CLOSURE','closure-admin@pawspace.test','Grooming closure operator','founder','active',?,?)").bind(now,now),
     db.prepare("INSERT OR REPLACE INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES ('600001','chennai-core','maa','Chennai','George Town',?)").bind(now),
     db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('groom_maa','maa','Meena R.','full_time','[\"grooming\"]','[\"chennai-core\"]',1,4.9,96,1,30,4,3,'active',1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
     db.prepare("INSERT INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_maa','grooming-default','maa',NULL,'enforce',0,100,100,0,1,2,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
+    db.prepare("INSERT OR REPLACE INTO booking_punctuality_policies (id,service_code,city_id,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES ('GPS-GROOM-UAT','grooming',NULL,1,300,50,'approved','2020-01-01',NULL,'journey_seed',?)").bind(now),
   ]);
   return { sqlite, db, close: () => sqlite.close() };
 }
@@ -97,6 +104,7 @@ async function routeCall(modulePath, method, path, body, cookie = "", origin = "
 }
 
 export async function runCompletedJourney(ctx, config) {
+  await seedOwnedPet(ctx.db, config.customerId, config.petSourceId, config.petName);
   const { db, sqlite } = ctx;
   const customerCookie = await sessionCookie(db, "customer", config.customerId, `customer:${config.customerId}`);
   const { resolveZoneByPincode } = await import("../../lib/service-zones.ts");
@@ -107,6 +115,7 @@ export async function runCompletedJourney(ctx, config) {
   const schedulePayload = {
     clientRequestId: config.groupId, customerId: config.customerId, petIds: [config.petSourceId],
     serviceCode: "grooming", cityId: config.cityId, zoneId: config.zoneId,
+    serviceAddress: `${config.customerName} service address`, servicePincode: config.pincode,
     scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(),
     preferredProviderId: config.preferredProviderId,
   };
@@ -139,10 +148,10 @@ export async function runCompletedJourney(ctx, config) {
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
   const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
-  // No booking_service_addresses fixture here on purpose. ARRIVED resolves the doorstep through
-  // lib/booking-doorstep.ts, which reads booking_service_locations - the table the real
-  // /api/grooming-service-location call above actually writes. Seeding the travel table instead was what
-  // let the geofence pass in tests while it was unreachable for every real customer.
+  const serviceLatitude = Number(location.body.data?.latitude), serviceLongitude = Number(location.body.data?.longitude);
+  if (location.status !== 201 || !Number.isFinite(serviceLatitude) || !Number.isFinite(serviceLongitude)) {
+    throw new Error(`Governed service location setup failed: ${location.status} ${JSON.stringify(location.body)}`);
+  }
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
@@ -158,14 +167,21 @@ export async function runCompletedJourney(ctx, config) {
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
   const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
   const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
+  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) {
+    if (action === "arrived") {
+      const capturedAt = Date.now();
+      const telemetry = await routeCall("../../app/api/grooming-route/route.ts", "POST", "/api/grooming-route", {
+        bookingId, providerId: provider.id, latitude: serviceLatitude, longitude: serviceLongitude,
+        accuracyMeters: 10, capturedAt, idempotencyKey: `golden:${bookingId}:${capturedAt}`,
+      }, providerCookie);
+      if (telemetry.status !== 201) throw new Error(`Trusted GPS setup failed: ${telemetry.status} ${JSON.stringify(telemetry.body)}`);
+    }
+    transitions.push(await lifecycle(action));
+  }
   const invalidEarlyComplete = await lifecycle("complete");
 
   const media = [];
   for (const purpose of ["before_service", "after_service"]) {
-    // The signed-upload boundary [PTJA-W2-B4-M04]: the provider requests a short-lived token bound to
-    // one object key, uploads, and the confirmation presents that token together with what the stored
-    // object actually is. Review is a separate identity - the provider cookie prepares, staff decides.
     const sha256 = purpose === "before_service" ? "a".repeat(64) : "b".repeat(64);
     const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256, fileName: `${purpose}.jpg` }, providerCookie);
     const { id, upload } = prepared.body.data;

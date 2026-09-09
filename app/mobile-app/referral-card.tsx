@@ -6,12 +6,14 @@ import type { LoggedInCustomer } from "./customer-login";
 import styles from "./referral-card.module.css";
 
 const monthStart = () => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
-const amount = (value: number | null | undefined) => value == null ? "Configuration required" : `₹${value}`;
+const amount = (value: number | null | undefined) => `₹${value}`;
 
 type Directory = { programmes: ReferralProgramme[]; rewards: Array<Record<string, unknown>> };
 
 export default function ReferralCard({ customer }: { customer: LoggedInCustomer }){
+  const [asOf]=useState(()=>Date.now());
   const [copied,setCopied]=useState(false);
+  const [shareError,setShareError]=useState("");
   const [code,setCode]=useState("");
   const [programme,setProgramme]=useState<ReferralProgramme|null>(null);
   const [usedThisMonth,setUsedThisMonth]=useState(0);
@@ -37,16 +39,20 @@ export default function ReferralCard({ customer }: { customer: LoggedInCustomer 
     return ()=>{ active=false; };
   },[customer.customerId]);
 
-  const share=async()=>{ if(!code) return; try{await navigator.clipboard.writeText(code);}catch{} setCopied(true); setTimeout(()=>setCopied(false),1800); };
+  const share=async()=>{ if(!code) return; try{await navigator.clipboard.writeText(code);setShareError("");setCopied(true);setTimeout(()=>setCopied(false),1800);}catch{setShareError("Unable to copy automatically. Select and copy your code instead.");} };
 
   if(loading) return <section className={styles.card}><header><div><span>REFER & EARN</span><h3>Loading your referral code…</h3></div><i>₹</i></header></section>;
   if(error || !programme) return <section className={styles.card}><header><div><span>REFER & EARN</span><h3>Referral programme unavailable</h3></div><i>₹</i></header><p>{error || "Unable to load canonical referral programme."}</p></section>;
 
+  const configured=[programme.friendDiscount,programme.referrerReward,programme.perReferrerMonthlyLimit,programme.rewardValidityDays].every(value=>value!==null&&Number.isFinite(value)&&value>0);
+  const available=programme.status==='active'&&configured&&asOf>=programme.validFrom&&asOf<=programme.validUntil;
+  if(!available)return <section className={styles.card}><header><div><span>REFER & EARN</span><h3>Referrals are not available yet</h3></div><i>₹</i></header><p>We’ll show your referral code and reward details here when the programme is available.</p></section>;
   const isLive = programme.status === "active";
   return <section className={styles.card}>
-    <header><div><span>REFER & EARN · {isLive ? "UAT" : "NOT LIVE"}</span><h3>Give {amount(programme.friendDiscount)}. Get {amount(programme.referrerReward)}.</h3></div><i>₹</i></header>
+    <header><div><span>REFER & EARN · {programme.testOnly ? "TEST PROGRAMME" : "REWARDS"}</span><h3>Give {amount(programme.friendDiscount)}. Get {amount(programme.referrerReward)}.</h3></div><i>₹</i></header>
     <p>Your friend saves on their first completed booking. Your reward unlocks for your next PawSpace booking.{!isLive && " This programme is not active yet — codes work in UAT only."}</p>
     <div className={styles.code}><span>{code || "—"}</span><button disabled={!code} onClick={share}>{copied?"Copied ✓":"Copy & share"}</button></div>
+    {shareError&&<p role="alert">{shareError}</p>}
     <footer><b>{usedThisMonth} / {programme.perReferrerMonthlyLimit ?? "Configuration required"} rewards this month</b><span>Valid {programme.rewardValidityDays ?? "configuration required"} days · no stacking</span></footer>
   </section>;
 }

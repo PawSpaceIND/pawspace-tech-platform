@@ -25,6 +25,7 @@
  * last case here proves.
  */
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
@@ -112,6 +113,9 @@ async function world({ hooks = {} } = {}) {
 
 /** Reserves through the REAL scheduling route - the authoritative assignment write path. */
 async function reserve(w, { group, providerId = "walk_nisha", service = "dog_walking", hoursAhead = 48, customerId = "CUST-F53X" }) {
+  // Supply a valid owned pet so these tests reach the provider-verification gate.
+  w.sqlite.exec(readFileSync(new URL("../app/api/walking-bookings/route.ts", import.meta.url), "utf8").match(/CREATE TABLE IF NOT EXISTS canonical_pets [^"\n]+/)[0]);
+  w.sqlite.prepare("INSERT OR IGNORE INTO canonical_pets(id,customer_id,name,species,created_at,updated_at) VALUES (?,?,'Verification test dog','dog',?,?)").run(`PET-${customerId}`, customerId, Date.now(), Date.now());
   const route = await import("../app/api/uat-scheduling/route.ts");
   const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
   const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");

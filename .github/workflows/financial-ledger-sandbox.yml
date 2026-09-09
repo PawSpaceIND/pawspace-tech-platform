@@ -1,0 +1,38 @@
+name: Financial Ledger Sandbox
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: financial-ledger-sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  financial-ledger:
+    name: Financial ledger (sandbox)
+    runs-on: ubuntu-latest
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Run dedicated financial lifecycle certification
+        run: npm run test:financial-ledger

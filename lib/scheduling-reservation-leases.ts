@@ -3,7 +3,7 @@ import {ensurePlatformSessionTables,resolvePlatformSession} from "./platform-ses
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-export const SCHEDULING_RESERVATION_LEASE_MS=15*60_000;
+export const SCHEDULING_RESERVATION_LEASE_MS=5*60_000;
 export const SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE="status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight'";
 export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`;
 const leaseTablesEnsured=new WeakSet<Db>();

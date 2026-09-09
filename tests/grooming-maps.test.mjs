@@ -15,12 +15,12 @@ assert.match(customer,/saveServiceLocation\(\{bookingId:canonical\.bookingId,cus
   assert.match(locationApi,/requireCustomerOwnership\(db,actor,customerId\)/);
   assert.match(locationApi,/booking_service_locations/);
   assert.match(routeApi,/requireProviderOwnership\(db,actor,input\.providerId\)/);
-  assert.match(routeApi,/activeTravelStates=new Set\(\["assigned","on_the_way","arrived"\]\)/);
+  assert.match(routeApi,/GPS_CAPTURE_STATES=new Set\(\["assigned","on_the_way","arrived"\]\)/);
   assert.match(routeApi,/GPS capture is disabled outside assigned, on-the-way or arrived states/);
   assert.match(routeCard,/navigator\.geolocation\.getCurrentPosition/);
   assert.match(routeCard,/navigator\.geolocation\.watchPosition/);
   assert.match(routeCard,/foreground-only in UAT/);
-  assert.match(routeCard,/Background tracking is not enabled/);
+  assert.match(routeCard,/Stale, future-clock and low-accuracy fixes are stored as rejected evidence/);
   assert.match(partner,/GroomingRouteCard bookingId=\{selected\.bookingId\} providerId=\{selected\.providerId\}/);
   assert.match(gateway,/\/api\/grooming-service-location/);
   assert.match(gateway,/\/api\/grooming-route/);
