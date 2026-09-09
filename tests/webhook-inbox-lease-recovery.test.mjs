@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__WEBHOOK_LEASE_DB__", "__WEBHOOK_LEASE_ENV__");
 
 function makeD1(sqlite) {
   const statement = (sql, args = []) => ({
@@ -60,6 +63,7 @@ function insertInbox(sqlite, id, eventId, status = "RECEIVED") {
 test("stale PROCESSING inbox leases are reclaimed with fencing and old workers cannot terminalize the row", async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__WEBHOOK_LEASE_DB__ = db; globalThis.__WEBHOOK_LEASE_ENV__ = {};
   createLegacyInbox(sqlite);
   insertInbox(sqlite, "INBOX-1", "evt-1");
 
@@ -99,6 +103,7 @@ test("stale PROCESSING inbox leases are reclaimed with fencing and old workers c
 test("a crash between outer PROCESSING and inner refund completion is recoverable and stays ledger-balanced", async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__WEBHOOK_LEASE_DB__ = db; globalThis.__WEBHOOK_LEASE_ENV__ = {};
   createLegacyInbox(sqlite);
   insertInbox(sqlite, "INBOX-CRASH", "evt_crash", "PROCESSING");
 
@@ -153,5 +158,5 @@ test("Razorpay webhook route wires lease recovery into inner reconciliation and 
   assert.match(source, /claimWebhookInbox/);
   assert.match(source, /webhook_processing_in_progress/);
   assert.match(source, /allowRecovery:recoveringInbox/);
-  assert.match(source, /processing_recovered/);
+  assert.match(source, /processingRecovered/);
 });
