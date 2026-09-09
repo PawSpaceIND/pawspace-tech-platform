@@ -73,7 +73,9 @@ test("the Haptik voice webhook is reachable and fail-closed on raw-body HMAC", (
   const source = read("app/api/haptik/route.ts");
   assert.match(source, /HAPTIK_API_KEY/);
   assert.match(source, /x-hub-signature/);
-  assert.match(source, /request\.text\(\)/);
+  assert.match(source, /readBoundedRequestText/);
+  assert.match(source, /MAX_HAPTIK_BYTES/);
+  assert.match(source, /413/);
   assert.match(source, /crypto\.subtle\.importKey/);
   assert.match(source, /safeEqual\(expected,provided\)/);
   assert.match(source, /Haptik integration is not connected[\s\S]*503/);

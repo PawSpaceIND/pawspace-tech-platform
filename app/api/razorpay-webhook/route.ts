@@ -7,6 +7,7 @@ import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayC
 import{ensureSubscriptionBillingTables,isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
 import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 type RazorEntity=Record<string,unknown>;
 type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{entity?:RazorEntity}>};
@@ -14,6 +15,8 @@ type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 const rank:Record<PaymentState,number>={CREATED:0,AUTHORIZED:1,CAPTURED:2,SETTLED:3,FAILED:90,CANCELLED:91};
 const text=(value:unknown)=>String(value??"").trim();
+/** Public gateway endpoint: refuse multi-megabyte bodies before HMAC work. */
+const MAX_WEBHOOK_BYTES=262_144;
 
 function entity(payload:RazorPayload,key:string){return payload.payload?.[key]?.entity||{};}
 function extract(payload:RazorPayload,eventId:string,payloadHash:string,environment:"sandbox"|"live"):GatewayEvent{
@@ -101,7 +104,12 @@ export async function POST(request:Request){
     const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
     const gate=resolvePaymentWebhookGate(runtime);if(!gate.ok)return json({error:gate.reason},gate.status);
     const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase();let eventId=(request.headers.get("x-razorpay-event-id")||"").trim();if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
-    const raw=await request.text();const db=await database();
+    let raw:string;
+    try{raw=await readBoundedRequestText(request,MAX_WEBHOOK_BYTES);}catch(error){
+      if(error instanceof VoiceFetchRefused)return json({error:"Razorpay webhook payload is too large"},413);
+      throw error;
+    }
+    const db=await database();
     let accepted:Awaited<ReturnType<typeof acceptRazorpayWebhook>>;
     try{
       accepted=await acceptRazorpayWebhook(db,{rawBody:raw,signature,webhookSecret:gate.secret,eventId,environment:gate.environment});
@@ -121,23 +129,7 @@ export async function POST(request:Request){
       const verifiedNonBooking=await knownNonBookingSubscriptionEvent(db,payload,eventType);
       if(!verifiedNonBooking){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await markInbox(db,accepted.row,"REJECTED",eventType,"outside_payment_pilot");return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
     }
-    /*
-     * NO TIMESTAMP CHECK HERE. Replay is bounded by IDENTITY, not by age: acceptRazorpayWebhook
-     * recognises a body it has already accepted by the digest of the signature-verified payload, so a
-     * forged event-id header can no longer manufacture a second event out of one captured body - and a
-     * genuine Razorpay retry arriving twenty hours late is recognised as the redelivery it is rather
-     * than refused. A clock-based window would have had to choose between those two.
-     */
     if(!(await claimInbox(db,accepted.row,eventType))){
-      /*
-       * `accepted.row.event_id`, NOT the header's eventId, and that distinction is new.
-       *
-       * The post-commit capture effects are keyed on the event id they were enqueued under, which is the
-       * id of the event as RECORDED. Since the inbox now dedupes on the payload digest, a redelivery can
-       * arrive carrying a different id in the header - a gateway retry, or a replay - and resolve to the
-       * original row. Looking the outbox up by the header id would then find nothing, silently answer
-       * 200, and strand a pending capture effect that the retry existed to finish.
-       */
       const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
       if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
       return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
@@ -186,7 +178,7 @@ export async function POST(request:Request){
 
       const result=await processGatewayEvent(db,event);
       const failed=String(result.status||"")==="exception";
-      if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
+      if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason ||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
 
       let transition:Awaited<ReturnType<typeof advancePaymentState>>|null=null;
       if(intent&&target)transition=await advancePaymentState(db,{intentId:String(intent.id),target,gatewayPaymentId:event.gatewayPaymentId});
