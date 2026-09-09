@@ -45,7 +45,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk,guards));
  const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk,guards));
  const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk,guards));
- const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status IN ('processing','processed','completed') AND booking_id IN (${placeholders})`,chunk,guards));
+ const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status IN ('processed','completed') AND booking_id IN (${placeholders})`,chunk,guards));
  const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk,guards));
  const tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk,guards));
 
@@ -161,7 +161,7 @@ function coverageNote(){return{
  gmv:"canonical_bookings (cancelled/draft excluded)",
  discounts:"coupon_redemptions + paw_points_ledger redemptions (Rs.0.50/point) + pawspace_wallet_ledger applied value",
  providerPayout:"provider_order_payouts (sandbox rail)",
- refunds:"booking_refund_cases status=processing|processed|completed",
+ refunds:"booking_refund_cases status=processed|completed",
  utilisation:"authoritative scheduling_availability capacity-hours; governed capacity when present, unit-capacity fallback only for missing legacy profile data; authored roster wins over uat_roster; city-scoped when requested",
  tax:"configuration_required - no published tax policy; excluded from contribution, never zeroed",
  paymentFee:"configuration_required - gateway fees are sandbox; excluded from contribution, never zeroed",

@@ -124,6 +124,7 @@ export async function POST(request:Request){
      * genuine Razorpay retry arriving twenty hours late is recognised as the redelivery it is rather
      * than refused. A clock-based window would have had to choose between those two.
      */
+    const recoveringFailedInbox=String(accepted.row.processing_status||"").toUpperCase()==="FAILED";
     if(!(await claimInbox(db,accepted.row,eventType))){
       /*
        * `accepted.row.event_id`, NOT the header's eventId, and that distinction is new.
@@ -171,7 +172,7 @@ export async function POST(request:Request){
           });
         }catch(error){
           if(!(error instanceof RazorpayCaptureAmountMismatchError))throw error;
-          const governed=await processGatewayEvent(db,event);
+          const governed=await processGatewayEvent(db,event,{allowRecovery:recoveringFailedInbox});
           await markInbox(db,accepted.row,"FAILED",eventType,String(governed.reason||"capture_amount_mismatch"));
           return json({ok:true,environment:gate.environment,...governed});
         }
@@ -180,7 +181,7 @@ export async function POST(request:Request){
         return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
       }
 
-      const result=await processGatewayEvent(db,event);
+      const result=await processGatewayEvent(db,event,{allowRecovery:recoveringFailedInbox});
       const failed=String(result.status||"")==="exception";
       if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
 

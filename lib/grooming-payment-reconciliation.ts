@@ -167,37 +167,34 @@ async function claimedBookingConflict(db:Db,event:GatewayEvent){
 
 async function resolvePayment(db:Db,event:GatewayEvent){if(event.bookingId){const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(event.bookingId).first<Row>();if(payment)return{bookingId:event.bookingId,payment};}if(event.gatewayPaymentLinkId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_link_id=?").bind(event.gatewayPaymentLinkId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayPaymentId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_id=?").bind(event.gatewayPaymentId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayOrderId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_order_id=?").bind(event.gatewayOrderId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}return null;}
 
-export async function processGatewayEvent(db:Db,event:GatewayEvent){
+export async function processGatewayEvent(db:Db,event:GatewayEvent,options:{allowRecovery?:boolean}={}){
   await ensurePaymentReconciliationTables(db);if(!event.signatureVerified)throw new Error("Gateway event signature is not verified");
+  const now=Date.now();
   const existing=await db.prepare("SELECT id,processing_status,event_type,booking_id FROM payment_gateway_events WHERE provider=? AND event_id=?").bind(event.provider,event.eventId).first<Row>();
+  let rowId="";
   if(existing){
-    // A redelivery of an already-recorded event is still allowed to COMPLETE a subscription transition
-    // that a transient dependent-write failure rolled back on the first pass — otherwise a one-off failure
-    // would strand a genuinely paid entitlement at pending_payment forever (exact-eventId redelivery is
-    // the gateway's own retry). The transition helpers are idempotent and touch ONLY the subscription /
-    // usage / lifecycle tables, so this repairs a pending transition, no-ops a completed one, and never
-    // re-enters the capture path: captured_amount, settlement and gateway-reference idempotency are
-    // untouched, and no money is recounted.
-    // ...but only for a capture the system ACCEPTED. Repair completes a transition a transient
-    // dependent-write failure rolled back; an event that was REFUSED is not a transition waiting to be
-    // completed. Without this check a signed Rs 1 capture, correctly refused as capture_amount_mismatch
-    // on delivery 1, activated a Rs 24,000 ten-session subscription on the gateway's own byte-identical
-    // retry - answering with the old refusal while performing a new, money-granting write. The receiver
-    // enforces no replay window, so that exposure never expired. This fails closed both ways: a refused
-    // event repairs nothing, and the failure branch can no longer close a genuinely paid entitlement on
-    // a replayed payment.failed the system had already rejected.
-    // The booking comes from the RECORDED event, never from the replayed payload. A processed capture
-    // always has its booking stamped on the event row, so an `|| event.bookingId` fallback could only
-    // ever fire for an event that had NO booking - which is exactly how a replayed id was able to act on
-    // a booking it never referred to, leaving no audit row linking the two.
-    const repairBookingId=String(existing.processing_status)==="processed"?String(existing.booking_id||"").trim():"";
-    if(repairBookingId){
-      if(["payment.captured","order.paid","payment_link.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
-      else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+    const existingStatus=String(existing.processing_status);
+    // D1 has no SELECT FOR UPDATE. The safe equivalent is the outer inbox CAS plus this inner
+    // compare-and-set on the unique provider/event identity. Only an outer FAILED retry may re-enter.
+    if(options.allowRecovery&&["received","processing"].includes(existingStatus)){
+      const reclaimed=await db.prepare("UPDATE payment_gateway_events SET processing_status='processing',failure_reason=NULL,processed_at=NULL WHERE id=? AND processing_status IN ('received','processing')").bind(existing.id).run();
+      if(Number(reclaimed.meta?.changes||0)===1)rowId=String(existing.id);
     }
-    return{duplicate:true,status:String(existing.processing_status)};
+    if(!rowId){
+      const repairBookingId=existingStatus==="processed"?String(existing.booking_id||"").trim():"";
+      if(repairBookingId){
+        if(["payment.captured","order.paid","payment_link.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+        else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+      }
+      return{duplicate:true,status:existingStatus};
+    }
   }
-  const now=Date.now(),rowId=`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO payment_gateway_events (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,detail_json,received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,'received',?,?)").bind(rowId,event.provider,event.environment,event.eventId,event.eventType,event.bookingId??null,null,event.gatewayOrderId??null,event.gatewayPaymentId??null,event.gatewayRefundId??null,event.amountSubunits??null,event.currency??null,event.payloadHash,JSON.stringify(event.detail||{}),now).run();
+  if(!rowId){
+    const candidate=`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+    const inserted=await db.prepare("INSERT OR IGNORE INTO payment_gateway_events (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,detail_json,received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,'processing',?,?)").bind(candidate,event.provider,event.environment,event.eventId,event.eventType,event.bookingId??null,null,event.gatewayOrderId??null,event.gatewayPaymentId??null,event.gatewayRefundId??null,event.amountSubunits??null,event.currency??null,event.payloadHash,JSON.stringify(event.detail||{}),now).run();
+    if(Number(inserted.meta?.changes||0)!==1){const winner=await db.prepare("SELECT processing_status FROM payment_gateway_events WHERE provider=? AND event_id=?").bind(event.provider,event.eventId).first<Row>();return{duplicate:true,status:String(winner?.processing_status||"processing")};}
+    rowId=candidate;
+  }
   const finish=async(status:"processed"|"exception",reason?:string)=>db.prepare("UPDATE payment_gateway_events SET processing_status=?,failure_reason=?,processed_at=? WHERE id=?").bind(status,reason??null,now,rowId).run();
   const conflict=await claimedBookingConflict(db,event);
   if(conflict){await addException(db,{bookingId:conflict.linkedBookingId,eventId:event.eventId,type:"gateway_order_booking_mismatch",detail:{claimedBookingId:event.bookingId,...conflict}});await finish("exception","Gateway reference belongs to a different booking");return{duplicate:false,status:"exception",reason:"gateway_order_booking_mismatch"};}
@@ -307,7 +304,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const claimed=event.gatewayRefundId?await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? AND gateway_reference=?").bind(bookingId,event.gatewayRefundId).first<Row>().catch(()=>null):null;
     const refund=claimed??await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? AND (gateway_reference IS NULL OR gateway_reference='') ORDER BY created_at DESC LIMIT 1").bind(bookingId).first<Row>();if(!refund){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"orphan_gateway_refund",detail:{gatewayRefundId:event.gatewayRefundId,amount}});await finish("exception","No internal refund case");return{duplicate:false,status:"exception",reason:"orphan_gateway_refund"};}
     const expectedRefund=Number(refund.amount||0),sameGatewayRefund=Boolean(event.gatewayRefundId&&String(refund.gateway_reference||"")===event.gatewayRefundId),alreadyProcessed=String(refund.status)==="processed"&&sameGatewayRefund;
-    if(event.eventType==="refund.processed"&&alreadyProcessed){await finish("processed","Duplicate logical refund ignored");return{duplicate:false,status:"processed",ignored:true,reason:"refund_already_processed"};}
+    if(event.eventType==="refund.processed"&&alreadyProcessed){if(event.gatewayRefundId)await postBookingRefundOnProcessed(db,{bookingId,paymentId,refundReference:event.gatewayRefundId,amount:expectedRefund,eventAt:event.createdAt??now});await finish("processed","Duplicate logical refund ignored");return{duplicate:false,status:"processed",ignored:true,reason:"refund_already_processed"};}
     if(event.eventType!=="refund.failed"&&Math.abs(amount-expectedRefund)>0.009){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_amount_mismatch",detail:{expected:expectedRefund,received:amount}});await finish("exception","Refund amount mismatch");return{duplicate:false,status:"exception",reason:"refund_amount_mismatch"};}
     if(event.eventType==="refund.created"&&String(refund.status)!=="processed")await db.prepare("UPDATE booking_refund_cases SET status='processing',gateway_reference=?,updated_at=? WHERE id=?").bind(event.gatewayRefundId??null,now,refund.id).run();
     if(event.eventType==="refund.failed"){
@@ -319,7 +316,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
        * against `expected` meant a full refund on a booking with nothing captured computed as 0 and was
        * certified "matched" - the one case the ledger must scream about was the case it called clean.
        * When captured == expected (the ordinary full-payment path) this is unchanged. [AUDIT-H6] */
-      const refundCeiling=Math.min(expected,capturedCurrent);const overage=Math.round((nextRefunded-refundCeiling)*100)/100;await upsert(nextRefunded>=expected?"refunded":"partially_refunded",overage>0.009?"refund_overage":"matched",capturedCurrent,nextRefunded,overage>0?overage:0);if(overage>0.009)await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_overage",detail:{expected,captured:capturedCurrent,refundCeiling,refunded:nextRefunded}});await lifecycle(db,bookingId,"refund_processed",{gateway:event.provider,eventId:event.eventId,gatewayRefundId:event.gatewayRefundId,amount});
+      const refundCeiling=Math.min(expected,capturedCurrent);const overage=Math.round((nextRefunded-refundCeiling)*100)/100;await upsert(nextRefunded>=expected?"refunded":"partially_refunded",overage>0.009?"refund_overage":"matched",capturedCurrent,nextRefunded,overage>0?overage:0);if(overage>0.009)await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_overage",detail:{expected,captured:capturedCurrent,refundCeiling,refunded:nextRefunded}});if(event.gatewayRefundId)await postBookingRefundOnProcessed(db,{bookingId,paymentId,refundReference:event.gatewayRefundId,amount,eventAt:event.createdAt??now});await lifecycle(db,bookingId,"refund_processed",{gateway:event.provider,eventId:event.eventId,gatewayRefundId:event.gatewayRefundId,amount});
     }
   }else{await upsert(gatewayCurrent||event.eventType,"ignored",capturedCurrent,refundedCurrent,varianceCurrent);}
   await finish("processed");return{duplicate:false,status:"processed",bookingId,paymentId};
@@ -374,4 +371,14 @@ async function postBookingCollectionOnCapture(db:Db,input:{bookingId:string;paym
     collectorId:method==="cash"?"gateway_reconciliation":null,
     entryDate:new Date().toISOString().slice(0,10),transactionAt:Date.now(),actorId:"gateway_reconciliation",
   });
+}
+
+async function postBookingRefundOnProcessed(db:Db,input:{bookingId:string;paymentId:string;refundReference:string;amount:number;eventAt:number}){
+  const payment=await db.prepare("SELECT id,customer_id,method FROM booking_payments WHERE id=?").bind(input.paymentId).first<Row>();
+  if(!payment)return;
+  const booking=await db.prepare("SELECT city_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  const method=String(payment.method||"").toLowerCase();
+  const refundInstrument=method==="cash"?"cash":(["bank","bank_transfer"].includes(method)?"bank":"gateway");
+  const at=Number.isFinite(input.eventAt)&&input.eventAt>0?input.eventAt:Date.now();
+  await postCollectionEvent(db,{event:"refund_completed",bookingId:input.bookingId,customerId:payment.customer_id?String(payment.customer_id):null,cityId:booking?.city_id?String(booking.city_id):null,serviceCode:booking?.service_code?String(booking.service_code):null,paymentId:String(payment.id),refundReference:input.refundReference,amount:input.amount,paymentMethod:method||null,refundInstrument,entryDate:new Date(at).toISOString().slice(0,10),transactionAt:at,actorId:"razorpay_webhook"});
 }
