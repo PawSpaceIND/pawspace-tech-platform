@@ -29,8 +29,11 @@ test("keeps the provider Partner app mobile-first and canonical", async () => {
   assert.match(routeCard, /\/api\/grooming-route/);
 
   assert.match(api, /requireProviderOwnership/);
-  assert.match(api, /activeTravelStates/);
-  assert.match(api, /provider_location_events/);
+  // GPS capture remains limited to assigned / on_the_way / arrived (GPS_CAPTURE_STATES).
+  // Address disclosure is governed by purpose-based policy (addressEligibleStatuses), not the old hard-coded activeTravelStates set.
+  assert.match(api, /GPS_CAPTURE_STATES/);
+  assert.match(api, /decideCustomerDataAccess|resolveDataAccessPolicy/);
+  assert.match(api, /provider_location_events|universal_provider_location_events/);
   assert.match(api, /GPS capture is disabled outside assigned, on-the-way or arrived states/);
 
   assert.match(layout, /PARTNER MOBILE UAT/);
