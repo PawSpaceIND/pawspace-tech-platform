@@ -92,6 +92,8 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     permissionRewrites: 0,
     bookerPermissionPreserved: 0,
     zoneRewrites: 0,
+    swarmSchedulingProviderRewrites: 0,
+    swarmBookingProviderRewrites: 0,
     quoteAttempts: 0,
     quotePreparations: 0,
     quoteFailures: 0,
@@ -119,6 +121,21 @@ export function adaptCurrentProductContracts({ http, d1 }) {
       }
       if (next.includes("'preview_booker'") && next.includes('[\"bookings.view\",\"scheduling.book\"]')) {
         metrics.bookerPermissionPreserved++;
+      }
+    }
+    // The legacy real-D1 swarm predates active provider-window uniqueness. It seeds every
+    // group at the same time with one provider; under the product invariant, INSERT OR REPLACE
+    // then replaces the prior reservation and leaves only the last group bookable. Keep the
+    // 60-request concurrency oracle strong by giving only swarm fixtures distinct synthetic
+    // providers. Non-swarm reservations and all product constraints remain untouched.
+    const swarmGroup = next.match(/'([^']+-swarm-(\d+))'/);
+    if (swarmGroup && /^INSERT OR REPLACE INTO scheduling_(?:assignment_decisions|reservations) /i.test(next)) {
+      const providerMatch = next.match(/'([^']+-PRV)'/);
+      if (providerMatch) {
+        const provider = providerMatch[1];
+        const rewritten = next.replaceAll(`'${provider}'`, `'${provider}-swarm-${swarmGroup[2]}'`);
+        if (rewritten !== next) metrics.swarmSchedulingProviderRewrites++;
+        next = rewritten;
       }
     }
     if (/^INSERT OR REPLACE INTO scheduling_reservations /i.test(next)) {
@@ -222,6 +239,11 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     if (method === "POST" && requestPath === "/api/canonical-bookings" && options.body && typeof options.body === "object") {
       let body = { ...options.body };
       if (body.cityId === "blr" && body.zoneId === "koramangala") body.zoneId = "blr-east";
+      const swarmMatch = String(body.scheduleGroupId || "").match(/-swarm-(\d+)$/);
+      if (swarmMatch && body.provider && typeof body.provider === "object" && body.provider.id) {
+        body = { ...body, provider: { ...body.provider, id: `${body.provider.id}-swarm-${swarmMatch[1]}` } };
+        metrics.swarmBookingProviderRewrites++;
+      }
 
       const cacheKeys = [
         body.idempotencyKey ? `ik:${body.idempotencyKey}` : "",
@@ -335,6 +357,8 @@ export async function runGate(io) {
   const contractOk = contract.permissionRewrites > 0
     && contract.bookerPermissionPreserved > 0
     && contract.zoneRewrites > 0
+    && contract.swarmSchedulingProviderRewrites > 0
+    && contract.swarmBookingProviderRewrites > 0
     && contract.quotePreparations > 0
     && contract.quoteFailures === 0
     && contract.captureFailures === 0;
@@ -343,6 +367,8 @@ export async function runGate(io) {
     `viewerPermissions=${contract.permissionRewrites}`,
     `bookerOwnershipPreserved=${contract.bookerPermissionPreserved}`,
     `zones=${contract.zoneRewrites}`,
+    `swarmSchedulingProviders=${contract.swarmSchedulingProviderRewrites}`,
+    `swarmBookingProviders=${contract.swarmBookingProviderRewrites}`,
     `prepared=${contract.quotePreparations}`,
     `quoteAttempts=${contract.quoteAttempts}`,
     `quoteFailures=${contract.quoteFailures}`,
