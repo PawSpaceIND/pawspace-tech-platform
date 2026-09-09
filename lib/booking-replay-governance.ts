@@ -1,4 +1,4 @@
-import {ensureBookingConversationOnInsert} from "./booking-conversation";
+import {ensureBookingConversationOnInsert} from "./booking-conversation.ts";
 
 type Row=Record<string,unknown>;
 
