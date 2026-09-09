@@ -104,3 +104,19 @@ test("malformed explicit telemetry attempt numbers fail before writes",async t=>
  }
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_performance_events").get().n,0);
 });
+
+
+test("forecast averages and seasonality use the same complete trailing UTC days",async t=>{
+ const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);t.after(()=>sqlite.close());
+ sqlite.exec("CREATE TABLE canonical_bookings(created_at INTEGER,service_code TEXT,city_id TEXT,status TEXT)");
+ const cutoff=Date.UTC(2026,8,8),at=cutoff+6*3600000,basisDays=7;
+ for(const created of [cutoff-basisDays*86400000,cutoff-1,cutoff-basisDays*86400000-1,cutoff,at+1,cutoff+3*86400000]){
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,'grooming','blr','confirmed')").run(created);
+ }
+ const input={serviceCode:"grooming",cityId:"blr",basisDays,horizonDays:7,at};
+ const morning=await forecastDemand(db,input);
+ const evening=await forecastDemand(db,{...input,at:cutoff+23*3600000});
+ assert.equal(morning.dailyAverage,0.29,"only two rows inside the seven complete days may contribute");
+ assert.equal(morning.forecastTotal,2,"the seven weekday averages must use those same two rows");
+ assert.deepEqual(evening,morning,"the same as-of day must not drift with partial-day arrivals");
+});

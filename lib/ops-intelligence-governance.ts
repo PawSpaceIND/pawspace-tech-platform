@@ -87,14 +87,16 @@ export async function forecastDemand(db: Db, input: { serviceCode?: string; city
   const at = input.at ?? Date.now();
   const basisDays = Math.max(7, Math.min(Number(input.basisDays) || 28, 120));
   const horizonDays = Math.max(1, Math.min(Number(input.horizonDays) || 14, 60));
-  const since = at - basisDays * DAY;
+  // Match the seasonal buckets: complete UTC calendar days only, never the partial as-of day.
+  const cutoff = Date.parse(`${isoDate(at)}T00:00:00Z`);
+  const since = cutoff - basisDays * DAY;
   const svc = String(input.serviceCode || "").trim(), city = String(input.cityId || "").trim();
   const degradedSources: string[] = [];
-  const rows = await readRows(db, "canonical_bookings", "SELECT date(created_at/1000,'unixepoch') day,COUNT(*) n FROM canonical_bookings WHERE created_at>=? AND status NOT IN ('draft','cancelled','canceled') AND (?='' OR service_code=?) AND (?='' OR city_id=?) GROUP BY day", [since, svc, svc, city, city], degradedSources);
+  const rows = await readRows(db, "canonical_bookings", "SELECT date(created_at/1000,'unixepoch') day,COUNT(*) n FROM canonical_bookings WHERE created_at>=? AND created_at<? AND status NOT IN ('draft','cancelled','canceled') AND (?='' OR service_code=?) AND (?='' OR city_id=?) GROUP BY day", [since, cutoff, svc, svc, city, city], degradedSources);
   const byDay = new Map(rows.map(r => [String(r.day), Number(r.n)]));
   const dowTotals = Array(7).fill(0), dowCounts = Array(7).fill(0);
   for (let d = 0; d < basisDays; d++) {
-    const date = isoDate(at - (d + 1) * DAY), w = dow(date);
+    const date = isoDate(cutoff - (d + 1) * DAY), w = dow(date);
     dowTotals[w] += byDay.get(date) || 0; dowCounts[w] += 1;
   }
   const dowAvg = dowTotals.map((t, i) => (dowCounts[i] ? t / dowCounts[i] : 0));
