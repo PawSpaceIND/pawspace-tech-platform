@@ -17,6 +17,11 @@
 .splash p{font-size:1rem;font-weight:650;line-height:1.5;margin:0}
 .splash img{width:min(280px,90%);height:auto;display:block;border-radius:18px}
 .locationMark{display:grid;place-items:center;width:48px;height:48px;border-radius:16px;background:#ffffffb3;color:#422962;font-size:28px}
+.logoOnly{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:var(--paw-welcome,#ffe49a);padding:env(safe-area-inset-top) 24px env(safe-area-inset-bottom);box-sizing:border-box}
+.logoOnly img{width:min(260px,65vw);height:auto;border-radius:24px;animation:logoBreathe 1.8s ease-in-out infinite}
+:global(body):has(.logoOnly) :global(.paw-appearance-trigger){display:none}
+@keyframes logoBreathe{0%,100%{transform:scale(.96);opacity:.85}50%{transform:scale(1);opacity:1}}
+@media(prefers-reduced-motion:reduce){.logoOnly img{animation:none}}
 .welcome:not(.compact) .content{background:var(--paw-surface);border-radius:24px;padding:24px 18px;margin:0}
 .welcome:not(.compact) .content h1{font-size:clamp(28px,7vw,36px);line-height:1.15}
 @media(max-width:480px){.welcome:not(.compact){border-radius:0;min-height:100dvh;padding-top:env(safe-area-inset-top)}}

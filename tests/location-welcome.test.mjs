@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {resolveServiceCoverage} from '../lib/service-zone-client.ts';
 
+test('logo-only entry never blocks Home on denied or stalled location',()=>{
+ const source=readFileSync('app/mobile-app/location-welcome.tsx','utf8');
+ const splash=source.split('if (!compact) return <section')[1].split('</section>;')[0];
+ assert.match(splash,/pawspace-official-lockup/);
+ assert.doesNotMatch(splash,/<button|<p|<form|<h1/);
+ assert.match(source,/setTimeout\(\(\) => finish\(null\), 8000\)/);
+ assert.match(source,/compact \|\| !note/);
+ assert.match(readFileSync('app/mobile-app/location-welcome.module.css','utf8'),/prefers-reduced-motion/);
+});
+
 test('address suggestions debounce typing and discard stale responses without submitting a booking',()=>{
  const source=readFileSync('app/mobile-app/address-autofill.tsx','utf8');
  assert.match(source,/350/);

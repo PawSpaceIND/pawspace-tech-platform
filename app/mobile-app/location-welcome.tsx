@@ -6,7 +6,7 @@ import styles from "./location-welcome.module.css";
 import type { AddressSuggestion, AutocompleteResult, ResolvedAddress } from "../../lib/address-autocomplete";
 
 export const DISCOVERY_PIN_KEY = "pawspace.discovery.pin";
-export const WELCOME_SEEN_KEY = "pawspace.welcome.seen.v3";
+export const WELCOME_SEEN_KEY = "pawspace.welcome.seen.v4";
 
 /** A discovery preference, never a verified doorstep or a booking/price authority. */
 export default function LocationWelcome({ onContinue, compact = false }: {
@@ -19,14 +19,20 @@ export default function LocationWelcome({ onContinue, compact = false }: {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
-  const [manual, setManual] = useState(compact);
   const generation = useRef(0);
   useEffect(() => () => { generation.current += 1; }, []);
   useEffect(() => {
     if (compact) return;
     const timer = window.setTimeout(() => { void locate(); }, 0);
-    return () => window.clearTimeout(timer);
+    // Location must never gate guest access, including an unanswered permission prompt.
+    const deadline = window.setTimeout(() => finish(null), 8000);
+    return () => { window.clearTimeout(timer); window.clearTimeout(deadline); };
   }, [compact]);
+  useEffect(() => {
+    if (compact || !note) return;
+    const timer = window.setTimeout(() => finish(null), 300);
+    return () => window.clearTimeout(timer);
+  }, [compact, note]);
 
   async function findArea(placeId?: string) {
     const request = ++generation.current;
@@ -106,9 +112,8 @@ export default function LocationWelcome({ onContinue, compact = false }: {
     onContinue(selected);
   }
 
-  if (!compact && !manual) return <section className={styles.welcome} data-location-welcome="true" aria-label="Find care near you">
-    <div className={styles.splash} style={{ minHeight: "75dvh" }}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace — Your Petter Half" fetchPriority="high" /><p role="status">{note ? "Choose your location to find care nearby" : "Finding your location…"}</p>
-    <button className={styles.skip} onClick={() => { generation.current += 1; setBusy(false); setManual(true); }}>Choose location</button></div>
+  if (!compact) return <section className={styles.logoOnly} data-location-welcome="true" role="status" aria-label="Opening PawSpace">
+    <img src="/assets/pawspace-official-lockup.png" alt="PawSpace — Your Petter Half" fetchPriority="high" />
   </section>;
 
   return <section className={`${styles.welcome} ${compact ? styles.compact : ""}`} data-location-welcome={compact ? undefined : "true"} aria-labelledby={compact ? "location-edit-title" : "location-welcome-title"}>
