@@ -16,7 +16,7 @@ export async function ensureBookingConversationOnInsert(db:Db){
     db.prepare(THREADS_INDEX),
     db.prepare(PARTICIPANTS_TABLE),
   ]);
-  await db.exec(`CREATE TRIGGER IF NOT EXISTS trg_canonical_booking_customer_conversation
+  await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_canonical_booking_customer_conversation
     AFTER INSERT ON canonical_bookings
     BEGIN
       INSERT INTO communication_threads
@@ -48,5 +48,5 @@ export async function ensureBookingConversationOnInsert(db:Db){
         )
       ORDER BY t.updated_at DESC,t.id DESC
       LIMIT 1;
-    END;`);
+    END`).run();
 }
