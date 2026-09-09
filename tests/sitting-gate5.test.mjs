@@ -314,4 +314,10 @@ test("Sitting replacement offer reserves the preserved care window after origina
   const reservations = await world.db.prepare("SELECT provider_id,status FROM scheduling_reservations WHERE group_id=? AND status NOT IN ('cancelled','completed')").bind(booking.schedule_group_id).all();
   assert.equal(reservations.results.length, 1, "replacement offer must hold the original booking's capacity");
   assert.equal(reservations.results[0].provider_id, providerId);
+  const recovery = await import("../lib/sitting-recovery-finalizer.ts");
+  await recovery.acceptSittingRecoveryOffer(world.db, world.bookingId, providerId, nextKey("SG5-REPLACEMENT"));
+  await recovery.finalizeSittingRecoveryAcceptance(world.db, world.bookingId, OPS);
+  await world.stayAct("submit_care_plan", { carePlan: validSittingCarePlan(), actorId: world.customerId });
+  const checkedIn = await world.stayAct("check_in", { actorId: providerId, ...metresNorth(world.doorstep, 20) }).catch(async error => { throw new Error(error instanceof Response ? await error.text() : String(error)); });
+  assert.equal(checkedIn.status, "in_progress", "accepted replacement must be able to begin the preserved care visit");
 });
