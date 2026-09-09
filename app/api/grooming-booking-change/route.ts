@@ -7,6 +7,7 @@ import{evaluateCancellationRefund,resolveRefundPolicy}from"../../../lib/refund-p
 import{openCancellationCase}from"../../../lib/cancellation-case-governance";
 import{cityOffsetMinutes,scheduleRules}from"../../../backend/src/scheduling";
 import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authority";
+import{bridgeLifecycleCommunications}from"../../../lib/lifecycle-communications";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -20,6 +21,7 @@ async function ensureTables(db:Db){await ensureProviderCapacityTables(db);await 
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS customer_grooming_subscriptions (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,service_package_code TEXT NOT NULL,total_sessions INTEGER NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 0,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'active',started_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,source_booking_id TEXT NOT NULL UNIQUE,catalogue_version TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);
   // Additive: the approved refund evaluation that produced the case, so a finance reviewer can see which
   // policy version, which notice band and which basis were applied - and the gateway deduction recorded
@@ -126,6 +128,8 @@ export async function POST(request:Request){
       if(!refundEvaluation)return json({error:"The cancellation refund policy could not be evaluated"},409);
       const refundAmount=refundEvaluation.customerRefundAmount;
       const refundId=refundAmount>0?crypto.randomUUID():null;
+      const cancellationEventId=crypto.randomUUID();
+      const cancellationMessage=refundAmount>0?`Your PawSpace Grooming booking is cancelled. A refund of ₹${refundAmount.toFixed(2)} is pending reconciliation.`:"Your PawSpace Grooming booking is cancelled.";
       const usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(input.bookingId).first<Row>();
       const reservedSessions=usage?Number(usage.sessions_reserved||0):0;
       const subscriptionId=usage?String(usage.plan_code):"";
@@ -149,6 +153,7 @@ export async function POST(request:Request){
         db.prepare("UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending'").bind(now,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(json_set(detail_json,'$.cancelReason',?),'$.commercialPolicyEvaluation',json(?)),updated_at=? WHERE booking_id=?").bind(refundAmount>0?"refund_pending":"cancelled",reason,JSON.stringify(policyEvaluation),now,input.bookingId),
+        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,input.customerId,"whatsapp",refundAmount>0?"grooming_booking_cancelled_refund_pending":"grooming_booking_cancelled",cancellationMessage,"queued",cancellationEventId,now),
         db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN 'reversed' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
       ];
       if(subscriptionId&&reservedSessions>0)statements.push(db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),status=CASE WHEN source_booking_id=? THEN ? ELSE status END,updated_at=? WHERE id=?").bind(reservedSessions,input.bookingId,refundAmount>0?"refund_pending":"cancelled",now,subscriptionId));
@@ -162,8 +167,9 @@ export async function POST(request:Request){
         if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking, provider work, payment or subscription credits changed. Refresh before requesting cancellation."},409);
         throw error;
       }
+      const customerCommunication=await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:auditActor});
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
-      return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,referral}});
+      return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,customerCommunication,referral}});
     }
 
     if(!["confirmed","assigned","awaiting_acceptance"].includes(status)||!["confirmed","assigned","awaiting_acceptance"].includes(String(work.status)))return json({error:"This Grooming service has progressed and cannot be rescheduled directly"},409);

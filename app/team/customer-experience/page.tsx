@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import DeliveryRecovery from "./DeliveryRecovery";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { subscribeConversationRefresh } from "../../../lib/conversation-live-refresh";
+import { inboxResponseError, inboxErrorMessage } from "../../../lib/inbox-ui-error";
+import { consentEvidenceLabel } from "../../../lib/communication-ui-state";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -97,6 +101,11 @@ export default function CustomerExperiencePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof EventSource === "undefined") return;
+    return subscribeConversationRefresh(() => window.dispatchEvent(new Event("pawspace:cx-refresh")));
+  }, []);
+
+  useEffect(() => {
     let active = true;
     let refreshing = false;
     const refresh = async () => {
@@ -113,10 +122,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const invalidate = () => { void refresh(); };
+    window.addEventListener("pawspace:cx-refresh", invalidate);
+    const timer = window.setInterval(invalidate, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:cx-refresh", invalidate);
     };
   }, [loadThreads]);
 
@@ -137,10 +149,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
+    const invalidate = () => { void refresh(); };
+    window.addEventListener("pawspace:cx-refresh", invalidate);
+    const timer = window.setInterval(invalidate, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.removeEventListener("pawspace:cx-refresh", invalidate);
     };
   }, [selected, loadConversation, loadControl]);
 
@@ -377,6 +392,7 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Activity / Audit Trail</strong><a>Canonical</a></div><div className={styles.audit}>{messages.slice(-5).reverse().map((message) => <div className={styles.auditItem} key={`audit-${text(message.id)}`}><span className={styles.auditDot} /><span>{when(message.created_at)} · {pretty(message.channel)} {pretty(message.direction)} · {pretty(message.status)}</span></div>)}{control?.handoff?.events?.slice(-3).reverse().map((event) => <div className={styles.auditItem} key={`handoff-${text(event.id)}`}><span className={styles.auditDot} /><span>{when(event.created_at)} · {pretty(event.event_type)} · {text(event.actor_email)}</span></div>)}{messages.length === 0 && !control?.handoff?.events?.length ? <small>No message events yet.</small> : null}</div></section>
         </aside>
       </div>
+      <DeliveryRecovery />
     </OpsShell>
   );
 }

@@ -129,6 +129,8 @@ test("real execution: with every secret supplied, only NON-SECRET config is writ
   const result = runStageConfig(GOOD);
   assert.equal(result.code, 0, `expected success, got: ${result.stderr}`);
   assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox", "sandbox payments are preserved");
+  assert.equal(result.config.vars.PAWSPACE_PAYMENT_LIVE_APPROVED, "false", "live approval must be explicitly false");
+  assert.equal(result.config.vars.FORBID_PRODUCTION, "true", "production prohibition must be an explicit Worker binding");
   assert.equal(result.config.vars.PAWSPACE_UAT_LOGIN, "on", "the UAT login flag is a non-secret var and is preserved");
   assert.equal(result.config.vars.PAWSPACE_MAPS_ENV, "sandbox", "Maps stays locked to sandbox");
   assert.equal(result.config.vars.PAWSPACE_COMMUNICATION_ENV, "uat", "communications stay locked to UAT");

@@ -49,7 +49,7 @@ export const FORBIDDEN_ON_STAGING = {
 };
 
 /** Required staging modes, as name → the only accepted value. */
-export const REQUIRED_STAGING_VARS = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" };
+export const REQUIRED_STAGING_VARS = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", FORBID_PRODUCTION: "true", PAWSPACE_UAT_LOGIN: "on" };
 
 /**
  * The staff identities /staging-login advertises. Each must be an ACTIVE app_users row whose role has
@@ -150,7 +150,7 @@ export async function runStagingIsolationPreflight({ deployedConfig, liveVersion
   if (!EXACT_SHA.test(expectedSha)) throw new StagingIsolationRefused("Refusing to certify: EXPECTED_SHA is not an exact commit sha");
   if (String(await liveVersionMessage()).trim() !== `staging ${expectedSha}`) throw new StagingIsolationRefused("Refusing to certify: the active version does not match EXPECTED_SHA");
   const vars = config && typeof config.vars === "object" ? config.vars : {};
-  for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) if (val(vars, name) !== expected) throw new StagingIsolationRefused(`Refusing to certify: ${name} is not ${expected}`);
+  for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) if (vars[name] !== expected) throw new StagingIsolationRefused(`Refusing to certify: ${name} is not ${expected}`);
   if (Object.entries(FORBIDDEN_ON_STAGING).some(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))) throw new StagingIsolationRefused("Refusing to certify: a production/live approval flag is active");
   if (STAGING_SECRET_NAMES.some(name => val(vars, name))) throw new StagingIsolationRefused("Refusing to certify: a UAT credential is serialized in deployed vars");
   return { ok: true, worker: val(env, "WORKER_NAME"), sha: expectedSha, databaseIdVerified: true };
@@ -218,7 +218,7 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
   // ── environment mode ────────────────────────────────────────────────────────────────────────
   const vars = (config && typeof config.vars === "object" && config.vars) || {};
   for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) {
-    check(`environment mode: ${name} is ${expected}`, val(vars, name) === expected, `${name}="${val(vars, name) || "(unset)"}"`);
+    check(`environment mode: ${name} is ${expected}`, vars[name] === expected, `${name}="${val(vars, name) || "(unset)"}"`);
   }
   const liveFlags = Object.entries(FORBIDDEN_ON_STAGING)
     .filter(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))

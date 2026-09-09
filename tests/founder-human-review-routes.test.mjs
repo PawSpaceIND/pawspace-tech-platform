@@ -8,6 +8,7 @@ const reviewRoutes = [
   "/team/cases",
   "/team/alerts",
   "/team/analytics",
+  "/team/customer-experience",
   "/team/finance/partners",
   "/team/ai",
   "/team/ai/configuration",
@@ -28,5 +29,7 @@ test("renders every founder human-review route from the exact candidate", async 
     );
     assert.equal(response.status, 200, `${path} must render from this candidate`);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i, path);
+    const html = await response.text();
+    assert.doesNotMatch(html, /This page didn(?:'|&#x27;|&#39;)t load|Something went wrong while preparing this screen/, `${path} must render its page, not an HTTP-200 recovery screen`);
   }
 });

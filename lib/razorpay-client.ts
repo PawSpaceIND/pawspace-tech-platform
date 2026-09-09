@@ -2,7 +2,7 @@
  * Environment-aware, fail-closed Razorpay order/refund adapter for the CUSTOMER verify-first payment
  * path. All provider-bound money is converted to integer paise before the HTTP boundary.
  */
-import{parsePaymentEnvironment,type PaymentEnvironment}from"./payment-environment";
+import{parsePaymentEnvironment,assertRazorpayKeyEnvironment,type PaymentEnvironment}from"./payment-environment";
 import{enforcePilotBooking}from"./payment-pilot-guard";
 export type{PaymentEnvironment}from"./payment-environment";
 
@@ -38,6 +38,7 @@ function resolveCredentials(env: RazorEnv): CredentialResolution {
   try { environment = paymentEnvironment(env); } catch (error) { return { declared: false, reason: error instanceof Error ? error.message : String(error) }; }
   const keyId = String((environment === "sandbox" ? env?.RAZORPAY_KEY_ID_SANDBOX : env?.RAZORPAY_KEY_ID) || "").trim();
   const keySecret = String((environment === "sandbox" ? env?.RAZORPAY_KEY_SECRET_SANDBOX : env?.RAZORPAY_KEY_SECRET) || "").trim();
+  try { assertRazorpayKeyEnvironment(environment, keyId); } catch (error) { return { declared: false, reason: error instanceof Error ? error.message : String(error) }; }
   return { declared: true, environment, keyId, keySecret };
 }
 

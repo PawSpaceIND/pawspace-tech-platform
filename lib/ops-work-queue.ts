@@ -65,7 +65,7 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
  }
  if(await tableExists(db,"payment_reconciliation_exceptions")){
   const rows=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at LIMIT 200").all<Row>();
-  for(const row of rows.results)await record({rule:"payment_exception",queue:"finance",priority:String(row.severity)==="critical"?"critical":"high",title:`Payment reconciliation exception: ${String(row.exception_type)}`,bookingId:row.booking_id?String(row.booking_id):null,entityType:"payment_exception",entityId:String(row.id),slaMinutes:120,detail:{exceptionType:row.exception_type,severity:row.severity,paymentId:row.payment_id}});
+  for(const row of rows.results){const refundFailed=String(row.exception_type)==="refund_failed";await record({rule:refundFailed?"refund_failed":"payment_exception",queue:"finance",priority:refundFailed||String(row.severity)==="critical"?"critical":"high",title:refundFailed?`Refund failed for booking ${String(row.booking_id||"unknown")} — Finance recovery required`:`Payment reconciliation exception: ${String(row.exception_type)}`,bookingId:row.booking_id?String(row.booking_id):null,entityType:"payment_exception",entityId:String(row.id),slaMinutes:refundFailed?60:120,detail:{exceptionType:row.exception_type,severity:row.severity,paymentId:row.payment_id}});}
  }
  if(await tableExists(db,"service_reviews")){
   const rows=await db.prepare("SELECT id,booking_id,customer_id,stars,created_at FROM service_reviews WHERE stars<=2 ORDER BY created_at LIMIT 200").all<Row>();

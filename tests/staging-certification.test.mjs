@@ -29,7 +29,7 @@ const PRODUCTION_D1_ID = "99999999-8888-4777-8666-555555555555";
 const goodConfig = () => ({
   name: "pawspace-staging",
   d1_databases: [{ binding: "DB", database_name: "pawspace-staging", database_id: STAGING_D1_ID }],
-  vars: { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" },
+  vars: { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", FORBID_PRODUCTION: "true", PAWSPACE_UAT_LOGIN: "on" },
 });
 const goodEnv = () => ({ EXPECTED_SHA: SHA, WORKER_NAME: "pawspace-staging", STAGING_D1_ID, PRODUCTION_D1_ID, PRODUCTION_WORKER_NAME: "pawspace-production", ACCESS_CODE });
 
@@ -145,6 +145,8 @@ test("the deployed config and SHA come from the same active version resource", a
       { type: "d1", name: "DB", id: STAGING_D1_ID },
       { type: "plain_text", name: "PAWSPACE_PAYMENT_ENV", text: "sandbox" },
       { type: "plain_text", name: "PAWSPACE_UAT_LOGIN", text: "on" },
+      { type: "plain_text", name: "PAWSPACE_PAYMENT_LIVE_APPROVED", text: "false" },
+      { type: "plain_text", name: "FORBID_PRODUCTION", text: "true" },
     ] },
   };
   const config = deployedConfigFromVersion(version);
@@ -549,6 +551,24 @@ test("nothing in the staging pipeline addresses production", async () => {
       const line = source.slice(source.lastIndexOf("\n", match.index) + 1, source.indexOf("\n", match.index));
       assert.doesNotMatch(line, /wrangler (deploy|d1 execute|secret put)/,
         `${file} appears to address production: ${line.trim()}`);
+    }
+  }
+});
+
+
+test("beta financial locks must be explicit and exact before certification", async () => {
+  for (const [name, values] of [
+    ["PAWSPACE_PAYMENT_LIVE_APPROVED", [undefined, "true", "FALSE", "false ", false]],
+    ["FORBID_PRODUCTION", [undefined, "false", "TRUE", "true ", true]],
+  ]) {
+    for (const value of values) {
+      const config = goodConfig();
+      if (value === undefined) delete config.vars[name]; else config.vars[name] = value;
+      const adapters = world({ deployedConfig: async () => config });
+      await assert.rejects(runStagingIsolationPreflight(adapters), StagingIsolationRefused, `${name}=${value}`);
+      const report = await runStagingCertification(adapters);
+      assert.equal(report.ok, false, `${name}=${value} must not certify`);
+      assert.ok(failed(report, `environment mode: ${name}`).length);
     }
   }
 });

@@ -1,0 +1,130 @@
+name: Remote Finance Closure
+
+on:
+  push:
+    branches:
+      - audit/remote-finance-closure
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: remote-finance-closure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  close-finance:
+    if: ${{ !contains(github.event.head_commit.message, '[finance-closure-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+      PAWSPACE_SCHEDULING_ENV: uat
+      PAWSPACE_MEDIA_ENV: uat
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Assert exact source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "audit/remote-finance-closure"
+          git status --short --branch
+          git log -5 --oneline --decorate
+          test -f e2e/helpers/correlated-grooming.ts
+          test -f e2e/journeys/08-http-cancellation-demo.spec.ts
+      - name: Apply six guarded finance closure repairs
+        run: python3 scripts/apply-remote-finance-closure.py
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --stat
+          git diff -- app/api/booking-operations/route.ts app/api/grooming-booking-change/route.ts app/api/grooming-payment-sandbox/route.ts app/api/razorpay-webhook/route.ts lib/grooming-payment-reconciliation.ts lib/company-analytics.ts lib/unit-economics.ts lib/pnl-reporting.ts lib/ops-work-queue.ts app/api/ops-work-queue/route.ts
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Prove fail-closed sandbox invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PAWSPACE_PAYMENT_ENV=$PAWSPACE_PAYMENT_ENV"
+          echo "FORBID_PRODUCTION=$FORBID_PRODUCTION"
+          echo "PAWSPACE_PAYMENT_LIVE_APPROVED=$PAWSPACE_PAYMENT_LIVE_APPROVED"
+          node --input-type=module -e 'import { assertHumanBetaSandbox } from "./scripts/assert-human-beta-sandbox.mjs"; assertHumanBetaSandbox(process.env); console.log("SANDBOX_LOCK=PASS")'
+      - name: Run focused finance closure regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test --test-concurrency=1 \
+            tests/remote-finance-closure.test.mjs \
+            tests/qa-refund-analytics-remediation.test.mjs \
+            tests/ptja-w2-b2-collection-ledger.test.mjs \
+            tests/ops-work-queue.test.mjs 2>&1 | tee remote-finance-focused.tap
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Run exact cancellation/refund E2E with hardened governed bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/e2e/run-finance-closure.sh
+      - name: Reassert sandbox invariants after E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          echo "POST_E2E_SANDBOX_LOCK=PASS"
+      - name: Commit verified production repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PawSpace Finance Closure Bot"
+          git config user.email "finance-closure@pawspace.invalid"
+          git add \
+            app/api/booking-operations/route.ts \
+            app/api/grooming-booking-change/route.ts \
+            app/api/grooming-payment-sandbox/route.ts \
+            app/api/razorpay-webhook/route.ts \
+            app/api/ops-work-queue/route.ts \
+            lib/grooming-payment-reconciliation.ts \
+            lib/company-analytics.ts \
+            lib/unit-economics.ts \
+            lib/pnl-reporting.ts \
+            lib/ops-work-queue.ts
+          git diff --cached --quiet && { echo "No production patch to commit"; exit 1; }
+          git commit -m "[finance-closure-applied] fix(finance): close cancellation refund recovery"
+          git push origin HEAD:audit/remote-finance-closure
+      - name: Upload closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-finance-closure-evidence
+          path: |
+            remote-finance-focused.tap
+            remote-finance-seed-pass1.log
+            remote-finance-seed-pass2.log
+            remote-finance-playwright.log
+            playwright-report/
+            test-results/
+            /tmp/finance-closure-serve.log
+            /tmp/wrangler-e2e.log
+          if-no-files-found: warn

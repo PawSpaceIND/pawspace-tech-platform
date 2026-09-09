@@ -90,7 +90,7 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
   // W2-08-F03 exists to surface - and the platform's own remedy for a post-close correction is to post
   // it in the next open period.
   const refundsByMonth=emptyMonthly(months);
-  const refundRows=await db.prepare("SELECT amount,updated_at,created_at FROM booking_refund_cases WHERE status IN ('processing','processed','completed')").all<Row>().catch(()=>null);
+  const refundRows=await db.prepare("SELECT amount,updated_at,created_at FROM booking_refund_cases WHERE status IN ('processed','completed')").all<Row>().catch(()=>null);
   for(const row of refundRows?.results??[]){
     const at=Number(row.updated_at??row.created_at??0);
     if(!Number.isFinite(at)||at<=0)continue;
