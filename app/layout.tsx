@@ -6,6 +6,9 @@ import "./unified-pawspace-theme.css";
 import "./prototype-convergence.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
 import OrderNotificationCenter from "./components/order-notification-center";
+import MobilePushListener from "./components/mobile-push-listener";
+import MobileDeepLinkHandler from "./components/mobile-deep-link-handler";
+import MobileNetworkStatus from "./components/mobile-network-status";
 import PawSpaceAppearance from "./components/pawspace-appearance";
 
 export const metadata: Metadata = {
@@ -18,5 +21,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#01261F" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className="antialiased"><ReviewUxFixes />{children}<PawSpaceAppearance /><OrderNotificationCenter /></body></html>;
+  return <html lang="en"><body className="antialiased"><MobileNetworkStatus /><ReviewUxFixes /><MobilePushListener /><MobileDeepLinkHandler />{children}<PawSpaceAppearance /><OrderNotificationCenter /></body></html>;
 }

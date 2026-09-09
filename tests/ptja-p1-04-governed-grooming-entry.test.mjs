@@ -219,8 +219,14 @@ test("P1-04-A01 a post-commit failure names the booking instead of denying it", 
   assert.ok(handler.includes("committedBookingId?"), "the handler branches on whether the booking exists");
   assert.ok(handler.includes("is confirmed"), "and says so rather than denying it");
   assert.ok(handler.includes("Do not rebook"), "and tells the customer not to rebook");
-  // Non-vacuity: the pre-commit path still reports a genuine scheduling failure.
-  assert.ok(handler.includes("No groomer is available for this slot"), "a pre-commit failure still reads as one");
+  // Non-vacuity: the pre-commit path still reports a genuine scheduling failure rather
+  // than collapsing into the post-commit copy. The hardcoded slot message moved into
+  // schedulingRefusalMessage, so pin the mechanism that now carries it.
+  assert.match(handler, /error instanceof SchedulingRefusal\s*\?\s*error\.message/,
+    "a pre-commit failure still reads as one, via the scheduling refusal message");
+  const refusals = await read("lib/uat-scheduling-client.ts");
+  assert.match(refusals, /NO_SCHEDULE_AVAILABLE:"No provider is available/,
+    "and that refusal copy is real, not a generic fallback");
 });
 
 test("P1-04-K06 the key covers every input the request actually carries", async () => {

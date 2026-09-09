@@ -2,6 +2,7 @@
 
 import DeliveryRecovery from "./DeliveryRecovery";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { subscribeConversationRefresh } from "../../../lib/conversation-live-refresh";
 import { inboxResponseError, inboxErrorMessage } from "../../../lib/inbox-ui-error";
 import { consentEvidenceLabel } from "../../../lib/communication-ui-state";
 import { Badge, Button, EmptyState } from "../../components/ui";
@@ -130,6 +131,14 @@ export default function CustomerExperiencePage() {
     if (shouldApply() && activeThread.current === id) setControl(next);
     return next;
   }, [clearAccess]);
+
+  useEffect(() => {
+    // The page owns the conversation stream. subscribeConversationRefresh dedupes by
+    // stream version and re-refreshes after a reconnect; the interval below is the
+    // fallback. Dispatching instead of remounting keeps drafts and selection intact.
+    if (typeof EventSource === "undefined") return;
+    return subscribeConversationRefresh(() => window.dispatchEvent(new Event("pawspace:conversation-refresh")));
+  }, []);
 
   useEffect(() => {
     let active = true;
