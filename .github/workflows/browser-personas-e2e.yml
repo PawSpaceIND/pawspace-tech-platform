@@ -42,12 +42,20 @@ jobs:
           GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
         run: |
           python3 - <<'PYMAPS'
-          import json, os
+          import json, os, secrets
           from pathlib import Path
           key = os.environ.get("GOOGLE_MAPS_SERVER_API_KEY_UAT", "").strip()
           if not key:
               raise SystemExit("Customer checkout requires the Google Maps UAT repository secret.")
+          access_code = secrets.token_hex(24)
+          signing_key = secrets.token_hex(32)
+          print("::add-mask::" + access_code)
+          with open(os.environ["GITHUB_ENV"], "a") as handle:
+              handle.write("PW_STAFF_UAT_ACCESS_CODE=" + access_code + "\n")
           bindings = {
+              "PAWSPACE_UAT_LOGIN": "on",
+              "PAWSPACE_UAT_ACCESS_CODE": access_code,
+              "PAWSPACE_UAT_SIGNING_KEY": signing_key,
               "GOOGLE_MAPS_SERVER_API_KEY_UAT": key,
               "PAWSPACE_MAPS_ENV": "sandbox",
               "PAWSPACE_DEPLOYMENT_ENV": "e2e",
