@@ -26,7 +26,7 @@ type OperationInput = {
   upgradedAmount?: number;
   refundCaseId?: string;
   upgradeRequestId?: string;
-  refundStatus?: "approved" | "processing" | "completed" | "rejected";
+  refundStatus?: "requested" | "approved" | "processing" | "completed" | "rejected";
   gatewayReference?: string;
 };
 
@@ -253,6 +253,7 @@ export async function POST(request: Request) {
       const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"],processed:["completed"],failed:["requested","processing"]};
       if (!(transitions[fromStatus]??[]).includes(toStatus)) return json({ error: `Refund cannot move from ${fromStatus} to ${toStatus}` },409);
       if(toStatus==="approved"&&String(refund.requested_by)===actor.email)return json({error:"Segregation of duties: the refund requester cannot approve their own refund",code:"refund_self_approval_forbidden"},409);
+      if(fromStatus==="failed"&&toStatus==="processing"&&(!String(refund.approved_by||"").trim()||String(refund.approved_by)===String(refund.requested_by)))return json({error:"Refund retry requires an existing independent approval; return it to the approval queue",code:"refund_retry_approval_required"},409);
       const gatewayReference=String(refund.gateway_reference||"").trim();
       if(toStatus==="completed"){
         if(!gatewayReference)return json({error:"Refund completion requires an authoritative gateway reference"},409);
@@ -263,19 +264,14 @@ export async function POST(request: Request) {
       const eventId=crypto.randomUUID(),claim=crypto.randomUUID(),claimId=crypto.randomUUID(),retryOfFailedMessage=fromStatus==="failed";
       const message=toStatus==="approved"?"Your refund is approved and will now be sent to the original payment method.":toStatus==="processing"?(retryOfFailedMessage?"The first refund attempt did not go through. We have sent it to the payment gateway again.":"Your refund has been sent to the payment gateway for processing."):toStatus==="completed"?"Your refund is complete. The gateway reference is available in this order.":toStatus==="requested"?"The refund attempt did not go through. It is back with our finance team to be re-issued.":"Your refund request was not approved. Open the order to see the reason or contact support.";
       const guard="EXISTS (SELECT 1 FROM booking_refund_transition_claims WHERE refund_case_id=? AND from_status=? AND to_status=? AND claim_token=?)";
-      /* booking_refund_transition_claims is UNIQUE(refund_case_id,from_status). That is what makes a
-       * transition once-only under concurrency, and it must stay. But `failed` is now a state a case can
-       * ENTER MORE THAN ONCE, so without clearing the spent claim the first retry would work and every
-       * later one would be silently INSERT OR IGNOREd - stranding the money one attempt further on.
-       * A claim whose from_status is `failed` can only exist because a previous retry already committed
-       * and the gateway failed the refund again, so it is spent. Concurrency is still protected by the
-       * status-guarded UPDATE below: two simultaneous retries both clear, one insert wins the UNIQUE, and
-       * the loser changes 0 rows and gets the 409. [FIN-D1] */
+      // A failed refund starts a new attempt. Renew spent claims only while the exact failed
+      // case version still owns this batch; a losing concurrent request must not delete the
+      // winner's claim or enqueue notifications. Audit/lifecycle history remains append-only.
       const retryOfFailed=fromStatus==="failed";
       const applied=await db.batch([
-        ...(retryOfFailed?[db.prepare("DELETE FROM booking_refund_transition_claims WHERE refund_case_id=? AND from_status='failed'").bind(input.refundCaseId)]:[]),
-        db.prepare("INSERT OR IGNORE INTO booking_refund_transition_claims (id,refund_case_id,from_status,to_status,claim_token,actor_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(claimId,input.refundCaseId,fromStatus,toStatus,claim,actor.email,now),
-        db.prepare(`UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,updated_at=? WHERE id=? AND status=? AND ${guard}`).bind(toStatus,toStatus,actor.email,now,input.refundCaseId,fromStatus,input.refundCaseId,fromStatus,toStatus,claim),
+        ...(retryOfFailed?[db.prepare("DELETE FROM booking_refund_transition_claims WHERE refund_case_id=? AND EXISTS (SELECT 1 FROM booking_refund_cases WHERE id=? AND status='failed' AND updated_at=?)").bind(input.refundCaseId,input.refundCaseId,refund.updated_at)]:[]),
+        db.prepare("INSERT OR IGNORE INTO booking_refund_transition_claims (id,refund_case_id,from_status,to_status,claim_token,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM booking_refund_cases WHERE id=? AND status=? AND updated_at=?)").bind(claimId,input.refundCaseId,fromStatus,toStatus,claim,actor.email,now,input.refundCaseId,fromStatus,refund.updated_at),
+        db.prepare(`UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='requested' THEN NULL WHEN ?='approved' THEN ? ELSE approved_by END,updated_at=MAX(?,updated_at+1) WHERE id=? AND status=? AND updated_at=? AND ${guard}`).bind(toStatus,toStatus,toStatus,actor.email,now,input.refundCaseId,fromStatus,refund.updated_at,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) SELECT ?,?,?,?,?,0,?,?,? WHERE ${guard}`).bind(eventId,input.bookingId,String(booking.provider_id??""),`refund.${toStatus}`,input.reason,JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:gatewayReference||null}),actor.email,now,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`).bind(crypto.randomUUID(),input.bookingId,`refund.${toStatus}`,"refund",input.refundCaseId,actor.email,JSON.stringify({gatewayReference:gatewayReference||null}),now,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?, 'queued',?,? FROM canonical_bookings b WHERE b.id=? AND ${guard}`).bind(crypto.randomUUID(),`refund_${toStatus}`,message,eventId,now,input.bookingId,input.refundCaseId,fromStatus,toStatus,claim),

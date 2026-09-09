@@ -101,3 +101,93 @@ test("redelivery repairs a half-committed processed refund instead of declaring 
 test("payment environment remains fail-closed while sandbox remains explicitly available",async()=>{
  const{parsePaymentEnvironment,sandboxCapabilitiesUnlocked}=await import("../lib/payment-environment.ts");for(const unset of [undefined,null,"",{},{PAWSPACE_PAYMENT_ENV:""},{PAWSPACE_PAYMENT_ENV:"production"}]){assert.throws(()=>parsePaymentEnvironment(unset),/must be exactly "sandbox" or "live"/);assert.equal(sandboxCapabilitiesUnlocked(unset),false);}assert.equal(parsePaymentEnvironment({PAWSPACE_PAYMENT_ENV:"sandbox"}),"sandbox");assert.equal(sandboxCapabilitiesUnlocked({PAWSPACE_PAYMENT_ENV:"sandbox"}),true);assert.equal(sandboxCapabilitiesUnlocked({PAWSPACE_PAYMENT_ENV:"live"}),false);
 });
+
+
+test("exact refund webhook retry repairs a ledger failure without recounting the refund",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();
+ sqlite.exec("CREATE TRIGGER fail_refund_posting BEFORE INSERT ON collection_ledger_postings WHEN NEW.event='refund_completed' BEGIN SELECT RAISE(ABORT,'injected refund ledger failure'); END");
+ const event=refundEvent();
+ await assert.rejects(()=>recon.processGatewayEvent(db,event),/injected refund ledger failure/);
+ sqlite.exec("DROP TRIGGER fail_refund_posting");
+ const retry=await recon.processGatewayEvent(db,event);
+ assert.equal(retry.status,"processed");assert.ok(ledgerRow(sqlite),"same-event replay must restore the missing ledger posting");
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='refund_completed'").get().n,2);
+});
+
+test("logical refund redelivery after a ledger failure does not add the money twice",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();
+ sqlite.exec("CREATE TRIGGER fail_refund_posting BEFORE INSERT ON collection_ledger_postings WHEN NEW.event='refund_completed' BEGIN SELECT RAISE(ABORT,'injected refund ledger failure'); END");
+ await assert.rejects(()=>recon.processGatewayEvent(db,refundEvent()),/injected refund ledger failure/);
+ sqlite.exec("DROP TRIGGER fail_refund_posting");
+ await recon.processGatewayEvent(db,refundEvent({eventId:"evt_refund_retry_different_id"}));
+ assert.ok(ledgerRow(sqlite));
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='refund_overage'").get().n,0);
+});
+
+test("failed refund can complete the full reapproval cycle more than once",async()=>{
+ const{sqlite,db}=refundWorld();seedCanonical(sqlite);seedRefundCase(sqlite,{status:"requested"});
+ for(let cycle=0;cycle<3;cycle++){
+  let result=await refundTransition(sqlite,db,"approved");assert.equal(result.status,200,result.body);
+  result=await refundTransition(sqlite,db,"processing");assert.equal(result.status,200,result.body);
+  sqlite.prepare("UPDATE booking_refund_cases SET status='failed' WHERE id=?").run(REFUND_CASE);
+  result=await refundTransition(sqlite,db,"requested");assert.equal(result.status,200,result.body);
+ }
+});
+
+test("concurrent failed-refund retries create only the winning transition's notifications",async()=>{
+ const{sqlite,db}=refundWorld();seedCanonical(sqlite);seedRefundCase(sqlite,{status:"failed",approvedBy:OPS});
+ const results=await Promise.all([refundTransition(sqlite,db,"processing"),refundTransition(sqlite,db,"processing")]);
+ assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_operational_events WHERE event_type='refund.processing'").get().n,1);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_customer_notifications WHERE template_code='refund_processing'").get().n,1);
+});
+
+test("failed refund without prior independent approval cannot jump back to processing",async()=>{
+ const{sqlite,db}=refundWorld();seedCanonical(sqlite);seedRefundCase(sqlite,{status:"failed"});
+ const result=await refundTransition(sqlite,db,"processing");
+ assert.equal(result.status,409);assert.equal(refundStatus(sqlite),"failed");
+});
+
+
+test("refund journal failure rolls back payment, case, reconciliation and lifecycle facts together",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();
+ sqlite.exec("CREATE TRIGGER fail_refund_posting BEFORE INSERT ON collection_ledger_postings WHEN NEW.event='refund_completed' BEGIN SELECT RAISE(ABORT,'injected atomic rollback'); END");
+ await assert.rejects(()=>recon.processGatewayEvent(db,refundEvent()),/injected atomic rollback/);
+ assert.equal(refundStatus(sqlite),"processing");
+ assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(PAYMENT).status,"captured");
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,0);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='refund_completed'").get().n,0);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE event_type='refund_processed'").get().n,0);
+ assert.equal(sqlite.prepare("SELECT processing_status FROM payment_gateway_events WHERE event_id=?").get(refundEvent().eventId).processing_status,"received");
+});
+
+test("a changed payload cannot repurpose an existing refund webhook id",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();const event=refundEvent();await recon.processGatewayEvent(db,event);
+ await assert.rejects(()=>recon.processGatewayEvent(db,{...event,amountSubunits:100,payloadHash:"changed-payload"}),/does not match the recorded payload/);
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
+});
+
+test("legacy financial facts with a missing journal recover without a second refund lifecycle",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();await recon.processGatewayEvent(db,refundEvent());
+ sqlite.exec("DELETE FROM collection_ledger_postings WHERE event='refund_completed'; DELETE FROM finance_journal_entries WHERE source_type='refund_completed'");
+ await recon.processGatewayEvent(db,refundEvent({eventId:"evt_legacy_refund_repair"}));
+ assert.ok(ledgerRow(sqlite));
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE event_type='refund_processed'").get().n,1);
+});
+
+test("two concurrent partial refunds retain both amounts in the canonical reconciliation total",async()=>{
+ const{sqlite,db,recon}=await reconciledWorld();
+ sqlite.prepare("UPDATE booking_refund_cases SET amount=? WHERE id=?").run(AMOUNT/2,REFUND_CASE);
+ sqlite.prepare("INSERT INTO booking_refund_cases SELECT ?,booking_id,payment_id,amount,reason,status,requested_by,approved_by,?,policy_json,created_at,updated_at FROM booking_refund_cases WHERE id=?").run("RR-REF-002","rfnd_TESTFIN2",REFUND_CASE);
+ const results=await Promise.all([
+  recon.processGatewayEvent(db,refundEvent({amountSubunits:AMOUNT*50})),
+  recon.processGatewayEvent(db,refundEvent({eventId:"evt_second_partial",gatewayRefundId:"rfnd_TESTFIN2",amountSubunits:AMOUNT*50})),
+ ]);
+ assert.equal(results.every(x=>x.status==="processed"),true);
+ assert.equal(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount,AMOUNT);
+ assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(PAYMENT).status,"refunded");
+ assert.equal(sqlite.prepare("SELECT SUM(amount) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n,AMOUNT);
+});
