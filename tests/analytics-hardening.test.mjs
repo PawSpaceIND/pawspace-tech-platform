@@ -159,7 +159,7 @@ test("company analytics keeps gross collections, refunds and split-payment cash 
   const { sqlite, db } = fresh();
   seedBooking(sqlite, "B-REF", "grooming", "completed", 8000, "2026-07-05T09:00:00.000Z");
   seedPayment(sqlite, "B-REF", 8000, "partially_refunded");
-  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-1','B-REF',3000,'processing')").run();
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-1','B-REF',3000,'processed')").run();
 
   seedBooking(sqlite, "B-SPLIT", "boarding", "confirmed", 10000, "2026-07-06T09:00:00.000Z");
   seedPayment(sqlite, "B-SPLIT", 10000, "captured");
@@ -248,5 +248,5 @@ test("company analytics declares unconnected sources honestly", async () => {
   const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
   const data = await buildCompanyAnalytics(globalThis.__PAWSPACE_TEST_ENV.DB, { from: "2026-07-01", to: "2026-08-01" });
   assert.equal(data.sourceStatus.marketingSpend, "not_connected");
-  assert.equal(data.money.refundsStatus, "booking_refund_cases_processing_processed_completed");
+  assert.equal(data.money.refundsStatus, "booking_refund_cases_processed_completed");
 });

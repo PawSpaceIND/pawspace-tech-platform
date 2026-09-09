@@ -353,7 +353,7 @@ test("release gate: across every service, P&L turnover === analytics GMV === the
 
   // Every unconnected source is still declared honestly on the same dashboard.
   assert.equal(dashboard.sourceStatus.marketingSpend, "not_connected");
-  assert.equal(dashboard.money.refundsStatus, "booking_refund_cases_processing_processed_completed");
+  assert.equal(dashboard.money.refundsStatus, "booking_refund_cases_processed_completed");
   assert.equal(report.dataSource, "platform_live");
 });
 

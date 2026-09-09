@@ -34,7 +34,11 @@ export async function POST(request:Request){try{
     // MONEY DOES NOT MOVE FOR A CASE NOBODY APPROVED. The error text three lines up has always claimed
     // this - "Create and approve an internal refund case" - but the only status ever refused was
     // 'processed', so a 'requested', 'rejected' or 'cancelled' case reached the gateway. [W2-PAY-02]
-    if(String(refund.status)!=="approved")return json({error:"This refund case is not approved; approve it before a gateway refund",code:"refund_not_approved",refundCaseStatus:String(refund.status)},409);
+    const refundStatus=String(refund.status);
+    const retryTransition=refundStatus==="processing"
+      ?await db.prepare("SELECT id FROM booking_refund_transition_claims WHERE refund_case_id=? AND from_status='failed' AND to_status='processing' ORDER BY created_at DESC LIMIT 1").bind(refund.id).first<Record<string,unknown>>().catch(()=>null)
+      :null;
+    if(refundStatus!=="approved"&&!retryTransition)return json({error:"This refund case is not approved for gateway processing",code:"refund_not_approved",refundCaseStatus:refundStatus},409);
     // A BOOKING CANNOT REFUND MORE THAN IT COLLECTED. Nothing compared the running refund total to the
     // captured amount, so N internal cases produced N full-value gateway refunds against one capture -
     // measured at Rs 24,000 of refund instructions against Rs 8,000 collected, each carrying a different
@@ -49,9 +53,12 @@ export async function POST(request:Request){try{
     // Claim the approved case before crossing the gateway boundary. This prevents two concurrent
     // staff requests from both initiating the same refund. If the gateway refuses the call, release
     // the claim so Finance can retry the approved case.
-    const claimTime=Date.now();const claim=await db.prepare("UPDATE booking_refund_cases SET status='processing',updated_at=? WHERE id=? AND status='approved'").bind(claimTime,refund.id).run();
+    const claimTime=Date.now();
+    const claim=refundStatus==="approved"
+      ?await db.prepare("UPDATE booking_refund_cases SET status='processing',updated_at=? WHERE id=? AND status='approved'").bind(claimTime,refund.id).run()
+      :await db.prepare("UPDATE booking_refund_cases SET updated_at=? WHERE id=? AND status='processing'").bind(claimTime,refund.id).run();
     if(Number(claim.meta?.changes||0)!==1)return json({error:"This refund case is already being processed",code:"refund_already_claimed",refundCaseId:String(refund.id)},409);
-    let result:Record<string,unknown>;try{result=await createSandboxRefund(runtime,{bookingId:input.bookingId,paymentId:String(payment.id),gatewayPaymentId:String(link.gateway_payment_id),refundCaseId:String(refund.id),amount:Number(refund.amount||0)});}catch(error){await db.prepare("UPDATE booking_refund_cases SET status='approved',updated_at=? WHERE id=? AND status='processing' AND gateway_reference IS NULL").bind(Date.now(),refund.id).run();throw error;}
+    let result:Record<string,unknown>;try{result=await createSandboxRefund(runtime,{bookingId:input.bookingId,paymentId:String(payment.id),gatewayPaymentId:String(link.gateway_payment_id),refundCaseId:String(refund.id),amount:Number(refund.amount||0)});}catch(error){await db.prepare("UPDATE booking_refund_cases SET status='approved',updated_at=? WHERE id=? AND status='processing'").bind(Date.now(),refund.id).run();throw error;}
     const gatewayRefundId=String(result.id),now=Date.now();await db.prepare("UPDATE booking_refund_cases SET gateway_reference=?,updated_at=? WHERE id=? AND status='processing'").bind(gatewayRefundId,now,refund.id).run();await db.prepare("UPDATE payment_reconciliation_records SET gateway_status='refund_requested',reconciliation_status='pending_refund',updated_at=? WHERE payment_id=?").bind(now,payment.id).run();await securityAudit(db,actor,"grooming.payment_sandbox.initiate_refund","booking",input.bookingId,"completed",{refundCaseId:refund.id,gatewayRefundId,amount:refund.amount});return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId,status:String(result.status||"processing"),environment:"sandbox"}},201);
   }
 
