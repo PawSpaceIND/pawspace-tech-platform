@@ -55,3 +55,104 @@ test("customer discovery and app surfaces never expose sandbox/prototype payment
   }
   expect(findings, "customer discovery/app copy must not disclose sandbox or prototype internals").toEqual([]);
 });
+
+// Physical browser checks on the built app. No intercepted responses or SDK doubles.
+// This checks navigation and the real unconfigured-checkout refusal, NOT a gateway payment.
+test("customer navigation and billing controls have physical 44px targets and recover from unconfigured checkout", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await page.setExtraHTTPHeaders({});
+  await page.context().clearCookies();
+  const measurements: Array<Record<string, unknown>> = [];
+  async function target(control: import("@playwright/test").Locator, label: string) {
+    await expect(control, label).toBeVisible();
+    await expect(control, label).toBeEnabled();
+    await control.scrollIntoViewIfNeeded();
+    const box = await control.boundingBox();
+    expect(box, `${label}: a physical rectangle is required`).not.toBeNull();
+    const hit = await control.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return { unobstructed: !!top && (top === element || element.contains(top)), pointerEvents: getComputedStyle(element).pointerEvents };
+    });
+    measurements.push({ label, width: box!.width, height: box!.height, ...hit });
+    console.log(`[PAWSPACE-UX] ${JSON.stringify(measurements.at(-1))}`);
+    expect.soft(box!.width, `${label}: minimum width`).toBeGreaterThanOrEqual(44);
+    expect.soft(box!.height, `${label}: minimum height`).toBeGreaterThanOrEqual(44);
+    expect.soft(hit.unobstructed, `${label}: center must receive pointer events`).toBe(true);
+    await control.click({ trial: true });
+  }
+  try {
+    const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
+    expect(response?.status()).toBe(200);
+    const nav = page.getByRole("navigation", { name: "Customer navigation" });
+    const surfaces = [["Home", /Good morning,/], ["Book", /^Book Grooming$/], ["Activity", /^Your activity$/],
+      ["My Pets", /^Your pets$/], ["Account", /^My PawSpace$/]] as const;
+    for (const [name, heading] of surfaces) {
+      const button = nav.getByRole("button", { name: new RegExp(name === "Book" ? "Book$" : name + "$", "i") });
+      await target(button, `navigation:${name}`);
+      await button.click();
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    }
+    await page.screenshot({ path: testInfo.outputPath("customer-ux-guest-navigation.png"), fullPage: true });
+
+    // Normal local sandbox OTP exchange, not a forged browser customer or bypassed session.
+    await expect(page.getByPlaceholder("10-digit phone number")).toBeEnabled();
+    await page.getByPlaceholder("10-digit phone number").fill("9800000111");
+    const send = page.getByRole("button", { name: "Send OTP", exact: true });
+    await target(send, "login:Send OTP");
+    await send.click();
+    const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+    await expect(sandbox).toBeVisible();
+    const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+    expect(code).toMatch(/^\d{6}$/);
+    await page.getByPlaceholder("6-digit code").fill(code!);
+    const name = page.getByPlaceholder("Your name (first time only)");
+    if (await name.isVisible()) await name.fill("E2E UI Customer");
+    const verify = page.getByRole("button", { name: "Verify & continue", exact: true });
+    await target(verify, "login:Verify & continue");
+    await verify.click();
+    await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
+    const account = await page.evaluate(async () => {
+      const response = await fetch("/api/customer-account", { cache: "no-store" });
+      return { status: response.status, body: await response.json() };
+    });
+    expect(account.status).toBe(200);
+    expect(account.body.data.customerId).toBe("E2E-CUS-UI-001");
+
+    for (const title of ["Notifications & reminders", "Offers & PawPoints", "Privacy & security", "Payments & invoice summaries"]) {
+      const summary = page.locator("summary").filter({ hasText: title });
+      await target(summary, `account:${title}`);
+      await summary.click();
+      await expect(summary.locator("..")).toHaveAttribute("open", "");
+      if (title !== "Payments & invoice summaries") await summary.click();
+    }
+    const billing = page.locator("details").filter({ has: page.locator("summary").filter({ hasText: "Payments & invoice summaries" }) });
+    const pay = billing.getByRole("button", { name: /^(Review & pay|Check balance) \(test\)$/ }).first();
+    await target(pay, "billing:checkout");
+    await target(billing.getByRole("button", { name: "Billing support", exact: true }), "billing:support");
+    // No external Razorpay credentials are provisioned in the hardened local UI runner.
+    // Assert its real 503 refusal and visible retry, never count it as captured/paid.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const reply = page.waitForResponse(response => new URL(response.url()).pathname === "/api/customer-checkout" && response.request().method() === "POST");
+      await pay.click();
+      const result = await reply;
+      expect(result.status()).toBe(503);
+      const body = await result.json();
+      expect(body.error).toMatch(/not enabled for this environment|not configured/);
+      await expect(billing.getByRole("alert")).toContainText(body.error);
+      await expect(pay).toBeEnabled();
+      await expect(billing.getByText("Payment in progress…", { exact: true })).toHaveCount(0);
+      console.log(`[PAWSPACE-UX] checkout_attempt=${attempt} http=503 configuration=BLOCKED capture=NOT_RUN`);
+    }
+    await page.screenshot({ path: testInfo.outputPath("customer-ux-checkout-refusal.png"), fullPage: true });
+    const refresh = billing.getByRole("button", { name: "Refresh billing", exact: true });
+    await target(refresh, "billing:refresh");
+    await refresh.click();
+    await expect(pay).toBeVisible();
+    await expect(billing.getByRole("alert")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("customer-ux-billing-recovered.png"), fullPage: true });
+  } finally {
+    await testInfo.attach("customer-ux-target-measurements", { body: JSON.stringify({ project: testInfo.project.name,
+      scope: "navigation-login-account-billing; not exhaustive service-flow or provider E2E", measurements }, null, 2), contentType: "application/json" });
+  }
+});
