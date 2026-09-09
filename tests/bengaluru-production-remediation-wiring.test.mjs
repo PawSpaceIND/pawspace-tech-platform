@@ -86,3 +86,13 @@ test("D1 backup and restore guard suites are tracked by the normal test glob", (
   assert.doesNotThrow(() => read("scripts/d1-restore.mjs"));
   assert.doesNotThrow(() => read("tests/d1-backup-restore-guards.test.mjs"));
 });
+
+test("production deploy reads the production D1 identifier from the protected secret source", () => {
+  const secretRefs = workflow.match(/PRODUCTION_D1_ID:\s*\$\{\{\s*secrets\.PRODUCTION_D1_ID\s*\}\}/g) || [];
+  assert.ok(secretRefs.length >= 2, "configuration and post-deploy certification must both use secrets.PRODUCTION_D1_ID");
+  assert.doesNotMatch(
+    workflow,
+    /PRODUCTION_D1_ID:\s*\$\{\{\s*vars\.PRODUCTION_D1_ID\s*\}\}/,
+    "production deployment must not read PRODUCTION_D1_ID from repository/environment variables",
+  );
+});

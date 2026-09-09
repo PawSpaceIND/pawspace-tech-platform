@@ -1,0 +1,225 @@
+name: Verify release preview runtime - issue 672 (read only)
+
+# Manual, main-only evidence check. No deploy, SQL, login, OTP, secret update or application HTTP.
+# Protected environment approval and the existing preview concurrency lock are retained.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-release-preview
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pawspace-release-preview
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prepare and self-test the evidence verifier (no credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/runtime-672.mjs" <<'JS'
+          // Issue 672: Cloudflare control-plane GETs only. No application HTTP requests or D1 SQL.
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const PRODUCT = '9535ce85c0e2fe60da3d2fce091c305dde5d99fc';
+          const ADAPTER = '8b1ac9a296d5e52f60df011981cf7d85d7935611';
+          const BASELINE = '7b67d7ab-4ae8-43f9-ae48-e24f31a078df';
+          const WORKER = 'pawspace-release-preview';
+          const PREVIEW_DB_HASH = '5f09c4912525883b766fe286f17ea1be6f839640c2a1ca7e944e04228b55fb7e';
+          const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
+          const OFF = ['PAYMENTS','PAYOUTS','REFUNDS','BANK_INSTRUCTIONS','WHATSAPP','SMS','EMAIL','PUSH','TELEPHONY','KYC','ESIGN','MAPS_BILLING','EXTERNAL_AI','ACCOUNTING','TAX_POSTING'].map(n => `PAWSPACE_LIVE_${n}`);
+          const CREDENTIALS = ['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT'];
+          class SafeError extends Error {}
+          const need = (ok, code) => { if (!ok) throw new SafeError(code); };
+          // Keep both workflow and runtime guards aligned; main is the approved environment branch.
+          // Refuse non-manual or other-ref execution before constructing a credentialed API client.
+          function assertExecutionContext(env) {
+            need(env.GITHUB_REPOSITORY==='PawSpaceIND/pawspace-tech-platform'
+              && env.GITHUB_REF==='refs/heads/main' && env.GITHUB_EVENT_NAME==='workflow_dispatch',
+              'WRONG_REPOSITORY_BRANCH_OR_EVENT');
+          }
+          function deployment(result) {
+            const rows = result?.deployments;
+            need(Array.isArray(rows) && rows.length > 0, 'DEPLOYMENT_LIST_UNAVAILABLE');
+            need(rows.every(r => UUID.test(r?.id) && typeof r.created_on === 'string' && Number.isFinite(Date.parse(r.created_on))), 'DEPLOYMENT_LIST_INVALID');
+            const sorted = [...rows].sort((a,b) => Date.parse(b.created_on)-Date.parse(a.created_on));
+            need(sorted.length < 2 || Date.parse(sorted[0].created_on) !== Date.parse(sorted[1].created_on), 'AMBIGUOUS_CURRENT_DEPLOYMENT');
+            const row = sorted[0];
+            need(row.strategy === 'percentage', 'UNKNOWN_DEPLOYMENT_STRATEGY');
+            need(Array.isArray(row.versions) && row.versions.length > 0 && row.versions.length <= 2, 'ACTIVE_VERSIONS_UNAVAILABLE');
+            need(row.versions.every(v => UUID.test(v?.version_id) && typeof v.percentage === 'number' && Number.isFinite(v.percentage) && v.percentage > 0 && v.percentage <= 100), 'TRAFFIC_INVALID');
+            need(new Set(row.versions.map(v=>v.version_id)).size === row.versions.length, 'DUPLICATE_ACTIVE_VERSION');
+            need(Math.abs(row.versions.reduce((n,v)=>n+v.percentage,0)-100) < 1e-8, 'TRAFFIC_NOT_100_PERCENT');
+            return { id: row.id, created_on: row.created_on, versions: row.versions.map(v=>({version_id:v.version_id,percentage:v.percentage})).sort((a,b)=>a.version_id.localeCompare(b.version_id)) };
+          }
+          function bindings(version, id) {
+            need(version?.id === id, 'VERSION_ID_MISMATCH');
+            const rows = version?.resources?.bindings;
+            need(Array.isArray(rows) && rows.length > 0, 'VERSION_BINDINGS_UNAVAILABLE');
+            need(rows.every(r=>typeof r?.name==='string' && typeof r.type==='string'), 'BINDING_INVALID');
+            need(new Set(rows.map(r=>r.name)).size===rows.length, 'DUPLICATE_BINDING');
+            return new Map(rows.map(r=>[r.name,r]));
+          }
+          function plain(map, name, optional=false) {
+            const row = map.get(name);
+            if (!row && optional) return '';
+            need(row?.type==='plain_text' && typeof row.text==='string', `BINDING_NOT_READABLE_${name}`);
+            return row.text.trim();
+          }
+          function evaluate(version, id, baselineEtag, previewDbHash, productionDb, sharedDb) {
+            const map = bindings(version,id);
+            need(plain(map,'PAWSPACE_RELEASE_SHA')===PRODUCT, 'ACTIVE_PRODUCT_SHA_MISMATCH');
+            const etag = version?.resources?.script?.etag;
+            need(typeof baselineEtag==='string' && baselineEtag.length>0 && typeof etag==='string' && etag===baselineEtag, 'ACTIVE_SCRIPT_DIFFERS_FROM_PASSED_DEPLOYMENT');
+            need(plain(map,'PAWSPACE_ENVIRONMENT')==='release-preview', 'WRONG_ENVIRONMENT');
+            need(plain(map,'PAWSPACE_PAYMENT_ENV')==='sandbox', 'PAYMENT_NOT_SANDBOX');
+            for (const name of OFF) need(plain(map,name)==='false', `LIVE_EFFECT_NOT_OFF_${name}`);
+            need(plain(map,'PAWSPACE_PROVIDER_MARKETPLACE_LIVE')==='false' && plain(map,'PAWSPACE_PROVIDER_ORDER_ELIGIBLE')==='false' && plain(map,'PAWSPACE_PROVIDER_ACTIVATION')==='uat_ready', 'PROVIDER_ACTIVATION_NOT_SAFE');
+            need(plain(map,'PAWSPACE_UAT_LOGIN')==='on', 'UAT_LOGIN_NOT_ENABLED');
+            for (const name of CREDENTIALS) need(map.get(name)?.type==='secret_text', `UAT_CREDENTIAL_NOT_SECRET_${name}`);
+            const d1 = [...map.values()].filter(b=>b.type==='d1');
+            need(d1.length===1 && d1[0].name==='DB', 'UNEXPECTED_D1_BINDINGS');
+            const db = d1[0].database_id ?? d1[0].id;
+            need(UUID.test(db) && (!d1[0].database_id || !d1[0].id || d1[0].database_id===d1[0].id), 'D1_ID_UNAVAILABLE');
+            need(UUID.test(productionDb) && UUID.test(sharedDb), 'ISOLATION_COMPARATORS_UNAVAILABLE');
+            need(sha256(db)===previewDbHash && db.toLowerCase()!==productionDb.toLowerCase() && db.toLowerCase()!==sharedDb.toLowerCase(), 'ACTIVE_D1_NOT_ISOLATED_PREVIEW');
+            // Matches the pinned product's guards; generic PAWSPACE_LIVE_SMS is NOT used by OTP routes.
+            // Refuse production labeling regardless of credential presence, so opaque secrets cannot produce a false negative.
+            const env = plain(map,'PAWSPACE_DEPLOYMENT_ENV',true);
+            need(env.toLowerCase()!=='production', 'PRODUCTION_OTP_ENVIRONMENT');
+            if (env==='staging') {
+              const flag = plain(map,'PAWSPACE_STAGING_LIVE_CUSTOMER_OTP',true).toLowerCase();
+              need(!['true','1','yes','on'].includes(flag), 'STAGING_LIVE_CUSTOMER_OTP_ENABLED');
+            }
+            return { version_id:id, product_marker_matches:true, script_etag_matches_passed_deployment:true,
+              payment_sandbox:true, live_effect_flags_off:true, provider_activation_off:true, preview_d1_isolated:true,
+              uat_credentials_present_as_secrets:true, production_otp_path_disabled:true, staging_customer_otp_path_disabled:true,
+              credential_strength_retested:false, human_role_access_tested:false };
+          }
+          function client(account, token, fetchImpl=fetch) {
+            need(/^[a-f0-9]{32}$/i.test(account) && token.length>0, 'CLOUDFLARE_CREDENTIALS_UNAVAILABLE');
+            const root=`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${WORKER}`;
+            return async (suffix) => {
+              need(suffix==='/deployments' || /^\/versions\/[a-f0-9-]{36}$/i.test(suffix), 'READ_ENDPOINT_NOT_ALLOWED');
+              let response;
+              try { response=await fetchImpl(root+suffix,{method:'GET',headers:{authorization:`Bearer ${token}`,accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(20000)}); }
+              catch { throw new SafeError('CLOUDFLARE_READ_TRANSPORT_FAILED'); }
+              need(response.ok, `CLOUDFLARE_READ_HTTP_${response.status}`);
+              let parsed; try { parsed=await response.json(); } catch { throw new SafeError('CLOUDFLARE_RESPONSE_NOT_JSON'); }
+              need(parsed?.success===true && parsed.result && (!parsed.errors || parsed.errors.length===0), 'CLOUDFLARE_API_REFUSED');
+              return parsed.result;
+            };
+          }
+          async function verify(read, options) {
+            const before=deployment(await read('/deployments'));
+            const baseline=await read(`/versions/${BASELINE}`);
+            need(plain(bindings(baseline,BASELINE),'PAWSPACE_RELEASE_SHA')===PRODUCT, 'BASELINE_PRODUCT_SHA_MISMATCH');
+            const rows=[];
+            for (const v of before.versions) {
+              const data=v.version_id===BASELINE?baseline:await read(`/versions/${v.version_id}`);
+              rows.push({...evaluate(data,v.version_id,baseline?.resources?.script?.etag,options.dbHash,options.productionDb,options.sharedDb),traffic_percentage:v.percentage});
+            }
+            const after=deployment(await read('/deployments'));
+            need(JSON.stringify(before)===JSON.stringify(after), 'DEPLOYMENT_CHANGED_DURING_VERIFICATION');
+            return {active_deployment:after, active_versions:rows, active_deployment_stable_during_verification:true};
+          }
+          async function selfTest() {
+            const ids=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333'];
+            const db='44444444-4444-4444-8444-444444444444';
+            const data={id:ids[0],resources:{script:{etag:'test-bundle'},bindings:[
+              ...Object.entries({PAWSPACE_RELEASE_SHA:PRODUCT,PAWSPACE_ENVIRONMENT:'release-preview',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_PROVIDER_MARKETPLACE_LIVE:'false',PAWSPACE_PROVIDER_ORDER_ELIGIBLE:'false',PAWSPACE_PROVIDER_ACTIVATION:'uat_ready',...Object.fromEntries(OFF.map(n=>[n,'false']))}).map(([name,text])=>({name,text,type:'plain_text'})),
+              ...CREDENTIALS.map(name=>({name,type:'secret_text'})),{name:'DB',type:'d1',id:db}]}};
+            const options={dbHash:sha256(db),productionDb:ids[1],sharedDb:ids[2]};
+            let count=0;
+            const check=(f)=>{f();count++;};
+            const allowedContext={GITHUB_REPOSITORY:'PawSpaceIND/pawspace-tech-platform',GITHUB_REF:'refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch'};
+            check(()=>assert.doesNotThrow(()=>assertExecutionContext(allowedContext)));
+            for (const override of [
+              {GITHUB_REF:'refs/heads/evidence/issue-672-runtime-readonly'},
+              {GITHUB_REF:'refs/tags/main'}, {GITHUB_REF:'refs/pull/1/merge'},
+              {GITHUB_REF:'refs/heads/main-other'}, {GITHUB_REPOSITORY:'other/pawspace-tech-platform'},
+              {GITHUB_EVENT_NAME:'push'}, {GITHUB_EVENT_NAME:'pull_request'}, {GITHUB_EVENT_NAME:''},
+            ]) check(()=>assert.throws(()=>assertExecutionContext({...allowedContext,...override}),/WRONG_REPOSITORY_BRANCH_OR_EVENT/));
+            check(()=>assert.throws(()=>assertExecutionContext({}),/WRONG_REPOSITORY_BRANCH_OR_EVENT/));
+            const run=(v)=>evaluate(v,ids[0],'test-bundle',options.dbHash,options.productionDb,options.sharedDb);
+            const mutate=(name,value,type='plain_text')=>{const v=structuredClone(data);v.resources.bindings=v.resources.bindings.filter(b=>b.name!==name);v.resources.bindings.push({name,text:value,type});return v;};
+            check(()=>assert.equal(run(data).production_otp_path_disabled,true));
+            check(()=>assert.throws(()=>run(mutate('PAWSPACE_RELEASE_SHA','wrong')),SafeError));
+            check(()=>assert.throws(()=>run(mutate('PAWSPACE_PAYMENT_ENV','live')),SafeError));
+            for (const n of OFF) check(()=>assert.throws(()=>run(mutate(n,'true')),SafeError));
+            check(()=>assert.throws(()=>run(mutate('PAWSPACE_DEPLOYMENT_ENV','production')),SafeError));
+            check(()=>assert.throws(()=>run(mutate('PAWSPACE_DEPLOYMENT_ENV','hidden','secret_text')),SafeError));
+            const staging=mutate('PAWSPACE_DEPLOYMENT_ENV','staging');
+            check(()=>assert.equal(run(staging).staging_customer_otp_path_disabled,true));
+            for (const flag of ['on','TRUE','1','yes']) { const v=structuredClone(staging);v.resources.bindings.push({name:'PAWSPACE_STAGING_LIVE_CUSTOMER_OTP',text:flag,type:'plain_text'});check(()=>assert.throws(()=>run(v),SafeError)); }
+            check(()=>assert.throws(()=>run(mutate('PAWSPACE_UAT_SIGNING_KEY','unsafe')),SafeError));
+            check(()=>assert.throws(()=>evaluate(data,ids[0],'different-bundle',options.dbHash,ids[1],ids[2]),SafeError));
+            check(()=>assert.throws(()=>evaluate(data,ids[0],'test-bundle',options.dbHash,db,ids[2]),SafeError));
+            check(()=>assert.throws(()=>evaluate(data,ids[0],'test-bundle','wrong',ids[1],ids[2]),SafeError));
+            const missing=structuredClone(data);missing.resources.bindings=undefined;check(()=>assert.throws(()=>run(missing),SafeError));
+            const duplicate=structuredClone(data);duplicate.resources.bindings.push(duplicate.resources.bindings[0]);check(()=>assert.throws(()=>run(duplicate),SafeError));
+            const d={id:ids[1],created_on:'2026-09-09T17:08:01Z',strategy:'percentage',versions:[{version_id:ids[0],percentage:100}]};
+            check(()=>assert.equal(deployment({deployments:[d]}).id,ids[1]));
+            check(()=>assert.throws(()=>deployment({deployments:[]}),SafeError));
+            const split=structuredClone(d);split.versions=[{version_id:ids[0],percentage:60},{version_id:ids[2],percentage:40}];check(()=>assert.equal(deployment({deployments:[split]}).versions.length,2));
+            const bad=structuredClone(d);bad.versions[0].percentage=99;check(()=>assert.throws(()=>deployment({deployments:[bad]}),SafeError));
+            check(()=>assert.throws(()=>deployment({deployments:[d,{...d,id:ids[2]}]}),SafeError));
+            let calls=[];
+            const read=async suffix=>{calls.push(suffix);if(suffix==='/deployments')return{deployments:[d]};return {...structuredClone(data),id:suffix.split('/').at(-1)};};
+            const result=await verify(read,options);assert.equal(result.active_versions.length,1);count++;
+            assert.equal(calls.filter(x=>x==='/deployments').length,2);count++;
+            let n=0;await assert.rejects(()=>verify(async s=>s==='/deployments'?{deployments:[++n===1?d:{...d,id:ids[2]}]}:read(s),options),/DEPLOYMENT_CHANGED/);count++;
+            const paths=[];const api=client('a'.repeat(32),'test-token',async (url,init)=>{paths.push([url,init.method,init.redirect]);return{ok:true,json:async()=>({success:true,result:{deployments:[d]}})};});
+            await api('/deployments');assert.equal(paths[0][1],'GET');assert.equal(paths[0][2],'error');count++;
+            await assert.rejects(()=>api('/settings'),/NOT_ALLOWED/);assert.equal(paths.length,1);count++;
+            console.log(`Verifier self-tests: ${count} PASS; no network, no production code executed.`);
+            return count;
+          }
+          if (process.argv.includes('--self-test')) await selfTest();
+          else {
+            const report={schema_version:1,issue:672,observed_at_utc:new Date().toISOString(),
+              verifier_sha:process.env.GITHUB_SHA||null,verifier_run_id:process.env.GITHUB_RUN_ID||null,
+              product_sha:PRODUCT,booking_adapter_sha:ADAPTER,booking_evidence_run_id:34380905564,
+              booking_evidence_artifact_id:10116480279,baseline_version_id:BASELINE,
+              worker:WORKER,scope:'control-plane configuration and script provenance; NOT human UI or all-service certification',
+              status:'HOLD',human_uat:'HOLD_PENDING_HUMAN_ROLE_AND_JOURNEY_EVIDENCE'};
+            try {
+              const env=process.env;
+              assertExecutionContext(env);
+              const read=client(String(env.CLOUDFLARE_ACCOUNT_ID||'').trim(),String(env.CLOUDFLARE_API_TOKEN||'').trim());
+              Object.assign(report,await verify(read,{dbHash:PREVIEW_DB_HASH,productionDb:String(env.PRODUCTION_D1_ID||'').trim(),sharedDb:String(env.SHARED_STAGING_D1_ID||'').trim()}));
+              report.status='PASS';
+            } catch(error) { report.error_code=error instanceof SafeError?error.message:'UNEXPECTED_VERIFICATION_ERROR';process.exitCode=1; }
+            mkdirSync('runtime-evidence',{recursive:true});
+            const safe=JSON.stringify(report,null,2)+'\n';
+            writeFileSync('runtime-evidence/runtime-verification.json',safe);
+            console.log(safe);
+          }
+          JS
+          node "$RUNNER_TEMP/runtime-672.mjs" --self-test
+      - name: Read current deployment and safety bindings (GET only)
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+        run: node "$RUNNER_TEMP/runtime-672.mjs"
+      - name: Upload sanitized runtime evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-preview-runtime-672
+          path: runtime-evidence/runtime-verification.json
+          if-no-files-found: error
