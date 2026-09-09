@@ -300,3 +300,18 @@ test("Sitting Operations retry keys cannot replay a different booking or action"
     assert.equal(rejected?.status, 409, "a key belongs to exactly one booking and action");
   }
 });
+
+test("Sitting replacement offer reserves the preserved care window after original sitter recovery", async () => {
+  const world = await opsWorld();
+  const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
+  await seedProviderCapacityDefaults(world.db);
+  await world.stayAct("decline", { reason: "Cannot travel to the customer today" });
+  const { row } = await world.flagsFor();
+  assert.ok(row.replacementCandidates.length > 0, "fixture has an eligible replacement");
+  const providerId = row.replacementCandidates[0].providerId;
+  await world.opsAct("assign_replacement", { providerId, reason: "Protect the same customer care window" });
+  const booking = await world.db.prepare("SELECT schedule_group_id FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  const reservations = await world.db.prepare("SELECT provider_id,status FROM scheduling_reservations WHERE group_id=? AND status NOT IN ('cancelled','completed')").bind(booking.schedule_group_id).all();
+  assert.equal(reservations.results.length, 1, "replacement offer must hold the original booking's capacity");
+  assert.equal(reservations.results[0].provider_id, providerId);
+});
