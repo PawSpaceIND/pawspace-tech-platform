@@ -48,6 +48,31 @@ function looksLikePii(value: unknown): boolean {
   return PII_VALUE.test(s);
 }
 
+function parseJsonObject(raw: unknown): Record<string, unknown> {
+  const text = String(raw ?? "").trim();
+  if (!text || text[0] !== "{") return {};
+  try {
+    const value = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return value as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonArray(raw: unknown): string[] {
+  const text = String(raw ?? "").trim();
+  if (!text || text[0] !== "[") return [];
+  try {
+    const value = JSON.parse(text);
+    if (!Array.isArray(value)) return [];
+    return value.filter((item) => typeof item === "string" && !looksLikePii(item)).map(String);
+  } catch {
+    // Invalid checklist JSON is treated as empty operational data, not a silent DB failure.
+    return [] as string[];
+  }
+}
+
 export function sanitizeProviderEventDetail(detail: unknown): Record<string, unknown> {
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) return {};
   const out: Record<string, unknown> = {};
@@ -70,15 +95,7 @@ export function projectProviderLifecycleEvent(row: Row) {
     entityType: String(row.entity_type || ""),
     // Never return staff email / actor id raw to providers
     actorId: "provider_or_system",
-    detail: sanitizeProviderEventDetail(
-      (() => {
-        try {
-          return JSON.parse(String(row.detail_json ?? "{}"));
-        } catch {
-          return {};
-        }
-      })(),
-    ),
+    detail: sanitizeProviderEventDetail(parseJsonObject(row.detail_json)),
     occurredAt: Number(row.occurred_at || 0),
   };
 }
@@ -131,13 +148,7 @@ export function projectProviderLifecycleBundle(data: LifecycleBundle | null) {
       ? {
           beforePhotoRef: data.proof.before_photo_ref ? String(data.proof.before_photo_ref) : null,
           afterPhotoRef: data.proof.after_photo_ref ? String(data.proof.after_photo_ref) : null,
-          checklist: (() => {
-            try {
-              return JSON.parse(String(data.proof.checklist_json || "[]"));
-            } catch {
-              return [];
-            }
-          })(),
+          checklist: parseJsonArray(data.proof.checklist_json),
           completionNotes: data.proof.completion_notes ? String(data.proof.completion_notes).slice(0, 200) : null,
           updatedAt: Number(data.proof.updated_at || 0),
         }
