@@ -5,6 +5,7 @@ import{recordInteraktDeliveryWebhookAtomic}from"../../../lib/interakt-delivery-a
 import{processInteraktInboundTrustSafe}from"../../../lib/trust-safety-interakt";
 import{verifyCanonicalInteraktWebhook}from"../../../lib/interakt-webhook-auth";
 import{captureInboundWebhook,runInboundWebhookAttempt}from"../../../lib/gateway-inbound-queue";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const MAX_CALLBACK_BYTES=65_536;
@@ -17,7 +18,12 @@ function identity(rawBody:string,provider:string){let body:Record<string,unknown
 async function processCallback(db:D1Database,env:Record<string,unknown>,provider:string,rawBody:string,headers:Headers){if(isInteraktProvider(provider))return isInteraktDeliveryWebhook(rawBody)?await recordInteraktDeliveryWebhookAtomic(db,env,{rawBody,headers}):await processInteraktInboundTrustSafe(db,env,{rawBody,headers});return await recordCommunicationProviderCallback(db,env,{provider,rawBody,headers});}
 
 export async function POST(request:Request){try{
- const provider=text(new URL(request.url).searchParams.get("provider")||request.headers.get("x-pawspace-communication-provider")).toLowerCase();if(!provider)return json({error:"Communication provider is required"},400);const declared=Number(request.headers.get("content-length")||0);if(Number.isFinite(declared)&&declared>MAX_CALLBACK_BYTES)return json({error:"Provider callback payload is too large"},413);const rawBody=await request.text();if(new TextEncoder().encode(rawBody).byteLength>MAX_CALLBACK_BYTES)return json({error:"Provider callback payload is too large"},413);
+ const provider=text(new URL(request.url).searchParams.get("provider")||request.headers.get("x-pawspace-communication-provider")).toLowerCase();if(!provider)return json({error:"Communication provider is required"},400);
+ let rawBody:string;
+ try{rawBody=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}catch(error){
+  if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);
+  throw error;
+ }
  const{env}=await import("cloudflare:workers"),runtime=env as unknown as Record<string,unknown>,db=await database();const verified=isInteraktProvider(provider)?await verifyCanonicalInteraktWebhook(rawBody,request.headers,runtime):await verifyGeneric(rawBody,request.headers,runtime);if(!verified.ok)return json({error:verified.reason},verified.status);
  const ids=identity(rawBody,provider);if(!ids.eventId)return json({error:"Provider callback event ID is required"},400);
  const captured=await captureInboundWebhook(db,{provider,routeKey:"communication-provider-callback",environment:callbackEnvironment(runtime),eventId:ids.eventId,messageId:ids.messageId,rawBody,headers:request.headers});const status=text(captured.row.status);if(status==="PROCESSED")return json({ok:true,duplicatePrevented:true,status});if(status==="DEAD_LETTER")return json({ok:false,duplicatePrevented:true,status},503);
