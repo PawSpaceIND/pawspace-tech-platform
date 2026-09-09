@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { build } from "esbuild";
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 import { installAiHooks, freshAiDb, seedCustomer } from "../../tests/helpers/ai-harness.mjs";
 
 installAiHooks();
