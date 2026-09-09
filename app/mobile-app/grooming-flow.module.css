@@ -1,6 +1,12 @@
 .flow {
   padding-bottom: 10px;
 }
+.flow { color: var(--paw-text); }
+.petSummary { display: grid; gap: 12px; width: 100%; }
+.petSummary > div { display: flex; gap: 12px; align-items: center; }
+.petSummary img { border-radius: 50%; object-fit: cover; }
+.petSummary small { display: block; color: var(--paw-muted); font-size: 14px; }
+.petSummary > div > span { font-size: 28px; }
 .steps {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -688,3 +694,40 @@
 }
 .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#012a22;color:#fff;padding:11px 16px;border-radius:10px;font-size:10px;box-shadow:0 10px 28px #0005;max-width:320px;text-align:center}
 .premiumIntro{position:relative;display:grid;grid-template-columns:1fr auto;gap:10px;overflow:hidden;margin:2px 0 13px;padding:15px;border-radius:18px;background:linear-gradient(135deg,#01261f,#0d5746);color:#fff}.premiumIntro:after{content:"";position:absolute;right:-38px;bottom:-53px;width:130px;height:130px;border:1px solid #ffffff2e;border-radius:50%}.premiumIntro>span{grid-column:1/-1;color:#e6b34e;font-size:9px;font-weight:900;letter-spacing:.14em}.premiumIntro h2{margin:0;font-size:20px;line-height:1;letter-spacing:-.05em}.premiumIntro small{display:block;margin-top:5px;color:#dbece6;font-size:10px;line-height:1.3}.premiumIntro>b{position:relative;z-index:1;align-self:end;display:flex;align-items:baseline;color:#e6b34e;font-size:22px}.premiumIntro>b i{color:#dbece6;font-size:11px;font-style:normal}.steps{gap:6px;margin-bottom:18px}.steps span{height:5px;border-radius:99px;color:transparent;background:#dbe7e2}.steps .active{background:#e6b34e;color:transparent}.head h3{font-size:19px;letter-spacing:-.04em}.head small,.section span{font-size:10px}.types{gap:9px}.types button{min-height:82px;border-radius:16px;padding:12px 4px}.types i{font-size:27px}.types b{font-size:10px}.field{font-size:11px;margin-top:15px}.field small{font-size:10px;font-weight:600;color:#6c8077}.pet{border-radius:16px;padding:14px;margin-top:10px}.pet b{font-size:13px}.pet small{font-size:10px;line-height:1.35}.pet em{width:25px;height:25px;font-size:12px}.hint,.chooseHelp{font-size:10px;line-height:1.5}.packs{gap:10px}.packs button{min-height:189px;border-radius:16px;padding:12px}.packs span{font-size:8px}.packs h4{font-size:13px}.packs p{font-size:10px;min-height:42px}.bestFor{font-size:9px!important;min-height:29px}.packageDetail{border-radius:18px}.packageDetail h4{font-size:16px}.packageDetail>p{font-size:10px;line-height:1.4}.coverage section{gap:6px}.coverage section b,.coverage section span{font-size:10px}.primary{position:sticky;bottom:0;z-index:4;min-height:48px;margin-top:12px;border-radius:14px;background:#e6b34e;color:#2a1e05;box-shadow:0 -8px 20px #f2f7f5e8;font-size:13px}.back{font-size:12px}.section b{font-size:13px}.addons button,.subs button,.pay button{font-size:11px}.dates button,.slots button{font-size:11px}.review span,.review b{font-size:11px}
+
+/* Readable booking details across all three shared colour collections. */
+.flow :is(button, select) { min-height: 48px; scroll-margin-block: 100px; }
+.flow :is(.types button, .field select, .pet, .add, .packs button, .subs button,
+  .addons button, .dates button, .slots button, .check, .review, .pay button,
+  .info, .person, .qr, .packageDetail, .compareStrip > b, .compareStrip span) {
+  background: var(--paw-surface); color: var(--paw-text); border-color: var(--paw-line);
+}
+.flow .selected { background: var(--paw-raised) !important; border-color: var(--paw-primary) !important; }
+.flow :is(.head small, .section span, .field, .field small, .pet small, .packs p,
+  .packs small, .chooseHelp, .packageDetail > p, .subs small, .slots small,
+  .check small, .review span, .pay span, .info span, .person small) { color: var(--paw-muted); }
+.flow .bestFor { color: var(--paw-muted) !important; font-size: 13px !important; }
+.flow :is(.hint, .completeNote, .coverage section, .coverage .notIncluded) {
+  background: var(--paw-raised); color: var(--paw-text);
+}
+.flow :is(.coverage section b, .coverage section span, .compareStrip i,
+  .packs button > b, .subs strong, .subs button em, .addons b, .review b, .back, .add) { color: var(--paw-primary); }
+.flow .packageDetail > header { background: var(--paw-primary); color: var(--paw-on-primary); }
+.flow :is(.packageDetail header small, .packageDetail header strong) { color: var(--paw-on-primary); }
+.flow .compareStrip { background: var(--paw-line); border-color: var(--paw-line); }
+.flow :is(.head small, .section span, .types b, .field, .field small, .pet small,
+  .hint, .chooseHelp, .packs span, .packs p, .packs small, .packageDetail header small,
+  .packageDetail > p, .coverage section b, .coverage section span, .completeNote,
+  .compareStrip > b, .compareStrip span:first-of-type, .compareStrip strong, .compareStrip i,
+  .subs b, .subs small, .subs button em, .dates button, .slots small, .check small,
+  .review span, .pay span, .total small, .info span, .person small) { font-size: 13px; line-height: 1.5; }
+.flow :is(.section b, .packs h4, .pet b, .addons button, .slots b, .check b,
+  .review b, .pay b, .info b, .subs strong, .field select) { font-size: 16px; }
+.flow .primary {
+  position: relative; bottom: auto; background: var(--paw-primary);
+  color: var(--paw-on-primary); box-shadow: none; font-size: 16px;
+}
+.flow .packs button { min-height: 0; }
+@media (max-width: 480px) {
+  .flow :is(.packs, .subs, .coverage) { grid-template-columns: 1fr; }
+}

@@ -195,7 +195,8 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(training, /PAWSPACE RECOMMENDS/);
   assert.match(training, /Video \+ homework/);
   assert.match(training, /complimentary Bath & Basic grooming/);
-  assert.match(training, /All training programmes/);
+  assert.match(training, /Programmes for your selected dogs/);
+  assert.match(training, /eligiblePlans\.map/);
   assert.match(training, /Select this programme/);
   assert.match(training, /Selected programme/);
   assert.match(training, /training-plans\.module\.css/);
@@ -266,7 +267,7 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   assert.match(grooming, /status:"created"/);
   assert.match(grooming, /initialPaymentStatus:pay==="online"\?"payment_pending":"due_after_service"/);
   assert.doesNotMatch(grooming.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//")).join("\n"), /status:pay==="online"\?"captured":"created"/);
-  assert.match(training, /MEET A TRAINER FIRST/);
+  assert.match(training, /Meet a trainer first/);
   assert.match(training, /Book Meet & Greet only/);
   assert.match(stays, /10-minute phone call · Included/);
   assert.match(groomer, /Package upgraded/);

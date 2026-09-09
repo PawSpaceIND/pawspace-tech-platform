@@ -18,10 +18,10 @@ test("customer acceptance waits for OTP verification to replace the login UI", (
 
 test("approved premium Home exposes stable labelled discovery regions", () => {
   assert.match(discoverySource, /aria-label="Care services"/);
-  assert.match(discoverySource, /aria-label="Quick service guides"/);
-  assert.match(discoverySource, />Everything they need</);
-  assert.match(discoverySource, /data-home-design="option-5-premium-visual"/);
-  assert.match(discoverySource, />Premium care for your loved ones</);
+  assert.match(discoverySource, /aria-label="Care services"/);
+  assert.match(discoverySource, />Care for every little need</);
+  assert.match(discoverySource, /data-home-design="pawspace-prototype-converged"/);
+  assert.match(discoverySource, />Welcome to your/);
   assert.doesNotMatch(discoverySource, /Care for every kind of day/);
   assert.doesNotMatch(discoverySource, /Offers carousel/);
 });

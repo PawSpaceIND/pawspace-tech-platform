@@ -21,19 +21,18 @@ test("premium customer shell keeps the real signed-in service flows", () => {
   ], "mobile shell");
 });
 
-test("premium discovery keeps all eight legacy customer services reachable while video stays six-slot", () => {
+test("prototype-converged discovery keeps all eight wired customer services reachable without duplicate guides", () => {
   const home = read("app/mobile-app/premium-discovery-home.tsx");
   hasAll(home, [
     /const careServices = visible/,
-    /VIDEO_SERVICE_CODES/,
-    /"grooming"/,
-    /"dog_training"/,
-    /"boarding"/,
-    /"pet_sitting"/,
-    /"dog_walking"/,
-    /"pet_taxi"/,
+    /grooming/,
+    /dog_training/,
+    /boarding/,
+    /pet_sitting/,
+    /dog_walking/,
+    /pet_taxi/,
     /careServices\.map/,
-    /videoServices\.map/,
+    /data-service=\{service.serviceCode\}/,
   ], "premium discovery");
   const shell = read("app/mobile-app/page.tsx");
   hasAll(shell, [

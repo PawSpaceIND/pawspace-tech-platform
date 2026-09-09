@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {inboxResponseError,inboxErrorMessage} from "../../../../lib/inbox-ui-error";
+import styles from "./handoff.module.css";
 
 type Thread = {
   id: string;
@@ -50,14 +52,14 @@ const label = (value: unknown) => String(value || "—").replaceAll("_", " ");
 async function fetchQueue(): Promise<QueueEntry[]> {
   const response = await fetch("/api/ai-human-handoff?mode=queue", { cache: "no-store" });
   const body = (await response.json()) as { data?: { queue: QueueEntry[] }; error?: string };
-  if (!response.ok) throw new Error(body.error || "Unable to load the AI handoff queue");
+  if (!response.ok) throw inboxResponseError(response.status);
   return body.data?.queue || [];
 }
 
 async function fetchThreads(): Promise<Thread[]> {
   const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
   const body = (await response.json()) as { data?: { threads: Thread[] }; error?: string };
-  if (!response.ok) throw new Error(body.error || "Unable to load conversations");
+  if (!response.ok) throw inboxResponseError(response.status);
   return body.data?.threads || [];
 }
 
@@ -68,7 +70,7 @@ async function fetchHandoff(thread: Thread): Promise<Handoff | null> {
     { cache: "no-store" },
   );
   const body = (await response.json()) as { data?: Handoff; error?: string };
-  if (!response.ok) throw new Error(body.error || "Unable to load handoff");
+  if (!response.ok) throw inboxResponseError(response.status);
   return body.data || null;
 }
 
@@ -79,48 +81,62 @@ export default function AiHandoffPage() {
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading,setLoading]=useState(true);
+  const [queueLoaded,setQueueLoaded]=useState(false);
+  const [detailLoading,setDetailLoading]=useState(false);
+  const [revision,setRevision]=useState(0);
+  const selectionVersion=useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([fetchThreads(), fetchQueue().catch(() => [] as QueueEntry[])])
+    setLoading(true);setQueueLoaded(false);setError("");
+    void Promise.all([fetchThreads(), fetchQueue()])
       .then(([rows, escalations]) => {
         if (cancelled) return;
-        setThreads(rows);
+        const allRows=[...rows];
+        for(const entry of escalations){
+          if(!allRows.some(row=>row.id===entry.threadId))allRows.push({id:entry.threadId,customer_id:entry.customerId,status:entry.status});
+        }
+        setThreads(allRows);
         setQueue(escalations);
+        setQueueLoaded(true);
         // Open on a conversation that actually has a live handoff; fall back to the first thread only
         // when nothing is escalated.
-        const escalated = rows.find((thread) => escalations.some((entry) => entry.threadId === thread.id));
-        setSelected((current) => current || escalated || rows[0] || null);
+        const escalated = allRows.find((thread) => escalations.some((entry) => entry.threadId === thread.id));
+        setSelected((current) => allRows.find(row=>row.id===current?.id) || escalated || allRows[0] || null);
       })
       .catch((cause) => {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "Unable to load conversations");
+          setError(inboxErrorMessage(cause));
         }
-      });
+      }).finally(()=>{if(!cancelled)setLoading(false);});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [revision]);
 
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
+    const version=selectionVersion.current;
+    setHandoff(null);setDetailLoading(true);
     void fetchHandoff(selected)
       .then((nextHandoff) => {
-        if (!cancelled) setHandoff(nextHandoff);
+        if (!cancelled && version===selectionVersion.current) setHandoff(nextHandoff);
       })
       .catch((cause) => {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "Unable to load handoff");
+        if (!cancelled && version===selectionVersion.current) {
+          setError(inboxErrorMessage(cause));
         }
-      });
+      }).finally(()=>{if(!cancelled && version===selectionVersion.current)setDetailLoading(false);});
     return () => {
       cancelled = true;
     };
   }, [selected]);
 
   async function act(action: "take_over" | "resume_ai") {
-    if (!selected?.customer_id) return;
+    if (!selected?.customer_id || busy || detailLoading || !queueLoaded) return;
+    if(action==='resume_ai'&&!window.confirm('Return this conversation to AI? Staff ownership will end.'))return;
     setBusy(true);
     setError("");
     try {
@@ -139,15 +155,17 @@ export default function AiHandoffPage() {
         }),
       });
       const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error || "Handoff action failed");
+      if (!response.ok) throw inboxResponseError(response.status);
 
       const [rows, nextHandoff] = await Promise.all([fetchThreads(), fetchHandoff(selected)]);
       setThreads(rows);
       setHandoff(nextHandoff);
       const refreshedSelected = rows.find((thread) => thread.id === selected.id);
       if (refreshedSelected) setSelected(refreshedSelected);
+      setRevision(value=>value+1);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Handoff action failed");
+      setHandoff(null);setQueueLoaded(false);
+      setError(inboxErrorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -158,6 +176,7 @@ export default function AiHandoffPage() {
 
   return (
     <main
+      className={styles.page}
       style={{
         minHeight: "100vh",
         background: "#f7f4fb",
@@ -177,12 +196,13 @@ export default function AiHandoffPage() {
           }}
         >
           <div>
-            <small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · AI GATE 4</small>
+            <small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · HUMAN SUPPORT</small>
             <h1 style={{ margin: "6px 0" }}>Human handoff & staff takeover</h1>
             <p style={{ margin: 0, color: "#756c7d" }}>
               AI pauses during staff ownership. Return to AI requires an explicit governed staff action.
             </p>
           </div>
+          <button disabled={busy||loading} onClick={()=>setRevision(value=>value+1)}>{loading?'Refreshing…':'Refresh handoffs'}</button>
           <Link href="/team/customer-experience" style={{ padding: 10, textDecoration: "none", ...box }}>
             CX workspace
           </Link>
@@ -190,6 +210,7 @@ export default function AiHandoffPage() {
 
         {error && (
           <div
+            role="alert"
             style={{
               padding: 12,
               marginBottom: 14,
@@ -203,26 +224,24 @@ export default function AiHandoffPage() {
         )}
 
         <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(320px,.8fr) minmax(540px,1.4fr)",
-            gap: 16,
-          }}
+          className={styles.grid}
         >
           <aside style={{ ...box, overflow: "hidden" }}>
             <div style={{ padding: 16, borderBottom: "1px solid #eee6f5" }}>
               <b>Open canonical threads</b>
               <div style={{ fontSize: 12, color: "#746b7d", marginTop: 4 }}>
-                {queue.length === 0
+                {!queueLoaded ? (loading?'Loading handoff queue…':'Queue unavailable. Refresh to try again.') : queue.length === 0
                   ? "No conversation is currently escalated to a human."
                   : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
               </div>
             </div>
-            {threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
+            {queueLoaded && threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
             {threads.map((thread) => (
               <button
                 key={thread.id}
-                onClick={() => setSelected(thread)}
+                disabled={busy||loading}
+                aria-current={selected?.id===thread.id?'true':undefined}
+                onClick={() => {selectionVersion.current+=1;setHandoff(null);setDetailLoading(true);setSelected({...thread});setError("");}}
                 style={{
                   display: "block",
                   width: "100%",
@@ -263,14 +282,14 @@ export default function AiHandoffPage() {
                     </p>
                   </div>
                   <div>
-                    <b>{handoff?.aiPaused ? "AI paused" : "AI available"}</b>
+                    <b>{detailLoading?'Checking status…':!handoff?'Status not confirmed':handoff.aiPaused ? "AI paused" : "AI not paused"}</b>
                   </div>
                 </div>
 
                 <hr style={{ border: 0, borderTop: "1px solid #eee6f5", margin: "18px 0" }} />
 
                 {!current ? (
-                  <p>No Gate-4 handoff is active or recorded for this thread.</p>
+                  <p>{detailLoading?'Loading the selected conversation’s handoff…':!handoff?'Handoff details unavailable. Refresh before taking action.':'No handoff is active or recorded for this thread.'}</p>
                 ) : (
                   <>
                     <p>
@@ -282,13 +301,13 @@ export default function AiHandoffPage() {
                     </p>
                     <div style={{ display: "flex", gap: 8, margin: "14px 0" }}>
                       <button
-                        disabled={busy || String(current.status) !== "queued"}
+                        disabled={busy || loading || detailLoading || !queueLoaded || String(current.status) !== "queued"}
                         onClick={() => act("take_over")}
                       >
                         Take over
                       </button>
                       <button
-                        disabled={busy || String(current.status) !== "staff_active"}
+                        disabled={busy || loading || detailLoading || !queueLoaded || String(current.status) !== "staff_active"}
                         onClick={() => act("resume_ai")}
                       >
                         Return to AI

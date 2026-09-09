@@ -72,5 +72,16 @@
 	<string>PawSpace requires background location access for live pet walking telemetry.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>PawSpace requires camera access for pet grooming verification photos.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.pawspace.customer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pawspace</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

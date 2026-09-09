@@ -34,14 +34,16 @@ installWorkersHooks("__TRAINING_CAPTURE_DB__");
 
 const CAPTURE_URL = "/api/training-payment-sandbox";
 const BOOKING_URL = "/api/canonical-bookings";
+const ELIGIBILITY_URL = "/api/training-eligibility";
 
 /** Records every request in order and answers each endpoint with its real success envelope. */
-function stubFetch({ captureStatus = 200 } = {}) {
+function stubFetch({ captureStatus = 200, eligibilityStatus = 200 } = {}) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     const path = String(url);
     const body = init.body ? JSON.parse(String(init.body)) : null;
     calls.push({ path, body, headers: init.headers ?? {} });
+    if(path === ELIGIBILITY_URL) return new Response(JSON.stringify(eligibilityStatus===200?{data:{eligible:true}}:{error:"Please update your saved pet age."}),{status:eligibilityStatus,headers:{"content-type":"application/json"}});
     if (path === CAPTURE_URL) {
       if (captureStatus !== 200) return new Response(JSON.stringify({ error: "Training quote expired before sandbox capture" }), { status: captureStatus, headers: { "content-type": "application/json" } });
       return new Response(JSON.stringify({ data: { quoteId: body.quoteId, status: "captured", amount: body.amount, currency: "INR", environment: "sandbox", reference: "TRN-UAT-PAY-DEADBEEF", duplicatePrevented: false, liveMoney: false, synthetic: true } }), { status: 200, headers: { "content-type": "application/json" } });
@@ -79,10 +81,10 @@ test("P1-C01 a Training programme booking obtains the server sandbox capture bef
   await createCanonicalTrainingBooking(bookingArgs(trainingQuote()));
 
   const paths = calls.map((call) => call.path);
-  assert.deepEqual(paths, [CAPTURE_URL, BOOKING_URL],
+  assert.deepEqual(paths, [ELIGIBILITY_URL, CAPTURE_URL, BOOKING_URL],
     `the capture must happen, and happen first: ${JSON.stringify(paths)}`);
 
-  const capture = calls[0];
+  const capture = calls.find(call=>call.path===CAPTURE_URL);
   assert.equal(capture.body.quoteId, "TQ-CAPTURE-1", "the capture is bound to the quote being spent");
   assert.equal(capture.body.amount, 3000, "for the amount the quote says is due now, not the total");
   assert.ok(String(capture.headers["x-payment-capture-key"] || "").length > 0,
@@ -107,7 +109,7 @@ test("P1-C03 nothing is booked when the capture fails", async () => {
   const { createCanonicalTrainingBooking } = await import("../lib/training-booking-client.ts");
   await assert.rejects(() => createCanonicalTrainingBooking(bookingArgs(trainingQuote())),
     /expired before sandbox capture/, "the customer sees why, in the server's own words");
-  assert.deepEqual(calls.map((call) => call.path), [CAPTURE_URL],
+  assert.deepEqual(calls.map((call) => call.path), [ELIGIBILITY_URL, CAPTURE_URL],
     "an unproven payment must never reach the booking endpoint");
 });
 
@@ -120,7 +122,7 @@ test("P1-C04 Trainer Meet & Greet is not sandbox-captured", async () => {
     quoteId: "TQ-MEET-1", packageCode: "trainer-meet-greet", packageName: "Trainer Meet & Greet",
     sessions: 1, totalAmount: 500, amountDueNow: 500, paymentMode: "prepaid", meetAndGreet: true,
   })));
-  assert.deepEqual(calls.map((call) => call.path), [BOOKING_URL], "Meet & Greet books without a capture");
+  assert.deepEqual(calls.map((call) => call.path), [ELIGIBILITY_URL, BOOKING_URL], "Meet & Greet books without a capture");
 });
 
 // --- the shared lifecycle client, which made the above possible ---------------------------------
@@ -145,7 +147,7 @@ test("P1-C05 a caller that already declared its own payment captured is still ma
   await createCanonicalLifecycle(lifecycleInput({
     payment: { method: "internal_uat", mode: "split", status: "captured", detail: "Training UAT sandbox capture marker; live money disabled" },
   }));
-  assert.deepEqual(calls.map((call) => call.path), [CAPTURE_URL, BOOKING_URL],
+  assert.deepEqual(calls.map((call) => call.path), [ELIGIBILITY_URL, CAPTURE_URL, BOOKING_URL],
     "a client-declared 'captured' is not evidence and must not skip the capture");
 });
 
@@ -155,7 +157,15 @@ test("P1-C06 a Training programme with no server quote is not sent to the captur
   const calls = stubFetch();
   const { createCanonicalLifecycle } = await import("../lib/canonical-lifecycle-client.ts");
   await createCanonicalLifecycle(lifecycleInput({ pricing: { discount: 0 } }));
-  assert.deepEqual(calls.map((call) => call.path), [BOOKING_URL]);
+  assert.deepEqual(calls.map((call) => call.path), [ELIGIBILITY_URL, BOOKING_URL]);
+});
+
+test("an ineligible saved pet stops the flow before capture or booking",async()=>{
+  const calls=stubFetch({eligibilityStatus:409});
+  const {createCanonicalLifecycle}=await import("../lib/canonical-lifecycle-client.ts");
+  await assert.rejects(()=>createCanonicalLifecycle(lifecycleInput()),/saved pet age/);
+  assert.deepEqual(calls.map(call=>call.path),[ELIGIBILITY_URL]);
+  assert.deepEqual(calls[0].body,{customerId:"CUS-1",petIds:["account-1"],packageCode:"training-4-puppy"});
 });
 
 test("P1-C07 other services are never sent to the Training capture endpoint", async () => {

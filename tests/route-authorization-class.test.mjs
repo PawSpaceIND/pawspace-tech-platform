@@ -268,6 +268,7 @@ const AUTHORIZED_PROBE_VALIDATION = new Map([
   ["customer-grooming-summary.GET", "customer probe holds scheduling.book; missing selector validates after authorization"],
   ["grooming-booking-change.GET", "customer probe holds scheduling.book; missing booking selector is validated only after authorization"],
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
+  ["training-eligibility.POST", "customer probe holds scheduling.book; saved-pet payload validation follows the route permission check, then ownership is enforced"],
   ["subscription-billing.GET", "customer probe holds scheduling.book; missing subscription selector is validated only after authorization"],
 ]);
 

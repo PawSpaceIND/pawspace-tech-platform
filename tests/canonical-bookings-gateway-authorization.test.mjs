@@ -83,6 +83,19 @@ async function throughGateway(request) {
   return { access };
 }
 
+test("anonymous address discovery passes both gateways only for GET", async () => {
+  const { sqlite } = freshDb();
+  try {
+    const read = await throughGateway(new Request(`${ORIGIN}/api/address-autocomplete?mode=search&query=Bengaluru`));
+    assert.ok(read.access, "guest location discovery must not require checkout OTP");
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const write = await throughGateway(new Request(`${ORIGIN}/api/address-autocomplete`, { method }));
+      assert.ok(write.refused instanceof Response, `${method} must remain protected`);
+      assert.ok([401, 403].includes(write.refused.status));
+    }
+  } finally { sqlite.close(); }
+});
+
 /** Run the request through the gateway and, only if permitted, on to the real route handler. */
 async function callEndpoint(request) {
   const gate = await throughGateway(request);

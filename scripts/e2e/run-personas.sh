@@ -30,6 +30,7 @@ npx playwright test \
   e2e/customer-booking.spec.ts \
   e2e/partner-journey.spec.ts \
   e2e/frontend-resilience.spec.ts \
+  e2e/mobile-internal-wiring.spec.ts \
   --project=chromium \
   --project=mobile-chromium
 
