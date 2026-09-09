@@ -4,6 +4,7 @@ import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "../
 import { cleanupExpiredReservationLeases, SCHEDULING_RESERVATION_LEASE_MS } from "../../lib/scheduling-reservation-leases";
 import { runAutomaticBookingRefundSweep } from "../../lib/automatic-booking-refund";
 import { buildCompanyAnalytics } from "../../lib/company-analytics";
+import { ensureCanonicalBookingReadModel } from "../../lib/canonical-booking-read-model";
 
 const futureSlot = (daysAhead = 12) => {
   const start = new Date(Date.now() + daysAhead * 86_400_000);
@@ -37,13 +38,16 @@ test("01A same-slot concurrency: one reservation wins, two lose, losers create n
   const ctx = await setupJourney();
   try {
     const { start, end } = futureSlot(12);
-    const actors = await Promise.all([0, 1, 2].map(async index => {
+    const actors: Array<{ groupId: string; customerId: string; petId: string; cookie: string; start: string; end: string }> = [];
+    // Fixture setup is intentionally sequential because the in-memory D1 adapter uses one SQLite
+    // connection. The concurrency under test begins below at the reservation barrier, not during seeding.
+    for (const index of [0, 1, 2]) {
       const customerId = `CUST-CONC-${index + 1}`;
       const petId = `PET-CONC-${index + 1}`;
       await seedOwnedPet(ctx.db, customerId, petId, `Dog ${index + 1}`);
       const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
-      return { groupId: `GROOM-CONC-${index + 1}`, customerId, petId, cookie, start, end };
-    }));
+      actors.push({ groupId: `GROOM-CONC-${index + 1}`, customerId, petId, cookie, start, end });
+    }
 
     const originalBatch = ctx.db.batch.bind(ctx.db);
     let arrivals = 0;
@@ -80,6 +84,7 @@ test("01B abandoned reservation: five-minute lease cleanup releases capacity for
   const ctx = await setupJourney();
   const db = ctx.db as unknown as D1Database;
   try {
+    await ensureCanonicalBookingReadModel(db);
     expect(SCHEDULING_RESERVATION_LEASE_MS).toBe(5 * 60_000);
     const { start, end } = futureSlot(14);
     const a = { customerId: "CUST-TTL-A", petId: "PET-TTL-A", groupId: "GROOM-TTL-A" };
@@ -128,7 +133,8 @@ test("01C paid cancellation: one refund case, Razorpay Payments refund, exact re
     });
 
     const journey = await runCompletedJourney(ctx, config);
-    expect(journey.captured.status).toBe(200);
+    expect(journey.captured.status).toBe(201);
+    expect(journey.captureReplay.status).toBe(200);
     const total = Number(journey.total);
     expect(total).toBeGreaterThan(0);
 
