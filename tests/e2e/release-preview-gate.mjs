@@ -48,6 +48,11 @@ function statusCount(bucket, status) {
   bucket[key] = Number(bucket[key] || 0) + 1;
 }
 
+function swarmFixtureProvider(groupId) {
+  const group = String(groupId || "");
+  return /-swarm-\d+$/.test(group) ? `${group}-PRV` : "";
+}
+
 /**
  * Hosted Workers.dev traffic is external transport, not product logic. One lost TCP/TLS/header response
  * must not turn an otherwise deterministic gate into a five-minute anonymous `fetch failed`, but neither
@@ -92,6 +97,8 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     permissionRewrites: 0,
     bookerPermissionPreserved: 0,
     zoneRewrites: 0,
+    swarmSeedProviderRewrites: 0,
+    swarmBookingProviderRewrites: 0,
     quoteAttempts: 0,
     quotePreparations: 0,
     quoteFailures: 0,
@@ -121,6 +128,25 @@ export function adaptCurrentProductContracts({ http, d1 }) {
         metrics.bookerPermissionPreserved++;
       }
     }
+
+    // The legacy swarm predates active provider-window uniqueness and seeds every reservation for the
+    // same provider at the same exact two-hour window. With the production uniqueness index present,
+    // INSERT OR REPLACE correctly collapses those 60 fixtures to one row, so "60/60 bookings" becomes
+    // impossible before concurrency is even exercised. Preserve the swarm's actual purpose — 60 valid,
+    // independent booking confirmations under concurrent load — by giving only swarm fixtures a provider
+    // identity derived from their already-unique scheduling group. The deployed route still verifies that
+    // assignment, reservation and booking provider identities agree; no product guard is bypassed.
+    if (/^INSERT OR REPLACE INTO scheduling_(?:assignment_decisions|reservations) /i.test(next)) {
+      const group = next.match(/'([A-Za-z0-9_-]+-swarm-\d+)'/)?.[1] || "";
+      const uniqueProvider = swarmFixtureProvider(group);
+      if (uniqueProvider) {
+        const legacyProvider = group.replace(/-swarm-\d+$/, "-PRV");
+        const rewritten = next.replaceAll(`'${legacyProvider}'`, `'${uniqueProvider}'`);
+        if (rewritten !== next) metrics.swarmSeedProviderRewrites++;
+        next = rewritten;
+      }
+    }
+
     if (/^INSERT OR REPLACE INTO scheduling_reservations /i.test(next)) {
       const rewritten = next.replaceAll("'blr','koramangala'", "'blr','blr-east'");
       if (rewritten !== next) metrics.zoneRewrites++;
@@ -222,6 +248,12 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     if (method === "POST" && requestPath === "/api/canonical-bookings" && options.body && typeof options.body === "object") {
       let body = { ...options.body };
       if (body.cityId === "blr" && body.zoneId === "koramangala") body.zoneId = "blr-east";
+
+      const uniqueSwarmProvider = swarmFixtureProvider(body.scheduleGroupId);
+      if (uniqueSwarmProvider) {
+        body.provider = { ...(body.provider || {}), id: uniqueSwarmProvider };
+        metrics.swarmBookingProviderRewrites++;
+      }
 
       const cacheKeys = [
         body.idempotencyKey ? `ik:${body.idempotencyKey}` : "",
@@ -335,6 +367,8 @@ export async function runGate(io) {
   const contractOk = contract.permissionRewrites > 0
     && contract.bookerPermissionPreserved > 0
     && contract.zoneRewrites > 0
+    && contract.swarmSeedProviderRewrites > 0
+    && contract.swarmBookingProviderRewrites > 0
     && contract.quotePreparations > 0
     && contract.quoteFailures === 0
     && contract.captureFailures === 0;
@@ -343,6 +377,8 @@ export async function runGate(io) {
     `viewerPermissions=${contract.permissionRewrites}`,
     `bookerOwnershipPreserved=${contract.bookerPermissionPreserved}`,
     `zones=${contract.zoneRewrites}`,
+    `swarmSeedProviders=${contract.swarmSeedProviderRewrites}`,
+    `swarmBookingProviders=${contract.swarmBookingProviderRewrites}`,
     `prepared=${contract.quotePreparations}`,
     `quoteAttempts=${contract.quoteAttempts}`,
     `quoteFailures=${contract.quoteFailures}`,
