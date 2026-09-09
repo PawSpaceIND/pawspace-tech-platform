@@ -12,76 +12,100 @@
 
 type Row = Record<string, unknown>;
 
-const SAFE_EVENT_DETAIL_KEYS = new Set([
-  "action",
-  "from",
-  "to",
-  "status",
-  "sessionId",
-  "distanceMeters",
-  "thresholdMeters",
-  "consumedExactlyOnce",
-  "evidenceRefs",
-  "ownerHandoverMinutes",
-  "nextSession",
-  "programme",
-  "closure",
-  "reason",
-  "code",
-]);
-
+// Explicit schemas are the privacy boundary. A value-shaped PII check alone cannot
+// decide whether an arbitrary nested key (for example internalNote) is operational.
+type ScalarKind = "text" | "number" | "boolean";
+const EVENT_FIELDS: Record<string, ScalarKind> = {
+  action: "text", from: "text", to: "text", status: "text", sessionId: "text",
+  distanceMeters: "number", thresholdMeters: "number", consumedExactlyOnce: "boolean",
+  ownerHandoverMinutes: "number", code: "text",
+};
+const NEXT_SESSION_FIELDS: Record<string, ScalarKind> = {
+  sessionId: "text", sequenceNo: "number", status: "text",
+};
+const PROGRAMME_FIELDS: Record<string, ScalarKind> = {
+  total: "number", completed: "number", noShow: "number", cancelled: "number",
+  status: "text", terminal: "boolean",
+};
+const CLOSURE_FIELDS: Record<string, ScalarKind> = {
+  certificateNumber: "text", reviewDispatched: "boolean",
+};
+const PROGRESS_FIELDS: Record<string, ScalarKind> = {
+  focus: "number", recall: "number", impulse: "number", parent: "number",
+};
 const PII_VALUE = /(?:\+?91[\s-]?)?\d{10}|@|street|road|nagar|layout|apartment|flat\s*#|email|phone|called customer/i;
 
 function looksLikePii(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const s = value.trim();
-  if (s.length > 240) return true;
-  return PII_VALUE.test(s);
+  return typeof value === "string" && (value.trim().length > 240 || PII_VALUE.test(value));
 }
 
-function parseJsonObject(raw: unknown): Record<string, unknown> {
-  const text = String(raw ?? "").trim();
-  if (!text || text[0] !== "{") return {};
-  try {
-    const value = JSON.parse(text);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return value as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+function object(value: unknown): Row {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 }
 
-export function sanitizeTrainingEventDetail(detail: unknown): Record<string, unknown> {
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return {};
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(detail as Row)) {
-    if (!SAFE_EVENT_DETAIL_KEYS.has(key)) continue;
-    if (Array.isArray(value)) {
-      out[key] = value.filter((item) => typeof item === "string" && !looksLikePii(item)).map(String);
-      continue;
-    }
-    if (typeof value === "object" && value !== null) {
-      // Nested objects (nextSession, programme, closure) are operational; keep shallow safe scalars only.
-      if (key === "nextSession" || key === "programme" || key === "closure") {
-        const nested: Record<string, unknown> = {};
-        for (const [nk, nv] of Object.entries(value as Row)) {
-          if (typeof nv === "object" && nv !== null) continue;
-          if (looksLikePii(nv)) continue;
-          nested[nk] = nv;
-        }
-        out[key] = nested;
-      }
-      continue;
-    }
-    if (looksLikePii(value)) continue;
-    out[key] = value;
+function projectScalars(value: unknown, fields: Record<string, ScalarKind>): Row {
+  const row = object(value);
+  const out: Row = {};
+  for (const [key, kind] of Object.entries(fields)) {
+    if (!Object.hasOwn(row, key)) continue;
+    const item = row[key];
+    if (kind === "text" && typeof item === "string" && !looksLikePii(item)) out[key] = item;
+    if (kind === "number" && typeof item === "number" && Number.isFinite(item)) out[key] = item;
+    if (kind === "boolean" && typeof item === "boolean") out[key] = item;
   }
   return out;
 }
 
-export function projectTrainingSessionEvent(row: Row) {
+function projectAttendance(value: unknown): Row {
+  const row = object(value);
+  const out = projectScalars(row, { parentOrCaretakerConfirmed: "boolean", safeAreaConfirmed: "boolean" });
+  if (row.mode === "parent" || row.mode === "trainer_led") out.mode = row.mode;
+  return out;
+}
+
+function projectHomework(value: unknown): Row {
+  const row = object(value);
+  // Homework is intentional trainer-facing content, not arbitrary metadata. Do not
+  // erase a legitimate long assignment simply because event summaries are shorter.
+  return typeof row.text === "string" && !PII_VALUE.test(row.text) ? { text: row.text } : {};
+}
+
+function projectProgress(value: unknown): Row {
+  return Object.fromEntries(Object.entries(projectScalars(value, PROGRESS_FIELDS))
+    .filter(([, score]) => Number(score) >= 1 && Number(score) <= 10));
+}
+
+function evidenceRefs(value: unknown): string[] {
+  // The Training lifecycle/media API uses opaque canonical media refs. Never return
+  // signed URLs, arbitrary strings, or contact data smuggled into a refs array.
+  return Array.isArray(value) ? value.filter((item): item is string =>
+    typeof item === "string" && /^media:\/\/asset\/[A-Za-z0-9_-]{1,128}$/.test(item)) : [];
+}
+
+function parseJsonObject(raw: unknown): Row {
+  if (typeof raw !== "string") return object(raw);
+  try { return object(JSON.parse(raw)); } catch { return {}; }
+}
+
+export function sanitizeTrainingEventDetail(detail: unknown): Row {
+  const row = object(detail);
+  // Free-text staff reasons, actor IDs and reports are intentionally not event fields.
+  const out = projectScalars(row, EVENT_FIELDS);
+  for (const [key, fields] of Object.entries({
+    nextSession: NEXT_SESSION_FIELDS, programme: PROGRAMME_FIELDS, closure: CLOSURE_FIELDS,
+  })) {
+    if (!Object.hasOwn(row, key)) continue;
+    if (row[key] === null) out[key] = null;
+    else out[key] = projectScalars(row[key], fields);
+  }
+  if (Object.hasOwn(row, "evidenceRefs")) out.evidenceRefs = evidenceRefs(row.evidenceRefs);
+  return out;
+}
+
+export function projectTrainingSessionEvent(value: unknown) {
+  const row = object(value);
   return {
-    eventType: String(row.event_type || ""),
+    eventType: typeof row.event_type === "string" && !looksLikePii(row.event_type) ? row.event_type : "",
     // Never return staff email / actor id raw to trainers
     actorId: "provider_or_system",
     detail: sanitizeTrainingEventDetail(
@@ -96,7 +120,8 @@ export function projectTrainingSessionEvent(row: Row) {
  * customer_name is expected to already be maskName'd by the route; we still
  * refuse to pass through any other contact-shaped fields from the raw join.
  */
-export function projectTrainerSession(row: Row) {
+export function projectTrainerSession(value: unknown) {
+  const row = object(value);
   const events = Array.isArray(row.events) ? (row.events as Row[]).map(projectTrainingSessionEvent) : [];
   return {
     id: String(row.id || ""),
@@ -121,12 +146,10 @@ export function projectTrainerSession(row: Row) {
     requirements: Array.isArray(row.requirements)
       ? (row.requirements as unknown[]).filter((x) => typeof x === "string" && !looksLikePii(x)).map(String)
       : [],
-    attendance: row.attendance && typeof row.attendance === "object" && !Array.isArray(row.attendance) ? row.attendance : {},
-    homework: row.homework && typeof row.homework === "object" && !Array.isArray(row.homework) ? row.homework : {},
-    progress: row.progress && typeof row.progress === "object" && !Array.isArray(row.progress) ? row.progress : {},
-    evidenceRefs: Array.isArray(row.evidenceRefs)
-      ? (row.evidenceRefs as unknown[]).filter((x) => typeof x === "string").map(String)
-      : [],
+    attendance: projectAttendance(row.attendance),
+    homework: projectHomework(row.homework),
+    progress: projectProgress(row.progress),
+    evidenceRefs: evidenceRefs(row.evidenceRefs),
     events,
   };
 }

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { adaptCurrentProductContracts, boundedPreviewFetch } from "./e2e/release-preview-gate.mjs";
 
@@ -194,4 +195,156 @@ test("capture failure is reported separately from quote failure", async () => {
   assert.equal(stats.captureFailures, 1);
   assert.equal(stats.captureFailureStatuses["403"], 1);
   assert.match(stats.firstPreparationFailure, /^capture:status=403:error=PAYMENT_CAPTURE_REPLAY$/);
+});
+
+// Swarm regression coverage belongs to this existing adapter suite; keep the static-file ratchet unchanged.
+test("current preview adapter gives each swarm scheduling group an independent provider slot", async () => {
+  const d1Seen = [];
+  const httpSeen = [];
+  const d1 = async (sql) => { d1Seen.push(String(sql)); return []; };
+  const http = async (method, path, options = {}) => {
+    httpSeen.push({ method, path, body: options.body });
+    return { status: 418, body: {}, headers: {} };
+  };
+  const adapted = adaptCurrentProductContracts({ http, d1 });
+
+  const group = "preview-deadbeef-9001-1-swarm-3";
+  const baseProvider = "preview-deadbeef-9001-1-PRV";
+  const uniqueProvider = `${group}-PRV`;
+
+  await adapted.d1(`INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES ('${group}','balanced','[]','${baseProvider}','assigned','preview','gate',1)`);
+  await adapted.d1(`INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES ('RES-${group}','${group}','${baseProvider}','pet_sitting','blr','koramangala','preview-deadbeef-9001-1-CUS','[]','2027-03-04T09:00:00.000Z','2027-03-04T11:00:00.000Z',1,1,NULL,'reserved','{}',1)`);
+
+  assert.equal(d1Seen.length, 2);
+  for (const sql of d1Seen) {
+    assert.match(sql, new RegExp(`'${uniqueProvider}'`), "both assignment and reservation must use the unique swarm provider");
+  }
+  assert.match(d1Seen[1], /'blr','blr-east'/, "the existing current-zone adaptation must remain intact");
+
+  await adapted.http("POST", "/api/canonical-bookings", {
+    body: {
+      idempotencyKey: group,
+      scheduleGroupId: group,
+      customer: { id: "not-the-owned-gate-customer" },
+      pets: [{ sourceId: "swarm-3", name: "Pet 3" }],
+      cityId: "maa",
+      zoneId: "adyar",
+      serviceCode: "pet_sitting",
+      provider: { id: baseProvider, name: "Preview sitter", model: "full_time" },
+    },
+  });
+
+  const forwarded = httpSeen.at(-1);
+  assert.equal(forwarded.path, "/api/canonical-bookings");
+  assert.equal(forwarded.body.provider.id, uniqueProvider, "booking payload must name the same provider the swarm reservation holds");
+
+  const metrics = adapted.stats();
+  assert.equal(metrics.swarmSeedProviderRewrites, 2, "assignment and reservation rewrites must both be observed");
+  assert.equal(metrics.swarmBookingProviderRewrites, 1, "booking provider rewrite must be observed");
+});
+
+test("current preview adapter leaves non-swarm provider identities unchanged", async () => {
+  const d1Seen = [];
+  const httpSeen = [];
+  const adapted = adaptCurrentProductContracts({
+    d1: async (sql) => { d1Seen.push(String(sql)); return []; },
+    http: async (method, path, options = {}) => { httpSeen.push({ method, path, body: options.body }); return { status: 418, body: {}, headers: {} }; },
+  });
+
+  const group = "preview-deadbeef-9001-1-normal";
+  const provider = "preview-deadbeef-9001-1-PRV";
+  await adapted.d1(`INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES ('${group}','balanced','[]','${provider}','assigned','preview','gate',1)`);
+  await adapted.http("POST", "/api/canonical-bookings", {
+    body: {
+      scheduleGroupId: group,
+      customer: { id: "not-the-owned-gate-customer" },
+      pets: [{ sourceId: "pet", name: "Pet" }],
+      cityId: "maa",
+      zoneId: "adyar",
+      serviceCode: "pet_sitting",
+      provider: { id: provider, name: "Preview sitter", model: "full_time" },
+    },
+  });
+
+  assert.match(d1Seen[0], new RegExp(`'${provider}'`));
+  assert.equal(httpSeen.at(-1).body.provider.id, provider);
+  assert.equal(adapted.stats().swarmSeedProviderRewrites, 0);
+  assert.equal(adapted.stats().swarmBookingProviderRewrites, 0);
+});
+
+test("swarm seed identity follows group_id even after quoted JSON and reordered columns", async () => {
+  const seen = [];
+  const adapted = adaptCurrentProductContracts({ d1: async (sql) => { seen.push(sql); return []; }, http: async () => ({ status: 418 }) });
+  const group = "preview-deadbeef-9001-1-swarm-7";
+  const provider = "preview-deadbeef-9001-1-PRV";
+  await adapted.d1(`INSERT OR REPLACE INTO scheduling_reservations (explanation_json,id,provider_id,group_id,status) VALUES ('{"note":"owner''s,fixture"}', 'RES-${group}', '${provider}', '${group}', 'reserved')`);
+  assert.ok(seen[0].includes(`'${group}-PRV'`));
+  assert.ok(seen[0].includes(`'RES-${group}'`), "reservation identity itself is never rewritten");
+  assert.ok(seen[0].includes(`'{"note":"owner''s,fixture"}'`), "quoted data remains byte-for-byte intact");
+  assert.equal(adapted.stats().swarmSeedProviderRewrites, 1);
+});
+
+test("swarm-looking reservation IDs do not rewrite a non-swarm or missing group_id", async () => {
+  const seen = [];
+  const adapted = adaptCurrentProductContracts({ d1: async (sql) => { seen.push(sql); return []; }, http: async () => ({ status: 418 }) });
+  for (const sql of [
+    "INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id) VALUES ('preview-x-swarm-1','preview-x-normal','preview-x-PRV')",
+    "INSERT OR REPLACE INTO scheduling_reservations (id,provider_id) VALUES ('preview-x-swarm-1','preview-x-PRV')",
+  ]) {
+    await adapted.d1(sql);
+    assert.equal(seen.at(-1), sql);
+  }
+  assert.equal(adapted.stats().swarmSeedProviderRewrites, 0);
+});
+
+test("all 60 swarm reservations survive a real SQLite provider-window uniqueness constraint", async (t) => {
+  const db = new DatabaseSync(":memory:");
+  t.after(() => db.close());
+  // Local fixture tables exercise SQLite REPLACE behavior, not a mock of its uniqueness semantics.
+  db.exec(`
+    CREATE TABLE scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,selected_provider_id TEXT);
+    CREATE TABLE scheduling_reservations (
+      id TEXT PRIMARY KEY,group_id TEXT,provider_id TEXT,service_code TEXT,city_id TEXT,zone_id TEXT,
+      customer_id TEXT,pet_ids_json TEXT,scheduled_start TEXT,scheduled_end TEXT,capacity_units INTEGER,
+      occurrence_number INTEGER,care_mode TEXT,status TEXT,explanation_json TEXT,created_at INTEGER
+    );
+    CREATE UNIQUE INDEX uq_scheduling_reservations_active_provider_window
+      ON scheduling_reservations(provider_id,scheduled_start,scheduled_end)
+      WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight';
+  `);
+  const requests = [];
+  const adapted = adaptCurrentProductContracts({
+    d1: async (sql) => { db.exec(sql); return []; },
+    http: async (method, path, options = {}) => {
+      requests.push({ method, path, body: options.body });
+      return { status: 418, body: {}, headers: {} };
+    },
+  });
+  const prefix = "preview-deadbeef-9001-1";
+  const provider = `${prefix}-PRV`;
+  for (let i = 0; i < 60; i++) {
+    const group = `${prefix}-swarm-${i}`;
+    await adapted.d1(`INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,selected_provider_id) VALUES ('${group}','${provider}')`);
+    await adapted.d1(`INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES ('RES-${group}','${group}','${provider}','pet_sitting','blr','koramangala','${prefix}-CUS','[]','2027-03-04T09:00:00.000Z','2027-03-04T11:00:00.000Z',1,1,NULL,'reserved','{}',1)`);
+    await adapted.http("POST", "/api/canonical-bookings", {
+      body: booking({ idempotencyKey: group, scheduleGroupId: group, provider: { id: provider }, customer: { id: "not-the-owned-gate-customer" } }),
+    });
+  }
+  const rows = db.prepare(`SELECT r.group_id,r.provider_id,a.selected_provider_id FROM scheduling_reservations r
+    JOIN scheduling_assignment_decisions a ON a.group_id=r.group_id`).all();
+  assert.equal(rows.length, 60, "REPLACE must not collapse the 60 valid reservations to one");
+  assert.equal(new Set(rows.map((row) => row.provider_id)).size, 60);
+  assert.equal(requests.length, 60);
+  for (const row of rows) {
+    assert.equal(row.provider_id, `${row.group_id}-PRV`);
+    assert.equal(row.selected_provider_id, row.provider_id);
+    assert.equal(requests.find((request) => request.body.scheduleGroupId === row.group_id).body.provider.id, row.provider_id);
+  }
+  assert.equal(adapted.stats().swarmSeedProviderRewrites, 120);
+  assert.equal(adapted.stats().swarmBookingProviderRewrites, 60);
+  // A genuinely duplicated slot must still fail; the fixture adapter cannot weaken this guard.
+  assert.throws(() => db.exec(`INSERT INTO scheduling_reservations
+    (id,group_id,provider_id,service_code,scheduled_start,scheduled_end,care_mode,status)
+    VALUES ('duplicate','duplicate','${prefix}-swarm-0-PRV','pet_sitting','2027-03-04T09:00:00.000Z','2027-03-04T11:00:00.000Z',NULL,'reserved')`), /UNIQUE constraint failed/);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM scheduling_reservations").get().n, 60);
 });

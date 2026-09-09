@@ -76,9 +76,10 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   const location = page.getByRole("button", { name: "Choose your service location" });
   if (await location.isVisible().catch(() => false)) {
     await location.click();
-    await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Indiranagar, Bengaluru");
-    await page.getByRole("button", { name: "Save location" }).click();
-    await expect(page.getByRole("button", { name: /Choose your service location/i })).toContainText(/Indiranagar\s*,?\s*Bengaluru/i);
+    const locationDialog = page.getByRole("dialog", { name: "Choose your service area" });
+    await expect(locationDialog).toBeVisible();
+    await locationDialog.getByRole("button", { name: "Browse without location", exact: true }).click();
+    await expect(locationDialog).toBeHidden();
   }
 
   await grooming.getByRole("button", { name: /book now/i }).click();

@@ -58,6 +58,10 @@ function upsert(db, table, row) {
 
 export function seed(dbPath = locateDb()) {
   const db = new DatabaseSync(dbPath);
+  // The hardened runner stops Wrangler before seeding, but workerd can retain the final SQLite
+  // writer lock briefly after the port closes. Wait a bounded interval for that local lock instead
+  // of turning a clean shutdown race into a false E2E failure.
+  db.exec("PRAGMA busy_timeout=5000");
   const now = Date.now();
   const out = [];
 
