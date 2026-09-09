@@ -1,0 +1,99 @@
+name: Pending PR closure source snapshot (read only)
+
+# Transport source/evidence to an offline reviewer; never publish product code.
+on:
+  push:
+    branches: [evidence/pr-closure-snapshot-20260909]
+    paths: [.github/workflows/pr-closure-source-snapshot.yml]
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-pr-closure-source-snapshot
+  cancel-in-progress: false
+env:
+  PAWSPACE_PAYMENT_ENV: sandbox
+  FORBID_PRODUCTION: 'true'
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+jobs:
+  snapshot:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/evidence/pr-closure-snapshot-20260909'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 53b65fe1cc8737f4d2c5c83d7868e3223c278805
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Snapshot exact refs and compute non-mutating merge inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pr-closure-source"
+          python3 - <<'PY'
+          import subprocess, json, os, datetime
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'pr-closure-source'
+          base='53b65fe1cc8737f4d2c5c83d7868e3223c278805'
+          expected={
+            560:'03d1115cb4fa28cd31a6a4cd13fb6afd2d9147f5',
+            565:'ae2658dab4674ad07d64a377aaa1b435e9d67b74',
+            575:'ebf8514b0173d6bea757ba9f5e00ad38cef47c3a',
+            578:'e3946a0a2b544ca638378910a717e13ec9146a41',
+            588:'52ffe68903118df937168a9e2dab7a2679201ee1',
+            589:'4994718a505d141f4f1a199d6c894a663667a73c',
+            640:'99d96d9fd64f6c1196bad73e59e9c0d3522fc127',
+            641:'a00706c32a362b8dea3bfb52a799476252cb0023',
+            655:'08a455e81d3c6b523e0ab45f05a8b28ca9084bf3',
+            663:'98e46110be1c47fa1f5c239f2074ef318c780665',
+            668:'7b19c029e899dadb05df23c019224183af995c17',
+            673:'d2bbd5f8140f4f9c54b0d34922e137eeaccf4f13',
+            674:'b9348cf9b52b81289cd5ddf7ffb96855ae566726',
+            675:'9a2115048dc20e616ef5e969ba671f942bfcb7b7',
+            676:'38177ca5562760c1972d46aaffadc8527b99a22e',
+            677:'35d9872ea6167d505e9e114230f89640f6b37465'
+          }
+          def git(*args,check=True):
+            return subprocess.run(['git',*args],text=True,capture_output=True,check=check,timeout=180)
+          assert git('rev-parse','HEAD').stdout.strip()==base
+          git('update-ref','refs/heads/snapshot-main',base)
+          remote='https://github.com/PawSpaceIND/pawspace-tech-platform.git'
+          specs=[f'+refs/pull/{n}/head:refs/heads/snapshot-pr-{n}' for n in expected]
+          git('fetch','--no-tags',remote,*specs)
+          manifest={'base_sha':base,'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'run_id':os.environ['GITHUB_RUN_ID'],'source_only':True,'prs':[]}
+          refs=['refs/heads/snapshot-main']
+          for n,sha in expected.items():
+            ref=f'refs/heads/snapshot-pr-{n}'
+            actual=git('rev-parse',ref).stdout.strip()
+            refs.append(ref)
+            merge=git('merge-tree','--write-tree',base,actual,check=False)
+            if merge.returncode not in (0,1):
+              raise RuntimeError(f'Non-mutating merge inspection failed for PR {n}')
+            (root/f'merge-pr-{n}.txt').write_text(merge.stdout)
+            paths=git('diff','--name-only',f'{base}...{actual}').stdout.splitlines()
+            manifest['prs'].append({'number':n,'expected_head':sha,'observed_head':actual,'head_matches':actual==sha,'merged_into_base':git('merge-base','--is-ancestor',actual,base,check=False).returncode==0,'merge_clean_against_snapshot_main':merge.returncode==0,'merge_tree':merge.stdout.splitlines()[0] if merge.stdout else None,'changed_paths':paths})
+          git('bundle','create',str(root/'source.bundle'),*refs)
+          git('bundle','verify',str(root/'source.bundle'))
+          (root/'snapshot.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          print(f'Source snapshot: {len(expected)} PRs; main={base}; no remote code/ref changes')
+          PY
+      - name: Install locked dependencies for offline execution
+        run: npm run install:ci
+      - name: Package installed dependencies without credentials or system fonts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude='*.ttf' --exclude='*.otf' --exclude='*.woff' --exclude='*.woff2' -czf "$RUNNER_TEMP/pr-closure-source/node-modules.tar.gz" node_modules
+          cd "$RUNNER_TEMP/pr-closure-source"
+          sha256sum source.bundle node-modules.tar.gz snapshot.json > SHA256SUMS.txt
+      - name: Upload source and offline verification inputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-closure-source-snapshot
+          path: ${{ runner.temp }}/pr-closure-source/
+          retention-days: 3
+          if-no-files-found: error
