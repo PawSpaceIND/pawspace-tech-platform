@@ -25,7 +25,7 @@ async function expectOk(response: import("@playwright/test").APIResponse, label:
 }
 
 
-export async function runGroomingDemo(origin: string, suffix: string, dayOffset: number) {
+export async function runGroomingDemo(origin: string, suffix: string, dayOffset: number, ending: "complete" | "cancel" = "complete") {
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
   const provider = await actorApi(origin, PROVIDER_EMAIL);
   const admin = await actorApi(origin, ADMIN_EMAIL);
@@ -116,6 +116,21 @@ export async function runGroomingDemo(origin: string, suffix: string, dayOffset:
       },
     });
     await expectOk(captured, "finance sandbox payment capture");
+
+    if (ending === "cancel") {
+      const data = {bookingId, customerId:CUSTOMER_ID, action:"cancel",reason:"Connected sandbox cancellation demo"};
+      const responses = await Promise.all([customer.post("/api/grooming-booking-change",{data}),customer.post("/api/grooming-booking-change",{data})]);
+      const cancellations = await Promise.all(responses.map(async response=>({status:response.status(),body:await response.json()})));
+      console.log(JSON.stringify({bookingId,cancellations}));
+      const successful = cancellations.filter(result=>result.status===200);
+      expect(successful.length).toBeGreaterThan(0);
+      const caseIds = [...new Set(successful.map(result=>result.body.data.refundCaseId))];
+      expect(caseIds, "a double tap must not open two refund cases").toHaveLength(1);
+      const adminBody = await expectOk(await admin.get("/api/canonical-bookings"),"admin cancellation visibility");
+      const row = adminBody.bookings.find((row:{id:string})=>row.id===bookingId);
+      expect(row.status).toBe("cancelled");expect(row.work_order_status).toBe("cancelled");expect(row.payment_status).toBe("refund_pending");
+      return {bookingId,groupId,cancellations,adminView:row,paymentMode:"sandbox",evidenceKind:"built-worker-http-local-d1-cancellation"};
+    }
 
     for (const action of ["accept", "on_the_way"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
