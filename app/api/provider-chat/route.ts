@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     if (!assignment) assignment = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
     if (!assignment || text(assignment.provider_id) !== providerId) return json({ error: "Provider is not assigned to this conversation" }, 403);
     const messages = await db.prepare("SELECT id,direction,channel,payload_json,status,created_at FROM communication_messages WHERE thread_id=? AND channel IN ('chat','whatsapp') ORDER BY created_at ASC LIMIT 250").bind(threadId).all<Row>();
-    const data = messages.results.map(row => { let payload: Row = {}; try { payload = JSON.parse(text(row.payload_json) || "{}") as Row; } catch {} delete payload.customerPhone; delete payload.providerPhone; delete payload.providerIdentity; return { id: row.id, direction: row.direction, channel: row.channel, payload, status: row.status, createdAt: row.created_at }; });
+    const data = messages.results.map(row => { let payload: Row = {}; try { payload = JSON.parse(text(row.payload_json) || "{}") as Row; } catch {} delete payload.internalNote; delete payload.customerPhone; delete payload.providerPhone; delete payload.providerIdentity; return { id: row.id, direction: row.direction, channel: row.channel, payload, status: row.status, createdAt: row.created_at }; });
     return json({ data: { threadId, bookingId: text(thread.booking_id), messages: data, contactMode: "masked_proxy_only" } });
   } catch (error) { return authError(error, "Unable to load provider chat"); }
 }

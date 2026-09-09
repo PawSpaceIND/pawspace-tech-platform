@@ -112,7 +112,7 @@ test("META-03: an inbound payload signed with the real app secret verifies, and 
   console.log(`META-03 signature contract holds; parsed shape: ${JSON.stringify(parsed).slice(0, 160)}`);
 });
 
-test("META-04: the webhook challenge answers the real verify token and nothing else", { ...state.gate(), ...(process.env[VERIFY_TOKEN] ? {} : { skip: `${VERIFY_TOKEN} is not configured — the subscribe handshake cannot be exercised` }) }, async () => {
+test("META-04: the webhook challenge answers the real verify token and nothing else", state.gateOn(VERIFY_TOKEN), async () => {
   const token = String(process.env[VERIFY_TOKEN] || "");
   const url = (mode, supplied, challenge) => new URL(`https://uat.pawspace.in/api/whatsapp/meta-webhook?hub.mode=${mode}&hub.verify_token=${encodeURIComponent(supplied)}&hub.challenge=${challenge}`);
   assert.equal(webhook.verifyMetaWebhookChallenge(url("subscribe", token, "12345"), token), "12345", "the real token must echo the challenge");
