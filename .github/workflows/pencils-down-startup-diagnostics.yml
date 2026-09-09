@@ -1,0 +1,43 @@
+name: Pencils-down startup diagnostics
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-startup-diagnostics.yml]
+permissions:
+  contents: read
+  actions: read
+  checks: read
+jobs:
+  diagnostics:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # Deliberately no deployment environment or Cloudflare credentials.
+    # This only reads the rejected job's public/repository CI annotations.
+    steps:
+      - name: Read the rejected job annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          run='34390662170'
+          base='https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']
+          def get(path):
+              request=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
+          jobs=get('/actions/runs/'+run+'/jobs?per_page=100')['jobs']
+          report={'inspected_run_id':run,'read_only':True,'jobs':[]}
+          for job in jobs:
+              if job['name']!='staging':continue
+              annotations=get('/check-runs/'+str(job['id'])+'/annotations?per_page=30')
+              report['jobs'].append({'name':job['name'],'conclusion':job['conclusion'],'steps_started':len(job.get('steps') or []),'annotations':[{'level':a['annotation_level'],'message':a['message'][:4000]} for a in annotations]})
+          pathlib.Path('startup-diagnostics.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Preserve startup diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: pencils-down-startup-diagnostics
+          path: startup-diagnostics.json
+          retention-days: 7
