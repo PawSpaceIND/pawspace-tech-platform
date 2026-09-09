@@ -91,7 +91,10 @@ test("customer navigation and billing controls have physical 44px targets and re
       const button = nav.getByRole("button", { name: new RegExp(name === "Book" ? "Book$" : name + "$", "i") });
       await target(button, `navigation:${name}`);
       await button.click();
-      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+      // The discovery shell intentionally hides its legacy greeting header via :has([data-discovery]).
+      // Verify the visible functional home region instead; all other tabs retain their own heading.
+      if (name === "Home") await expect(page.getByRole("region", { name: "Care services", exact: true })).toBeVisible();
+      else await expect(page.getByRole("heading", { name: heading })).toBeVisible();
     }
     await page.screenshot({ path: testInfo.outputPath("customer-ux-guest-navigation.png"), fullPage: true });
 
