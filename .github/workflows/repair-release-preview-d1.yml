@@ -70,28 +70,71 @@ jobs:
           OUT="$(mktemp)"
           trap 'rm -f "$PROBE" "$OUT"' EXIT
 
+          # Wrangler's positional `d1 execute` argument is a configured database name/binding, not
+          # a raw UUID. The release-preview config intentionally stores the dedicated D1 as a UUID,
+          # so maintenance addresses it through Cloudflare's D1 Query API instead:
+          # POST /accounts/{account_id}/d1/database/{database_id}/query.
+          cf_query() {
+            local sql="$1"
+            local output="$2"
+            local payload http_status
+
+            payload="$(SQL="$sql" node --input-type=module <<'NODE'
+          process.stdout.write(JSON.stringify({sql: process.env.SQL}));
+          NODE
+            )"
+
+            http_status="$(curl --silent --show-error \
+              --output "$output" \
+              --write-out '%{http_code}' \
+              --request POST \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${PREVIEW_D1}/query" \
+              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              --header 'Content-Type: application/json' \
+              --data "$payload")"
+
+            if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+              return 1
+            fi
+
+            RESPONSE_FILE="$output" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const body = JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE, 'utf8'));
+          const result = Array.isArray(body?.result) ? body.result : [body?.result].filter(Boolean);
+          if (body?.success !== true || result.some(entry => entry?.success === false)) process.exit(1);
+          NODE
+          }
+
+          report_cf_error() {
+            RESPONSE_FILE="$1" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          let body;
+          try { body = JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE, 'utf8')); }
+          catch { console.error('Cloudflare D1 returned a non-JSON error response.'); process.exit(0); }
+          const errors = Array.isArray(body?.errors) ? body.errors : [];
+          const messages = errors.map(item => String(item?.message || item?.code || '')).filter(Boolean);
+          if (messages.length) console.error(`Cloudflare D1 error: ${messages.join(' | ')}`);
+          else console.error('Cloudflare D1 query failed without a structured error message.');
+          NODE
+          }
+
           # A brand-new preview D1 may not have the scheduling table yet. Treat ONLY that exact
           # condition as a no-op. Authentication/network/Cloudflare failures remain hard failures.
-          set +e
-          npx wrangler d1 execute "$PREVIEW_D1" --remote \
-            --command "SELECT 1 FROM scheduling_reservations LIMIT 1" >"$PROBE" 2>&1
-          PROBE_RC=$?
-          set -e
-          if [ "$PROBE_RC" -ne 0 ]; then
+          if ! cf_query "SELECT 1 FROM scheduling_reservations LIMIT 1" "$PROBE"; then
             if grep -Eqi 'no such table[^[:alnum:]_]*scheduling_reservations' "$PROBE"; then
               echo "No scheduling_reservations table exists yet; no historical preview repair is required."
               exit 0
             fi
+            report_cf_error "$PROBE"
             echo "Preview D1 probe failed for a reason other than a missing scheduling table; no mutation attempted." >&2
-            exit "$PROBE_RC"
+            exit 1
           fi
 
           # These predicates match only release-preview gate fixtures. created_at=1 is deliberately
           # part of the ownership proof; real application reservations are never manufactured that way.
           # Keep the rows for evidence/history but make them inactive so the product's unique index can
           # be established. Do not delete the index, broaden its predicate, or ignore uniqueness errors.
-          if ! npx wrangler d1 execute "$PREVIEW_D1" --remote --command \
-            "UPDATE scheduling_reservations
+          if ! cf_query "UPDATE scheduling_reservations
              SET status='cancelled'
              WHERE status!='cancelled'
                AND id LIKE 'RES-preview-%'
@@ -99,19 +142,20 @@ jobs:
                AND provider_id LIKE 'preview-%-PRV'
                AND customer_id LIKE 'preview-%-CUS%'
                AND service_code='pet_sitting'
-               AND created_at=1" >"$OUT" 2>&1; then
+               AND created_at=1" "$OUT"; then
+            report_cf_error "$OUT"
             echo "Scoped preview scheduling-fixture neutralization failed." >&2
             exit 1
           fi
 
           # This is the exact product invariant from lib/scheduling-reservation-leases.ts.
-          # If any remaining active collision exists, SQLite/D1 rejects this and the workflow stops.
-          if ! npx wrangler d1 execute "$PREVIEW_D1" --remote --command \
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduling_reservations_active_provider_window
+          # If any remaining active collision exists, D1 rejects this and the workflow stops.
+          if ! cf_query "CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduling_reservations_active_provider_window
              ON scheduling_reservations(provider_id,scheduled_start,scheduled_end)
              WHERE status!='cancelled'
                AND service_code!='boarding'
-               AND care_mode IS NOT 'overnight'" >"$OUT" 2>&1; then
+               AND care_mode IS NOT 'overnight'" "$OUT"; then
+            report_cf_error "$OUT"
             echo "Active provider-window uniqueness is still blocked after scoped preview cleanup." >&2
             exit 1
           fi
