@@ -173,6 +173,8 @@ async function opsStack() {
   // (lib/walking-governance) + POST /api/walking-bookings route handler.
   async function createWalkingBooking({ tag, providerId, walkCount = 2, customerId = `CUS-${tag}` }) {
     const groupId = `GRP-${tag}`;
+    const reservedPetId=`WALK-PET-${tag}`;
+    sqlite.prepare("INSERT INTO canonical_pets(id,customer_id,source_pet_id,name,species,created_at,updated_at) VALUES (?,?,'bruno','Bruno','dog',?,?)").run(reservedPetId,customerId,NOW,NOW);
     const windows = Array.from({ length: walkCount }, (_, index) => ({
       occurrence: index + 1,
       start: iso((2 + index) * DAY),
@@ -182,7 +184,7 @@ async function opsStack() {
       .run(groupId, "governed", "[]", providerId, "assigned", "test", "test", NOW);
     for (const window of windows)
       sqlite.prepare("INSERT INTO scheduling_reservations (id, group_id, provider_id, service_code, city_id, zone_id, customer_id, pet_ids_json, scheduled_start, scheduled_end, capacity_units, occurrence_number, care_mode, status, explanation_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(`RES-${tag}-${window.occurrence}`, groupId, providerId, "dog_walking", "tstcity", "tst-zone", customerId, "[]", window.start, window.end, 1, window.occurrence, "once", "held", "{}", NOW);
+      .run(`RES-${tag}-${window.occurrence}`, groupId, providerId, "dog_walking", "tstcity", "tst-zone", customerId, JSON.stringify([reservedPetId]), window.start, window.end, 1, window.occurrence, "once", "held", "{}", NOW);
     const weekdays = walkCount === 1 ? [] : [...new Set(windows.map((window) => new Date(window.start).getUTCDay()))];
     const quote = await walkingGovernance.createWalkingQuote(db, {
       packageCode: "walking-30", mode: walkCount === 1 ? "once" : "recurring", petCount: 1, walkCount,

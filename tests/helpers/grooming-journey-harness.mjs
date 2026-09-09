@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./saved-pet-fixture.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./module-hooks.mjs";
 import { installFinancialLifecycleSchema } from "./financial-lifecycle-schema.mjs";
@@ -100,6 +101,7 @@ async function routeCall(modulePath, method, path, body, cookie = "", origin = "
 }
 
 export async function runCompletedJourney(ctx, config) {
+  await seedOwnedPet(ctx.db, config.customerId, config.petSourceId, config.petName);
   const { db, sqlite } = ctx;
   const customerCookie = await sessionCookie(db, "customer", config.customerId, `customer:${config.customerId}`);
   const { resolveZoneByPincode } = await import("../../lib/service-zones.ts");

@@ -17,6 +17,13 @@ export PAWSPACE_VOICE_TRANSPORT="local_simulator_non_production"
 export PAWSPACE_SCHEDULING_ENV="uat"
 export PAWSPACE_MEDIA_ENV="uat"
 
+# Seed the disposable local D1 before Vite/Miniflare starts. The ID matches vite.config.ts;
+# --local and the explicit project-local state path prevent any remote database writes.
+# The default Grooming provider needs a base to pass the same radius checks as a real provider.
+npx wrangler d1 execute site-creator-d1 --local \
+  --config scripts/e2e/persona-local-db.jsonc --persist-to "$ROOT/.wrangler/state" \
+  --file scripts/e2e/persona-provider-home-base.sql
+
 # Vite lane: real sandbox customer/provider OTP plus fault injection. Declaring PAWSPACE_DEPLOYMENT_ENV
 # keeps OTP sandbox enabled but disables the localhost wildcard preview actor.
 npx playwright test \

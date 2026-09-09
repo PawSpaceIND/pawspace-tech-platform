@@ -1,3 +1,4 @@
+import{runAtomicProviderLifecycleTransition,providerLifecycleAssertionStatement}from"./provider-lifecycle";
 type Row=Record<string,unknown>;
 const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??"")) as T}catch{return fallback}};
 
@@ -8,7 +9,7 @@ export async function acceptSittingRecoveryOffer(db:D1Database,bookingId:string,
  const recovery=await db.prepare("SELECT id,replacement_provider_id,status FROM sitting_recovery_cases WHERE booking_id=? AND status='replacement_offered' ORDER BY opened_at DESC LIMIT 1").bind(bookingId).first<Row>();if(!recovery)throw new Response("No replacement Sitting recovery offer is open",{status:409});
  const providerId=String(booking.provider_id),groupId=String(booking.schedule_group_id||"");if(String(recovery.replacement_provider_id)!==providerId||String(booking.work_order_provider_id)!==providerId)throw new Response("Replacement sitter does not match the canonical booking",{status:409});
  const offer=await db.prepare("SELECT provider_id,status,expires_at FROM provider_assignment_offers WHERE group_id=?").bind(groupId).first<Row>();if(!offer||String(offer.provider_id)!==providerId||String(offer.status)!=="pending")throw new Response("No pending replacement sitter offer is available",{status:409});const now=Date.now();if(Number(offer.expires_at)<now)throw new Response("Replacement sitter acceptance offer expired; Operations recovery is required",{status:409});
- const result={bookingId,status:"assigned",providerId,recoveryId:String(recovery.id),bookingPreserved:true};await db.batch([
+ const result={bookingId,status:"assigned",providerId,recoveryId:String(recovery.id),bookingPreserved:true};await runAtomicProviderLifecycleTransition(db,{bookingId,serviceCode:"pet_sitting",providerId:null,nextProviderId:providerId,from:"requested",path:["provider_matched","accepted"],actorId,legacySeedStatus:"requested",detail:{action:"accept_replacement",recoveryId:String(recovery.id)},buildStatements:()=>[
   db.prepare("UPDATE canonical_bookings SET status='assigned',updated_at=? WHERE id=? AND status='reassignment_offered'").bind(now,bookingId),
   db.prepare("UPDATE provider_work_orders SET status='accepted',updated_at=? WHERE booking_id=? AND provider_id=? AND status='reassignment_offered'").bind(now,bookingId,providerId),
   db.prepare("UPDATE provider_assignment_offers SET status='accepted',responded_at=?,response_reason='Replacement sitter accepted in Sitting workspace',updated_at=? WHERE group_id=? AND provider_id=? AND status='pending'").bind(now,now,groupId,providerId),
@@ -16,7 +17,7 @@ export async function acceptSittingRecoveryOffer(db:D1Database,bookingId:string,
   db.prepare("INSERT INTO sitting_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(crypto.randomUUID(),bookingId,booking.customer_id,"push","sitting_recovery_update","Your replacement PawSpace sitter accepted the existing booking. The booking ID and paid care window are unchanged.",String(recovery.id),now),
   db.prepare("INSERT INTO sitting_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(crypto.randomUUID(),bookingId,booking.customer_id,"whatsapp","sitting_recovery_update","Your replacement PawSpace sitter accepted the existing booking. The booking ID and paid care window are unchanged.",String(recovery.id),now),
   db.prepare("INSERT INTO sitting_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,'accept',?,?)").bind(idempotencyKey,bookingId,JSON.stringify(result),now),
- ]);return result;
+ ],buildAssertion:ctx=>providerLifecycleAssertionStatement(db,ctx,"EXISTS(SELECT 1 FROM canonical_bookings WHERE id=? AND status='assigned' AND provider_id=?) AND EXISTS(SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status='accepted' AND provider_id=?) AND EXISTS(SELECT 1 FROM provider_assignment_offers WHERE group_id=? AND status='accepted' AND provider_id=?)",[bookingId,providerId,bookingId,providerId,groupId,providerId])});return result;
 }
 
 export async function finalizeSittingRecoveryAcceptance(db:D1Database,bookingId:string,actorId:string){

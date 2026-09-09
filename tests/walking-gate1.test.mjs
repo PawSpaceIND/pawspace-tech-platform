@@ -13,6 +13,7 @@
  * PAWSPACE_LOCAL_PREVIEW=on and anything posted to localhost resolves to a superuser holding ["*"].
  */
 import test from "node:test";
+import {readFileSync} from "node:fs";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { customerSessionCookie, freshSqlite, makeD1, nextKey, refusal, stayUrl, stayWindow } from "./helpers/stay-harness.mjs";
@@ -260,9 +261,11 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
    */
   const CUSTOMER = "CUS-WALK-REUSE";
   const GROUP = "GRP-WALK-REUSE";
+  sqlite.exec(readFileSync(new URL('../app/api/walking-bookings/route.ts',import.meta.url),'utf8').match(/CREATE TABLE IF NOT EXISTS canonical_pets [^"\n]+/)[0]);
+  sqlite.prepare("INSERT INTO canonical_pets(id,customer_id,source_pet_id,name,species,breed,vaccination_status,created_at,updated_at) VALUES ('WALK-OWNED-DOG',?,'pet-1','Bruno','dog','Indie','verified',?,?)").run(CUSTOMER,Date.now(),Date.now());
   sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','fixture',?)")
     .run(GROUP, "walker_dev", Date.now());
-  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,1,1,'once','held','{}',?)")
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[\"WALK-OWNED-DOG\"]',?,?,1,1,'once','held','{}',?)")
     .run("RES-WALK-REUSE-1", GROUP, "walker_dev", CUSTOMER, window.scheduledStart, window.scheduledEnd, Date.now());
   const { cookie } = await customerSessionCookie(db, { principalKey: "+919800000077", customerId: CUSTOMER });
 
@@ -282,11 +285,48 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
     }),
   }));
 
-  const created = await post();
+  for(const [pet,status] of [[{sourceId:'pet-1',name:'Cat',species:'cat'},400],[{sourceId:'different-dog',name:'Other',species:'dog'},409]]) {
+    const rejected=await post({pets:[pet]});assert.equal(rejected.status,status,await rejected.clone().text());
+  }
+  sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='WALK-OWNED-DOG'").run();
+  assert.equal((await post()).status,400,'submitted dog declaration cannot override the saved species');
+  sqlite.prepare("UPDATE canonical_pets SET species='dog',customer_id='FOREIGN' WHERE id='WALK-OWNED-DOG'").run();
+  assert.equal((await post()).status,403,'reservation must still belong to an owned pet');
+  sqlite.prepare("UPDATE canonical_pets SET customer_id=? WHERE id='WALK-OWNED-DOG'").run(CUSTOMER);
+  for(const invalidIds of ['[]','not-json','["WALK-OWNED-DOG","OTHER"]']){
+    sqlite.prepare("UPDATE scheduling_reservations SET pet_ids_json=? WHERE group_id=?").run(invalidIds,GROUP);
+    assert.equal((await post()).status,409,'missing, malformed and multi-pet reservations fail closed');
+  }
+  sqlite.prepare("UPDATE scheduling_reservations SET pet_ids_json='[\"WALK-OWNED-DOG\"]' WHERE group_id=?").run(GROUP);
+  assert.equal(Number((await db.prepare("SELECT COUNT(*) n FROM canonical_bookings").first()).n),0);
+  const care={instructions:"Use Luna's red harness. Avoid busy roads.",handoverPreference:"owner"};
+  const badCare=await post({ownerCare:{instructions:"x".repeat(2001),handoverPreference:"owner"}});
+  assert.equal(badCare.status,400);
+  const created = await post({ownerCare:care,idempotencyKey:"walking-care-replay",pets:[{sourceId:"pet-1",name:"Forged name",species:"dog",breed:"Forged breed",vaccinationStatus:"not_provided"}]});
   assert.equal(created.status, 201, `the governed booking is created: ${await created.clone().text()}`);
   const bundle = (await created.json()).data;
   assert.match(bundle.bookingId, /^PS-UAT-WALK-/);
+  assert.deepEqual(bundle.petIds,['WALK-OWNED-DOG']);
+  assert.deepEqual(sqlite.prepare("SELECT name,breed,vaccination_status FROM canonical_pets WHERE id='WALK-OWNED-DOG'").get(),Object.assign(Object.create(null),{name:'Bruno',breed:'Indie',vaccination_status:'verified'}),'checkout never edits the saved pet profile');
   assert.equal(bundle.liveMoney, false, "and never claims live money");
+  const assignment=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
+  assert.deepEqual(JSON.parse(assignment.assignment_json).ownerCare,care);
+  const lifecycle=await import('../lib/walking-lifecycle.ts');
+  sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,created_at,updated_at) VALUES (?,?,?,'dog',?,?)").run('UNBOOKED-DOG',CUSTOMER,'Luna',Date.now(),Date.now());
+  for (const scope of [{customerId:CUSTOMER},{providerId:'walker_dev'}]) {
+    const rows=await lifecycle.listWalkingBookings(db,{...scope,bookingId:bundle.bookingId});
+    assert.deepEqual(rows[0].ownerCare,care,'customer and assigned provider read the persisted instructions');
+    assert.deepEqual(rows[0].pets.map(pet=>pet.name),['Bruno'],'only the dog attached to the booking reaches the handoff');
+  }
+  const replay=await post({totalAmount:quote.totalAmount+1000,ownerCare:{...care,instructions:'Changed after first commit'},idempotencyKey:'walking-care-replay'});
+  assert.equal(replay.status,200);
+  const replayed=(await replay.json()).data;
+  assert.equal(replayed.totalAmount,quote.totalAmount,"replay keeps the booked price, not the new submitted amount");
+  assert.deepEqual({...replayed,duplicatePrevented:false},bundle,'retry returns the same complete client contract as initial creation');
+  for(const table of ['canonical_bookings','provider_work_orders','booking_payments','walking_sessions']) assert.equal(Number((await db.prepare(`SELECT COUNT(*) n FROM ${table}`).first()).n),1,`${table} is not duplicated by retry`);
+  const unchanged=await db.prepare("SELECT assignment_json FROM provider_work_orders WHERE booking_id=?").bind(bundle.bookingId).first();
+  assert.deepEqual(JSON.parse(unchanged.assignment_json).ownerCare,care,'retry cannot rewrite the saved care plan');
+
 
   // The PRODUCTION path consumed the quote and linked it to the booking it paid for.
   const consumed = await db.prepare("SELECT status,used_booking_id FROM walking_commercial_quotes WHERE id=?").bind(quote.quoteId).first();
@@ -300,7 +340,7 @@ test("a confirmed Dog Walking booking consumes its quote, and the quote cannot b
   const secondGroup = "GRP-WALK-REUSE-2";
   sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','fixture',?)")
     .run(secondGroup, "walker_dev", Date.now());
-  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,1,1,'once','held','{}',?)")
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[\"WALK-OWNED-DOG\"]',?,?,1,1,'once','held','{}',?)")
     .run("RES-WALK-REUSE-2", secondGroup, "walker_dev", CUSTOMER, window.scheduledStart, window.scheduledEnd, Date.now());
 
   const reused = await post({ scheduleGroupId: secondGroup });

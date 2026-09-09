@@ -22,7 +22,9 @@ test("the real five-minute scheduler runs the order notification sweep",async()=
 test("customer notification API is ownership guarded and supports read acknowledgement",async()=>{
  const source=await read("app/api/order-notifications/route.ts");
  assert.match(source,/requireCustomerOwnership/);
- assert.match(source,/runOrderNotificationSweep/);
+ // Reading one customer inbox must not enqueue work across all customers. The scheduler owns sweeping.
+ assert.doesNotMatch(source,/runOrderNotificationSweep/);
+ assert.match(source,/listOrderNotifications/);
  assert.match(source,/markOrderNotificationRead/);
  assert.match(source,/action!=="mark_read"/);
 });

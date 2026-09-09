@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 /**
  * PawSpace Total Journey Audit, Wave 1 F30 — travel buffer and max-daily-jobs were enforced only in
  * application code; the atomic reservation guard checked raw overlap alone.
@@ -89,6 +90,7 @@ async function world() {
   const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
 
   const reserve = async (group, customerId, startZ, endZ) => {
+    await seedOwnedPet(db, customerId, `PET-${customerId}`);
     const binding = await upsertIdentityBinding(db, {
       identitySource: "customer_otp", principalType: "identity_subject", principalKey: `customer:${customerId}`,
       subjectType: "customer", subjectId: customerId, verificationState: "verified",

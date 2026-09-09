@@ -533,12 +533,14 @@ test("TRN-13 refund policy: a cancellation cannot be priced until a policy is pu
   }));
   assert.equal(absurd.ok, false, "a cancellation fee of 150% of what was captured is not a policy");
 
-  const saved = await attempt(() => can.saveTrainingCancellationPolicy(db, {
+  const fee = await attempt(() => can.saveTrainingCancellationPolicy(db, {
     cityId: CITY, feeType: "percent_captured", feeValue: 25, noShowTreatment: "chargeable",
     effectiveFrom: "2026-04-01", actorId: "finance@pawspace.test", reason: "training vertical execution test",
   }));
+  assert.equal(fee.ok,false,"No cancellation fee may be configured");
+  const saved=await attempt(()=>can.saveTrainingCancellationPolicy(db,{cityId:CITY,feeType:"none",feeValue:0,noShowTreatment:"chargeable",effectiveFrom:"2026-04-01",actorId:"finance@pawspace.test",reason:"Founder no cancellation fee policy"}));
   assert.equal(saved.ok, true, `a valid policy must publish: ${String(saved.body ?? "").slice(0, 200)}`);
-  stage("Refund policy", "PASS", "no refund computed without a published policy; a 150% fee refused; a 25% policy publishes");
+  stage("Refund policy", "PASS", "no refund computed without a published policy; nonzero fees refused; no-fee policy publishes");
 });
 
 // --- 7. INVOICE --------------------------------------------------------------
@@ -722,4 +724,11 @@ test("TRN-99 training vertical scope report", () => {
     STAGES.map((x) => `  ${x.status.padEnd(7)} ${x.name}${x.detail ? ` — ${x.detail}` : ""}`).join("\n") +
     `\n\nPASS ${by("PASS")}  GAP ${by("GAP")}  HARNESS ${by("HARNESS")}\n`);
   assert.ok(STAGES.length > 0);
+});
+
+test("Training legacy fee configuration cannot reduce the cancellation refund",async()=>{
+ const{db,sqlite}=await programmeWorld();const can=await import("../lib/training-cancellation.ts");await can.saveTrainingCancellationPolicy(db,{cityId:CITY,feeType:"none",feeValue:0,noShowTreatment:"refundable",effectiveFrom:"2026-04-01",actorId:"finance@pawspace.test",reason:"No cancellation fee policy"});
+ sqlite.prepare("UPDATE training_cancellation_policies SET fee_type='percent_captured',fee_value=25 WHERE city_id=?").run(CITY);
+ const opened=await can.requestTrainingCancellation(db,{bookingId:BOOKING,reason:"Customer plans changed before training",idempotencyKey:"legacy-fee-test",actorId:CUSTOMER});
+ const row=sqlite.prepare("SELECT * FROM training_cancellation_cases WHERE id=?").get(opened.caseId);assert.equal(row.cancellation_fee,0);assert.equal(row.calculated_refund,Math.max(0,row.captured_amount-row.used_value));
 });

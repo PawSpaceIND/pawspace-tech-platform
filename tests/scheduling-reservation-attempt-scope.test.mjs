@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -23,6 +24,7 @@ test("every committed reservation carries the attempt that inserted it, and sepa
   const ctx = await setupJourney();
   t.after(ctx.close);
   const customerId = "CUST-ATTEMPT-SCOPE";
+  await seedOwnedPet(ctx.db, customerId, "PET-ATTEMPT");
   const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
 
   const reserve = async (clientRequestId, daysAhead) => {
@@ -51,7 +53,7 @@ test("verification and rollback are one atomic dispatch transaction", () => {
 
   assert.match(route, /scheduling_dispatch_assertions/);
   assert.match(route, /COUNT\(\*\) FROM scheduling_reservations WHERE attempt_id=\? AND status='assigned'/);
-  assert.match(route, /try\{await db\.batch\(statements\);\}/, "reservation rows and the completeness assertion commit in one D1 batch");
+  assert.match(route, /else await db\.batch\(statements\);/, "reservation rows and the completeness assertion commit in one D1 batch");
   assert.doesNotMatch(route, /SET status='cancelled' WHERE group_id=\? AND created_at=\?/,
     "a failed request must never clean up by a caller-controlled group/timestamp pair");
   assert.doesNotMatch(route, /FROM scheduling_reservations WHERE group_id=\? AND created_at=\?/,
@@ -94,6 +96,7 @@ test("a database whose scheduling_reservations predates attempt_id is repaired i
   assert.ok(!columns().includes("attempt_id"), "the fixture must start drifted or this test is vacuous");
 
   const customerId = "CUST-ATTEMPT-DRIFT";
+  await seedOwnedPet(ctx.db, customerId, "PET-ATTEMPT-DRIFT");
   const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
   const response = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {
     clientRequestId: "ATTEMPT-DRIFT-A", customerId, petIds: ["PET-ATTEMPT-DRIFT"], serviceCode: "grooming",
@@ -116,6 +119,9 @@ test("a partial insert rolls back atomically without touching a colliding reques
   t.after(() => { Date.now = realNow; });
 
   const customerId = "CUST-ATTEMPT-RACE";
+  // The race must reach dispatch with a valid, customer-owned saved dog.
+  ctx.sqlite.exec(fs.readFileSync("app/api/walking-bookings/route.ts", "utf8").match(/CREATE TABLE IF NOT EXISTS canonical_pets [^"\n]+/)[0]);
+  ctx.sqlite.prepare("INSERT INTO canonical_pets(id,customer_id,name,species,created_at,updated_at) VALUES (?,?,'Race dog','dog',?,?)").run("PET-ATTEMPT-RACE", customerId, FIXED, FIXED);
   const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
   const groupId = "ATTEMPT-RACE-A";
   const first = slot(21), second = slot(28);

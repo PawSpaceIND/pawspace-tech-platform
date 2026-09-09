@@ -1,7 +1,35 @@
 "use client";
+import{FormEvent,useEffect,useRef,useState}from"react";
+import Link from"next/link";
+import styles from"./page.module.css";
+type Reply={knowledge?:Array<{title?:string;excerpt?:string}>;duplicatePrevented?:boolean;ai?:{turn?:{output?:string;outcome?:string}};callback?:{matched?:boolean}};
+type Turn={question:string;reply:Reply};
+type Identity="checking"|"customer"|"guest"|"unavailable";
 
-import{FormEvent,useState}from"react";
-
-type Reply={mode?:string;knowledge?:Array<{title?:string;excerpt?:string}>;lead?:unknown;ai?:{turn?:{output?:string;outcome?:string}};threadId?:string};
-
-export default function AiChatPage(){const[mode,setMode]=useState<"public"|"authenticated">("public"),[customerId,setCustomerId]=useState(""),[message,setMessage]=useState(""),[reply,setReply]=useState<Reply|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError("");try{const body=mode==="public"?{mode,query:message}:{mode,customerId,message,idempotencyKey:`web-${Date.now()}-${Math.random().toString(36).slice(2)}`};const response=await fetch("/api/ai-web-chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),payload=await response.json()as{data?:Reply;error?:string};if(!response.ok)throw new Error(payload.error||"Chat request failed");setReply(payload.data||null);}catch(cause){setError(cause instanceof Error?cause.message:"Chat request failed");}finally{setBusy(false);}}return <main style={{maxWidth:760,margin:"40px auto",padding:24,fontFamily:"Arial,sans-serif"}}><h1>PawSpace AI chat UAT</h1><p>Public mode is restricted to approved public knowledge. Authenticated mode uses the canonical customer conversation and ownership boundary.</p><div style={{display:"flex",gap:8,marginBottom:16}}><button onClick={()=>setMode("public")} disabled={mode==="public"}>Public</button><button onClick={()=>setMode("authenticated")} disabled={mode==="authenticated"}>Authenticated customer</button></div><form onSubmit={submit}>{mode==="authenticated"&&<input aria-label="Customer ID" value={customerId} onChange={event=>setCustomerId(event.target.value)} placeholder="Canonical customer ID" style={{width:"100%",padding:10,marginBottom:8}}/>}<textarea aria-label="Message" value={message} onChange={event=>setMessage(event.target.value)} placeholder="Ask PawSpace" style={{width:"100%",minHeight:110,padding:10}}/><button disabled={busy||!message.trim()} style={{marginTop:8}}>{busy?"Sending…":"Send"}</button></form>{error&&<p role="alert">{error}</p>}{reply&&<section style={{marginTop:20}}><h2>Result</h2>{reply.ai?.turn?.output&&<p>{reply.ai.turn.output}</p>}{reply.knowledge?.map((item,index)=><article key={index}><strong>{item.title}</strong><p>{item.excerpt}</p></article>)}{reply.threadId&&<small>Canonical thread: {reply.threadId}</small>}</section>}</main>}
+export default function AiChatPage(){
+ const[mode,setMode]=useState<"public"|"authenticated">("public"),[identity,setIdentity]=useState<Identity>("checking"),[message,setMessage]=useState(""),[turns,setTurns]=useState<Turn[]>([]),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+ const pending=useRef<{text:string;mode:string;key:string}|null>(null),request=useRef<AbortController|null>(null);
+ useEffect(()=>{let active=true;const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
+ fetch('/api/identity-session',{cache:'no-store',signal:controller.signal}).then(async response=>{if(response.status===401){if(active)setIdentity('guest');return;}if(!response.ok)throw new Error('Session unavailable');const body=await response.json();if(active)setIdentity(body.data?.subjectType==='customer'?'customer':'guest');}).catch(()=>{if(active)setIdentity('unavailable');}).finally(()=>clearTimeout(timer));
+ return()=>{active=false;controller.abort();clearTimeout(timer);request.current?.abort();};},[]);
+ function choose(next:"public"|"authenticated"){setMode(next);setTurns([]);setError("");pending.current=null;}
+ async function submit(event:FormEvent){event.preventDefault();if(busy||!message.trim()||(mode==='authenticated'&&identity!=='customer'))return;
+  const question=message.trim();if(!pending.current||pending.current.text!==question||pending.current.mode!==mode)pending.current={text:question,mode,key:crypto.randomUUID()};
+  const controller=new AbortController();request.current=controller;const timer=setTimeout(()=>controller.abort(),20000);setBusy(true);setError('');
+  try{const body=mode==='public'?{mode,query:question}:{mode,message:question,idempotencyKey:'web-'+pending.current.key};
+   const response=await fetch('/api/ai-web-chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+   const payload=await response.json().catch(()=>null) as {data?:Reply;error?:string}|null;
+   if(!response.ok){if(response.status===401)setIdentity('guest');throw new Error(payload?.error||'Chat is temporarily unavailable. Please try again.');}
+   if(!payload?.data)throw new Error('Chat returned an incomplete response. Please try again.');
+   setTurns(current=>[...current,{question,reply:payload.data!}]);setMessage('');pending.current=null;
+  }catch(cause){setError(controller.signal.aborted?'The reply is taking too long. Your message is saved here; try sending it again.':cause instanceof Error?cause.message:'Chat is temporarily unavailable. Please try again.');}
+  finally{clearTimeout(timer);setBusy(false);request.current=null;}
+ }
+ return <main className={styles.page}><Link href="/mobile-app">← PawSpace</Link><h1>How can we help?</h1><p>Ask about our services, or sign in for help with your account.</p>
+ <div className={styles.modes} aria-label="Chat topic"><button aria-pressed={mode==='public'} disabled={busy} onClick={()=>choose('public')}>Our services</button><button aria-pressed={mode==='authenticated'} disabled={busy} onClick={()=>choose('authenticated')}>My account</button></div>
+ {mode==='authenticated'&&identity!=='customer'&&<section className={styles.notice} role="status">{identity==='checking'?<p>Checking your sign-in…</p>:identity==='unavailable'?<><p>We couldn’t check your sign-in. Reload this page to try again, or browse our services.</p><button onClick={()=>window.location.reload()}>Check sign-in again</button></>:<><p>Sign in to your customer account to discuss bookings and account details.</p><Link href="/mobile-app">Open customer app to sign in</Link></>}</section>}
+ <section className={styles.history} aria-label="Conversation" aria-live="polite">{turns.map((turn,index)=>{const reply=turn.reply,output=reply.ai?.turn?.output,hasKnowledge=Boolean(reply.knowledge?.length);return <article key={index}><p className={styles.question}>{turn.question}</p><div className={styles.answer}>{output?<p>{output}</p>:hasKnowledge?reply.knowledge!.map((item,i)=><section key={i}><h2>{item.title}</h2><p>{item.excerpt}</p></section>):<p>{reply.callback?.matched?'Your callback request was received. This does not confirm that a call has been placed.':reply.duplicatePrevented?'This message was already received. Please check your account for updates.':mode==='public'?'I couldn’t find an approved answer to that question. Try a specific service, or open the customer app for support.':'Your message was received, but an answer is not available here yet. Open the customer app for support.'}</p>}{(!output&&!hasKnowledge)&&<Link href="/mobile-app">Open customer app</Link>}</div></article>})}</section>
+ <form onSubmit={submit}><label htmlFor="chat-message">Your message</label><textarea id="chat-message" value={message} onChange={event=>setMessage(event.target.value)} placeholder="Ask PawSpace" maxLength={4000} disabled={busy}/><button disabled={busy||!message.trim()||(mode==='authenticated'&&identity!=='customer')}>{busy?'Sending…':'Send'}</button></form>
+ {busy&&<p role="status">Waiting for a reply…</p>}{error&&<p role="alert" className={styles.error}>{error}</p>}
+ </main>;
+}

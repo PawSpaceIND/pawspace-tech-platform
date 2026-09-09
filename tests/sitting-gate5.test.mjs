@@ -287,3 +287,37 @@ test("Pet Sitting operations API is a guarded route", async () => {
   const booking = await world.db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
   assert.equal(booking.provider_id, SITTER, "a refused request must not have reassigned the sitter");
 });
+
+test("Sitting Operations retry keys cannot replay a different booking or action", async () => {
+  const world = await opsWorld();
+  const idempotencyKey = nextKey("SG5-SCOPE");
+  const first = await world.opsAct("add_note", { idempotencyKey, note: "Customer asked Operations to call before arrival." });
+  const replay = await world.opsAct("add_note", { idempotencyKey, note: "Customer asked Operations to call before arrival." });
+  assert.equal(replay.noteId, first.noteId);
+  assert.equal(replay.duplicatePrevented, true);
+  for (const change of [{ bookingId: "ANOTHER-SITTING-BOOKING" }, { action: "close_recovery" }]) {
+    const rejected = await refusal(world.opsAct("add_note", { idempotencyKey, note: "Must not return the earlier success.", ...change }));
+    assert.equal(rejected?.status, 409, "a key belongs to exactly one booking and action");
+  }
+});
+
+test("Sitting replacement offer reserves the preserved care window after original sitter recovery", async () => {
+  const world = await opsWorld();
+  const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
+  await seedProviderCapacityDefaults(world.db);
+  await world.stayAct("decline", { reason: "Cannot travel to the customer today" });
+  const { row } = await world.flagsFor();
+  assert.ok(row.replacementCandidates.length > 0, "fixture has an eligible replacement");
+  const providerId = row.replacementCandidates[0].providerId;
+  await world.opsAct("assign_replacement", { providerId, reason: "Protect the same customer care window" });
+  const booking = await world.db.prepare("SELECT schedule_group_id FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  const reservations = await world.db.prepare("SELECT provider_id,status FROM scheduling_reservations WHERE group_id=? AND status NOT IN ('cancelled','completed')").bind(booking.schedule_group_id).all();
+  assert.equal(reservations.results.length, 1, "replacement offer must hold the original booking's capacity");
+  assert.equal(reservations.results[0].provider_id, providerId);
+  const recovery = await import("../lib/sitting-recovery-finalizer.ts");
+  await recovery.acceptSittingRecoveryOffer(world.db, world.bookingId, providerId, nextKey("SG5-REPLACEMENT"));
+  await recovery.finalizeSittingRecoveryAcceptance(world.db, world.bookingId, OPS);
+  await world.stayAct("submit_care_plan", { carePlan: validSittingCarePlan(), actorId: world.customerId });
+  const checkedIn = await world.stayAct("check_in", { actorId: providerId, ...metresNorth(world.doorstep, 20) }).catch(async error => { throw new Error(error instanceof Response ? await error.text() : String(error)); });
+  assert.equal(checkedIn.status, "in_progress", "accepted replacement must be able to begin the preserved care visit");
+});

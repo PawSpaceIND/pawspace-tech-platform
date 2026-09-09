@@ -100,7 +100,8 @@ test("boarding and sitting premium presentation still uses governed quotes, capa
 
 test("walking and taxi premium presentation still prices from their commercial APIs", () => {
   const walking = read("app/mobile-app/walking-flow.tsx");
-  hasAll(walking, [/loadWalkingCatalogue/, /createWalkingQuote/, /reserveWalkingSchedule/, /createCanonicalWalkingBooking/, /resolveServiceCoverage/], "Walking");
+  hasAll(walking, [/loadWalkingCatalogue/, /createWalkingQuote/, /reserveWalkingSchedule/, /createCanonicalWalkingBooking/, /AddressPicker/, /serviceAddress:serviceLocation.address/, /servicePincode:serviceLocation.assignment.pincode/], "Walking");
+  hasAll(read("app/mobile-app/address-picker.tsx"), [/resolveServiceCoverage/, /resolveAddress/, /onZoneResolved/], "Walking verified address picker");
   const taxi = read("app/mobile-app/taxi-flow.tsx");
   hasAll(taxi, [/loadTaxiRouteClasses/, /createTaxiQuote/, /reserveTaxiSchedule/, /createCanonicalTaxiBooking/, /resolveServiceCoverage/], "Taxi");
   assert.doesNotMatch(walking, /customerId\s*:\s*["']TST-101["']/);

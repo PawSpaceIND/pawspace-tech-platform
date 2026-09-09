@@ -25,6 +25,7 @@ import { readFile } from "node:fs/promises";
 // ---------------------------------------------------------------------------
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+const customerSource = async path => {const source=await read(path);return source.includes('StayBookingPage')?source+'\n'+await read('app/mobile-app/stay-booking-page.tsx'):source;};
 
 /** Every customer-facing page that books or reads on behalf of the signed-in customer. */
 const CUSTOMER_PAGES = [
@@ -43,7 +44,7 @@ const FIXTURES = ["TST-101", "uat.customer@pawspace.test", "+919880222741", "TST
 
 test("P1-I01 no customer-facing page carries a fixture customer identity", async () => {
   for (const path of CUSTOMER_PAGES) {
-    const source = await read(path);
+    const source = await customerSource(path);
     for (const fixture of FIXTURES) {
       // A fixture named inside a comment is a record of the defect, not the defect. Only code counts.
       const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*")).join("\n");
@@ -56,7 +57,7 @@ test("P1-I02 each resolves the customer from the session instead", async () => {
   // loadCustomerAccount() sends NO id: the server derives the subject from the platform session, which
   // is the same identity the booking is scoped to, so the two cannot disagree the way a fixture did.
   for (const path of CUSTOMER_PAGES) {
-    const source = await read(path);
+    const source = await customerSource(path);
     assert.match(source, /loadCustomerAccount/, `${path} must resolve the signed-in customer`);
     assert.doesNotMatch(source, /loadCustomerAccount\(\s*["'`]/, `${path} must not pass a literal customer id`);
   }
