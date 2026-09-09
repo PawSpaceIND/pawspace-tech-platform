@@ -63,8 +63,18 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
   const rows=await db.prepare("SELECT id,booking_id,amount,reason,requested_by,created_at FROM booking_refund_cases WHERE status='requested' ORDER BY created_at LIMIT 200").all<Row>();
   for(const row of rows.results)await record({rule:"refund_requested",queue:"finance",priority:"high",title:`Refund requested on booking ${String(row.booking_id)}`,bookingId:String(row.booking_id),entityType:"refund_case",entityId:String(row.id),slaMinutes:240,detail:{amount:Number(row.amount||0),reason:row.reason,requestedBy:row.requested_by}});
  }
+ /* FIN-D5. A refund the gateway REJECTED is money still sitting with us that a customer is owed, and it
+  * used to reach staff only as one more row in the generic `payment_exception` rule - same title shape,
+  * same SLA, indistinguishable in the queue from an amount mismatch or an orphan refund. It now has its
+  * own rule so it is independently assertable: you can query for `refund_failed` work items and get a
+  * yes or no, rather than inferring it from a detail_json field on a generic task. It is always critical,
+  * carries a tighter 60-minute SLA, and names the retry that FIN-D1 opened up. The generic detector below
+  * now EXCLUDES refund_failed so one exception never produces two competing work items. */
  if(await tableExists(db,"payment_reconciliation_exceptions")){
-  const rows=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at LIMIT 200").all<Row>();
+  const failedRefunds=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' AND exception_type='refund_failed' ORDER BY created_at LIMIT 200").all<Row>();
+  for(const row of failedRefunds.results)await record({rule:"refund_failed",queue:"finance",priority:"critical",title:`Refund FAILED at the gateway on booking ${String(row.booking_id||"unknown")} - customer is still owed this money`,bookingId:row.booking_id?String(row.booking_id):null,entityType:"payment_exception",entityId:String(row.id),slaMinutes:60,detail:{exceptionType:"refund_failed",paymentId:row.payment_id,retryPath:"booking-operations refund_status: failed -> requested or failed -> processing",gateway:(()=>{try{return JSON.parse(String(row.detail_json||"{}")) as Record<string,unknown>;}catch{return{};}})()}});
+
+  const rows=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,created_at FROM payment_reconciliation_exceptions WHERE status='open' AND exception_type<>'refund_failed' ORDER BY created_at LIMIT 200").all<Row>();
   for(const row of rows.results)await record({rule:"payment_exception",queue:"finance",priority:String(row.severity)==="critical"?"critical":"high",title:`Payment reconciliation exception: ${String(row.exception_type)}`,bookingId:row.booking_id?String(row.booking_id):null,entityType:"payment_exception",entityId:String(row.id),slaMinutes:120,detail:{exceptionType:row.exception_type,severity:row.severity,paymentId:row.payment_id}});
  }
  if(await tableExists(db,"service_reviews")){

@@ -159,7 +159,14 @@ test("company analytics keeps gross collections, refunds and split-payment cash 
   const { sqlite, db } = fresh();
   seedBooking(sqlite, "B-REF", "grooming", "completed", 8000, "2026-07-05T09:00:00.000Z");
   seedPayment(sqlite, "B-REF", 8000, "partially_refunded");
-  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-1','B-REF',3000,'processing')").run();
+  /* POLICY CHANGE [FIN-D3]. This fixture used to seed the refund as 'processing' and assert it counted.
+   * A 'processing' refund has been SENT to the gateway and has not landed, so counting it dropped
+   * recognised revenue before any money moved - and restored it if the gateway then failed. Only
+   * 'processed' and 'completed' count now. The refund is seeded as 'processed' so this test keeps
+   * asserting exactly what its name says (gross collections, refunds and split cash stay distinct) with
+   * every figure below unchanged; the excluded 'processing' case is pinned on the line after it. */
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-1','B-REF',3000,'processed')").run();
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-2','B-REF',500,'processing')").run();
 
   seedBooking(sqlite, "B-SPLIT", "boarding", "confirmed", 10000, "2026-07-06T09:00:00.000Z");
   seedPayment(sqlite, "B-SPLIT", 10000, "captured");
@@ -170,7 +177,7 @@ test("company analytics keeps gross collections, refunds and split-payment cash 
   const data = await buildCompanyAnalytics(db, { from: "2026-07-01", to: "2026-07-31" });
   assert.equal(data.money.gmv, 18000);
   assert.equal(data.money.collected, 13000, "a refund does not erase historical capture, and an unpaid split balance is not collected");
-  assert.equal(data.money.refunds, 3000);
+  assert.equal(data.money.refunds, 3000, "the ₹500 refund still in flight at the gateway must not be counted");
   assert.equal(data.money.netCollections, 10000);
   assert.equal(data.services.grooming.collected, 8000);
   assert.equal(data.services.grooming.refunds, 3000);
@@ -248,5 +255,5 @@ test("company analytics declares unconnected sources honestly", async () => {
   const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
   const data = await buildCompanyAnalytics(globalThis.__PAWSPACE_TEST_ENV.DB, { from: "2026-07-01", to: "2026-08-01" });
   assert.equal(data.sourceStatus.marketingSpend, "not_connected");
-  assert.equal(data.money.refundsStatus, "booking_refund_cases_processing_processed_completed");
+  assert.equal(data.money.refundsStatus, "booking_refund_cases_processed_completed");
 });

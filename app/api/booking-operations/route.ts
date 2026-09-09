@@ -242,7 +242,15 @@ export async function POST(request: Request) {
       const refund = await db.prepare("SELECT * FROM booking_refund_cases WHERE id=? AND booking_id=?").bind(input.refundCaseId,input.bookingId).first<Record<string,unknown>>();
       if (!refund) return json({ error: "Refund case not found" }, 404);
       const fromStatus=String(refund.status),toStatus=String(input.refundStatus);
-      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"],processed:["completed"]};
+      /* `failed` had NO entry, so it was terminal: a refund the gateway rejected could never be retried
+       * through any governed path, and the customer's money stayed with us with no way out. Two exits now.
+       * `failed -> requested` restarts the approval chain (segregation of duties applies again); 
+       * `failed -> processing` re-attempts the gateway on the approval already given - `approved_by` is
+       * preserved below, and `completed` still demands signature-verified gateway evidence, so a retry
+       * cannot short-cut into completion. Only the two exits authorised in the diagnostic are added;
+       * `processing -> failed` is deliberately NOT opened here - the gateway webhook is the only thing
+       * that may declare a refund failed, and widening that is a separate decision. [FIN-D1] */
+      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"],processed:["completed"],failed:["requested","processing"]};
       if (!(transitions[fromStatus]??[]).includes(toStatus)) return json({ error: `Refund cannot move from ${fromStatus} to ${toStatus}` },409);
       if(toStatus==="approved"&&String(refund.requested_by)===actor.email)return json({error:"Segregation of duties: the refund requester cannot approve their own refund",code:"refund_self_approval_forbidden"},409);
       const gatewayReference=String(refund.gateway_reference||"").trim();
@@ -252,10 +260,20 @@ export async function POST(request: Request) {
         const gatewayProof=await db.prepare("SELECT id FROM payment_gateway_events WHERE booking_id=? AND payment_id=? AND gateway_refund_id=? AND event_type='refund.processed' AND signature_verified=1 AND processing_status='processed' LIMIT 1").bind(input.bookingId,refund.payment_id??null,gatewayReference).first<Record<string,unknown>>().catch(()=>null);
         if(!gatewayProof)return json({error:"Refund completion requires signature-verified gateway reconciliation evidence"},409);
       }
-      const eventId=crypto.randomUUID(),claim=crypto.randomUUID(),claimId=crypto.randomUUID();
-      const message=toStatus==="approved"?"Your refund is approved and will now be sent to the original payment method.":toStatus==="processing"?"Your refund has been sent to the payment gateway for processing.":toStatus==="completed"?"Your refund is complete. The gateway reference is available in this order.":"Your refund request was not approved. Open the order to see the reason or contact support.";
+      const eventId=crypto.randomUUID(),claim=crypto.randomUUID(),claimId=crypto.randomUUID(),retryOfFailedMessage=fromStatus==="failed";
+      const message=toStatus==="approved"?"Your refund is approved and will now be sent to the original payment method.":toStatus==="processing"?(retryOfFailedMessage?"The first refund attempt did not go through. We have sent it to the payment gateway again.":"Your refund has been sent to the payment gateway for processing."):toStatus==="completed"?"Your refund is complete. The gateway reference is available in this order.":toStatus==="requested"?"The refund attempt did not go through. It is back with our finance team to be re-issued.":"Your refund request was not approved. Open the order to see the reason or contact support.";
       const guard="EXISTS (SELECT 1 FROM booking_refund_transition_claims WHERE refund_case_id=? AND from_status=? AND to_status=? AND claim_token=?)";
+      /* booking_refund_transition_claims is UNIQUE(refund_case_id,from_status). That is what makes a
+       * transition once-only under concurrency, and it must stay. But `failed` is now a state a case can
+       * ENTER MORE THAN ONCE, so without clearing the spent claim the first retry would work and every
+       * later one would be silently INSERT OR IGNOREd - stranding the money one attempt further on.
+       * A claim whose from_status is `failed` can only exist because a previous retry already committed
+       * and the gateway failed the refund again, so it is spent. Concurrency is still protected by the
+       * status-guarded UPDATE below: two simultaneous retries both clear, one insert wins the UNIQUE, and
+       * the loser changes 0 rows and gets the 409. [FIN-D1] */
+      const retryOfFailed=fromStatus==="failed";
       const applied=await db.batch([
+        ...(retryOfFailed?[db.prepare("DELETE FROM booking_refund_transition_claims WHERE refund_case_id=? AND from_status='failed'").bind(input.refundCaseId)]:[]),
         db.prepare("INSERT OR IGNORE INTO booking_refund_transition_claims (id,refund_case_id,from_status,to_status,claim_token,actor_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(claimId,input.refundCaseId,fromStatus,toStatus,claim,actor.email,now),
         db.prepare(`UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,updated_at=? WHERE id=? AND status=? AND ${guard}`).bind(toStatus,toStatus,actor.email,now,input.refundCaseId,fromStatus,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) SELECT ?,?,?,?,?,0,?,?,? WHERE ${guard}`).bind(eventId,input.bookingId,String(booking.provider_id??""),`refund.${toStatus}`,input.reason,JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:gatewayReference||null}),actor.email,now,input.refundCaseId,fromStatus,toStatus,claim),
@@ -263,7 +281,9 @@ export async function POST(request: Request) {
         db.prepare(`INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?, 'queued',?,? FROM canonical_bookings b WHERE b.id=? AND ${guard}`).bind(crypto.randomUUID(),`refund_${toStatus}`,message,eventId,now,input.bookingId,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(crypto.randomUUID(),actor.email,actor.roleCode,`booking_operations.refund_${toStatus}`,"refund",String(input.refundCaseId),"completed",JSON.stringify({bookingId:input.bookingId,fromStatus,toStatus,gatewayReference:gatewayReference||null}),now,input.refundCaseId,fromStatus,toStatus,claim),
       ]);
-      if(Number(applied[0]?.meta?.changes||0)!==1||Number(applied[1]?.meta?.changes||0)!==1)return json({error:"Refund status was already changed by another request",code:"refund_transition_already_claimed"},409);
+      // The prepended DELETE shifts the claim/update positions by one on a retry of a failed refund.
+      const claimIndex=retryOfFailed?1:0;
+      if(Number(applied[claimIndex]?.meta?.changes||0)!==1||Number(applied[claimIndex+1]?.meta?.changes||0)!==1)return json({error:"Refund status was already changed by another request",code:"refund_transition_already_claimed"},409);
       // Only now is this request the one that actually moved the refund. Running the hand-off above
       // the guard meant a LOSING concurrent request enqueued the winner's notification and then
       // returned 409 - a side effect on a request it rejects. The bridge never throws, so a
