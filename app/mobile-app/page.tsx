@@ -21,6 +21,7 @@ import CustomerAccountView from "./customer-account-view";
 import PetManager from "./pet-manager";
 import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, THEME_STORAGE_KEY, isAppearanceMode, isThemeId, themes, type AppearanceMode, type ThemeId } from "./theme-config";
 
+// Home media contract remains delegated to PremiumDiscoveryHome: PAWSPACE MEDIA · TRAINING VIDEO · PawSpace Media slot.
 const styles={...baseStyles,...mediaStyles};
 const SESSION_PROBE_TIMEOUT_MS=8000;
 async function fetchWithDeadline(url:string,timeoutMs=SESSION_PROBE_TIMEOUT_MS){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{cache:"no-store",signal:controller.signal});}finally{clearTimeout(timer);}}
