@@ -222,6 +222,7 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
             Name
             <input value={form.name} maxLength={60} placeholder="Pet name" onChange={(event) => setField({ name: event.target.value })} />
           </label>
+          {!form.id && form.name.trim() && <div className={styles.full} aria-label="Matching saved pets">{pets.filter(pet => pet.name.toLocaleLowerCase().includes(form.name.trim().toLocaleLowerCase())).map(pet => <button key={pet.id} type="button" className={styles.secondary} onClick={() => openEdit(pet)}>Use {pet.name} · {pet.breed || pet.species}</button>)}</div>}
           <label>
             Species
             <select value={form.species} onChange={(event) => setField({ species: event.target.value, breed: "" })}>
@@ -241,12 +242,12 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
           </label>
           <label className={styles.full}>
             Breed
-            <select value={form.breed} onChange={(event) => setField({ breed: event.target.value })}>
-              <option value="">Select a breed…</option>
+            <input list="pet-breed-options" value={form.breed} placeholder="Start typing a breed" autoComplete="off" onChange={(event) => setField({ breed: event.target.value })} />
+            <datalist id="pet-breed-options">
               {breedsFor(form.species === "cat" ? "cat" : "dog").map((breed) => (
                 <option key={breed} value={breed}>{breed}</option>
               ))}
-            </select>
+            </datalist>
           </label>
           <label>
             Age

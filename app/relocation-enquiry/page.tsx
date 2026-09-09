@@ -1,5 +1,6 @@
 "use client";
 import Link from"next/link";
+import AddressAutofill from "../mobile-app/address-autofill";
 import{useState}from"react";
 
 type EnquiryResult={id:string;customerName:string;pickupDate:string;expectedTravelDate:string};
@@ -52,8 +53,8 @@ export default function RelocationEnquiryPage(){
       <label style={label}>Pet type<select style={input} value={form.petType} onChange={e=>set("petType",e.target.value as"dog"|"cat")}><option value="dog">Dog</option><option value="cat">Cat</option></select></label>
       <label style={label}>Pickup date<input style={input} type="date" value={form.pickupDate} onChange={e=>set("pickupDate",e.target.value)}/></label>
       <label style={label}>Pickup approximate time<input style={input} type="time" value={form.pickupApproxTime} onChange={e=>set("pickupApproxTime",e.target.value)}/></label>
-      <label style={label}>Pickup location<input style={input} value={form.pickupLocation} onChange={e=>set("pickupLocation",e.target.value)} placeholder="Address / area, city"/></label>
-      <label style={label}>Drop location<input style={input} value={form.dropLocation} onChange={e=>set("dropLocation",e.target.value)} placeholder="Address / area, city"/></label>
+      <label style={label}>Pickup location<AddressAutofill style={input} value={form.pickupLocation} onChange={value=>set("pickupLocation",value)} placeholder="Address / area, city"/></label>
+      <label style={label}>Drop location<AddressAutofill style={input} value={form.dropLocation} onChange={value=>set("dropLocation",value)} placeholder="Address / area, city"/></label>
       <label style={label}>Expected travel date<input style={input} type="date" value={form.expectedTravelDate} onChange={e=>set("expectedTravelDate",e.target.value)}/></label>
       <div><button style={button} disabled={busy} onClick={()=>void submit()}>{busy?"Submitting…":"Submit enquiry"}</button></div>
     </section>

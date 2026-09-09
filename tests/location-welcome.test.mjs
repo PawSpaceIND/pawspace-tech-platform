@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {resolveServiceCoverage} from '../lib/service-zone-client.ts';
 
+test('address suggestions debounce typing and discard stale responses without submitting a booking',()=>{
+ const source=readFileSync('app/mobile-app/address-autofill.tsx','utf8');
+ assert.match(source,/350/);
+ assert.match(source,/if \(!active\) return/);
+ assert.match(source,/active = false; clearTimeout\(timer\)/);
+ assert.match(source,/autoComplete="street-address"/);
+ assert.match(source,/Suggestions are unavailable/);
+ assert.doesNotMatch(source,/method: "POST"/);
+ for(const file of ['address-picker','taxi-flow','relocation-flow']) assert.match(readFileSync(`app/mobile-app/${file}.tsx`,'utf8'),/<AddressAutofill/);
+});
+
+test('pet suggestions reuse an existing profile explicitly and keep standard breed validation',()=>{
+ const source=readFileSync('app/mobile-app/pet-manager.tsx','utf8');
+ assert.match(source,/Matching saved pets/);
+ assert.match(source,/onClick=\{\(\) => openEdit\(pet\)\}/);
+ assert.match(source,/list="pet-breed-options"/);
+ assert.match(source,/validatePetProfile/);
+});
+
 test('welcome and home share GPS-first location with neighbourhood search and optional PIN fallback',()=>{
  const welcome=readFileSync('app/mobile-app/location-welcome.tsx','utf8');
  const home=readFileSync('app/mobile-app/premium-discovery-home.tsx','utf8');

@@ -8,7 +8,7 @@ async function payload<T>(response: Response): Promise<T> {
 
 export async function searchAddresses(query: string, sessionToken: string): Promise<AutocompleteResult> {
   const params = new URLSearchParams({ mode: "search", query, sessionToken });
-  return payload<AutocompleteResult>(await fetch(`/api/address-autocomplete?${params.toString()}`, { cache: "no-store" }));
+  return payload<AutocompleteResult>(await fetch(`/api/address-autocomplete?${params.toString()}`, { cache: "no-store", signal: AbortSignal.timeout(10000) }));
 }
 
 export async function resolveAddress(placeId: string, sessionToken: string): Promise<ResolvedAddress> {
