@@ -2,7 +2,6 @@
 
 import DeliveryRecovery from "./DeliveryRecovery";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { subscribeConversationRefresh } from "../../../lib/conversation-live-refresh";
 import { inboxResponseError, inboxErrorMessage } from "../../../lib/inbox-ui-error";
 import { consentEvidenceLabel } from "../../../lib/communication-ui-state";
 import { Badge, Button, EmptyState } from "../../components/ui";
@@ -63,47 +62,74 @@ export default function CustomerExperiencePage() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const [reply, setReply] = useState("");
-  const [replyRequestId, setReplyRequestId] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, { text: string; clientRequestId: string }>>({});
+  const reply = drafts[selected]?.text || "";
+  const replyRequestId = drafts[selected]?.clientRequestId || "";
+  const activeThread = useRef("");
+  const mutationInFlight = useRef(false);
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
+  const accessEpoch = useRef(0);
+  const clearAccess = useCallback((threadId?: string) => {
+    accessEpoch.current++;
+    if (threadId) {
+      setThreads(current => current.filter(row => row.id !== threadId));
+      setDrafts(current => { const next = { ...current }; delete next[threadId]; return next; });
+    } else {
+      setThreads([]); setDrafts({}); setQuery("");
+    }
+    if (!threadId || activeThread.current === threadId) {
+      activeThread.current = "";
+      setSelected(""); setConversation(null); setControl(null); setNotice("");
+      setServiceWindowCheckedAt(0); setRoutingReason("CX operator routing decision");
+    }
+  }, []);
+  const selectThread = (id: string) => {
+    if (activeThread.current === id) return;
+    activeThread.current = id;
+    setSelected(id); setConversation(null); setControl(null); setError(""); setNotice("");
+  };
 
   const loadThreads = useCallback(async () => {
+    const epoch = accessEpoch.current;
     const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[] }; error?: string };
+    if (epoch !== accessEpoch.current) return [];
+    if ([401, 403].includes(response.status)) clearAccess();
     if (!response.ok) throw new Error(payload.error || `Unable to load conversations (HTTP ${response.status})`);
     const next = payload.data?.threads || [];
     setThreads(next);
     return next;
-  }, []);
+  }, [clearAccess]);
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return;
+    const epoch = accessEpoch.current;
     const response = await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
+    if (!shouldApply() || epoch !== accessEpoch.current) return;
+    if ([401, 403, 404].includes(response.status)) clearAccess(response.status === 401 ? undefined : id);
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
-    if (!shouldApply()) return;
+    if (!shouldApply() || activeThread.current !== id) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
-  }, []);
+  }, [clearAccess]);
 
   const loadControl = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return null;
+    const epoch = accessEpoch.current;
     const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
+    if (!shouldApply() || epoch !== accessEpoch.current) return null;
+    if ([401, 403].includes(response.status)) clearAccess(response.status === 401 ? undefined : id);
     if (response.status === 409 || response.status === 404) {
-      if (shouldApply()) setControl(null);
+      if (shouldApply() && activeThread.current === id) setControl(null);
       return null;
     }
     if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
     const next = payload.data || null;
-    if (shouldApply()) setControl(next);
+    if (shouldApply() && activeThread.current === id) setControl(next);
     return next;
-  }, []);
-
-  useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    return subscribeConversationRefresh(() => window.dispatchEvent(new Event("pawspace:cx-refresh")));
-  }, []);
+  }, [clearAccess]);
 
   useEffect(() => {
     let active = true;
@@ -113,7 +139,10 @@ export default function CustomerExperiencePage() {
       refreshing = true;
       try {
         const next = await loadThreads();
-        if (active && next[0]) setSelected((current) => current || String(next[0].id));
+        if (active && next[0] && !activeThread.current) {
+          activeThread.current = String(next[0].id);
+          setSelected(String(next[0].id));
+        }
         if (active) setError("");
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
@@ -122,13 +151,13 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const invalidate = () => { void refresh(); };
-    window.addEventListener("pawspace:cx-refresh", invalidate);
-    const timer = window.setInterval(invalidate, inboxRefreshMs);
+    const refreshFromEvent = () => { void refresh(); };
+    window.addEventListener("pawspace:conversation-refresh", refreshFromEvent);
+    const timer = window.setInterval(refreshFromEvent, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.removeEventListener("pawspace:cx-refresh", invalidate);
+      window.removeEventListener("pawspace:conversation-refresh", refreshFromEvent);
     };
   }, [loadThreads]);
 
@@ -149,18 +178,20 @@ export default function CustomerExperiencePage() {
       }
     };
     void refresh();
-    const invalidate = () => { void refresh(); };
-    window.addEventListener("pawspace:cx-refresh", invalidate);
-    const timer = window.setInterval(invalidate, inboxRefreshMs);
+    const refreshFromEvent = () => { void refresh(); };
+    window.addEventListener("pawspace:conversation-refresh", refreshFromEvent);
+    const timer = window.setInterval(refreshFromEvent, inboxRefreshMs);
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.removeEventListener("pawspace:cx-refresh", invalidate);
+      window.removeEventListener("pawspace:conversation-refresh", refreshFromEvent);
     };
   }, [selected, loadConversation, loadControl]);
 
   async function act(action: string, payload: Row) {
-    if (!selected) return false;
+    if (!selected || conversation?.thread.id !== selected || mutationInFlight.current) return false;
+    const target = selected;
+    mutationInFlight.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -168,22 +199,25 @@ export default function CustomerExperiencePage() {
       const response = await fetch("/api/conversations", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, threadId: selected, ...payload }),
+        body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
-      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     } finally {
+      mutationInFlight.current = false;
       setBusy(false);
     }
   }
 
   async function controlAct(action: string, payload: Row = {}) {
-    if (!selected) return false;
+    if (!selected || conversation?.thread.id !== selected || mutationInFlight.current) return false;
+    const target = selected;
+    mutationInFlight.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -191,35 +225,38 @@ export default function CustomerExperiencePage() {
       const response = await fetch("/api/whatsapp/conversation-control", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, threadId: selected, ...payload }),
+        body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || `WhatsApp control failed (HTTP ${response.status})`);
-      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      await Promise.all([loadThreads(), loadConversation(target), loadControl(target)]);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeThread.current === target) setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     } finally {
+      mutationInFlight.current = false;
       setBusy(false);
     }
   }
 
   async function sendHumanReply() {
     const message = reply.trim();
-    if (!message) return;
+    if (!message || conversation?.thread.id !== selected || control?.threadId !== selected || mutationInFlight.current) return;
+    const target = selected;
+    const submittedText = reply;
     const clientRequestId = replyRequestId || crypto.randomUUID();
-    if (!replyRequestId) setReplyRequestId(clientRequestId);
+    if (!replyRequestId) setDrafts(current => ({ ...current, [target]: { text: submittedText, clientRequestId } }));
     const sent = await controlAct("human_reply", { message, clientRequestId });
     if (sent) {
-      setReply("");
-      setReplyRequestId("");
-      setNotice("Reply queued through the governed WhatsApp outbox.");
+      setDrafts(current => current[target]?.text === submittedText && current[target]?.clientRequestId === clientRequestId
+        ? { ...current, [target]: { text: "", clientRequestId: "" } } : current);
+      if (activeThread.current === target) setNotice("Reply queued through the governed WhatsApp outbox.");
     }
   }
 
   const visible = useMemo(() => threads.filter((row) => {
-    const hay = `${text(row.customer_name, "")} ${text(row.customer_id, "")} ${text(row.primary_phone, "")} ${text(row.lastMessage?.channel, "")}`.toLowerCase();
+    const hay = `${text(row.customer_name, "")} ${text(row.customer_id, "")} ${text(row.primary_phone, "")} ${text(row.lastMessage?.channel, "")} ${text(row.lastMessage?.text, "")}`.toLowerCase();
     if (!hay.includes(query.toLowerCase())) return false;
     if (filter === "unassigned") return !text(row.assigned_to, "");
     if (filter === "whatsapp") return text(row.lastMessage?.channel, "") === "whatsapp";
@@ -251,7 +288,7 @@ export default function CustomerExperiencePage() {
   const ticket = thread?.ticket as Row | undefined;
   const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
   const isWhatsApp = Boolean(control);
-  const canSendHumanReply = Boolean(isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
+  const canSendHumanReply = Boolean(conversation?.thread.id === selected && control?.threadId === selected && isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
   const modeLabel = humanMode ? "Human only" : aiMode ? "AI Assistant" : "Chatbot only";
 
   return (
@@ -312,11 +349,11 @@ export default function CustomerExperiencePage() {
                   type="button"
                   className={styles.row}
                   aria-current={selected === row.id ? "true" : undefined}
-                  onClick={() => setSelected(row.id)}
+                  onClick={() => selectThread(row.id)}
                 >
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
-                  <small>{text((row.lastMessage?.payload as Row | undefined)?.text || row.lastMessage?.template_key, "No message preview")}</small>
+                  <small>{text(row.lastMessage?.text, row.lastMessage ? "Message" : "No messages yet")}</small>
                   <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner}` : channel === "whatsapp" ? "WhatsApp open" : "Open"}</span></div>
                 </button>
               );
@@ -354,7 +391,7 @@ export default function CustomerExperiencePage() {
             <footer className={styles.composer}>
               <input
                 value={reply}
-                onChange={(event) => { setReply(event.target.value); setReplyRequestId(""); }}
+                onChange={(event) => { const value = event.target.value; setDrafts(current => ({ ...current, [selected]: { text: value, clientRequestId: "" } })); }}
                 disabled={!isWhatsApp || !humanMode || busy || !withinWindow}
                 maxLength={4096}
                 placeholder={!isWhatsApp ? "Select a WhatsApp thread to reply" : !humanMode ? "Take over or switch to Human only to reply" : !withinWindow ? "24-hour window closed — use an approved template" : "Reply as PawSpace CX..."}

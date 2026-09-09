@@ -21,13 +21,19 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 const round2=(value:number)=>Math.round(value*100)/100;
 
+function missingLedgerOnly(error:unknown,table:string):null {
+ const message=error instanceof Error?error.message:String(error);
+ if(message.includes(`no such table: ${table}`)||message.includes(`no such table: main.${table}`))return null;
+ throw error;
+}
+
 /** 1 point = Rs.0.50 off. */
 export const REDEEM_RUPEE_PER_POINT=0.5;
 
 /** Rupee value of the credit already applied to this booking, from every instrument. */
 export async function creditsAppliedToBooking(db:Db,bookingId:string){
- const wallet=await db.prepare("SELECT COALESCE(SUM(applied_value),0) total FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_type='booking' AND source_id=?").bind(bookingId).first<Row>().catch(()=>null);
- const points=await db.prepare("SELECT COALESCE(SUM(-points),0) points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const wallet=await db.prepare("SELECT COALESCE(SUM(applied_value),0) total FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_type='booking' AND source_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"pawspace_wallet_ledger"));
+ const points=await db.prepare("SELECT COALESCE(SUM(-points),0) points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"paw_points_ledger"));
  return round2(Number(wallet?.total||0)+Number(points?.points||0)*REDEEM_RUPEE_PER_POINT);
 }
 

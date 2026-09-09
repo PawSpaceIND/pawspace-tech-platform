@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, FormEvent } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, FormEvent } from "react";
+
+import { startLiveRefresh } from "../../lib/live-refresh";
 
 interface ThreadItem {
   id: string;
@@ -39,6 +41,7 @@ interface ThreadDetail {
     sessionExpiresAt: number | null;
   };
   routingMode: string;
+  simulationAllowed?: boolean;
   quickReplies: Array<{ code: string; label: string; body: string }>;
 }
 
@@ -48,98 +51,60 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   const [threadDetail, setThreadDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [messageText, setMessageText] = useState("");
+  const [drafts, setDrafts] = useState<Record<string,string>>({});
+  const messageText = drafts[selectedThreadId] || "";
+  const setMessageText = (value:string) => setDrafts(current => ({...current,[selectedThreadId]:value}));
+  const [listError,setListError] = useState(false);
+  const [detailError,setDetailError] = useState(false);
+  const listRefresh=useRef<ReturnType<typeof startLiveRefresh>|null>(null);
+  const detailRefresh=useRef<ReturnType<typeof startLiveRefresh>|null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sending, setSending] = useState(false);
+  const pendingSend = useRef<{ fingerprint: string; clientRequestId: string } | null>(null);
+  const sendInFlight = useRef(false);
   const [simulating, setSimulating] = useState(false);
   const [simulateText, setSimulateText] = useState("Hi PawSpace, I'd like to check my pet grooming booking details");
 
-  // Load threads
-  const loadThreads = useCallback(async () => {
-    try {
-      const res = await fetch("/api/crm/chat", { cache: "no-store" });
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        data?: { threads?: ThreadItem[] };
-        error?: string;
-      };
-      if (res.ok && body.data?.threads) {
-        setThreads(body.data.threads);
-        setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
+  const loadThreads=useCallback(()=>{listRefresh.current?.refresh();detailRefresh.current?.refresh();},[]);
+
+  useEffect(()=>{
+    let active=true;
+    const sync=startLiveRefresh(async signal=>{
+      const response=await fetch("/api/crm/chat",{cache:"no-store",signal});
+      if(!active||signal.aborted)return;
+      if(response.status===401||response.status===403){
+        setThreads([]);setSelectedThreadId("");setThreadDetail(null);setDrafts({});
       }
-    } catch {
-      notify("Failed to load chat threads");
-    } finally {
-      setLoading(false);
-    }
-  }, [notify]);
+      if(!response.ok)throw new Error("Conversation list unavailable");
+      const body=await response.json() as {data?:{threads?:ThreadItem[]}};
+      if(!active||signal.aborted)return;
+      if(!Array.isArray(body.data?.threads))throw new Error("Invalid conversation list");
+      setThreads(body.data.threads);setListError(false);setLoading(false);
+      setSelectedThreadId(current=>current||body.data?.threads?.[0]?.id||"");
+    },{onError:()=>{if(active){setListError(true);setLoading(false);}}});
+    listRefresh.current=sync;
+    window.addEventListener("online",sync.refresh);
+    return()=>{active=false;sync.stop();window.removeEventListener("online",sync.refresh);listRefresh.current=null;};
+  },[]);
 
-  useEffect(() => {
-    let active = true;
-    void fetch("/api/crm/chat", { cache: "no-store" })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          data?: { threads?: ThreadItem[] };
-          error?: string;
-        };
-        if (!active) return;
-        if (res.ok && body.data?.threads) {
-          setThreads(body.data.threads);
-          setSelectedThreadId((current) => current || body.data?.threads?.[0]?.id || "");
-        }
-      })
-      .catch(() => {
-        if (active) notify("Failed to load chat threads");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [notify]);
-
-  // Load thread detail when selected
-  useEffect(() => {
-    if (!selectedThreadId) {
-      queueMicrotask(() => {
-        setThreadDetail(null);
-      });
-      return;
-    }
-
-    let active = true;
-    queueMicrotask(() => {
-      if (active) setDetailLoading(true);
-    });
-
-    void fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`, { cache: "no-store" })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          data?: ThreadDetail;
-          error?: string;
-        };
-        if (!active) return;
-        if (res.ok && body.data) {
-          setThreadDetail(body.data);
-        } else {
-          notify(body.error || "Failed to load conversation messages");
-        }
-      })
-      .catch(() => {
-        if (active) notify("Connection error loading conversation");
-      })
-      .finally(() => {
-        if (active) setDetailLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [selectedThreadId, notify]);
+  useEffect(()=>{
+    let active=true;
+    queueMicrotask(()=>{if(active){setThreadDetail(null);setDetailError(false);setDetailLoading(Boolean(selectedThreadId));}});
+    if(!selectedThreadId)return()=>{active=false;};
+    const sync=startLiveRefresh(async signal=>{
+      const response=await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`,{cache:"no-store",signal});
+      if(!active||signal.aborted)return;
+      if([401,403,404].includes(response.status))setThreadDetail(null);
+      if(!response.ok)throw new Error("Conversation unavailable");
+      const body=await response.json() as {data?:ThreadDetail};
+      if(!active||signal.aborted)return;
+      if(!body.data||body.data.thread.id!==selectedThreadId)throw new Error("Conversation response mismatch");
+      setThreadDetail(body.data);setDetailError(false);setDetailLoading(false);
+    },{onError:()=>{if(active){setDetailError(true);setDetailLoading(false);}}});
+    detailRefresh.current=sync;
+    window.addEventListener("online",sync.refresh);
+    return()=>{active=false;sync.stop();window.removeEventListener("online",sync.refresh);detailRefresh.current=null;};
+  },[selectedThreadId]);
 
   // Filter threads
   const filteredThreads = useMemo(() => {
@@ -156,8 +121,11 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   // Send message
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim() || !threadDetail) return;
-
+    if (!messageText.trim() || !threadDetail || sendInFlight.current) return;
+    const fingerprint = JSON.stringify([threadDetail.thread.id, threadDetail.thread.customer_id, messageText.trim()]);
+    if (pendingSend.current?.fingerprint !== fingerprint) pendingSend.current = { fingerprint, clientRequestId: crypto.randomUUID() };
+    const clientRequestId = pendingSend.current.clientRequestId;
+    sendInFlight.current = true;
     setSending(true);
     try {
       const res = await fetch("/api/crm/chat", {
@@ -165,6 +133,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "send_message",
+          clientRequestId,
           threadId: threadDetail.thread.id,
           customerId: threadDetail.thread.customer_id,
           text: messageText.trim(),
@@ -178,18 +147,18 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       };
 
       if (res.ok && data.ok) {
-        notify("WhatsApp message queued via Meta Cloud sandbox");
+        pendingSend.current = null;
+        notify("WhatsApp message queued");
         setMessageText("");
         // Refresh detail
-        const refRes = await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`);
-        const refBody = (await refRes.json().catch(() => ({}))) as { data?: ThreadDetail };
-        if (refBody.data) setThreadDetail(refBody.data);
+        loadThreads();
       } else {
         notify(data.error || data.data?.reason || "Failed to send WhatsApp message");
       }
     } catch {
       notify("Network error while sending message");
     } finally {
+      sendInFlight.current = false;
       setSending(false);
     }
   };
@@ -214,9 +183,6 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       if (res.ok && data.ok) {
         notify("Simulated inbound customer WhatsApp message received");
         // Reload detail and threads
-        const refRes = await fetch(`/api/crm/chat?threadId=${encodeURIComponent(selectedThreadId)}`);
-        const refBody = (await refRes.json().catch(() => ({}))) as { data?: ThreadDetail };
-        if (refBody.data) setThreadDetail(refBody.data);
         loadThreads();
       } else {
         notify(data.error || "Failed to simulate inbound message");
@@ -257,18 +223,15 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 170px)", background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #e2d9ec" }}>
-      {/* Sandbox Lock Header Bar */}
+      {/* Conversation header */}
       <div style={{ background: "#24133f", color: "#fff", padding: "10px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ background: "#4cd964", color: "#000", fontWeight: 800, padding: "2px 8px", borderRadius: 4 }}>SANDBOX ACTIVE</span>
-          <span>Meta WhatsApp Cloud API Webhook Integration</span>
+          <span>WhatsApp Conversations</span>
         </div>
-        <div style={{ display: "flex", gap: 14, color: "#d8caea", fontFamily: "monospace" }}>
-          <span>PAWSPACE_PAYMENT_ENV=sandbox</span>
-          <span>FORBID_PRODUCTION=true</span>
-          <span>LIVE_DELIVERY=LOCKED</span>
-        </div>
+        <span>Delivery status is shown on each message</span>
       </div>
+
+      {(listError||detailError)&&<div role="alert" style={{padding:"8px 18px",background:"#fff3cd"}}>Conversation updates unavailable. Retrying automatically.</div>}
 
       {/* Main Split Content */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -314,7 +277,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: "#6e637a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.lastMessage?.text || "No messages yet"}
+                    {t.lastMessage?.text || (t.lastMessage ? "Message" : "No messages yet")}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                     <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: t.withinSession ? "#d4f4dd" : "#f4e0d4", color: t.withinSession ? "#13632e" : "#873200" }}>
@@ -436,7 +399,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
               </form>
 
               {/* Sandbox Inbound Simulator Toolbar */}
-              <div style={{ padding: "8px 18px", background: "#f8f6fb", borderTop: "1px dashed #dcd3e7", display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+              {threadDetail.simulationAllowed && <div style={{ padding: "8px 18px", background: "#f8f6fb", borderTop: "1px dashed #dcd3e7", display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
                 <span style={{ color: "#746b7d", fontWeight: 700 }}>Sandbox Test:</span>
                 <input
                   type="text"
@@ -453,7 +416,7 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                 >
                   {simulating ? "Simulating…" : "⚡ Simulate Customer Inbound"}
                 </button>
-              </div>
+              </div>}
             </>
           )}
         </main>
