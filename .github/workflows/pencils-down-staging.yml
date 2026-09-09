@@ -1,0 +1,99 @@
+name: Pencils-down isolated frontend (ab40dc00)
+
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths:
+      - .github/workflows/pencils-down-staging.yml
+      - ops/pencils-down/**
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-pencils-down-ab40dc00
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/ops/pencils-down-staging-ab40dc00'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - name: Checkout deployment tools only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+          persist-credentials: false
+      - name: Checkout frozen product without local changes
+        uses: actions/checkout@v4
+        with:
+          ref: ab40dc009471e0fdac41b07034aaef18784f0a02
+          path: candidate
+          persist-credentials: false
+      - name: Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check credentials and isolated namespace without writes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          EXISTING_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+        run: python infra/ops/pencils-down/deploy_frozen.py preflight
+      - name: Install frozen dependencies (no deployment secrets)
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Build exact frozen product
+        working-directory: candidate
+        run: npm run build
+      - name: Deploy only the dedicated frontend and verify active bindings
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          EXISTING_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+        run: python infra/ops/pencils-down/deploy_frozen.py deploy
+      - name: Install browser for one customer-shell smoke
+        working-directory: candidate
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Read-only customer-shell browser smoke (no orders or external calls)
+        run: node infra/ops/pencils-down/frontend-smoke.cjs
+      - name: Upload sanitized deployment evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pencils-down-staging-evidence
+          path: pencils-down-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Staging URL and remaining gates
+        if: ${{ success() }}
+        run: |
+          echo "Frontend: ${{ steps.deploy.outputs.origin }}"
+          echo "Product: ab40dc009471e0fdac41b07034aaef18784f0a02"
+          echo "Hosted checkout, authenticated booking and device checks remain NOT RUN."
