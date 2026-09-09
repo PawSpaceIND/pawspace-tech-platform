@@ -53,6 +53,19 @@ function swarmFixtureProvider(groupId) {
   return /-swarm-\d+$/.test(group) ? `${group}-PRV` : "";
 }
 
+// Read group_id by column, never the first swarm-shaped string: a reservation's leading
+// id is RES-<group> and has the same suffix. These gate seeds are single-row literal INSERTs.
+function swarmSeedGroup(sql) {
+  const insert = sql.match(/^INSERT OR REPLACE INTO scheduling_(?:assignment_decisions|reservations)\s*\(([^)]+)\)\s*VALUES\s*\((.*)\)\s*;?\s*$/is);
+  if (!insert) return "";
+  const columns = insert[1].split(",").map((column) => column.trim().toLowerCase());
+  // Quoted JSON may contain commas or doubled SQL quotes; splitting VALUES on commas is unsafe.
+  const values = insert[2].match(/'(?:''|[^'])*'|[^',\s][^,]*/g) || [];
+  if (columns.length !== values.length) return "";
+  const value = values[columns.indexOf("group_id")]?.trim() || "";
+  return value.match(/^'([A-Za-z0-9_-]+-swarm-\d+)'$/)?.[1] || "";
+}
+
 /**
  * Hosted Workers.dev traffic is external transport, not product logic. One lost TCP/TLS/header response
  * must not turn an otherwise deterministic gate into a five-minute anonymous `fetch failed`, but neither
@@ -137,7 +150,7 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     // identity derived from their already-unique scheduling group. The deployed route still verifies that
     // assignment, reservation and booking provider identities agree; no product guard is bypassed.
     if (/^INSERT OR REPLACE INTO scheduling_(?:assignment_decisions|reservations) /i.test(next)) {
-      const group = next.match(/'([A-Za-z0-9_-]+-swarm-\d+)'/)?.[1] || "";
+      const group = swarmSeedGroup(next);
       const uniqueProvider = swarmFixtureProvider(group);
       if (uniqueProvider) {
         const legacyProvider = group.replace(/-swarm-\d+$/, "-PRV");
