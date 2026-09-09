@@ -57,7 +57,6 @@ jobs:
 
           finance_files=(
             app/api/booking-operations/route.ts
-            app/api/grooming-booking-change/route.ts
             app/api/grooming-payment-sandbox/route.ts
             app/api/razorpay-webhook/route.ts
             app/api/ops-work-queue/route.ts
@@ -69,6 +68,35 @@ jobs:
           )
           git diff --binary 2fa3d85c209409ea857f395b1fe94c5c507b7244 0f5e42f4003dc6dc1cbbc268bffbde152ad22a9a -- "${finance_files[@]}" > /tmp/finance-certified.patch
           git apply --3way --index /tmp/finance-certified.patch
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/api/grooming-booking-change/route.ts')
+          s=p.read_text()
+          def repl(old,new,label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'missing expected release shape: {label}')
+              s=s.replace(old,new,1)
+
+          repl('import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authority";\n',
+               'import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authority";\nimport{bridgeLifecycleCommunications}from"../../../lib/lifecycle-communications";\n',
+               'communication bridge import')
+          repl('  db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT \'requested\',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),\n',
+               '  db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT \'requested\',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),\n  db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT \'queued\',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),\n',
+               'notification table')
+          repl('      const refundAmount=refundEvaluation.customerRefundAmount;\n      const refundId=refundAmount>0?crypto.randomUUID():null;\n',
+               '      const refundAmount=refundEvaluation.customerRefundAmount;\n      const refundId=refundAmount>0?crypto.randomUUID():null;\n      const cancellationEventId=crypto.randomUUID();\n      const cancellationMessage=refundAmount>0?`Your PawSpace Grooming booking is cancelled. A refund of ₹${refundAmount.toFixed(2)} is pending reconciliation.`:"Your PawSpace Grooming booking is cancelled.";\n',
+               'cancellation notification variables')
+          repl('        db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(json_set(detail_json,\'$.cancelReason\',?),\'$.commercialPolicyEvaluation\',json(?)),updated_at=? WHERE booking_id=?").bind(refundAmount>0?"refund_pending":"cancelled",reason,JSON.stringify(policyEvaluation),now,input.bookingId),\n        db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN \'reversed\' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),\n',
+               '        db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(json_set(detail_json,\'$.cancelReason\',?),\'$.commercialPolicyEvaluation\',json(?)),updated_at=? WHERE booking_id=?").bind(refundAmount>0?"refund_pending":"cancelled",reason,JSON.stringify(policyEvaluation),now,input.bookingId),\n        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,input.customerId,"whatsapp",refundAmount>0?"grooming_booking_cancelled_refund_pending":"grooming_booking_cancelled",cancellationMessage,"queued",cancellationEventId,now),\n        db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN \'reversed\' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),\n',
+               'durable notification insert')
+          repl('      let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}\n      return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,referral}});\n',
+               '      const customerCommunication=await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:auditActor});\n      let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}\n      return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,customerCommunication,referral}});\n',
+               'post-commit communication handoff')
+          p.write_text(s)
+          PY
+          git add app/api/grooming-booking-change/route.ts
 
           closure_assets=(
             e2e/helpers/correlated-grooming.ts
