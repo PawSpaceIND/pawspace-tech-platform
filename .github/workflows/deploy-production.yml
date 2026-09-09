@@ -147,7 +147,7 @@ jobs:
 
       - name: Configure production (name + D1 + explicit runtime modes + provider identifiers)
         env:
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
           PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
@@ -243,7 +243,7 @@ jobs:
 
       - name: Certify the deployed configuration
         env:
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
           EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
           IDFY_URL: ${{ vars.IDFY_URL }}

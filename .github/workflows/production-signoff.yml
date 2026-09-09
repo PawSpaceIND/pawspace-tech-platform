@@ -30,7 +30,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Production readiness policy certification
-        run: node --test tests/production-readiness-enforcement.test.mjs tests/production-readiness-closure.test.mjs tests/bengaluru-production-remediation-wiring.test.mjs
+        run: node --test tests/production-readiness-enforcement.test.mjs tests/production-readiness-closure.test.mjs tests/bengaluru-production-remediation-wiring.test.mjs tests/production-d1-secret-wiring.test.mjs
 
   production-key-presence-audit:
     if: ${{ github.event_name == 'workflow_dispatch' }}
