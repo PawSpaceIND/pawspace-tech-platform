@@ -8,9 +8,9 @@ export async function ensureGroomingInvoiceTables(db:Db){await db.batch([
 ]);}
 
 /**
- * UAT-only seed for a city tax policy. Does not overwrite an existing published policy.
+ * Explicit UAT/test seed for a city tax policy. Does not overwrite an existing published policy.
  * Default is 18% GST inclusive — placeholder only, not final business policy.
- * Production cities must still go through saveGroomingTaxPolicy with an explicit reason.
+ * Must NOT be called from issueGroomingInvoice (fail-closed without a published policy).
  */
 const taxPolicySeeded=new WeakMap<Db,Set<string>>();
 export async function seedDefaultGroomingTaxPolicy(db:Db,cityId="blr"){
@@ -55,7 +55,6 @@ export async function issueGroomingInvoice(db:Db,input:{bookingId:string;reason:
   const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(!payment||String(payment.status)!=="captured")throw new Response("Grooming invoice cannot be issued until the sandbox payment is captured",{status:409});
   const cityId=String(booking.city_id);
-  await seedDefaultGroomingTaxPolicy(db,cityId);
   const policy=await db.prepare("SELECT * FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first<Row>();
   const amounts=invoiceAmounts(Number(booking.total_amount||0),policy);
   if(!amounts)throw new Response("Grooming invoice is blocked until a published tax policy is configured for this city",{status:409});
