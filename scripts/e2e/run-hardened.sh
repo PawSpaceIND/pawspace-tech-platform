@@ -135,3 +135,10 @@ for journey in "${journeys[@]}"; do
     stop_server
   done
 done
+
+# The CX communication-visibility proof owns its own isolated SQLite/D1 harness and browser server.
+# Keep Wrangler stopped so the proof can run independently and reproduce the exact terminal command
+# used during local development.
+echo "[e2e] running Razorpay capture -> Meta 503 -> CX visibility proof"
+stop_server
+npx playwright test --config playwright.cx-visibility.config.ts tests/e2e/09-webhook-flood-cx-visibility.spec.ts

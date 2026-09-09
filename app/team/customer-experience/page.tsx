@@ -7,6 +7,16 @@ import teamStyles from "../team-console.module.css";
 import styles from "./whatsapp-inbox.module.css";
 
 type Row = Record<string, unknown>;
+type CommunicationState = {
+  bookingId?: string;
+  state?: "pending" | "failed";
+  label?: string;
+  outboxStatus?: string;
+  attemptCount?: number;
+  maxAttempts?: number;
+  nextAttemptAt?: number | null;
+  lastError?: string;
+};
 type Thread = Row & {
   id: string;
   customer_name?: string;
@@ -17,6 +27,7 @@ type Thread = Row & {
   assigned_to?: string;
   lastMessage?: Row | null;
   ticket?: Row | null;
+  communicationState?: CommunicationState | null;
 };
 type Conversation = {
   thread: Row;
@@ -262,6 +273,8 @@ export default function CustomerExperiencePage() {
   }), [threads, query, filter]);
 
   const thread = conversation?.thread || null;
+  const selectedThread = threads.find(row => row.id === selected) || null;
+  const communicationState = selectedThread?.communicationState || null;
   const messages = conversation?.messages || [];
   const assigned = thread ? text(thread.assigned_to, "") : "";
   const routingMode = control?.routing?.mode || "human_only";
@@ -340,6 +353,7 @@ export default function CustomerExperiencePage() {
               const owner = text(row.assigned_to, "");
               const isHuman = Boolean(owner && owner !== "ai-orchestrator");
               const channel = text(row.lastMessage?.channel, "thread");
+              const comm = row.communicationState;
               return (
                 <button
                   key={row.id}
@@ -351,6 +365,7 @@ export default function CustomerExperiencePage() {
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
                   <small>{text(row.lastMessage?.text, row.lastMessage ? "Message" : "No messages yet")}</small>
+                  {comm ? <div className={`${styles.communicationFlag} ${comm.state === "failed" ? styles.communicationFlagFailed : styles.communicationFlagPending}`} role="status"><b>{text(comm.label)}</b><span>Booking {text(comm.bookingId)} · customer may not know payment succeeded</span></div> : null}
                   <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner}` : channel === "whatsapp" ? "WhatsApp open" : "Open"}</span></div>
                 </button>
               );
@@ -366,6 +381,7 @@ export default function CustomerExperiencePage() {
               <div className={styles.person}><div className={styles.avatar}>{initials(customerName)}</div><div><h2>{customerName}</h2><small>{leadId} · {isWhatsApp ? `${modeLabel}${humanOwned ? ` · Owner: ${assigned}` : ""}` : pretty(lastMessage?.channel || "conversation")}</small></div></div>
               <span className={styles.window}>{isWhatsApp ? (withinWindow ? "WhatsApp service window open" : "Template required") : "Canonical conversation"}</span>
             </header>
+            {communicationState ? <div className={`${styles.communicationBanner} ${communicationState.state === "failed" ? styles.communicationBannerFailed : styles.communicationBannerPending}`} role="alert"><div><b>{text(communicationState.label)}</b><span>Financial confirmation is complete, but the mandatory customer communication has not been delivered.</span></div><small>Booking {text(communicationState.bookingId)} · {pretty(communicationState.outboxStatus)}{communicationState.attemptCount ? ` · attempt ${communicationState.attemptCount}${communicationState.maxAttempts ? `/${communicationState.maxAttempts}` : ""}` : ""}{communicationState.lastError ? ` · ${text(communicationState.lastError)}` : ""}</small></div> : null}
             <div className={styles.aiBar}>
               <div>
                 <b>{isWhatsApp ? `${modeLabel} routing` : "Non-WhatsApp conversation"}</b><br />
@@ -401,6 +417,7 @@ export default function CustomerExperiencePage() {
 
         <aside className={styles.inspector}>
           <section className={styles.card}><div className={styles.cardHead}><strong>Lead / Customer</strong><a>Canonical</a></div><div className={styles.kv}><span>Name</span><b>{customerName}</b><span>Phone</span><b>{phone}</b><span>Lead</span><b>{leadId}</b><span>Thread</span><b>{text(thread?.id)}</b></div></section>
+          {communicationState ? <section className={`${styles.card} ${styles.communicationContext}`}><div className={styles.cardHead}><strong>Customer Awareness Risk</strong><a>{communicationState.state === "failed" ? "Action required" : "Delivery pending"}</a></div><div className={styles.kv}><span>Booking</span><b>{text(communicationState.bookingId)}</b><span>Financial state</span><b>Confirmed / captured</b><span>Customer state</span><b>Confirmation may be unseen</b><span>Queue</span><b>{pretty(communicationState.outboxStatus)}</b></div></section> : null}
           <section className={styles.card}><div className={styles.cardHead}><strong>Consent Evidence</strong><a>Governed</a></div><div className={styles.kv}><span>WhatsApp</span><b>{consentState}</b><span>Purpose</span><b>Lead response / service</b><span>Marketing</span><b>No</b><span>Opt-out</span><b>Prior opt-out always wins</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Qualification</strong><a>AI summary</a></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Ticket</span><b>{text(ticket?.id, "None")}</b><span>Priority</span><b>{pretty(ticket?.priority || "normal")}</b><span>Subject</span><b>{text(ticket?.subject, "No active ticket")}</b><span>Promise</span><b>Never invent slot/price</b></div></section>
