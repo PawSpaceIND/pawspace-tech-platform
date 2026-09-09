@@ -79,6 +79,7 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
     commercialSnapshot: {
       paymentStage: stage.stage,
       bookingTotal: stage.bookingTotal,
+      appliedCredits: stage.appliedCredits || 0,
       dueNow: amount,
       outstandingBalance: stage.outstandingBalance,
     },

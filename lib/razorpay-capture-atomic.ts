@@ -1,4 +1,5 @@
 import { ACCT } from "./finance-accounts";
+import { creditsAppliedToBooking } from "./booking-credit-application";
 import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { postCollectionEvent } from "./collection-ledger";
 import { convertLeadOnPaymentCaptured } from "./lead-conversion-attribution";
@@ -95,7 +96,10 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   const refundedCurrent = Number(current?.refunded_amount || 0);
   const capturedTotal = round2(capturedCurrent + amount);
   const scheduleTotal = schedule ? round2(Number(schedule.paid_now_amount || 0) + Number(schedule.balance_amount || 0)) : 0;
-  const collectedInFull = schedule ? capturedTotal + 0.009 >= scheduleTotal : true;
+  const appliedCredits = schedule ? await creditsAppliedToBooking(db, input.bookingId) : 0;
+  if (!Number.isFinite(appliedCredits) || appliedCredits < 0) throw new Error("Applied booking credit is invalid");
+  const expectedCashTotal = schedule ? round2(Math.max(0, scheduleTotal - appliedCredits)) : amount;
+  const collectedInFull = schedule ? capturedTotal + 0.009 >= expectedCashTotal : true;
   const gateway = input.environment === "sandbox" ? "razorpay_sandbox" : "razorpay";
   const journalId = `JT-${crypto.randomUUID()}`;
   const journalEventId = `razorpay:capture:${captureKey(input)}`;
@@ -127,7 +131,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at)
       VALUES (?,?,?,?,?,?,?,?,'captured',?,0,?,?)
       ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,captured_amount=excluded.captured_amount,refunded_amount=excluded.refunded_amount,currency=excluded.currency,gateway_status='captured',reconciliation_status=excluded.reconciliation_status,variance_amount=0,last_event_id=excluded.last_event_id,updated_at=excluded.updated_at`)
-      .bind(input.paymentId, input.bookingId, "razorpay", input.environment, amount, capturedTotal, refundedCurrent, input.currency, collectedInFull ? "matched" : "partially_captured", input.eventId, now),
+      .bind(input.paymentId, input.bookingId, "razorpay", input.environment, appliedCredits > 0 ? expectedCashTotal : amount, capturedTotal, refundedCurrent, input.currency, collectedInFull ? "matched" : "partially_captured", input.eventId, now),
     ...(input.intentId ? [db.prepare("UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)")
       .bind(input.gatewayPaymentId || null, now, input.intentId, input.gatewayPaymentId || null)] : []),
     db.prepare("INSERT INTO journal_transactions (id,source_type,source_id,source_event_id,currency,status,narration,created_at) VALUES (?,?,?, ?,?,'DRAFT',?,?) ON CONFLICT(source_event_id) DO NOTHING")

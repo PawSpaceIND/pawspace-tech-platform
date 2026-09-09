@@ -1,5 +1,6 @@
 import{authError,database}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables,processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
+import {postVerifiedBookingRefund} from "../../../lib/booking-refund-ledger";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
 import{enforcePilotBooking}from"../../../lib/payment-pilot-guard";
 import{acceptRazorpayWebhook,advancePaymentState,type PaymentState}from"../../../lib/financial-lifecycle";
@@ -180,6 +181,9 @@ export async function POST(request:Request){
       const failed=String(result.status||"")==="exception";
       if(failed){await markInbox(db,accepted.row,"FAILED",eventType,String(result.reason ||"reconciliation_exception"));return json({ok:true,environment:gate.environment,...result});}
 
+      // Complete accounting before acknowledging a booking refund. The persisted refund identity
+      // makes a verified inbox retry repair an absent journal without posting a second reversal.
+      if(eventType==="refund.processed")await postVerifiedBookingRefund(db,event);
       let transition:Awaited<ReturnType<typeof advancePaymentState>>|null=null;
       if(intent&&target)transition=await advancePaymentState(db,{intentId:String(intent.id),target,gatewayPaymentId:event.gatewayPaymentId});
       await markInbox(db,accepted.row,"PROCESSED",eventType);
