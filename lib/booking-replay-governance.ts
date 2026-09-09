@@ -1,4 +1,4 @@
-// @ts-ignore Node 22 strip-types requires the explicit .ts extension at runtime.
+// @ts-expect-error Node 22 strip-types requires the explicit .ts extension at runtime.
 import {ensureBookingConversationOnInsert} from "./booking-conversation.ts";
 
 type Row=Record<string,unknown>;
