@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import styles from "./service-banner.module.css";
 import { getServiceMediaByName, getServiceVideoUrl } from "./service-media";
 import ServiceHero from "./service-hero";
+import { SERVICE_ART } from "./service-art";
 
 const HOME_BANNER = {
-  image: "/assets/banners/sitter-hug-golden.jpg",
-  alt: "PawSpace caregiver with a happy pet",
-  headline: "Real care. Real people.",
+  image: SERVICE_ART.pet_sitting.image,
+  alt: SERVICE_ART.pet_sitting.alt,
+  headline: "A little care. A lot of love.",
   sub: "One familiar PawSpace experience across every service",
-  review: "Google review carousel",
+  review: "PawSpace care details",
 };
 
 export default function ServiceBanner({ service, compact }: { service?: string; compact?: boolean }) {
@@ -24,10 +25,11 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
   const videoSrc = media ? getServiceVideoUrl(media.serviceCode) : null;
   const activeVisual = visualSelection.service === service ? visualSelection.index : 0;
   const safeVisualIndex = media ? Math.min(activeVisual, media.visuals.length - 1) : 0;
-  const mainVisual = media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
+  const serviceArt = media ? SERVICE_ART[media.serviceCode] : undefined;
+  const mainVisual = serviceArt ?? media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
   const headline = media?.headline ?? HOME_BANNER.headline;
   const sub = media?.sub ?? HOME_BANNER.sub;
-  const review = service ? `Google review carousel · ${service}` : HOME_BANNER.review;
+  const review = service ? `Care details · ${service}` : HOME_BANNER.review;
   const breedOptions = media?.breedLine.split(" · ") ?? [];
   const supportsIntersectionObserver = typeof window !== "undefined" && "IntersectionObserver" in window;
   const videoVisibleEnough = supportsIntersectionObserver ? videoInView : typeof window !== "undefined";
@@ -63,11 +65,11 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
 
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
-      <div className={styles.adSlot}><small>PAWSPACE MEDIA</small><b>Offer / education / partner placement</b></div>
+      <div className={styles.adSlot}><small>PAWSPACE CARE GUIDE</small><b>Get to know your pet’s care</b></div>
       <figure>
         <div className={styles.visualStack}>
           <img className={styles.heroImage} src={mainVisual.image} alt={mainVisual.alt} loading="lazy" />
-          {media && media.visuals.length > 1 && <div className={styles.visualThumbs} aria-label={`${service} curated visual examples`}>
+          {!serviceArt?.illustrated && media && media.visuals.length > 1 && <div className={styles.visualThumbs} aria-label={`${service} curated visual examples`}>
             {media.visuals.map((visual, index) => <button
               type="button"
               key={visual.image}
@@ -77,7 +79,7 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
               aria-pressed={index === safeVisualIndex}
             ><img src={visual.image} alt={visual.alt} loading="lazy" /></button>)}
           </div>}
-          {media?.breedLine && <div className={styles.breedLine} aria-label={`${service} curated breed and service visuals`}>
+          {!serviceArt?.illustrated && media?.breedLine && <div className={styles.breedLine} aria-label={`${service} curated breed and service visuals`}>
             {breedOptions.map((label, index) => <button
               type="button"
               key={label}
@@ -88,6 +90,7 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
           </div>}
         </div>
         <figcaption>
+          {serviceArt?.illustrated && <small>AI service illustration</small>}
           <h3>{headline}</h3>
           <p>{sub}</p>
         </figcaption>
@@ -100,23 +103,22 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
       </ul>
 
       {media && <section ref={videoPreviewRef} className={styles.videoPreview} aria-label={`${service} video preview`}>
-        {canAutoplayVideo ? <video muted autoPlay loop playsInline preload="metadata" poster={media.videoPoster} onError={() => setVideoFailed(true)}>
+        {canAutoplayVideo ? <video muted autoPlay loop playsInline preload="metadata" poster={serviceArt?.image ?? media.videoPoster} onError={() => setVideoFailed(true)}>
           <source src={videoSrc ?? undefined} type="video/mp4" />
           Your browser does not support embedded video.
-        </video> : <div className={styles.videoPoster} style={{ backgroundImage: `linear-gradient(90deg,rgba(1,38,31,.82),rgba(1,38,31,.28)),url(${media.videoPoster})` }}>
+        </video> : <div className={styles.videoPoster}>
           <i aria-hidden="true">▶</i>
           <span>
-            <small>HD SERVICE PREVIEW</small>
+            <small>SERVICE PREVIEW</small>
             <b>{media.videoTitle}</b>
-            <em>{videoFailed ? "Premium poster fallback" : reducedMotion ? "Still preview for reduced-motion preference" : videoSrc ? "Film plays silently while visible" : "Premium poster shown until approved footage is published"}</em>
+            <em>{videoFailed ? "The preview could not load. Your booking is unaffected." : reducedMotion ? "Autoplay is off for reduced motion." : videoSrc ? "Plays silently while visible." : "A service video will appear here when available."}</em>
           </span>
         </div>}
       </section>}
 
       <div className={styles.reviews} aria-label={review}>
-        <div><b>4.9 ★</b><span>Google Reviews</span></div>
-        <p>{review}</p>
-        <small>Scroll recent verified customer feedback here</small>
+        <div><b>Care you can understand</b></div>
+        <p>Compare what is included, share your pet’s needs and review the details before booking.</p>
       </div>
     </section>
   );

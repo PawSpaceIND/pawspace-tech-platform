@@ -192,6 +192,7 @@ export default function PremiumDiscoveryHome({
         {CAMPAIGNS.map((item, index) => <button key={item.title} aria-label={`Show campaign ${index + 1}`} aria-current={index === campaignIndex} className={index === campaignIndex ? styles.dotOn : ""} onClick={() => setCampaignIndex(index)} />)}
       </nav>
       <small>Care guide · PawSpace</small>
+      <p className={styles.mediaDisclosure}>PawSpace Media slot · service education and clearly labelled approved campaigns</p>
     </section>
 
     {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
