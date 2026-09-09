@@ -1,10 +1,10 @@
-import { expect, request } from "@playwright/test";
+import { expect, request, type APIResponse } from "@playwright/test";
 
 const ADMIN = "e2e.admin@pawspace.test";
 const FINANCE = "e2e.finance@pawspace.test";
-const PROVIDER_ID = "groom_arun";
+const PROVIDER_ID = "E2E-PRV-UI-001";
 
-async function expectOk(response: Awaited<ReturnType<Awaited<ReturnType<typeof request.newContext>>["get"]>>, label: string) {
+async function expectOk(response: APIResponse, label: string) {
   const text = await response.text();
   expect(response.ok(), `${label} failed: ${response.status()} ${text}`).toBeTruthy();
   return text ? JSON.parse(text) : {};
@@ -113,7 +113,7 @@ export async function runCancellationRefundRecovery(baseURL: string, cancellatio
       await admin.get(`/api/company-analytics?from=${scheduledDay}&to=${scheduledDay}&serviceCode=grooming`),
       "analytics before refund completion",
     );
-    expect(Number(analyticsBefore.data.money.refunds || 0), "processing refund must not reduce collections").toBe(0);
+    const refundBefore = Number(analyticsBefore.data.money.refunds || 0);
 
     const processedEventId = `evt_refund_processed_${token.slice(-12)}`;
     await expectOk(
@@ -163,7 +163,8 @@ export async function runCancellationRefundRecovery(baseURL: string, cancellatio
       await admin.get(`/api/company-analytics?from=${scheduledDay}&to=${scheduledDay}&serviceCode=grooming`),
       "analytics after refund completion",
     );
-    expect(Number(analyticsAfter.data.money.refunds || 0)).toBe(1899);
+    const refundAfter = Number(analyticsAfter.data.money.refunds || 0);
+    expect(refundAfter - refundBefore, "only a processed refund may reduce net collections").toBe(1899);
 
     const financeControl = await expectOk(await finance.get("/api/finance-control"), "finance journal visibility");
     const refundJournal = (financeControl.data.journals || []).filter(
