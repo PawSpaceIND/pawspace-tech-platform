@@ -2,6 +2,7 @@ import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governan
 import{groomingChangePreview}from"../../../lib/grooming-change-preview";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
+import{bridgeLifecycleCommunications}from"../../../lib/lifecycle-communications";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
 import{evaluateCancellationRefund,resolveRefundPolicy}from"../../../lib/refund-policy-governance";
 import{openCancellationCase}from"../../../lib/cancellation-case-governance";
@@ -17,6 +18,8 @@ async function database(){const{env}=await import("cloudflare:workers");return e
 async function ensureTables(db:Db){await ensureProviderCapacityTables(db);await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_change_assertions (id TEXT PRIMARY KEY,ok INTEGER NOT NULL CONSTRAINT grooming_change_assertion CHECK(ok=1))"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
+  // FIN-D4. The cancellation batch now writes the customer's notification, so the table must exist here.
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS customer_grooming_subscriptions (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,service_package_code TEXT NOT NULL,total_sessions INTEGER NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 0,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'active',started_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,source_booking_id TEXT NOT NULL UNIQUE,catalogue_version TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -131,7 +134,7 @@ export async function POST(request:Request){
       const subscriptionId=usage?String(usage.plan_code):"";
       const subscription=subscriptionId?await db.prepare("SELECT * FROM customer_grooming_subscriptions WHERE id=?").bind(subscriptionId).first<Row>():null;
       if(usage&&(!subscription||String(usage.customer_id)!==input.customerId||String(subscription.customer_id)!==input.customerId||!Number.isInteger(reservedSessions)||reservedSessions<0||Number(subscription.sessions_reserved)<reservedSessions))return json({error:"Subscription credits require review before cancellation."},409);
-      const assertionId=crypto.randomUUID();
+      const assertionId=crypto.randomUUID(),cancellationEventId=crypto.randomUUID();
       const usageGuard=usage?db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
         EXISTS (SELECT 1 FROM booking_subscription_usage WHERE id=? AND booking_id=? AND customer_id=? AND plan_code=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND updated_at=?)
         AND EXISTS (SELECT 1 FROM customer_grooming_subscriptions WHERE id=? AND customer_id=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND source_booking_id=? AND updated_at=?)
@@ -154,14 +157,29 @@ export async function POST(request:Request){
       if(subscriptionId&&reservedSessions>0)statements.push(db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),status=CASE WHEN source_booking_id=? THEN ? ELSE status END,updated_at=? WHERE id=?").bind(reservedSessions,input.bookingId,refundAmount>0?"refund_pending":"cancelled",now,subscriptionId));
       if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,policy_json,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?,?)").bind(refundId,input.bookingId,payment.id,refundAmount,reason,auditActor,JSON.stringify(refundEvaluation),now,now));
       statements.push(
-        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_cancelled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,referral:{status:"pending_evaluation"}}),now),
+        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(cancellationEventId,input.bookingId,"booking_cancelled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,referral:{status:"pending_evaluation"}}),now),
         securityAuditStatement(db,actor,"grooming.cancel","booking",input.bookingId,"completed",{customerId:input.customerId,refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,reservedSessions}),
+        /* FIN-D4. The cancellation transaction moved the booking, the work order, the reservation, the
+         * offer, the payment and the subscription credits - and told the customer nothing. Their booking
+         * simply stopped existing. The notification is written INSIDE the same batch as the cancellation
+         * so it cannot be lost: either the booking is cancelled and the customer is told, or neither. */
+        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)")
+          .bind(crypto.randomUUID(),input.bookingId,input.customerId,"whatsapp","booking_cancelled",
+            refundAmount>0
+              ?`Your PawSpace grooming booking is cancelled. A refund of ₹${refundAmount} has been raised and will go back to your original payment method.`
+              :"Your PawSpace grooming booking is cancelled. No payment was taken for it.",
+            cancellationEventId,now),
         db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-credits`),
       );
       try{await db.batch(statements);}catch(error){
         if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking, provider work, payment or subscription credits changed. Refresh before requesting cancellation."},409);
         throw error;
       }
+      /* FIN-D4. Committed. The queued notification is now handed to the canonical bridge, the same one
+       * booking-operations uses, so it becomes a real outbound message instead of a row nobody reads.
+       * Deliberately AFTER the batch and unawaited-for-failure: the bridge never throws, and a messaging
+       * problem must not undo a cancellation that has already released capacity and raised a refund. */
+      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:auditActor});
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
       return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,referral}});
     }
