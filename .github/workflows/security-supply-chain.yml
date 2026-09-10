@@ -71,7 +71,8 @@ jobs:
           const hits = [];
           for (const [path, pkg] of Object.entries(lock.packages || {})) {
             const license = String(pkg?.license || '');
-            if (denied.some((token) => license.includes(token))) hits.push(`${path || '<root>'}: ${license}`);
+            const terms = license.split(/\s+(?:AND|OR|WITH)\s+|[(),]/i).map((v) => v.trim()).filter(Boolean);
+            if (denied.some((token) => terms.includes(token))) hits.push(`${path || '<root>'}: ${license}`);
           }
           if (hits.length) {
             console.error('Forbidden dependency licenses detected:\n' + hits.join('\n'));
