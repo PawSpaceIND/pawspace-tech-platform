@@ -1,0 +1,27 @@
+.workspace { max-width: 800px; margin: 0 auto; padding: 24px 20px 48px; color: #173f3b; font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.workspace header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-bottom: 24px; }
+.workspace a { color: #126257; text-decoration: underline; text-underline-offset: 3px; }
+.workspace section { padding: 24px; background: #fff; border: 1px solid #c8d9d3; border-radius: 18px; }
+.workspace h1 { margin: 4px 0 20px; font-size: clamp(20px, 4vw, 28px); line-height: 1.3; }
+.workspace h2 { margin: 28px 0 12px; font-size: 22px; }
+.workspace p { margin: 10px 0; }
+.workspace [role="alert"] { padding: 12px; border: 1px solid #bd4848; border-radius: 8px; background: #fff1f1; color: #8d2525; }
+.actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.workspace button { min-height: 48px; padding: 12px 16px; border: 1px solid #176357; border-radius: 10px; background: #176357; color: #fff; font: inherit; font-weight: 600; line-height: 1.4; cursor: pointer; }
+.workspace button:disabled { background: #edf1ef; border-color: #ccd7d1; color: #596a62; cursor: not-allowed; }
+.workspace button:focus-visible, .workspace a:focus-visible { outline: 3px solid #d99517; outline-offset: 3px; }
+.workspace ul { margin: 0; padding-left: 20px; }
+.workspace li { padding: 10px 0; border-bottom: 1px solid #e2e9e5; }
+@media (max-width: 480px) { .workspace { padding: 16px 12px 36px; } .workspace section { padding: 18px 14px; } .actions { grid-template-columns: 1fr; } }
+
+.carePlan { margin: 24px 0; padding: 16px; background: #f3f7f4; border-radius: 12px; }
+.carePlan h2 { margin-top: 0; }
+.carePlan dl { margin: 0; display: grid; gap: 14px; }
+.carePlan dt { font-weight: 700; }
+.carePlan dd { margin: 4px 0 0; white-space: pre-wrap; }
+
+.recovery { display: grid; gap: 12px; margin-top: 28px; padding-top: 16px; border-top: 1px solid #c8d9d3; }
+.recovery h2 { margin: 0; }
+.recovery label { font-weight: 700; }
+.recovery textarea { width: 100%; min-height: 96px; padding: 12px; border: 1px solid #728b80; border-radius: 8px; font: inherit; }
+.recovery textarea:focus-visible { outline: 3px solid #d99517; outline-offset: 3px; }

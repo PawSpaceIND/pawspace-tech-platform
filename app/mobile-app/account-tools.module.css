@@ -1,0 +1,8 @@
+.tools{display:grid;gap:10px;margin:20px 0;color:var(--ps-text)}
+.item{background:var(--ps-surface);border:1px solid var(--ps-border);border-radius:16px;overflow:hidden}
+.item summary{cursor:pointer;padding:18px;font-size:16px;font-weight:600;min-height:52px}
+.content{padding:0 18px 18px;font-size:16px;line-height:1.5;overflow-wrap:anywhere}
+.content h4{font-size:16px;margin:18px 0 8px}.content p{margin:8px 0}
+.record{padding:12px 0;border-top:1px solid var(--ps-border)}.record small{display:block;font-size:14px;color:var(--ps-muted)}
+.button{font:inherit;color:var(--ps-text);background:var(--ps-surface);border:1px solid var(--ps-border);border-radius:10px;min-height:44px;padding:8px 14px;cursor:pointer;margin-top:8px}
+.error{color:#b3261e}.balance{font-size:28px;font-weight:700}.note{color:var(--ps-muted);font-size:14px}

@@ -35,7 +35,7 @@ function validateSlot(slotIndex: number, durationMinutes: number) {
 }
 
 export function groomingBookingDates(asOf = Date.now(), count = 4): GroomingBookingDate[] {
-  const safeCount = Math.max(1, Math.min(14, Math.trunc(count)));
+  const safeCount = Math.max(1, Math.min(31, Math.trunc(count)));
   const base = indiaDateParts(new Date(asOf));
   return Array.from({ length: safeCount }, (_, index) => {
     const value = indiaCalendarDate(base.year, base.month, base.day + index);

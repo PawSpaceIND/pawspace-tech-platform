@@ -60,3 +60,21 @@ jobs:
             /tmp/wrangler-e2e.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Retain employee recovery layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: employee-recovery-layout
+          path: test-results/**/employee-*-form.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Retain customer completed-care layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-completed-care-layout
+          path: test-results/**/customer-*.png
+          if-no-files-found: error
+          retention-days: 7

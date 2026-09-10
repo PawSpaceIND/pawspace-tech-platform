@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__WALKING_OWNER_CARE_DB__');
+const {normalizeWalkingOwnerCare}=await import('../lib/walking-owner-care.ts');
+test('walking care rejects malformed text and handover values instead of claiming it was saved',()=>{for(const input of [{instructions:4,handoverPreference:null},{instructions:'x'.repeat(2001),handoverPreference:null},{instructions:'hello',handoverPreference:['owner']},{instructions:'hello',handoverPreference:'stranger'}])assert.throws(()=>normalizeWalkingOwnerCare(input));assert.equal(normalizeWalkingOwnerCare(undefined),null);});
+test('saved walking care is readable without inventing handover approval',async()=>{const React=await import('react'),{renderToStaticMarkup}=await import('react-dom/server'),{default:Summary}=await import('../app/components/walking-owner-care.tsx');const html=renderToStaticMarkup(React.createElement(Summary,{care:{instructions:'Use red harness. Avoid busy roads.',handoverPreference:'building_staff'}}));assert.match(html,/Use red harness/);assert.match(html,/Building staff/);assert.match(html,/does not confirm access approval/);const empty=renderToStaticMarkup(React.createElement(Summary,{care:null}));assert.match(empty,/No walking instructions were recorded/);assert.match(empty,/Not specified/);});

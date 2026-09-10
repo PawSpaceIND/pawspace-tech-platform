@@ -25,7 +25,7 @@ async function expectOk(response: import("@playwright/test").APIResponse, label:
   return text ? JSON.parse(text) : {};
 }
 
-test("correlated journey: customer reserves/books -> assigned provider completes -> admin sees balanced completion finance", async ({ page, baseURL }) => {
+for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated journey (${assignmentMode}): customer reserves/books -> assigned provider completes -> admin sees balanced completion finance`, async ({ page, baseURL }) => {
   expect(baseURL).toBeTruthy();
   const origin = baseURL!;
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
@@ -42,14 +42,14 @@ test("correlated journey: customer reserves/books -> assigned provider completes
 
     const suffix = `${Date.now()}-${test.info().project.name}`.replace(/[^a-zA-Z0-9-]/g, "");
     const groupId = `E2E-MULTI-${suffix}`;
-    const deviceDayOffset = test.info().project.name === "mobile-chromium" ? 6 : 5;
+    const deviceDayOffset = (test.info().project.name === "mobile-chromium" ? 6 : 5)+(assignmentMode==="admin_choice"?2:0);
     const start = new Date(Date.now() + deviceDayOffset * 86_400_000);
     start.setUTCHours(4, 30, 0, 0);
     const end = new Date(start.getTime() + 2 * 60 * 60_000);
 
-    const scheduled = await customer.post("/api/uat-scheduling", {
-      data: {
+    const schedulePayload = {
         action: "reserve",
+        assignmentStrategy: assignmentMode,
         clientRequestId: groupId,
         customerId: CUSTOMER_ID,
         petIds: [PET_ID],
@@ -59,9 +59,39 @@ test("correlated journey: customer reserves/books -> assigned provider completes
         scheduledStart: start.toISOString(),
         scheduledEnd: end.toISOString(),
         preferredProviderId: PROVIDER_ID,
-      },
-    });
-    const scheduleBody = await expectOk(scheduled, "customer slot reservation");
+      };
+    const scheduled=await customer.post("/api/uat-scheduling",{data:schedulePayload});
+    let scheduleBody=await expectOk(scheduled,"customer slot reservation");
+    if(assignmentMode==="admin_choice"){
+      expect(scheduleBody.data.status).toBe("awaiting_admin");
+      const day=start.toISOString().slice(0,10);
+      const boardApi=await expectOk(await admin.get(`/api/uat-scheduling?date=${encodeURIComponent(day)}`),"admin waiting-request board API");
+      expect(boardApi.data.pendingRequests.some((row:{groupId:string})=>row.groupId===groupId)).toBe(true);
+      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL});
+      await page.goto("/team/scheduling");
+      // Wait for client hydration before changing the controlled date input. On mobile Chromium the
+      // server-rendered input can accept a Playwright fill before React attaches onChange, then hydration
+      // restores today's value and the browser journey observes the wrong day even though the API is sound.
+      const refresh=page.getByRole("button",{name:/Refresh|Refreshing/});
+      await expect(refresh).toBeEnabled({timeout:15000});
+      const dayInput=page.getByLabel("Day (IST)",{exact:true});
+      await dayInput.fill(day);
+      await expect(dayInput).toHaveValue(day);
+      const waiting=page.getByRole("region",{name:"Requests awaiting admin"}).locator("article").filter({hasText:groupId});
+      await expect(waiting).toBeVisible({timeout:15000});
+      await expect(refresh).toBeEnabled({timeout:15000});
+      await refresh.click();
+      await expect(waiting).toBeVisible({timeout:15000});await waiting.getByRole("button",{name:"Manage request",exact:true}).click();
+      await waiting.getByRole("combobox",{name:"Recommended provider",exact:true}).selectOption(PROVIDER_ID);
+      await waiting.getByRole("textbox",{name:"Reason",exact:true}).fill("Customer requested this verified provider");
+      await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
+      await waiting.getByRole("button",{name:"Assign provider",exact:true}).click();
+      await expect(page.getByRole("status")).toContainText("Partner acceptance and customer booking confirmation are still pending.");
+      await expect(waiting).toHaveCount(0);
+      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":CUSTOMER_EMAIL});
+      scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
+      expect(scheduleBody.data.duplicatePrevented).toBe(true);
+    }
     expect(scheduleBody?.data?.provider?.id).toBe(PROVIDER_ID);
 
     const booked = await customer.post("/api/canonical-bookings", {
@@ -174,10 +204,54 @@ test("correlated journey: customer reserves/books -> assigned provider completes
     expect(adminBody?.data?.booking?.id).toBe(bookingId);
     expect(adminBody?.data?.booking?.status).toBe("completed");
     expect(adminBody?.data?.invoice?.status).toBe("issued");
-    expect(adminBody?.data?.taxReadiness?.tax_rule_status).toBe("resolved");
+    expect(adminBody?.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
     expect(adminBody?.data?.payoutReadiness?.status).toBe("accrued");
-    expect(String(adminBody?.data?.payoutReadiness?.reason || "")).toMatch(/ledger balanced/i);
+    expect(Number(adminBody?.data?.payoutReadiness?.payoutAmount)).toBeGreaterThan(0);
 
+    // Completion only returns 200 after service-completion-finance proves the journal balances.
+    // Verify the separately authorized Finance surface also observes the captured/invoiced transaction,
+    // rather than re-exposing raw finance rows on the provider-safe lifecycle response.
+    const financeBody=await expectOk(await finance.get("/api/grooming-finance"),"finance completed transaction view");
+    const financeItem=financeBody.items.find((item:{booking_id:string})=>item.booking_id===bookingId);
+    expect(financeItem).toBeTruthy();
+    expect(financeItem.invoice_status).toBe("issued");
+    expect(Number(financeItem.gross_amount)).toBe(1899);
+    expect(Number(financeItem.captured_amount)).toBe(1899);
+    expect(financeItem.reconciliation_status).toBe("matched");
+    expect(Number(financeItem.open_reconciliation_exceptions)).toBe(0);
+
+    // Exchange a real local sandbox OTP for a customer session; provider/admin headers are removed.
+    await page.setExtraHTTPHeaders({});await page.context().clearCookies();await page.goto("/mobile-app");
+    await page.locator("nav").getByRole("button",{name:/account/i}).last().click();await page.getByPlaceholder("10-digit phone number").fill("9800000111");await page.getByRole("button",{name:"Send OTP",exact:true}).click();
+    const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await page.getByPlaceholder("6-digit code").fill(code!);
+    const name=page.getByPlaceholder("Your name (first time only)");if(await name.isVisible().catch(()=>false))await name.fill("E2E UI Customer");
+    await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
+    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not.
+    // Read through the actual browser session, without manually copying or weakening cookies.
+    const ownAccount=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(ownAccount.status).toBe(200);expect(ownAccount.body.data.customerId).toBe(CUSTOMER_ID);
+    await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
+    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoiceNumber));
+    const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(Number(financeItem.gross_amount));expect(summary.body.data.invoice.tax).toBe(Number(financeItem.tax_amount));expect(summary.body.data).not.toHaveProperty("payoutReadiness");
+    await page.reload();await expect(care).toContainText("Persona E2E completed safely");await page.screenshot({path:test.info().outputPath(`customer-completed-care-${assignmentMode}.png`),fullPage:true});
+    await page.goto("/mobile-app");
+    await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();
+    await page.getByRole("button",{name:"History",exact:true}).click();
+    const ratingCard=page.getByRole("article",{name:`Rate booking ${bookingId}`,exact:true});
+    await expect(ratingCard).toBeVisible();
+    await page.route("**/api/booking-rating",async route=>{if(route.request().method()==="POST")await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Rating is temporarily unavailable. Please retry."})});else await route.continue();});
+    await ratingCard.getByRole("button",{name:"4 stars",exact:true}).click();
+    await expect(page.getByRole("alert")).toContainText("Rating is temporarily unavailable");
+    await expect(ratingCard).toBeVisible();
+    await page.unroute("**/api/booking-rating");
+    const savedRating=page.waitForResponse(response=>response.url().endsWith("/api/booking-rating")&&response.request().method()==="POST");
+    await ratingCard.getByRole("button",{name:"4 stars",exact:true}).click();
+    const ratingResponse=await savedRating;expect(ratingResponse.status()).toBe(201);const ratingRequest=ratingResponse.request().postDataJSON();expect(ratingRequest.bookingId).toBe(bookingId);expect(ratingRequest.stars).toBe(4);
+    await expect(ratingCard).toHaveCount(0);
+    await page.reload();await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();await page.getByRole("button",{name:"History",exact:true}).click();
+    const persistedRating=await page.evaluate(async()=>{const response=await fetch("/api/booking-rating",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(persistedRating.status).toBe(200);expect(persistedRating.body.data.ratableBookings.some((item:{bookingId:string})=>item.bookingId===bookingId)).toBe(false);
+    await expect(ratingCard).toHaveCount(0);await expect(page.getByText(bookingId,{exact:false}).first()).toBeVisible();
+    await page.screenshot({path:test.info().outputPath(`customer-rating-saved-${assignmentMode}.png`),fullPage:true});
+    await page.context().clearCookies();
     await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL });
     const adminUi = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
     expect(adminUi?.status() ?? 500).toBeLessThan(500);

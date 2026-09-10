@@ -1,10 +1,12 @@
 import { ingestInboundEmail, recordEmailEngagement, syncCalendarEvents } from "../../../lib/crm-email-sync";
 import { authError } from "../../../lib/server-auth";
 import { captureInboundWebhook, runInboundWebhookAttempt } from "../../../lib/gateway-inbound-queue";
+import { readBoundedRequestText, VoiceFetchRefused } from "../../../lib/voice-safe-fetch";
 
 type Env = { DB: D1Database; PAWSPACE_EMAIL_WEBHOOK_SECRET?: string; PAWSPACE_PAYMENT_ENV?: string };
 const text = (v: unknown) => String(v ?? "").trim();
 const encoder = new TextEncoder();
+const MAX_WEBHOOK_BYTES = 262_144;
 
 async function runtimeEnv(): Promise<Env> { const { env } = await import("cloudflare:workers"); return env as unknown as Env; }
 function hex(bytes: ArrayBuffer) { return [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, "0")).join(""); }
@@ -32,7 +34,10 @@ async function processEmailWebhook(db:D1Database,raw:string){
 export async function POST(request: Request) {
  try{
   const env=await runtimeEnv(),secret=text(env.PAWSPACE_EMAIL_WEBHOOK_SECRET);if(!secret)return Response.json({ok:false,error:"email_webhook_not_configured"},{status:503});
-  const raw=await request.text(),signature=text(request.headers.get("x-pawspace-email-signature")||request.headers.get("x-signature"));if(!signature||!(await verifySignature(raw,secret,signature)))return Response.json({ok:false,error:"invalid_signature"},{status:401});
+  let raw: string;
+  try { raw = await readBoundedRequestText(request, MAX_WEBHOOK_BYTES); }
+  catch (error) { if (error instanceof VoiceFetchRefused) return Response.json({ ok: false, error: "email_webhook_payload_too_large" }, { status: 413 }); throw error; }
+  const signature=text(request.headers.get("x-pawspace-email-signature")||request.headers.get("x-signature"));if(!signature||!(await verifySignature(raw,secret,signature)))return Response.json({ok:false,error:"invalid_signature"},{status:401});
   let body:Record<string,unknown>;try{body=JSON.parse(raw) as Record<string,unknown>;}catch{return Response.json({ok:false,error:"invalid_json"},{status:400});}
   const provider=text(body.provider)||"email_provider",eventType=text(body.eventType||body.type),eventId=text(body.eventId),messageId=text(body.messageId);if(!eventId)return Response.json({ok:false,error:"event_id_required"},{status:400});if((eventType==="inbound"||["delivered","open","click","bounce","complaint"].includes(eventType))&&!messageId)return Response.json({ok:false,error:"message_id_required"},{status:400});
   const captured=await captureInboundWebhook(env.DB,{provider,routeKey:"email-provider-webhook",environment:"sandbox",eventId,messageId:messageId||null,rawBody:raw,headers:request.headers,requireMessageId:eventType!=="calendar_sync"});

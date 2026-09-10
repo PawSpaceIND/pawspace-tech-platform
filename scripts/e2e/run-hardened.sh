@@ -126,7 +126,7 @@ for journey in "${journeys[@]}"; do
   for project in "${projects[@]}"; do
     echo "[e2e] running ${journey} (${project}) with a fresh built-worker server"
     start_server
-    if ! npx playwright test --config playwright.e2e.config.ts --project="$project" "$journey"; then
+    if ! npx playwright test --config playwright.e2e.config.ts --project="$project" --output="test-results/$(basename "$journey" .spec.ts)/$project" "$journey"; then
       echo "[e2e] journey failed: ${journey} (${project})" >&2
       log_tail
       stop_server || true

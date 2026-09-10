@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
@@ -81,6 +82,7 @@ test("second-city journey preserves city/zone/provider and rejects cross-city co
   const result = await runCompletedJourney(ctx, config);
   assertCompleted(result, config);
 
+  await seedOwnedPet(ctx.db, "CUST-CROSS-CITY", "PET-CROSS");
   const otherCookie = await sessionCookie(ctx.db, "customer", "CUST-CROSS-CITY", "customer:CUST-CROSS-CITY");
   const crossGroup = "GROOM-CROSS-CITY";
   const start = future(5), end = new Date(new Date(start).getTime() + 2 * 60 * 60_000).toISOString();
@@ -102,9 +104,11 @@ test("unsupported location and no-capacity failures create no booking/payment/wo
 
   const cookie = await sessionCookie(ctx.db, "customer", "CUST-NOCAP", "customer:CUST-NOCAP");
   await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
+  await seedOwnedPet(ctx.db,"CUST-NOCAP","PET-NOCAP");
+  await seedOwnedPet(ctx.db,"CUST-NOCAP-2","PET-NOCAP-2");
   const base = { customerId: "CUST-NOCAP", petIds: ["PET-NOCAP"], serviceCode: "grooming", cityId: "maa", zoneId: "chennai-core", serviceAddress: "No capacity Chennai service address", servicePincode: "600001", scheduledStart: future(7), scheduledEnd: future(9), preferredProviderId: "groom_maa" };
   const first = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...base, clientRequestId: "NOCAP-1" }, cookie);
-  const second = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...base, clientRequestId: "NOCAP-2", customerId: "CUST-NOCAP-2" }, await sessionCookie(ctx.db, "customer", "CUST-NOCAP-2", "customer:CUST-NOCAP-2"));
+  const second = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { ...base, clientRequestId: "NOCAP-2", customerId: "CUST-NOCAP-2", petIds: ["PET-NOCAP-2"] }, await sessionCookie(ctx.db, "customer", "CUST-NOCAP-2", "customer:CUST-NOCAP-2"));
   assert.equal(first.status, 200);
   assert.equal(second.status, 409);
   assert.equal(second.body.error, "NO_SCHEDULE_AVAILABLE");
@@ -116,6 +120,7 @@ test("unsupported location and no-capacity failures create no booking/payment/wo
 test("session expiry between coupon quote and booking fails closed without business-entity orphans", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
   const customerId = "CUST-EXPIRED", groupId = "GROOM-EXPIRED", cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
+  await seedOwnedPet(ctx.db, customerId, "PET-EXPIRED");
   const start = future(10), end = future(12);
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { clientRequestId: groupId, customerId, petIds: ["PET-EXPIRED"], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_arun" }, cookie);
   assert.equal(scheduled.status, 200);
@@ -158,6 +163,8 @@ test("captured booking cancellation releases work and capacity and refund simula
 test("provider unavailability added after reserve fails confirmation cleanly and requests reassignment", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
   const customerId = "CUST-LATE-LEAVE", groupId = "GROOM-LATE-LEAVE", cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
+  await seedOwnedPet(ctx.db,customerId,"PET-LATE-LEAVE");
+  const savedPetsBefore=ctx.sqlite.prepare("SELECT * FROM canonical_pets").all();
   const start = future(10), end = future(12);
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", { clientRequestId: groupId, customerId, petIds: ["PET-LATE-LEAVE"], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_arun" }, cookie);
   assert.equal(scheduled.status, 200);
@@ -176,7 +183,8 @@ test("provider unavailability added after reserve fails confirmation cleanly and
   assert.equal(booked.body.reassignmentRequired, true);
   assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_reservations WHERE group_id=?").get(groupId).status, "cancelled");
   assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId).status, "reassignment_needed");
-  for (const table of ["canonical_bookings", "booking_payments", "provider_work_orders", "canonical_pets", "booking_lifecycle_events"]) {
+  for (const table of ["canonical_bookings", "booking_payments", "provider_work_orders", "booking_lifecycle_events"]) {
     assert.equal(ctx.sqlite.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c, 0, `${table} must remain empty after late provider unavailability`);
   }
+  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets").all(),savedPetsBefore,"failed confirmation preserves the existing pet");
 });

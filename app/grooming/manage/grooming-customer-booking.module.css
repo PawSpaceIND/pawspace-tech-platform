@@ -1,0 +1,21 @@
+.page{min-height:100vh;background:#faf9f5;color:#123a32;font-family:system-ui,sans-serif;padding:24px 16px 48px;box-sizing:border-box}
+.content{max-width:720px;margin:0 auto;display:grid;gap:22px}
+.content a{color:#175f50;display:inline-flex;align-items:center;min-height:44px;width:fit-content}
+.content h1{font-size:clamp(28px,6vw,40px);line-height:1.15;margin:8px 0}
+.content h2{font-size:24px;line-height:1.3;margin:0}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;margin:0}
+.card{display:grid;gap:14px;background:#fff;border:1px solid #d4e3db;border-radius:20px;padding:24px;min-width:0}
+.card p{margin:0;line-height:1.6}
+.status{text-transform:capitalize;color:#16684f;font-weight:700}
+.reference{overflow-wrap:anywhere;font-size:14px;color:#536960}
+.card dl{display:grid;gap:16px;margin:8px 0}
+.card dl>div{display:grid;gap:4px}
+.card dt{color:#536960;font-size:14px}
+.card dd{font-weight:600;margin:0;overflow-wrap:anywhere}
+.note{font-size:14px;color:#536960}
+.content button{font:inherit;min-height:48px;padding:12px 20px;background:#124f40;color:white;border:0;border-radius:12px;cursor:pointer;width:fit-content}
+.content button:focus-visible,.content a:focus-visible{outline:3px solid #c88b19;outline-offset:4px}
+
+.cancelForm{display:grid;gap:16px;border-top:1px solid #d4e3db;padding-top:20px}.cancelForm label{display:grid;gap:8px;line-height:1.5}.cancelForm textarea{font:inherit;min-height:100px;padding:12px;border:1px solid #80978d;border-radius:8px;resize:vertical;box-sizing:border-box;width:100%}.cancelForm .consent{display:flex;align-items:flex-start;gap:12px}.consent input{margin-top:4px;min-width:22px;min-height:22px}.content button:disabled{opacity:.55;cursor:default}.cancelForm textarea:focus-visible,.consent input:focus-visible{outline:3px solid #c88b19;outline-offset:3px}
+
+.cancelForm input[type=date],.cancelForm input[type=time]{font:inherit;min-height:48px;padding:10px;border:1px solid #80978d;border-radius:8px;box-sizing:border-box;max-width:100%;min-width:0}

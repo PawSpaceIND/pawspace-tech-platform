@@ -1,7 +1,8 @@
 "use client";
 import{useState,useEffect}from"react";
 import{resolveServiceCoverage}from"../../lib/service-zone-client";
-import{resolveAddress,searchAddresses}from"../../lib/address-autocomplete-client";
+import{resolveAddress,searchAddresses,type AddressSuggestion}from"../../lib/address-autocomplete-client";
+import{createAddressSessionToken}from"../../lib/grooming-booking-calendar";
 import{validGpsCoordinates}from"../../lib/gps-telemetry-policy";
 
 export type Zone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
@@ -20,20 +21,31 @@ const badge={display:"inline-block",padding:"4px 8px",borderRadius:"var(--ds-rad
 function remember(result:ZoneResult|null){try{if(result)sessionStorage.setItem(SELECTED_SERVICE_ADDRESS_KEY,JSON.stringify({address:result.address,pincode:result.assignment.pincode,latitude:result.latitude,longitude:result.longitude,placeId:result.placeId}));else sessionStorage.removeItem(SELECTED_SERVICE_ADDRESS_KEY);}catch{/* storage is convenience only; server authority still fails closed */}}
 
 export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:ZoneResult|null)=>void}){
+ const[suggestions,setSuggestions]=useState<AddressSuggestion[]>([]),[lookupSession,setLookupSession]=useState("");
  const[address,setAddress]=useState(""),[pincode,setPincode]=useState(""),[resolvedZone,setResolvedZone]=useState<ZoneResult|null>(null),[zones,setZones]=useState<Zone[]>([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  useEffect(()=>{async function loadZones(){try{const r=await fetch("/api/service-zone?action=list");const body=await r.json() as{data?:Zone[]};if(body.data)setZones(body.data);}catch(e){console.error("Failed to load zones:",e);}}void loadZones();},[]);
- async function resolveZone(){setError("");setLoading(true);try{
-  if(address.trim().length<8){setError("Enter the complete doorstep address");return;}if(!/^[1-9]\d{5}$/.test(pincode)){setError("Please enter a valid 6-digit pincode");return;}
-  const coverage=await resolveServiceCoverage(pincode),sessionToken=crypto.randomUUID(),lookup=await searchAddresses(`${address.trim()}, ${pincode}`,sessionToken);
-  if(lookup.status!=="configured"||!lookup.suggestions.length)throw new Error(lookup.error||"Choose an address that can be verified on the map");
-  const suggestion=lookup.suggestions[0],place=await resolveAddress(suggestion.placeId,sessionToken);if(place.status!=="configured"||!validGpsCoordinates(Number(place.latitude),Number(place.longitude)))throw new Error(place.error||"The doorstep coordinates could not be verified");
-  const mappedAddress=String(place.address||suggestion.fullText||address.trim());if(!mappedAddress.includes(pincode))throw new Error("The mapped doorstep does not match the selected pincode");
+ function clear(){setResolvedZone(null);setSuggestions([]);setLookupSession("");setError("");remember(null);onZoneResolved?.(null);}
+ async function resolveZone(){clear();setLoading(true);try{
+  if(address.trim().length<8)throw new Error("Enter the complete doorstep address");
+  if(!/^[1-9]\d{5}$/.test(pincode))throw new Error("Please enter a valid 6-digit pincode");
+  await resolveServiceCoverage(pincode);
+  const sessionToken=createAddressSessionToken(),lookup=await searchAddresses(`${address.trim()}, ${pincode}`,sessionToken);
+  if(lookup.status!=="configured")throw new Error("Address verification is unavailable right now. Please try again later or contact PawSpace support.");
+  const matches=lookup.suggestions.filter(suggestion=>suggestion.placeId&&suggestion.fullText);
+  if(!matches.length)throw new Error("No matching map address was found. Check your complete address and PIN, then try again.");
+  setLookupSession(sessionToken);setSuggestions(matches);
+ }catch(e){setError(e instanceof Error?e.message:"Failed to find mapped addresses");}finally{setLoading(false);}}
+ async function chooseAddress(suggestion:AddressSuggestion){setError("");setLoading(true);try{
+  const coverage=await resolveServiceCoverage(pincode),place=await resolveAddress(suggestion.placeId,lookupSession);
+  if(place.status!=="configured"||!validGpsCoordinates(Number(place.latitude),Number(place.longitude)))throw new Error(place.error||"The doorstep coordinates could not be verified");
+  const mappedAddress=String(place.address||suggestion.fullText);
+  if(!mappedAddress.includes(pincode))throw new Error("The mapped doorstep does not match the selected pincode. Choose another match or edit your address.");
   const zone:Zone={zoneId:coverage.zone.zoneId,zoneName:coverage.zone.zoneName,description:coverage.zone.description,color:coverage.zone.color,serviceAvailable:coverage.zone.serviceAvailable};
   const result:ZoneResult={zone,assignment:{pincode:coverage.pincode,zoneId:coverage.zoneId,cityId:coverage.cityId,city:coverage.city,area:coverage.area},address:mappedAddress,latitude:Number(place.latitude),longitude:Number(place.longitude),placeId:suggestion.placeId};
-  setAddress(mappedAddress);setResolvedZone(result);remember(result);onZoneResolved?.(result);
- }catch(e){setResolvedZone(null);remember(null);onZoneResolved?.(null);setError(e instanceof Error?e.message:"Failed to resolve zone");}finally{setLoading(false);}}
- const clear=()=>{setResolvedZone(null);remember(null);onZoneResolved?.(null);};
- return<div style={container}><section style={box}><label style={label}>Service area lookup<p style={{fontSize:13,color:"var(--ds-text-muted)",margin:0}}>Enter your doorstep and pincode. PawSpace verifies the mapped coordinates before the booking can continue.</p></label><div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}><input style={input} type="text" placeholder="House / flat, street and landmark" value={address} onChange={e=>{setAddress(e.target.value);clear();}} disabled={loading} aria-label="Complete doorstep address"/><input style={input} type="text" inputMode="numeric" placeholder="e.g., 560034" value={pincode} onChange={e=>{setPincode(e.target.value.replace(/\D/g,"").slice(0,6));clear();}} disabled={loading}/><button style={primaryButton} onClick={()=>void resolveZone()} disabled={loading||address.trim().length<8||pincode.length!==6}>{loading?"Verifying…":"Verify map"}</button></div>{error&&<p role="alert" style={{color:"var(--ds-danger-500)",fontSize:14,margin:0}}>{error}</p>}</section>
+  setAddress(mappedAddress);setResolvedZone(result);setSuggestions([]);remember(result);onZoneResolved?.(result);
+ }catch(e){setResolvedZone(null);remember(null);onZoneResolved?.(null);setError(e instanceof Error?e.message:"Failed to verify this address");}finally{setLoading(false);}}
+ return<div style={container}><section style={box}><label style={label}>Service area lookup<p style={{fontSize:13,color:"var(--ds-text-muted)",margin:0}}>Enter your doorstep and pincode. PawSpace verifies the mapped coordinates before the booking can continue.</p></label><div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}><input style={input} type="text" placeholder="House / flat, street and landmark" value={address} onChange={e=>{setAddress(e.target.value);clear();}} disabled={loading} aria-label="Complete doorstep address"/><input style={input} type="text" inputMode="numeric" aria-label="Pincode" placeholder="e.g., 560034" value={pincode} onChange={e=>{setPincode(e.target.value.replace(/\D/g,"").slice(0,6));clear();}} disabled={loading}/><button style={primaryButton} onClick={()=>void resolveZone()} disabled={loading||address.trim().length<8||pincode.length!==6}>{loading?"Verifying…":"Verify map"}</button></div>{error&&<p role="alert" style={{color:"var(--ds-danger-500)",fontSize:14,margin:0}}>{error}</p>}</section>
+ {suggestions.length>0&&<section style={box} aria-label="Matching map addresses"><p style={{margin:0,fontSize:14}}>Choose your doorstep from the map matches. Check the street and PIN before continuing.</p>{suggestions.map(suggestion=><button key={suggestion.placeId} type="button" style={{...zoneCard,textAlign:"left",fontSize:14,color:"var(--ds-text)",overflowWrap:"anywhere"}} disabled={loading} onClick={()=>void chooseAddress(suggestion)}>{suggestion.fullText}</button>)}</section>}
  {resolvedZone&&<section style={box}><p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Verified service doorstep</p><div style={{...zoneCardActive(resolvedZone.zone.color),padding:16}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:12}}><div><h3 style={{margin:"0 0 4px 0",fontSize:16,color:"var(--ds-text)"}}>{resolvedZone.zone.zoneName}</h3><p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>{resolvedZone.address}</p><p style={{margin:"8px 0 0 0",fontSize:13,color:"var(--ds-text)"}}>📍 {resolvedZone.assignment.area}, {resolvedZone.assignment.city} · map verified</p></div><span style={{...badge,background:resolvedZone.zone.color,color:"#fff"}}>{resolvedZone.zone.serviceAvailable?"✓ Available":"Not available"}</span></div></div></section>}
- {zones.length>0&&!resolvedZone&&<section style={box}><p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Configured UAT service zones</p><div style={{display:"grid",gap:8}}>{zones.map(zone=><div key={zone.zoneId} style={zoneCard} aria-disabled="true"><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}><div><h4 style={{margin:"0 0 4px 0",fontSize:14,fontWeight:600}}>{zone.zoneName}</h4><p style={{margin:0,fontSize:12,color:"var(--ds-text-muted)"}}>{zone.description}</p></div><span style={{fontSize:20}}>{zone.color}</span></div></div>)}</div></section>}</div>;
+ {zones.length>0&&!resolvedZone&&<section style={box}><p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Configured UAT service zones</p><div style={{display:"grid",gap:8}}>{zones.map(zone=><div key={zone.zoneId} style={zoneCard} aria-disabled="true"><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}><div><h4 style={{margin:"0 0 4px 0",fontSize:14,fontWeight:600}}>{zone.zoneName}</h4><p style={{margin:0,fontSize:12,color:"var(--ds-text-muted)"}}>{zone.description}</p></div><span aria-hidden="true" style={{width:14,height:14,flexShrink:0,borderRadius:"50%",background:zone.color}} /></div></div>)}</div></section>}</div>;
 }

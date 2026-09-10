@@ -27,7 +27,7 @@ export async function ensureBookingRatingTables(db: Db) {
   ]);
 }
 
-export async function submitBookingRating(db: Db, input: { customerId: string; bookingId: string; stars: number; comment?: string; actorId: string }) {
+export async function submitBookingRating(db: Db, input: { customerId: string; bookingId: string; stars: number; comment?: string; actorId: string; auditStatement?: (providerId: string) => D1PreparedStatement }) {
   await ensureBookingRatingTables(db);
   const stars = Number(input.stars);
   if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error("Rating must be a whole number from 1 to 5");
@@ -38,10 +38,20 @@ export async function submitBookingRating(db: Db, input: { customerId: string; b
   const existing = await db.prepare("SELECT id FROM booking_ratings WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if (existing) throw new Error("This booking has already been rated");
   const id = uid("RATE"), now = Date.now();
-  await db.prepare("INSERT INTO booking_ratings (id,booking_id,customer_id,provider_id,service_code,stars,comment,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(id, input.bookingId, input.customerId, String(booking.provider_id), String(booking.service_code), stars, input.comment?.trim() || null, now).run();
-  const recomputed = await recomputeProviderRating(db, String(booking.provider_id));
-  return { id, bookingId: input.bookingId, providerId: String(booking.provider_id), stars, ...recomputed };
+  const providerId = String(booking.provider_id);
+  await ensureProviderCapacityTables(db);
+  // A review, the matching score it changes, and route audit evidence commit together.
+  // Compute the aggregate inside this transaction so concurrent reviews cannot publish a stale score.
+  const statements = [
+    db.prepare("INSERT INTO booking_ratings (id,booking_id,customer_id,provider_id,service_code,stars,comment,created_at) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(id, input.bookingId, input.customerId, providerId, String(booking.service_code), stars, input.comment?.trim() || null, now),
+    db.prepare("UPDATE provider_capacity_profiles SET rating=(SELECT ROUND(AVG(stars),2) FROM booking_ratings WHERE provider_id=?),quality_score=(SELECT ROUND(ROUND(AVG(stars),2)*20) FROM booking_ratings WHERE provider_id=?),updated_at=? WHERE id=?")
+      .bind(providerId, providerId, now, providerId),
+  ];
+  if (input.auditStatement) statements.push(input.auditStatement(providerId));
+  await db.batch(statements);
+  const row = await db.prepare("SELECT COUNT(*) count, AVG(stars) avg_stars FROM booking_ratings WHERE provider_id=?").bind(providerId).first<Row>();
+  return { id, bookingId: input.bookingId, providerId, stars, ratingCount: Number(row?.count || 0), averageRating: row ? Math.round(Number(row.avg_stars) * 100) / 100 : null };
 }
 
 /**

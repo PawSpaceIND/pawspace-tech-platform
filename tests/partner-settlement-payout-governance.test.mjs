@@ -1,17 +1,9 @@
+import { d1 } from "./helpers/execution-harness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import * as settlement from "../lib/partner-settlement-governance.ts";
 
-function d1(sqlite) {
-  const st = (sql, args = []) => ({
-    bind: (...values) => st(sql, values),
-    first: async () => sqlite.prepare(sql).get(...args) ?? null,
-    run: async () => { const out = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(out.changes || 0) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return { prepare: (sql) => st(sql), batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; } };
-}
 async function world() {
   const sqlite = new DatabaseSync(":memory:");
   const db = d1(sqlite);

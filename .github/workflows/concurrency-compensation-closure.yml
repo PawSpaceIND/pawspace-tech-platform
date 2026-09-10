@@ -1,0 +1,43 @@
+name: Concurrency compensation closure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/api/razorpay-webhook/route.ts"
+      - "lib/automatic-booking-refund.ts"
+      - "lib/background-scheduler.ts"
+      - "lib/razorpay-client.ts"
+      - "lib/razorpay-order-outbox-sweep.ts"
+      - "lib/refund-collection-reversal.ts"
+      - "lib/scheduling-reservation-leases.ts"
+      - "playwright.config.ts"
+      - "tests/e2e/10-concurrency-and-compensation.spec.ts"
+      - "tests/scheduling-reservation-leases.test.mjs"
+      - ".github/workflows/concurrency-compensation-closure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  concurrency-compensation:
+    name: 01A / 01B / 01C closure
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run exact concurrency and compensation suite
+        run: PAWSPACE_PAYMENT_ENV=sandbox npx playwright test tests/e2e/10-concurrency-and-compensation.spec.ts

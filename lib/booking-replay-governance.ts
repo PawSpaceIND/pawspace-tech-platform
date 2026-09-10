@@ -1,3 +1,6 @@
+// @ts-expect-error Node 22 strip-types requires the explicit .ts extension at runtime.
+import {ensureBookingConversationOnInsert} from "./booking-conversation.ts";
+
 type Row=Record<string,unknown>;
 
 export const BOOKING_REPLAY_CONFLICT="This booking request conflicts with a booking owned by another customer";
@@ -7,8 +10,10 @@ export const SCHEDULING_GROUP_OWNERSHIP_CONFLICT="This scheduling group belongs 
 type ReplayInput={customerId:string;serviceCode:string;idempotencyKey:string;scheduleGroupId:string};
 
 export async function findCustomerReplay(db:D1Database,input:ReplayInput){
-  return db.prepare("SELECT * FROM canonical_bookings WHERE customer_id=? AND service_code=? AND (idempotency_key=? OR schedule_group_id=?) LIMIT 1")
+  const replay=await db.prepare("SELECT * FROM canonical_bookings WHERE customer_id=? AND service_code=? AND (idempotency_key=? OR schedule_group_id=?) LIMIT 1")
     .bind(input.customerId,input.serviceCode,input.idempotencyKey,input.scheduleGroupId).first<Row>();
+  if(!replay)await ensureBookingConversationOnInsert(db);
+  return replay;
 }
 
 export async function hasForeignReplayConflict(db:D1Database,input:ReplayInput){
