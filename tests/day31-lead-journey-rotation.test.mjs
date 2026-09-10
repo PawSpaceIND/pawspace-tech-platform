@@ -115,7 +115,7 @@ test("a lead that keeps going unanswered keeps rotating - it does not get strand
    * dialler would. Every round must land the lead on someone who did not just fail on it, and the
    * value the caller is handed must be the value the database holds - Ops reads that field.
    */
-  const { sqlite, db, assignLead, checkRnrAutoReassignment, now } = await seedWorld();
+  const { sqlite, db, assignLead, checkRnrAutoReassignment } = await seedWorld();
   await assignLead(db, { leadId: LEAD, idempotencyKey: `new-lead:${LEAD}`, reason: "new_lead", actorId: "system:intake" });
 
   const seen = [ownerOf(sqlite)];

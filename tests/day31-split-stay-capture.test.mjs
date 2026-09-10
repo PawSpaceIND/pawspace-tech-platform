@@ -76,7 +76,7 @@ test("the advance capture collects exactly the instalment due now, not the whole
 });
 
 test("after the advance, the payment stage asks for the BALANCE - not the total, not the advance again", async () => {
-  const { sqlite, db, inbox } = await seedStay();
+  const { db, inbox } = await seedStay();
   const { commitRazorpayCaptureAtomic } = await import("../lib/razorpay-capture-atomic.ts");
   const { paymentStageAmount } = await import("../lib/payment-stage-amount.ts");
   inbox("IB-ADV2");

@@ -187,7 +187,7 @@ test("the payout authorisation query matches the schema it reads", async () => {
    * the gate app/api/partner-finance/route.ts puts in front of BOTH level-2 money approvals - so no
    * partner payout and no order commission could reach level 2 at all.
    */
-  const { sqlite, db } = await seedPayoutBeneficiary();
+  const { sqlite } = await seedPayoutBeneficiary();
   const columns = new Set(sqlite.prepare("PRAGMA table_info(provider_verifications)").all().map((c) => c.name));
   for (const column of ["status", "verified_at", "expires_at"]) {
     assert.ok(columns.has(column), `payout authorisation reads provider_verifications.${column}`);
