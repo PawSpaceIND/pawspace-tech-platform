@@ -22,7 +22,7 @@ async function seed(id:string,customerId:string){const now=Date.now(),bookingId=
  await query(id,"INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,1,1,'INR','upi','prepaid','created','uat_sandbox',?,'{}',?,?)",[paymentId,bookingId,customerId,`idem-${paymentId}`,now,now]);return{bookingId,paymentId}}
 
 test("current isolated PR674 checkout reuses order and exposes loaded Razorpay Test modal",async({page},testInfo)=>{
- test.skip(testInfo.project.name!=="chromium");test.setTimeout(90000);expect(ACCOUNT).toMatch(/^[a-f0-9]{32}$/i);expect(TOKEN.length).toBeGreaterThan(20);
+ test.skip(testInfo.project.name!=="chromium");test.setTimeout(180000);expect(ACCOUNT).toMatch(/^[a-f0-9]{32}$/i);expect(TOKEN.length).toBeGreaterThan(20);
  await page.goto(`${ORIGIN}/mobile-app`,{waitUntil:"domcontentloaded"});
  const otp=await post(page,"/api/customer-otp",{action:"request",phone:"9000000674"});expect(otp.status).toBe(200);
  const verified=await post(page,"/api/customer-otp",{action:"verify",challengeId:otp.body.data.challengeId,code:otp.body.data.sandboxCode,name:"PR674 Diagnostic",cityId:"blr"});expect(verified.status).toBe(200);
@@ -37,6 +37,7 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  const firstOrder=String(start.body.data.orderId);
  await page.goto(`${ORIGIN}/mobile-app`,{waitUntil:"domcontentloaded"});
  await page.locator("nav").getByRole("button",{name:/account/i}).last().click();
+ await expect(page.getByText("Payments & invoice summaries",{exact:true})).toBeVisible({timeout:30000});
  await page.getByText("Payments & invoice summaries",{exact:true}).click();
  const card=page.locator("article").filter({hasText:fixture.bookingId});
  const pay=card.getByRole("button",{name:"Review & pay (test)",exact:true});
@@ -48,7 +49,34 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  await page.waitForTimeout(12000);
  const frames=[];for(const [index,frame] of page.frames().entries()){const text=await frame.locator("body").innerText().catch(()=>"");const controls=await frame.locator("input,button,[role=button]").evaluateAll(nodes=>nodes.slice(0,80).map(node=>({tag:node.tagName,text:(node.textContent||"").trim().replace(/\s+/g," ").slice(0,140),placeholder:node.getAttribute("placeholder"),aria:node.getAttribute("aria-label"),type:node.getAttribute("type")}))).catch(()=>[]);frames.push({index,url:frame.url(),text:text.slice(0,5000),controls});}
  console.log(`[PR674-MODAL] ${JSON.stringify(frames)}`);await testInfo.attach("pr674-razorpay-modal-structure",{body:JSON.stringify(frames,null,2),contentType:"application/json"});await page.screenshot({path:testInfo.outputPath("pr674-razorpay-modal-loaded.png"),fullPage:true});
- expect(frames.some(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url))).toBe(true);
+ const razor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url));
+ expect(razor,"Razorpay Test checkout frame must be present").toBeTruthy();
+ await razor!.getByRole("button",{name:"Close",exact:true}).click();
+ await expect(card.getByRole("alert")).toContainText("Checkout closed. No payment confirmation has been recorded here.",{timeout:10000});
+ await expect(pay).toBeEnabled();
+ const paymentAfterDismiss=await query(id,"SELECT status,amount,amount_due_now,gateway FROM booking_payments WHERE id=?",[fixture.paymentId]);
+ const intentAfterDismiss=await query(id,"SELECT state,order_request_state,gateway_order_id FROM payment_intents WHERE booking_id=?",[fixture.bookingId]);
+ expect(paymentAfterDismiss[0]?.status).toBe("created");
+ expect(intentAfterDismiss[0]?.state).toBe("CREATED");
+ expect(intentAfterDismiss[0]?.gateway_order_id).toBe(firstOrder);
+ console.log(`[PR674-DISMISS] ${JSON.stringify({payment:paymentAfterDismiss[0],intent:intentAfterDismiss[0]})}`);
+
+ const retry=page.waitForResponse(r=>{if(r.url()!==`${ORIGIN}/api/customer-checkout`||r.request().method()!=="POST")return false;try{return r.request().postDataJSON()?.action==="start"}catch{return false}});
+ await pay.click();
+ const retryResponse=await retry,retryBody=await retryResponse.json();
+ expect(retryResponse.status()).toBe(201);expect(retryBody.data.orderId).toBe(firstOrder);
+ await expect.poll(()=>page.frames().some(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url)),{timeout:15000}).toBe(true);
+ const retryRazor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url));
+ expect(retryRazor).toBeTruthy();
+ const mobile=retryRazor!.locator('input[placeholder="Mobile number"]');
+ await expect(mobile).toBeVisible({timeout:15000});
+ await mobile.fill("9000000674");
+ await retryRazor!.getByRole("button",{name:"Continue",exact:true}).click();
+ await page.waitForTimeout(5000);
+ const methodFrames=[];for(const [index,frame] of page.frames().entries()){const text=await frame.locator("body").innerText().catch(()=>"");const controls=await frame.locator("input,button,[role=button]").evaluateAll(nodes=>nodes.slice(0,100).map(node=>({tag:node.tagName,text:(node.textContent||"").trim().replace(/\s+/g," ").slice(0,160),placeholder:node.getAttribute("placeholder"),aria:node.getAttribute("aria-label"),type:node.getAttribute("type")}))).catch(()=>[]);methodFrames.push({index,url:frame.url(),text:text.slice(0,6000),controls});}
+ console.log(`[PR674-METHODS] ${JSON.stringify(methodFrames)}`);await testInfo.attach("pr674-payment-method-structure",{body:JSON.stringify(methodFrames,null,2),contentType:"application/json"});await page.screenshot({path:testInfo.outputPath("pr674-payment-methods.png"),fullPage:true});
+ expect(methodFrames.some(frame=>/UPI|Netbanking|Cards/i.test(frame.text))).toBe(true);
+ await page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url))?.getByRole("button",{name:"Close",exact:true}).click().catch(()=>{});
 });
 
 // Harness refresh marker: exact PR674 external modal diagnostic only.
