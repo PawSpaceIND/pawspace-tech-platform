@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {probeExotelRegion} from "../scripts/exotel-region-probe.mjs";
+import {probeExotelRegion} from "../lib/exotel-region-probe.ts";
 
 const response=status=>new Response("secret provider body that must be discarded",{status});
 test("read-only probe selects exactly one authenticated Exotel region and never POSTs",async()=>{

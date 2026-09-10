@@ -114,6 +114,18 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
   catch (error) { if (error instanceof ProviderResponseTooLarge) throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit"); throw error; }
 }
 
+function safeProviderErrorCode(raw: string) {
+  const safe = (value: unknown) => { const text = String(value ?? "").trim(); return /^[A-Za-z0-9_.:-]{1,64}$/.test(text) ? text : null; };
+  try {
+    const parsed = JSON.parse(raw) as Record<string, any>;
+    for (const value of [parsed.code, parsed.Code, parsed.error?.code, parsed.error_data?.code, parsed.ResponseData?.Code, parsed.response?.code, parsed.response?.error_data?.code]) {
+      const code = safe(value); if (code) return code;
+    }
+  } catch {}
+  const xml = raw.match(/<(?:Code|code)>\s*([A-Za-z0-9_.:-]{1,64})\s*<\/(?:Code|code)>/);
+  return safe(xml?.[1]);
+}
+
 function approvedStreamUrl(env: Env) {
   const value = val(env, "PAWSPACE_VOICE_STREAM_URL");
   if (!value) return null;
@@ -158,7 +170,10 @@ export function exotelTelephony(env: Env): TelephonyProvider {
         } catch (error) {
           throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
         }
-        if (!response.ok) throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status})`);
+        if (!response.ok) {
+          const code = safeProviderErrorCode(responseText);
+          throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status}${code ? `; code ${code}` : ""})`);
+        }
         let parsed: { Call?: { Sid?: string; Status?: string }; call?: { sid?: string; status?: string } } = {};
         try { parsed = JSON.parse(responseText) as typeof parsed; } catch { throw new TelephonyProviderUnavailable("Telephony provider returned a malformed response"); }
         const providerCallId = String(parsed.call?.sid || parsed.Call?.Sid || "").trim();
