@@ -163,12 +163,21 @@ async function submitUpi(page: Page, upi: string) {
             continue;
           }
         }
-        for (const locator of [
+        const upiEntries = [
           frame.getByRole("button", { name: /UPI/i }).first(),
           frame.getByText(/^UPI$/i).first(),
           frame.getByText(/Pay by UPI|UPI ID/i).first(),
-        ]) {
-          if (await locator.isVisible().catch(() => false)) await locator.click().catch(() => {});
+        ];
+        let selectedUpi = false;
+        for (const locator of upiEntries) {
+          if (!await locator.isVisible().catch(() => false)) continue;
+          await locator.click();
+          selectedUpi = true;
+          break;
+        }
+        if (selectedUpi) {
+          await page.waitForTimeout(800);
+          continue;
         }
         const inputs = frame.locator("input");
         const inputCount = await inputs.count();
