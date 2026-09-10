@@ -161,15 +161,21 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/whatsapp-uat-secrets.json"; DEPLOY_LOG="$RUNNER_TEMP/wrangler-deploy.log"; export SECRETS_FILE
           trap 'rm -f "$SECRETS_FILE" "$DEPLOY_LOG"' EXIT
           node --input-type=module <<'NODE'
           import {writeFileSync} from "node:fs";
-          const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
-          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"")]));if(Object.values(values).some(value=>!value))throw new Error("required core staging UAT secret missing");
-          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||"").trim();if(token)values.META_WHATSAPP_UAT_ACCESS_TOKEN=token;
+          const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","META_WHATSAPP_UAT_ACCESS_TOKEN","META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID","META_WHATSAPP_APP_SECRET","META_WHATSAPP_VERIFY_TOKEN","META_WHATSAPP_UAT_ALLOWLIST","META_WHATSAPP_TEMPLATE_ALLOWLIST"];
+          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"").trim()]));if(Object.values(values).some(value=>!value))throw new Error("required staging WhatsApp UAT secret missing");
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
           if ! npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" > "$DEPLOY_LOG" 2>&1; then echo "Wrangler staging deploy failed; raw output withheld." >&2; exit 1; fi
