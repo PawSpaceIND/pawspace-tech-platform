@@ -51,7 +51,7 @@ async function ensurePet(page){
 }
 
 const care=(page)=>page.getByRole("region",{name:"Care services"});
-async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Everything they need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
+async function goHome(page){await gotoApp(page);await nav(page,"Home");await care(page).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const card=care(page).getByRole("button",{name:new RegExp(name,"i")});const count=await card.count();if(count!==1)die(`${name} discovery card count=${count}`);if(await card.isDisabled())die(`${name} discovery card disabled`);await card.click();await wait(page,450);}
 
 async function observeFinal(page,button,target,safePosts=[],timeout=SERVER_TIMEOUT){
@@ -61,10 +61,13 @@ async function observeFinal(page,button,target,safePosts=[],timeout=SERVER_TIMEO
 
 async function homeControls(page){
  await goHome(page);for(const name of["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"]){const card=care(page).getByRole("button",{name:new RegExp(name,"i")});if(await card.count()!==1)die(`${name} missing/duplicated`);if(await card.isDisabled())die(`${name} disabled`);}
- const guides=page.getByRole("region",{name:"Quick service guides"}).getByRole("button");if(await guides.count()!==6)die(`guide slots=${await guides.count()}, expected 6`);
- await page.getByRole("button",{name:"Choose your service location"}).click();await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Indiranagar, Bengaluru");await page.getByRole("button",{name:"Save location"}).click();await text(page,"Indiranagar, Bengaluru");
+ const guides=care(page).getByRole("button");if(await guides.count()!==8)die(`service cards=${await guides.count()}, expected 8`);
+ await page.locator("[data-discovery]").getByRole("button",{name:"Choose your service location",exact:true}).click();
+ const location=page.getByRole("dialog",{name:"Choose your service area"});await location.waitFor({state:"visible",timeout:TIMEOUT});
+ await location.getByText("Can’t find your area? Use a PIN code",{exact:true}).click();await location.getByPlaceholder("6-digit PIN code").fill("560038");
+ await location.getByRole("button",{name:"Check area",exact:true}).click();await location.getByRole("button",{name:/Continue in Bengaluru/}).click();await location.waitFor({state:"hidden",timeout:TIMEOUT});
  const search=page.getByLabel("Search PawSpace services");await search.fill("food");await care(page).getByRole("button",{name:/Fresh Food/i}).waitFor({state:"visible",timeout:TIMEOUT});if(await care(page).getByRole("button",{name:/Grooming/i}).count())die("search failed to filter service cards");await search.fill("");
- await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + six guides + bookings + pets";
+ await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 illustrated services + search + verified location + bookings + pets";
 }
 
 async function grooming(page){await openService(page,"Grooming");await text(page,"Who needs grooming?");const next=page.getByRole("button",{name:/Choose a package/i});await ensurePetProgress(page,next,"Grooming package progression");await next.click();for(const label of["Essential Bath","Bath & Basic","Complete Makeover","Just Trim"])await text(page,label);return"pet -> package stage + legacy packages";}

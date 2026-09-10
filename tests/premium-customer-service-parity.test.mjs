@@ -21,19 +21,15 @@ test("premium customer shell keeps the real signed-in service flows", () => {
   ], "mobile shell");
 });
 
-test("premium discovery keeps all eight legacy customer services reachable while video stays six-slot", () => {
+test("premium discovery keeps all eight legacy customer services reachable", () => {
+  // Retired with the illustrated UI: VIDEO_SERVICE_CODES / videoServices.map (the
+  // six-slot video carousel), and the per-service literals, which moved out of the
+  // component - the service list now arrives as a prop from the shell. The shell
+  // block below is what actually guarantees all eight stay reachable.
   const home = read("app/mobile-app/premium-discovery-home.tsx");
   hasAll(home, [
     /const careServices = visible/,
-    /VIDEO_SERVICE_CODES/,
-    /"grooming"/,
-    /"dog_training"/,
-    /"boarding"/,
-    /"pet_sitting"/,
-    /"dog_walking"/,
-    /"pet_taxi"/,
     /careServices\.map/,
-    /videoServices\.map/,
   ], "premium discovery");
   const shell = read("app/mobile-app/page.tsx");
   hasAll(shell, [

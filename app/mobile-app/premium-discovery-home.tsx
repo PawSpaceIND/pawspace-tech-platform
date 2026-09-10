@@ -19,19 +19,6 @@ type CustomerPet = { name: string; profile?: { photo?: string } };
 type CustomerBooking = { id: string; serviceCode: string; packageName: string; scheduledStart: string; status: string };
 type CustomerOffer = { code: string; description: string; autoApply: boolean };
 
-const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
-
-const PHOTO: Record<string, string> = {
-  grooming: "/assets/banners/grooming-groomer-action.jpg",
-  dog_training: "/assets/banners/training-handshake.jpg",
-  boarding: "/assets/banners/boarding-puppy-hug.jpg",
-  pet_sitting: "/assets/banners/sitting-woman-cat.jpg",
-  pet_taxi: "/assets/banners/taxi-car-window.jpg",
-  dog_walking: "/assets/banners/walking-husky-forest.jpg",
-  food: "/assets/banners/food-prep-bowl.jpg",
-  relocation: "/assets/banners/taxi-vintage-truck.jpg",
-};
-
 const PROMISE: Record<string, string> = {
   grooming: "Salon-grade care at home",
   dog_training: "Build better behaviour",
@@ -124,7 +111,6 @@ export default function PremiumDiscoveryHome({
     [query, services],
   );
   const careServices = visible;
-  const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const campaign = CAMPAIGNS[campaignIndex];
   const customerInitial = customerName?.trim().slice(0, 1).toUpperCase() || "P";
 
@@ -136,9 +122,9 @@ export default function PremiumDiscoveryHome({
   if (showWelcome === null) return <p role="status">Preparing your PawSpace…</p>;
   if (showWelcome) return <LocationWelcome onContinue={useCoverage} />;
 
-  return <div className={styles.home} data-discovery data-home-design="option-5-premium-visual">
+  return <div className={styles.home} data-discovery data-home-design="pawspace-prototype-converged">
     <header className={styles.top}>
-      <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-logo.jpeg" alt="" /><b>PawSpace</b><small>Your Petter half</small></a>
+      <a className={styles.brand} href="/mobile-app"><img src="/assets/pawspace-icon.jpeg" alt="" /><b>PawSpace</b><small>Your Petter half</small></a>
       <div className={styles.topRow}>
         <button className={styles.location} onClick={() => { setEditingLocation(true); locationDialog.current?.showModal(); }} aria-label="Choose your service location">
           <i aria-hidden="true">●</i>
@@ -155,47 +141,21 @@ export default function PremiumDiscoveryHome({
       </label>
     </header>
 
-    <section className={styles.hero}>
-      <img src="/assets/banners/sitter-hug-golden.jpg" alt="PawSpace caregiver with a Golden Retriever" fetchPriority="high" />
-      <div className={styles.heroCopy}>
-        <small>{pet ? `CARE FOR ${pet.name.toUpperCase()}` : "PREMIUM CARE"}</small>
-        <h1>Premium care for your loved ones</h1>
-        <p>{pet ? `What does ${pet.name} need today? Trusted PawSpace care is ready when you are.` : "Book trusted, background-verified pet care across Bengaluru."}</p>
-        <button onClick={() => onOpen("grooming")}>Book now</button>
-      </div>
+    <section className={pet ? styles.personalHero : styles.welcomeHero} aria-label="Your pet family">
+      {pet ? <>
+        <div><small>YOUR PETTER HALF</small><h1>What does {pet.name} need today?</h1><button onClick={onShowPets}>Your pet family <span aria-hidden="true">↗</span></button></div>
+        <button className={styles.petPortrait} onClick={onShowPets} aria-label={`Open ${pet.name}'s profile`}>
+          {pet.profile?.photo ? <img src={pet.profile.photo} alt={pet.name} /> : <span aria-hidden="true">🐾</span>}
+        </button>
+      </> : <>
+        <img className={styles.welcomePhoto} src={SERVICE_ART.dog_training.image} alt="" fetchPriority="high" />
+        <div><small>A LITTLE CARE. A LOT OF LOVE.</small><h1>Welcome to your<br /><em>Petter half.</em></h1><button onClick={onShowPets}>Add your pet <span aria-hidden="true">＋</span></button></div>
+      </>}
     </section>
-
-    {pet && <section className={styles.personalHero} aria-label="Your pet family">
-      <div><small>YOUR PETTER HALF</small><h2>{pet.name}’s care, all in one place.</h2><button onClick={onShowPets}>Your pet family <span aria-hidden="true">↗</span></button></div>
-      <button className={styles.petPortrait} onClick={onShowPets} aria-label={`Open ${pet.name}'s profile`}>
-        {pet.profile?.photo ? <img src={pet.profile.photo} alt={pet.name} /> : <span aria-hidden="true">🐾</span>}
-      </button>
-    </section>}
-
-    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
-      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
-        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
-      </article>)}
-    </section>}
-
-    <section className={styles.media} aria-label="Featured promotion">
-      <div><span>{campaign.eyebrow}</span><em>{campaignIndex + 1}/{CAMPAIGNS.length}</em></div>
-      <h2>{campaign.title}</h2>
-      <p>{campaign.copy}</p>
-      <button onClick={() => onOpen(campaign.serviceCode)}>{campaign.cta}</button>
-      <nav aria-label="Choose featured promotion">
-        {CAMPAIGNS.map((item, index) => <button key={item.title} aria-label={`Show campaign ${index + 1}`} aria-current={index === campaignIndex} className={index === campaignIndex ? styles.dotOn : ""} onClick={() => setCampaignIndex(index)} />)}
-      </nav>
-      <small>PawSpace Media slot · service education and clearly labelled approved campaigns</small>
-    </section>
-
-    <section className={styles.quickSection} aria-label="Quick service guides">
-      <h2>Explore quickly</h2>
-      <div className={styles.quickGrid}>
-        {videoServices.map((service) => <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={disabledServices.has(service.serviceCode)}>
-          <span><img src={PHOTO[service.serviceCode] || SERVICE_ART[service.serviceCode]?.image || service.image} alt="" /></span><b>{service.name}</b>
-        </button>)}
-      </div>
+    <section className={styles.trustRow} aria-label="Care with confidence">
+      <span><i aria-hidden="true">♡</i><b>Pet-first care</b></span>
+      <span><i aria-hidden="true">✓</i><b>Clear packages</b></span>
+      <span><i aria-hidden="true">◷</i><b>Booking updates</b></span>
     </section>
 
     {nextBooking && <section className={styles.upcoming} aria-label="Upcoming booking">
@@ -204,7 +164,7 @@ export default function PremiumDiscoveryHome({
     </section>}
 
     <section className={styles.care} aria-label="Care services">
-      <div className={styles.sectionHead}><small>ALL 8 SERVICES</small><h2>Everything they need</h2></div>
+      <div className={styles.sectionHead}><h2>Care for every little need</h2><small>Explore services →</small></div>
       <div className={styles.cards}>
         {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
@@ -223,24 +183,29 @@ export default function PremiumDiscoveryHome({
       <p className={styles.artDisclosure}>AI service illustrations. Caregiver profiles are shown separately after assignment.</p>
     </section>
 
-    <section className={styles.assurance} aria-label="PawSpace trust standards">
-      <article><b>Verified & trusted</b><small>Background-checked professionals</small></article>
-      <article><b>Safety & comfort first</b><small>Protocols on every visit</small></article>
-      <article><b>Real-time updates</b><small>Photos and status as it happens</small></article>
-      <article><b>GST invoice</b><small>On every completed service</small></article>
+    <section className={styles.media} aria-label="Featured promotion">
+      <div><span>{campaign.eyebrow}</span><em>{campaignIndex + 1}/{CAMPAIGNS.length}</em></div>
+      <h2>{campaign.title}</h2>
+      <p>{campaign.copy}</p>
+      <button onClick={() => onOpen(campaign.serviceCode)}>{campaign.cta}</button>
+      <nav aria-label="Choose featured promotion">
+        {CAMPAIGNS.map((item, index) => <button key={item.title} aria-label={`Show campaign ${index + 1}`} aria-current={index === campaignIndex} className={index === campaignIndex ? styles.dotOn : ""} onClick={() => setCampaignIndex(index)} />)}
+      </nav>
+      <small>Care guide · PawSpace</small>
+      <p className={styles.mediaDisclosure}>PawSpace Media slot · service education and clearly labelled approved campaigns</p>
     </section>
+
+    {offers.length > 0 && <section className={styles.offers} aria-label="Available offers">
+      {offers.slice(0, 4).map((offer) => <article key={offer.code}>
+        <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
+      </article>)}
+    </section>}
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
 
     <dialog ref={locationDialog} className={styles.sheet} aria-label="Choose your service area" onClose={() => setEditingLocation(false)}>
-      <div className={styles.sheetBackdrop}>
-        <div className={styles.handle} aria-hidden="true" />
         <div className={styles.sheetHead}><small>CARE NEAR YOU</small><button aria-label="Close location" onClick={() => locationDialog.current?.close()}>×</button></div>
-        <p className={styles.locationNote}>Availability is shown only after PawSpace verifies the entered service area.</p>
-        <p className={styles.deviceLocation}>Verified pincode coverage · no guessed neighbourhood availability</p>
         {editingLocation && <LocationWelcome compact onContinue={coverage => { useCoverage(coverage); locationDialog.current?.close(); }} />}
-        <button className={styles.saveLocation} onClick={() => locationDialog.current?.close()}>Done</button>
-      </div>
     </dialog>
   </div>;
 }
