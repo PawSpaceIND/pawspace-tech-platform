@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type voice-uat to activate isolated staging, or voice-region-probe for read-only Exotel region detection'
+        description: 'Type voice-uat to activate isolated staging, voice-region-probe for read-only Exotel region detection, or voice-observe-retry7 for sanitized retry-7 proof'
         required: true
         default: ''
       expected_sha:
@@ -26,6 +26,42 @@ on:
         default: ''
 
 jobs:
+  observe-retry7:
+    name: Read-only Voice UAT retry-7 proof
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-observe-retry7' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Query sanitized retry-7 state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          IDEM='voice-carrier-uat:2026-09-11:controlled-retry-7'
+          RUN='VOICE-UAT-20260911-CONTROLLED-RETRY-7'
+          q() { npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "$1"; }
+          echo 'RETRY7_QUEUE'
+          q "SELECT status,last_state,failure_class,CASE WHEN call_id IS NOT NULL THEN 1 ELSE 0 END AS has_call,CASE WHEN started_at IS NOT NULL THEN 1 ELSE 0 END AS started,CASE WHEN finished_at IS NOT NULL THEN 1 ELSE 0 END AS finished FROM voice_carrier_uat_queue WHERE id='$RUN' LIMIT 1"
+          echo 'RETRY7_CALL'
+          q "SELECT provider,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,CASE WHEN provider_call_id IS NOT NULL THEN 1 ELSE 0 END AS has_provider_call,CASE WHEN ai_call_id IS NOT NULL THEN 1 ELSE 0 END AS has_ai_call,CASE WHEN dialed_at IS NOT NULL THEN 1 ELSE 0 END AS dialed,CASE WHEN connected_at IS NOT NULL THEN 1 ELSE 0 END AS connected,CASE WHEN ended_at IS NOT NULL THEN 1 ELSE 0 END AS ended FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1"
+          echo 'RETRY7_POLICY'
+          q "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1)"
+          echo 'RETRY7_PROVIDER_EVENTS'
+          q "SELECT COUNT(*) AS provider_events,SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END) AS applied_events FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1)"
+          echo 'RETRY7_AI'
+          q "SELECT COUNT(*) AS ai_calls,SUM(CASE WHEN status IN ('active','connected','completed','ended') THEN 1 ELSE 0 END) AS progressed_ai_calls FROM ai_voice_calls WHERE id=(SELECT ai_call_id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1)"
+          echo 'RETRY7_AI_EVENTS'
+          q "SELECT COUNT(*) AS ai_events,SUM(CASE WHEN event_type='agentstream_started' THEN 1 ELSE 0 END) AS agentstream_started,SUM(CASE WHEN event_type='agentstream_crm_disposition' THEN 1 ELSE 0 END) AS disposition_events,SUM(CASE WHEN event_type='agentstream_crm_disposition_failed' THEN 1 ELSE 0 END) AS disposition_failed_events FROM ai_voice_events WHERE call_id=(SELECT ai_call_id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1)"
+          echo 'RETRY7_SPEECH'
+          q "SELECT COUNT(*) AS customer_speech_segments FROM ai_voice_segments WHERE speaker='customer' AND length(trim(transcript_text))>0 AND call_id=(SELECT ai_call_id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1)"
+          echo 'RETRY7_CRM'
+          q "SELECT COUNT(*) AS disposition_count,SUM(CASE WHEN bot_provider='exotel_agentstream' THEN 1 ELSE 0 END) AS exotel_agentstream_count,SUM(CASE WHEN primary_tag='info_shared' THEN 1 ELSE 0 END) AS info_shared_count,SUM(CASE WHEN primary_tag='human_intervention_needed' THEN 1 ELSE 0 END) AS human_needed_count FROM bot_call_dispositions WHERE idempotency_key=('agentstream:' || (SELECT id FROM voice_call_orders WHERE idempotency_key='$IDEM' LIMIT 1) || ':completion')"
+
   ci-config:
     name: Voice UAT CI-only configuration
     if: ${{ github.event_name != 'workflow_dispatch' }}
