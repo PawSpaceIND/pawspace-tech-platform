@@ -74,3 +74,15 @@ test("release-preview verification reads version JSON and requires the exact sha
     "substring matching is not sufficient for exact-sha verification",
   );
 });
+
+
+test("release-preview installs the Maps UAT key only as an encrypted Worker secret", () => {
+  const install = namedStep(
+    "Install UAT credentials as Worker secrets",
+    "Verify the DEPLOYED sha is the candidate sha",
+  );
+  assert.match(install, /GOOGLE_MAPS_SERVER_API_KEY_UAT: \${{ secrets\.GOOGLE_MAPS_SERVER_API_KEY_UAT }}/);
+  assert.match(install, /for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT GOOGLE_MAPS_SERVER_API_KEY_UAT/);
+  assert.match(install, /printf '%s' "\${!name}" \| npx wrangler secret put "\$name" --name "\$WORKER"/);
+  assert.doesNotMatch(install, /wrangler secret put GOOGLE_MAPS_SERVER_API_KEY_UAT[^\n]*\$\{\{ secrets/);
+});
