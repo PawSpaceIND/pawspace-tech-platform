@@ -158,7 +158,10 @@ async function reviewWorld() {
 }
 
 test("review config is maker/checker gated and drives the request cadence", async () => {
-  const { db, config, reviews, activate } = await reviewWorld();
+  const { sqlite, db, config, reviews, activate } = await reviewWorld();
+  booking(sqlite, "BK-NOCFG", "CUS-1", "pet_taxi");
+  booking(sqlite, "BK-G1", "CUS-1", "grooming");
+  booking(sqlite, "BK-T1", "CUS-1", "dog_training");
   const draft = await config.saveReviewConfig(db, { serviceCode: "grooming", questions: [{ text: "How was the groomer?" }], triggerType: "every_service", channels: ["notification"] }, OPS);
   await assert.rejects(() => config.approveReviewConfig(db, { id: draft.id, approvalReference: "OPS-1", actor: OPS }), /cannot approve their own review config/);
   await assert.rejects(() => config.approveReviewConfig(db, { id: draft.id, approvalReference: "  ", actor: OPS_TWO }), /approval reference is required/);
@@ -187,7 +190,9 @@ test("review config is maker/checker gated and drives the request cadence", asyn
 });
 
 test("review submission is owner-only, single-shot, and only 5 stars offers the public-review reward", async () => {
-  const { db, reviews, activate } = await reviewWorld();
+  const { sqlite, db, reviews, activate } = await reviewWorld();
+  booking(sqlite, "BK-R1", "CUS-1", "grooming");
+  booking(sqlite, "BK-R2", "CUS-1", "grooming");
   await activate({ serviceCode: "grooming", questions: [{ text: "How was the groomer?" }, { text: "Was the pet comfortable?" }], triggerType: "every_service", channels: ["notification"] });
   const request = await reviews.requestServiceReview(db, { bookingId: "BK-R1", serviceCode: "grooming", customerId: "CUS-1" });
 

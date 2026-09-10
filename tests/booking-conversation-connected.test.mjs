@@ -130,3 +130,24 @@ test("communication engine reuses the booking-created thread without adding a se
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_participants WHERE thread_id=?").get(thread.id).n,1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE thread_id=?").get(thread.id).n,1);
 });
+
+test("equal-time existing threads keep participant and later message on the same canonical thread", async t => {
+  const {sqlite, db} = world();
+  t.after(() => sqlite.close());
+  await findCustomerReplay(db, input);
+  for (const id of ["THREAD-Z", "THREAD-A"]) {
+    sqlite.prepare("INSERT INTO communication_threads(id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,'CUS-1','BK-1',NULL,NULL,'open',NULL,NULL,1000,1000)").run(id);
+  }
+  await db.batch([booking(db)]);
+  const participant = sqlite.prepare("SELECT thread_id FROM communication_participants WHERE participant_type='customer' AND participant_id='CUS-1'").get();
+  assert.equal(participant.thread_id, "THREAD-Z");
+  const queued = await enqueueCommunication(db, {
+    customerId: "CUS-1", cityId: "blr", channel: "chat", purpose: "transactional",
+    idempotencyKey: "equal-time-thread-regression", templateKey: "booking_chat_probe",
+    payload: {text: "Synthetic thread consistency test"}, createdBy: "closure-regression",
+    bookingId: "BK-1", asOf: 2000,
+  });
+  assert.equal(queued.threadId, participant.thread_id);
+  assert.equal(sqlite.prepare("SELECT thread_id FROM communication_messages").get().thread_id, participant.thread_id);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_participants").get().n, 1);
+});

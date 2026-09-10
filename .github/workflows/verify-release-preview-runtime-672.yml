@@ -33,18 +33,18 @@ jobs:
           import { mkdirSync, writeFileSync } from 'node:fs';
           const PRODUCT = '9535ce85c0e2fe60da3d2fce091c305dde5d99fc';
           const ADAPTER = '8b1ac9a296d5e52f60df011981cf7d85d7935611';
-          // Reviewed tuple from successful hosted run 34381979950, not the current runtime.
+          // Reviewed tuple from successful hosted run 34449405870, not the current runtime.
           // The original 34380905564 baseline belongs to a separate, earlier build.
-          const EVIDENCE = Object.freeze({run_id:34381979950,artifact_id:10117208448,
-            artifact_sha256:'7d2e8bf2fc570d85d959a2948b1249d2c5e1b2b6a54ee7ea5d29d141db65c91b',
-            baseline_version_id:'dc882e91-c758-4403-a5f2-f94210173a22'});
+          const EVIDENCE = Object.freeze({run_id:34449405870,artifact_id:10141525207,
+            artifact_sha256:'55356e22a9efb7b38fbe674cbbab23593f420f027ab6a1439b27b437fa74a02c',
+            baseline_version_id:'419eb076-4ef1-4fca-b7a1-af50a6a8e7a3'});
           const BASELINE = EVIDENCE.baseline_version_id;
           const WORKER = 'pawspace-release-preview';
           const PREVIEW_DB_HASH = '5f09c4912525883b766fe286f17ea1be6f839640c2a1ca7e944e04228b55fb7e';
           const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
           const OFF = ['PAYMENTS','PAYOUTS','REFUNDS','BANK_INSTRUCTIONS','WHATSAPP','SMS','EMAIL','PUSH','TELEPHONY','KYC','ESIGN','MAPS_BILLING','EXTERNAL_AI','ACCOUNTING','TAX_POSTING'].map(n => `PAWSPACE_LIVE_${n}`);
-          const CREDENTIALS = ['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT'];
+          const CREDENTIALS = ['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','GOOGLE_MAPS_SERVER_API_KEY_UAT'];
           class SafeError extends Error {}
           const need = (ok, code) => { if (!ok) throw new SafeError(code); };
           // Keep both workflow and runtime guards aligned; main is the approved environment branch.
@@ -100,6 +100,7 @@ jobs:
             assertFingerprintMatch(etag,baselineEtag);
             need(plain(map,'PAWSPACE_ENVIRONMENT')==='release-preview', 'WRONG_ENVIRONMENT');
             need(plain(map,'PAWSPACE_PAYMENT_ENV')==='sandbox', 'PAYMENT_NOT_SANDBOX');
+            need(plain(map,'PAWSPACE_MAPS_ENV')==='sandbox', 'MAPS_NOT_SANDBOX');
             for (const name of OFF) need(plain(map,name)==='false', `LIVE_EFFECT_NOT_OFF_${name}`);
             need(plain(map,'PAWSPACE_PROVIDER_MARKETPLACE_LIVE')==='false' && plain(map,'PAWSPACE_PROVIDER_ORDER_ELIGIBLE')==='false' && plain(map,'PAWSPACE_PROVIDER_ACTIVATION')==='uat_ready', 'PROVIDER_ACTIVATION_NOT_SAFE');
             need(plain(map,'PAWSPACE_UAT_LOGIN')==='on', 'UAT_LOGIN_NOT_ENABLED');
@@ -119,7 +120,7 @@ jobs:
               need(!['true','1','yes','on'].includes(flag), 'STAGING_LIVE_CUSTOMER_OTP_ENABLED');
             }
             return { version_id:id, product_marker_matches:true, script_etag_matches_passed_deployment:true,
-              payment_sandbox:true, live_effect_flags_off:true, provider_activation_off:true, preview_d1_isolated:true,
+              payment_sandbox:true, maps_sandbox:true, live_effect_flags_off:true, provider_activation_off:true, preview_d1_isolated:true,
               uat_credentials_present_as_secrets:true, production_otp_path_disabled:true, staging_customer_otp_path_disabled:true,
               credential_strength_retested:false, human_role_access_tested:false };
           }
@@ -210,7 +211,7 @@ jobs:
             const ids=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333'];
             const db='44444444-4444-4444-8444-444444444444';
             const data={id:ids[0],resources:{script:{etag:'test-bundle'},bindings:[
-              ...Object.entries({PAWSPACE_RELEASE_SHA:PRODUCT,PAWSPACE_ENVIRONMENT:'release-preview',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_PROVIDER_MARKETPLACE_LIVE:'false',PAWSPACE_PROVIDER_ORDER_ELIGIBLE:'false',PAWSPACE_PROVIDER_ACTIVATION:'uat_ready',...Object.fromEntries(OFF.map(n=>[n,'false']))}).map(([name,text])=>({name,text,type:'plain_text'})),
+              ...Object.entries({PAWSPACE_RELEASE_SHA:PRODUCT,PAWSPACE_ENVIRONMENT:'release-preview',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_MAPS_ENV:'sandbox',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_PROVIDER_MARKETPLACE_LIVE:'false',PAWSPACE_PROVIDER_ORDER_ELIGIBLE:'false',PAWSPACE_PROVIDER_ACTIVATION:'uat_ready',...Object.fromEntries(OFF.map(n=>[n,'false']))}).map(([name,text])=>({name,text,type:'plain_text'})),
               ...CREDENTIALS.map(name=>({name,type:'secret_text'})),{name:'DB',type:'d1',id:db}]}};
             const options={dbHash:sha256(db),productionDb:ids[1],sharedDb:ids[2]};
             let count=0;
@@ -295,7 +296,7 @@ jobs:
             check(()=>assert.equal(splitDiag.version_comparisons[1].fingerprint_matches,false));
             // No mutable runtime/config value chooses the attested reference tuple.
             check(()=>assert.equal(Object.isFrozen(EVIDENCE),true));
-            check(()=>assert.deepEqual([EVIDENCE.run_id,EVIDENCE.artifact_id,BASELINE],[34381979950,10117208448,'dc882e91-c758-4403-a5f2-f94210173a22']));
+            check(()=>assert.deepEqual([EVIDENCE.run_id,EVIDENCE.artifact_id,BASELINE],[34449405870,10141525207,'419eb076-4ef1-4fca-b7a1-af50a6a8e7a3']));
             // Complete inventory proof must fail on missing, malformed, repeated or unbounded pages.
             const resolved=resolveProtectedDatabases(await databaseInventory(read),options.dbHash);
             check(()=>assert.deepEqual(resolved,{productionDb:ids[1],sharedDb:ids[2],previewDb:db}));

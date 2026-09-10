@@ -74,7 +74,7 @@ function parseReconDate(dateKey: string) {
 
 export async function fetchRazorpaySettlementReconDate(env: Env, dateKey: string) {
   const environment = paymentEnvironment(env);
-  if (environment === "live" && !isTrue(env.PAWSPACE_PAYMENT_LIVE_APPROVED)) {
+  if (environment === "live" && env.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") {
     return { connected: false as const, environment, reason: "Live Razorpay settlement reconciliation is not approved" };
   }
   const { keyId, keySecret } = credentials(env, environment);
@@ -202,7 +202,7 @@ export async function runRazorpaySettlementReconciliationSweep(db: Db, env: Env,
   }
   const asOf = input.asOf ?? Date.now();
   const environment = paymentEnvironment(env);
-  if (environment === "live" && !isTrue(env.PAWSPACE_PAYMENT_LIVE_APPROVED)) {
+  if (environment === "live" && env.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") {
     return { configured: true, skipped: true, environment, reason: "Live payments are not approved" };
   }
   const dateKey = istDateKey(asOf), runKey = `${environment}:${dateKey}`;
