@@ -24,6 +24,25 @@ export PW_UAT_SERVICE_DATE="$(node -e 'const d=new Date(Date.now()+5*86400000);p
 export PAWSPACE_UAT_SERVICE_CLOCK="on"
 export PAWSPACE_UAT_EXECUTION_NOW_MS="$(node -e 'process.stdout.write(String(Date.parse(process.env.PW_UAT_SERVICE_DATE+"T08:30:00.000Z")))')"
 
+# Vinext/Miniflare reads Cloudflare runtime bindings from .dev.vars. CI creates that file with the
+# disposable staff/maps secrets before this runner starts, so upsert only the non-secret service clock.
+if [ "${CI:-}" = "true" ]; then
+  if [ ! -f "$ROOT/.dev.vars" ]; then
+    echo "[persona-e2e] refusing to start: CI must provision .dev.vars before service-clock injection" >&2
+    exit 1
+  fi
+  python3 - "$ROOT/.dev.vars" "$PAWSPACE_UAT_SERVICE_CLOCK" "$PAWSPACE_UAT_EXECUTION_NOW_MS" <<'PYVARS'
+import json, sys
+from pathlib import Path
+path=Path(sys.argv[1])
+updates={"PAWSPACE_UAT_SERVICE_CLOCK":sys.argv[2],"PAWSPACE_UAT_EXECUTION_NOW_MS":sys.argv[3]}
+lines=path.read_text().splitlines()
+lines=[line for line in lines if not any(line.startswith(key+"=") for key in updates)]
+lines.extend(f"{key}={json.dumps(value)}" for key,value in updates.items())
+path.write_text("\n".join(lines)+"\n")
+PYVARS
+fi
+
 seed_persona_db() {
   # Each viewport gets a fresh disposable D1 so persisted reservations from desktop cannot influence mobile.
   # --local and the explicit project-local state path prevent any remote database writes.
@@ -41,7 +60,8 @@ for project in chromium mobile-chromium; do
     e2e/customer-booking.spec.ts \
     e2e/partner-journey.spec.ts \
     e2e/frontend-resilience.spec.ts \
-    --project="$project"
+    --project="$project" \
+    --retries=0
 done
 
 # Seeded built-worker journeys are deliberately certified by the independent required Browser E2E
