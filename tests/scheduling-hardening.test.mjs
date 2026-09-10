@@ -7,7 +7,13 @@ import * as nodeModule from "node:module";
 // Two test-only resolve hooks so the REAL route/engine sources run unmodified in node:
 // 1. "cloudflare:workers" resolves to a stub whose env.DB reads the current per-test D1 shim.
 // 2. Extensionless relative imports fall back to .ts (Node's ESM loader vs the bundler).
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
+// This legacy executable route harness intentionally uses localhost preview authority. Production now
+// requires the full preview triple-gate, so declare the test process explicitly rather than relying on
+// hostname alone. The service-discovery fixture is independently sandbox-gated and keeps city/zone/
+// coordinates server-owned while avoiding an external geocoder in this scheduling-focused suite.
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';},get PAWSPACE_PAYMENT_ENV(){return 'sandbox';},get PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE(){return 'on';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
