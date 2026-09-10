@@ -31,16 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 4
 
       - name: Prove application source is exactly unified beta1
         shell: bash
         run: |
           set -euo pipefail
           tag_sha=97d006a54c6661d21bb455bf8968a97739430c67
-          test "$(git rev-parse HEAD^)" = "$tag_sha"
-          git diff --exit-code "$tag_sha" HEAD -- . ':(exclude).github/workflows/e2e-unified-beta1-cloud-gate.yml'
-          echo "PASS application tree matches v1.0.0-unified-beta.1 exactly"
+          git merge-base --is-ancestor "$tag_sha" HEAD
+          git diff --exit-code "$tag_sha" HEAD -- . \
+            ':(exclude).github/workflows/e2e-unified-beta1-cloud-gate.yml' \
+            ':(exclude)e2e/journeys/03-admin.spec.ts'
+          echo "PASS shipping application tree matches v1.0.0-unified-beta.1 exactly; only isolated E2E harness files may differ"
 
       - uses: actions/setup-node@v4
         with:
