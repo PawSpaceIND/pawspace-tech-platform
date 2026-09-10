@@ -25,8 +25,6 @@ const TRAINER = "TRAINER-INC-001";
 const OTHER_TRAINER = "TRAINER-INC-002";
 const MONTH = "2026-09-01";
 const MONTH_END = "2026-09-30";
-const THRESHOLD = 140000;   // the ladder starts above this
-const RATE = 0.20;
 
 async function seedTrainer() {
   const { sqlite, db } = world("__D31W_TRN_DB__", "__D31W_TRN_ENV__");

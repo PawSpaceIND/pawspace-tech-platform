@@ -27,7 +27,6 @@ installWorkersHooks("__D31W_TAX_DB__", "__D31W_TAX_ENV__");
 const { tcsRateS52For, TCS_RATE_S52 } = await import("../lib/tcs-rate.ts");
 
 const CHANGE_DAY = "2024-07-10";
-const IST = 330 * 60_000;
 /** The exact epoch millisecond of an India wall-clock time. */
 const istInstant = (iso) => Date.parse(`${iso}+05:30`);
 
