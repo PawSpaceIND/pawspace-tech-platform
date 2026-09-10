@@ -1,6 +1,7 @@
 import { ACCT } from "./finance-accounts";
 import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { postCollectionEvent } from "./collection-ledger";
+import { paymentStageAmount } from "./payment-stage-amount";
 import { convertLeadOnPaymentCaptured } from "./lead-conversion-attribution";
 import { cancelRecoveryEntitlements } from "./payment-recovery-governance";
 import { activateSubscriptionOnCapture } from "./subscription-payment-activation";
@@ -55,22 +56,42 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(() => null),
   ]);
   if (!payment) throw new Error("Atomic capture could not resolve canonical payment state");
+
+  // A capture we have ALREADY collected is a replay, whatever amount the repeat notification
+  // carries - its amount was validated when it was first accepted, and both expectations below move
+  // as instalments are collected. Resolving that first keeps a legitimate retry of an earlier
+  // instalment from being rejected as a mismatch once a later one has shifted the expectation.
+  const prior = await db.prepare(`SELECT id,event_id FROM payment_gateway_events
+    WHERE payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
+      AND ((?<>'' AND gateway_payment_id=?) OR (?<>'' AND gateway_order_id=?))
+    LIMIT 1`).bind(input.paymentId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
+
   if (intent) {
     if (text(intent.booking_id) !== input.bookingId || text(intent.payment_id) !== input.paymentId) throw new Error("Payment intent does not own the capture booking/payment");
     if (input.gatewayOrderId && text(intent.gateway_order_id) && text(intent.gateway_order_id) !== text(input.gatewayOrderId)) throw new Error("Razorpay order does not belong to the payment intent");
     if (Number(intent.amount_paise) !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the payment intent", Number(intent.amount_paise), input.amountPaise);
     if (text(intent.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the payment intent");
     if (!["CREATED", "AUTHORIZED", "CAPTURED", "SETTLED"].includes(text(intent.state))) throw new Error(`Payment intent state ${text(intent.state)} cannot be captured atomically`);
-  } else {
-    const expectedPaise = Math.round(Number(current?.expected_amount ?? payment.amount ?? 0) * 100);
+  } else if (!prior) {
+    /*
+     * No payment intent: the capture was resolved through payment_gateway_links (a Razorpay payment
+     * link or a bare order). This branch used to expect `booking_payments.amount` - the value of the
+     * WHOLE booking - so on any booking that is not collected in one go it refused the very payment
+     * Razorpay had already taken. That contradicted this same function, which reads
+     * stay_payment_schedules a few lines below and computes `collectedInFull` precisely because a
+     * partial capture is expected here. lib/payment-order-intent.ts opens the gateway order for
+     * `paymentStageAmount().dueNow`, not for the booking total; the fallback has to agree with the
+     * order it is confirming, or an instalment and a credit-reduced amount both fail. [D31-T2]
+     */
+    const stage = await paymentStageAmount(db, input.bookingId).catch(() => null);
+    const expected = stage && stage.dueNow > 0
+      ? stage.dueNow
+      : Number(current?.expected_amount ?? payment.amount ?? 0);
+    const expectedPaise = Math.round(Number(expected) * 100);
     if (expectedPaise !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the linked payment expectation", expectedPaise, input.amountPaise);
     if (text(payment.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the linked payment");
   }
 
-  const prior = await db.prepare(`SELECT id,event_id FROM payment_gateway_events
-    WHERE payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
-      AND ((?<>'' AND gateway_payment_id=?) OR (?<>'' AND gateway_order_id=?))
-    LIMIT 1`).bind(input.paymentId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
   const now = Date.now();
   const effectsOutboxId = `FO-CAP-${crypto.randomUUID()}`;
   const effectsDedupe = `razorpay-capture-effects:${captureKey(input)}`;
