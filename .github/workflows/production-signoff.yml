@@ -67,6 +67,6 @@ jobs:
           META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
           INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: node scripts/assert-production-readiness.mjs
