@@ -12,6 +12,13 @@ test("customer acceptance waits for the asynchronous mobile shell before probing
   assert.doesNotMatch(source, /page\.locator\("nav"\)/);
 });
 
+test("customer acceptance targets each premium service card before its generic CTA", () => {
+  assert.match(source, /const serviceCard=\(page,name\)=>care\(page\)\.locator\("article"\)\.filter/);
+  assert.match(source, /async function serviceAction\(page,name\)/);
+  assert.match(source, /const action=await serviceAction\(page,name\)/);
+  assert.doesNotMatch(source, /care\(page\)\.getByRole\("button",\{name:new RegExp\(name,"i"\)\}\)/);
+});
+
 test("customer acceptance waits for OTP verification to replace the login UI", () => {
   assert.match(source, /codeInput\.waitFor\(\{state:"hidden",timeout:TIMEOUT\}\)/);
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
@@ -49,8 +56,12 @@ test("customer acceptance observes async final mutations through the server time
 
 test("customer acceptance uses the governed east-zone UAT location for Training", () => {
   assert.match(source, /PIN="560038"/);
-  assert.match(source, /ADDRESS="12 Acceptance Road, Indiranagar, Bengaluru"/);
+  assert.match(source, /ADDRESS="42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru"/);
   assert.doesNotMatch(source, /PIN="560034"/);
+  assert.match(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
+  assert.match(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
+  assert.match(source, /getByText\("Verified service doorstep",\{exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
 });
 
 test("customer acceptance accepts the current Boarding empty-selection CTA", () => {
