@@ -156,3 +156,13 @@ test("GET still refuses another provider and an anonymous caller before returnin
   const anonymous = await GET(new Request("https://app.pawspace.in/api/training-sessions?providerId=PRV-1"));
   assert.equal(anonymous.status, 401); assert.equal((await anonymous.json()).data, undefined);
 });
+
+test("reconciled projection retains typed operational metadata without nested private labels", () => {
+  const out = sanitizeTrainingEventDetail({caseId: "CASE-1", phase: "handover", durationMinutes: 15,
+    reportSaved: true, geofence: {distanceMeters: 42, thresholdMeters: 150, verified: true,
+      privateLabel: "private assessment", latitude: 12.97}, reason: "private assessment"});
+  assert.deepEqual(out, {caseId: "CASE-1", phase: "handover", durationMinutes: 15, reportSaved: true,
+    geofence: {distanceMeters: 42, thresholdMeters: 150, verified: true}});
+  assert.deepEqual(projectTrainerSession({homework: {text: "x".repeat(1001)}}).homework, {});
+  assert.deepEqual(projectTrainerSession({homework: {text: "Message @parent"}}).homework, {});
+});
