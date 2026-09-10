@@ -63,6 +63,7 @@ export function checkoutSandboxConfig(artifact: Record<string, unknown>, plan: R
       PAWSPACE_PAYMENT_ENV: "sandbox", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
       PAWSPACE_COMMUNICATION_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_VOICE_ENV: "disabled",
       PAWSPACE_VOICE_UAT_APPROVED: "false", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat",
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
       ...Object.fromEntries(["PAYMENTS", "PAYOUTS", "REFUNDS", "BANK_INSTRUCTIONS", "WHATSAPP", "SMS", "EMAIL", "PUSH",
         "TELEPHONY", "KYC", "ESIGN", "MAPS_BILLING", "EXTERNAL_AI", "ACCOUNTING", "TAX_POSTING"].map(name => [`PAWSPACE_LIVE_${name}`, "false"])),
       PAWSPACE_PROVIDER_MARKETPLACE_LIVE: "false", PAWSPACE_PROVIDER_ORDER_ELIGIBLE: "false", PAWSPACE_PROVIDER_ACTIVATION: "uat_ready",
