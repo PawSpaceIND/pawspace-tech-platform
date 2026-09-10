@@ -355,3 +355,30 @@ test("bot call modules do not fabricate values or use banned DB access", () => {
   const source = read("lib/bot-call-disposition.ts");
   for (const table of ["booking_payments", "canonical_bookings", "pawspace_wallet_ledger", "booking_invoices"]) assert.ok(!new RegExp(`(INSERT INTO|UPDATE|DELETE FROM)\\s+${table}`).test(source), `the bot must never write ${table}`);
 });
+
+test("a mid-disposition failure retries without double-counting the CRM attempt", async () => {
+  const { sqlite, db, disposition } = await leadWorld();
+  let failActivity = true;
+  const flakyDb = {
+    ...db,
+    prepare(sql) {
+      if (failActivity && /INSERT OR IGNORE INTO crm_activities/.test(sql)) {
+        failActivity = false;
+        return {
+          bind: () => ({ run: async () => { throw new Error("synthetic activity write interruption"); } }),
+        };
+      }
+      return db.prepare(sql);
+    },
+  };
+  const input = { idempotencyKey: "call-partial-retry", leadId: "LEAD-BOT", botProvider: BOT, primaryTag: "interested", actorId: BOT };
+  await assert.rejects(() => disposition.recordBotCallDisposition(flakyDb, input), /synthetic activity write interruption/);
+  assert.equal(sqlite.prepare("SELECT status FROM bot_call_disposition_operations WHERE idempotency_key='call-partial-retry'").get().status, "retryable");
+  const retried = await disposition.recordBotCallDisposition(flakyDb, input);
+  assert.equal(retried.duplicatePrevented, false);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM lead_attempts WHERE lead_id='LEAD-BOT'").get().c, 1);
+  assert.equal(sqlite.prepare("SELECT call_attempts FROM lead_work_items WHERE id='LEAD-BOT'").get().call_attempts, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM crm_activities WHERE contact_id='CU-BOT'").get().c, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM bot_call_dispositions WHERE idempotency_key='call-partial-retry'").get().c, 1);
+  assert.equal(sqlite.prepare("SELECT status FROM bot_call_disposition_operations WHERE idempotency_key='call-partial-retry'").get().status, "completed");
+});
