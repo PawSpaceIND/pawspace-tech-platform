@@ -27,6 +27,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/content-controls"){if(method==="GET")return url.searchParams.get("view")==="admin"?"marketing.manage":null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="set_feature"?"settings.manage":"marketing.manage";}
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
   if(url.pathname==="/api/control-tower")return "audit.view";
+  if(url.pathname==="/api/control-center-operations")return "audit.view";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
   if(url.pathname==="/api/uat-provider-switch")return null;
