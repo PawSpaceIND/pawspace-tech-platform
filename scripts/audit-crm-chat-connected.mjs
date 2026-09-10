@@ -83,7 +83,7 @@ const server=http.createServer(async(req,res)=>{
    for await(const chunk of result.body)res.write(chunk);res.end();return;
   }
   const result=await selectedRoute[req.method](request);if(req.method==='GET'&&holdList&&req.url==='/api/conversations?status=open')await new Promise(resolve=>heldReads.push(resolve));if(req.method==='POST'&&holdWrite)await new Promise(resolve=>{releaseWrite=resolve;});res.writeHead(result.status,Object.fromEntries(result.headers));const responseText=await result.text();if(req.method==='POST')writeResponses.push({status:result.status,body:JSON.parse(responseText)});res.end(responseText);
- }catch(error){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:String(error)}));}
+ }catch(error){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:'Internal audit server error'}));}
 });
 let browser;
 try{

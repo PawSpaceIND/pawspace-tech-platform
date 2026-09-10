@@ -92,7 +92,7 @@ const server = http.createServer(async (req, res) => {
     const result = await selectedRoute[req.method](request);
     res.writeHead(result.status, Object.fromEntries(result.headers)); res.end(await result.text());
   } catch (error) {
-    res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(error) }));
+    res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "Internal audit server error" }));
   }
 });
 
