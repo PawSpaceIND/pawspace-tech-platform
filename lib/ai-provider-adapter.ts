@@ -1,39 +1,13 @@
 /**
  * The single boundary between PawSpace and an external language-model provider.
- *
- * Everything here exists because the previous version of this file was three lines of `fetch` with
- * no deadline, no size bound, no output validation and a `reason` string built by pasting the
- * provider's own response body into it. Each of those is the same defect class the telephony adapter
- * was hardened against, and each has a concrete failure:
- *
- *   No deadline          a provider that accepts the connection and then stalls holds a Worker
- *                        request open until the platform kills it. The caller sees a generic 500,
- *                        not "the provider timed out", so nothing retries and nothing escalates.
- *   Headers-only timeout an AbortController released after `await fetch` bounds the handshake and
- *                        not the body. A provider that sends headers and then trickles bytes is
- *                        unbounded again, which is why the signal here is held until the body is read.
- *   No size bound        `await response.text()` on an untrusted origin buffers whatever arrives.
- *   No output validation `(body.content || [])` throws on a null body, so a provider answering
- *                        `null` with HTTP 200 crashed the caller instead of degrading to a handoff.
- *   Provider body echoed `detail.slice(0, 300)` put arbitrary provider output into a `reason` that
- *                        is rendered on staff screens and written to audit rows. A provider error
- *                        body can quote the request that caused it - which is our prompt, and in the
- *                        worst case the header block around it. Audit evidence must be safe to keep
- *                        forever, so failures are described from a fixed vocabulary of our own and
- *                        the numeric status, never from provider text.
- *   Unverified modelRef  `aiProviderConnection()` returned `modelRef: "claude-sonnet-4-6"` whenever
- *                        a key existed. A key is configuration; it proves nothing about which model
- *                        answers or whether anything answers at all. The model this adapter would
- *                        REQUEST is reported as exactly that, and `verified` stays false until
- *                        `verifyAiProvider` actually completes a round trip.
- *
- * Nothing in this file logs, returns or persists the prompt. The failure vocabulary below is the
- * complete set of strings that can reach a caller, so a leak has to be introduced deliberately.
+ * Every external request is privacy-sanitized, governance-checked, budgeted and circuit-broken here.
  */
 
 import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-bounds";
+import { sanitizeAiProviderText } from "./ai-provider-safety";
+import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
+import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
 
-/** The model this adapter requests when the environment does not name one. */
 export const DEFAULT_AI_MODEL_REF = "claude-sonnet-4-6";
 export const AI_PROVIDER_REF = "anthropic";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -42,15 +16,14 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 120_000;
-/** A drafting response is a few KB. 512 KB is generous headroom and still a hard ceiling. */
 export const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 
-/**
- * Why a request did not produce usable text. `retryable` is the only thing a caller needs to decide
- * whether to try again: a 400 will fail identically forever, a 429 or a timeout will not.
- */
 export type AiFailureClass =
   | "not_configured"
+  | "governance_blocked"
+  | "quota_exceeded"
+  | "circuit_open"
+  | "runtime_control_unavailable"
   | "timeout"
   | "network"
   | "rate_limited"
@@ -63,12 +36,12 @@ export type AiFailureClass =
 const RETRYABLE: ReadonlySet<AiFailureClass> = new Set<AiFailureClass>(["timeout", "network", "rate_limited", "provider_error"]);
 export const isRetryableAiFailure = (failure: AiFailureClass) => RETRYABLE.has(failure);
 
-/**
- * The complete set of caller-visible failure text. Nothing here interpolates provider output, prompt
- * text, a credential or a URL; the only variable admitted is a numeric HTTP status.
- */
 const FAILURE_REASON: Record<AiFailureClass, string> = {
   not_configured: "PAWSPACE_AI_PROVIDER_API_KEY is not configured - no external AI provider is connected and every conversation goes to a human",
+  governance_blocked: "External AI is disabled by an active PawSpace AI governance control",
+  quota_exceeded: "External AI is temporarily disabled because the configured request, token, or estimated-spend budget has been reached",
+  circuit_open: "External AI is temporarily disabled because the provider circuit breaker is open",
+  runtime_control_unavailable: "External AI is disabled because its runtime budget control could not be verified",
   timeout: "The AI provider did not respond within the configured deadline",
   network: "The AI provider could not be reached",
   rate_limited: "The AI provider rate-limited this request",
@@ -85,7 +58,7 @@ function reasonFor(failure: AiFailureClass, status?: number): string {
 }
 
 export type AiDraftFailure = { connected: false; reason: string; failure: AiFailureClass; retryable: boolean; status?: number };
-export type AiDraftSuccess = { connected: true; text: string; modelRef: string; providerRef: string; latencyMs: number; stopReason: string | null };
+export type AiDraftSuccess = { connected: true; text: string; modelRef: string; providerRef: string; latencyMs: number; stopReason: string | null; usageTokens?: number };
 export type AiDraftResult = AiDraftSuccess | AiDraftFailure;
 
 const fail = (failure: AiFailureClass, status?: number): AiDraftFailure => ({
@@ -101,13 +74,12 @@ async function runtimeEnv(): Promise<Record<string, unknown>> {
     const { env } = await import("cloudflare:workers");
     return env as unknown as Record<string, unknown>;
   } catch {
-    return {};
+    return (globalThis as typeof globalThis & { __PAWSPACE_TEST_ENV__?: Record<string, unknown> }).__PAWSPACE_TEST_ENV__ || {};
   }
 }
 
 const str = (env: Record<string, unknown>, key: string) => String(env[key] ?? "").trim();
 
-/** The model this adapter will ask for. Reporting it is not a claim that it answered. */
 export function aiModelRef(env: Record<string, unknown>): { modelRef: string; source: "configured" | "default" } {
   const configured = str(env, "PAWSPACE_AI_PROVIDER_MODEL");
   return configured ? { modelRef: configured, source: "configured" } : { modelRef: DEFAULT_AI_MODEL_REF, source: "default" };
@@ -119,21 +91,15 @@ export function aiTimeoutMs(env: Record<string, unknown>): number {
   return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, Math.floor(raw)));
 }
 
-/** Maps a provider HTTP status onto the failure vocabulary. */
 export function aiFailureForStatus(status: number): AiFailureClass {
   if (status === 429) return "rate_limited";
   if (status >= 500) return "provider_error";
   return "client_error";
 }
 
-/**
- * Turns whatever a 200 response actually contained into text, or names why it could not. Every branch
- * here is a shape a real provider can return: a null body, a body whose `content` is absent or not an
- * array, blocks with no `text`, or text that is only whitespace.
- */
-export function extractAiText(parsed: unknown): { text: string; stopReason: string | null } | { failure: AiFailureClass } {
+export function extractAiText(parsed: unknown): { text: string; stopReason: string | null; usageTokens?: number } | { failure: AiFailureClass } {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { failure: "malformed_output" };
-  const body = parsed as { content?: unknown; stop_reason?: unknown; type?: unknown };
+  const body = parsed as { content?: unknown; stop_reason?: unknown; type?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } };
   if (body.type === "error") return { failure: "provider_error" };
   if (!Array.isArray(body.content)) return { failure: "malformed_output" };
   const text = body.content
@@ -143,14 +109,34 @@ export function extractAiText(parsed: unknown): { text: string; stopReason: stri
     .join("\n")
     .trim();
   if (!text) return { failure: "empty_output" };
-  return { text, stopReason: typeof body.stop_reason === "string" ? body.stop_reason : null };
+  const inputTokens = Number(body.usage?.input_tokens), outputTokens = Number(body.usage?.output_tokens);
+  const usageTokens = Number.isFinite(inputTokens) && inputTokens >= 0 && Number.isFinite(outputTokens) && outputTokens >= 0 ? Math.floor(inputTokens + outputTokens) : undefined;
+  return { text, stopReason: typeof body.stop_reason === "string" ? body.stop_reason : null, ...(usageTokens === undefined ? {} : { usageTokens }) };
 }
 
-/**
- * Configuration status. `connected` here means "a credential is present, so this adapter will attempt
- * provider calls" - it is deliberately NOT a reachability claim, and `verified` says so out loud.
- * Only `verifyAiProvider` can produce evidence that the provider answered.
- */
+async function governanceAllowsExternalAi(
+  env: Record<string, unknown>,
+  input: { channel?: string; intent?: string },
+  modelRef: string,
+): Promise<boolean> {
+  const db = env.DB as D1Database | undefined;
+  const production = str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production";
+  if (!db) return !production;
+  try {
+    const switches = await resolveExplicitAiKillSwitches(db, {
+      channel: String(input.channel || "direct"),
+      intent: String(input.intent || "direct"),
+      provider: AI_PROVIDER_REF,
+      model: modelRef,
+    });
+    return switches.length === 0;
+  } catch {
+    // Unit/migration harnesses may not own ai_kill_switches yet. Production never converts an
+    // unreadable governance control plane into permission to contact the provider.
+    return !production;
+  }
+}
+
 export async function aiProviderConnection(): Promise<{
   configured: boolean;
   connected: boolean;
@@ -177,16 +163,34 @@ export async function aiProviderConnection(): Promise<{
   };
 }
 
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const apiKey = str(env, "PAWSPACE_AI_PROVIDER_API_KEY");
   if (!apiKey) return fail("not_configured");
 
   const { modelRef } = aiModelRef(env);
+  if (!(await governanceAllowsExternalAi(env, input, modelRef))) return fail("governance_blocked");
+
+  const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
+  const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
+  const maxTokens = Math.min(8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000)));
+  const db = env.DB as D1Database | undefined;
+  if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
+
+  let reservation: AiRuntimeReservation = null;
+  if (db) {
+    const preflight = await reserveAiProviderRequest(db, env, { provider: AI_PROVIDER_REF, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    if (!preflight.allowed) return fail(preflight.reason);
+    reservation = preflight.reservation;
+  }
+
+  const finishFailure = async (failure: AiFailureClass, status?: number) => {
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
+    return fail(failure, status);
+  };
+
   const timeoutMs = aiTimeoutMs(env);
   const controller = new AbortController();
-  // Released in `finally`, not after `await fetch`: a provider that answers with headers and then
-  // trickles the body must hit the same deadline as one that never answers at all.
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   try {
@@ -196,37 +200,32 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
         method: "POST",
         signal: controller.signal,
         headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
-        body: JSON.stringify({
-          model: modelRef,
-          max_tokens: Math.min(8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000))),
-          system: input.systemPrompt,
-          messages: [{ role: "user", content: input.userPrompt }],
-        }),
+        body: JSON.stringify({ model: modelRef, max_tokens: maxTokens, system: safeSystemPrompt, messages: [{ role: "user", content: safeUserPrompt }] }),
       });
     } catch {
-      return fail(controller.signal.aborted ? "timeout" : "network");
+      return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
     if (!response.ok) {
-      // The body is drained and discarded on purpose. It is the provider's text about our request,
-      // and the status alone is what a caller can act on.
       await response.body?.cancel().catch(() => {});
-      return fail(aiFailureForStatus(response.status), response.status);
+      const failure = aiFailureForStatus(response.status);
+      return await finishFailure(failure, response.status);
     }
 
     let raw: string;
     try {
       raw = await readBoundedText(response, MAX_AI_RESPONSE_BYTES);
     } catch (error) {
-      if (error instanceof ProviderResponseTooLarge) return fail("oversized_output");
-      return fail(controller.signal.aborted ? "timeout" : "network");
+      if (error instanceof ProviderResponseTooLarge) return await finishFailure("oversized_output");
+      return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
     let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { return fail("malformed_output"); }
+    try { parsed = JSON.parse(raw); } catch { return await finishFailure("malformed_output"); }
     const extracted = extractAiText(parsed);
-    if ("failure" in extracted) return fail(extracted.failure);
+    if ("failure" in extracted) return await finishFailure(extracted.failure);
 
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, actualTokens: extracted.usageTokens });
     return {
       connected: true,
       text: extracted.text,
@@ -234,17 +233,13 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       providerRef: AI_PROVIDER_REF,
       latencyMs: Date.now() - started,
       stopReason: extracted.stopReason,
+      ...(extracted.usageTokens === undefined ? {} : { usageTokens: extracted.usageTokens }),
     };
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * A real round trip, used to produce integration-readiness evidence. Returns what the registry needs
- * and nothing a prompt could hide in: no response text, only whether the provider answered, which
- * model was requested, and how long it took.
- */
 export async function verifyAiProvider(): Promise<{
   verified: boolean;
   providerRef: string | null;
@@ -260,6 +255,8 @@ export async function verifyAiProvider(): Promise<{
     systemPrompt: "Reply with the single word OK. No punctuation, no explanation.",
     userPrompt: "readiness probe",
     maxTokens: 8,
+    channel: "system",
+    intent: "readiness_probe",
   });
   const env = await runtimeEnv();
   const { modelRef } = aiModelRef(env);
