@@ -44,3 +44,14 @@ test("the boarding host surface renders", async ({ page }) => {
   const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
 });
+
+test("partner hub opens the hydrated assigned-job feed for the authenticated provider", async ({ page }) => {
+  const hub = await page.goto("/partner", { waitUntil: "domcontentloaded" });
+  expect(hub?.status()).toBe(200);
+  await page.getByRole("link", { name: "All assigned jobs", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/partner\/jobs$/);
+  await expect(page.getByRole("heading", { name: "Your jobs", exact: true })).toBeVisible();
+  await expect(page.getByText("Standard Groom", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("E2E UI Customer", { exact: false })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(/Application error|Unhandled Runtime Error/i);
+});
