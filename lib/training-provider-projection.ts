@@ -37,6 +37,16 @@ const PROGRESS_FIELDS: Record<string, ScalarKind> = {
   focus: "number", recall: "number", impulse: "number", parent: "number", sit: "number",
 };
 const PII_VALUE = /@|(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
+const TRAINER_REQUIREMENT_GOALS = new Map([
+  "Toilet routine",
+  "Biting & chewing",
+  "Leash walking",
+  "Recall",
+  "Basic obedience",
+  "Socialisation",
+  "Excess barking",
+  "Separation anxiety",
+].map((goal) => [goal.toLowerCase(), goal] as const));
 
 function looksLikePii(value: unknown): boolean {
   return typeof value === "string" && (value.trim().length > 240 || PII_VALUE.test(value));
@@ -76,6 +86,20 @@ function projectHomework(value: unknown): Row {
 function projectProgress(value: unknown): Row {
   return Object.fromEntries(Object.entries(projectScalars(value, PROGRESS_FIELDS))
     .filter(([, score]) => Number(score) >= 1 && Number(score) <= 10));
+}
+
+function projectRequirements(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const canonical = TRAINER_REQUIREMENT_GOALS.get(raw.trim().toLowerCase());
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
 }
 
 function evidenceRefs(value: unknown): string[] {
@@ -147,9 +171,9 @@ export function projectTrainerSession(value: unknown) {
     cancelled_sessions: Number(row.cancelled_sessions || 0),
     programme_status: String(row.programme_status || ""),
     petIds: Array.isArray(row.petIds) ? row.petIds.filter((x) => typeof x === "string").map(String) : [],
-    requirements: Array.isArray(row.requirements)
-      ? (row.requirements as unknown[]).filter((x) => typeof x === "string" && !looksLikePii(x)).map(String)
-      : [],
+    // Only the fixed customer UI goals are operational trainer requirements. Custom/free-text
+    // goals remain stored for customer/staff context but never cross the provider privacy boundary.
+    requirements: projectRequirements(row.requirements),
     attendance: projectAttendance(row.attendance),
     homework: projectHomework(row.homework),
     progress: projectProgress(row.progress),
