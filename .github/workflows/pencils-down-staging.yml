@@ -1,4 +1,4 @@
-name: Pencils-down isolated frontend (ab40dc00)
+name: Pencils-down reviewed test UI (5f12f6ef)
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - name: Checkout frozen product without local changes
         uses: actions/checkout@v4
         with:
-          ref: ab40dc009471e0fdac41b07034aaef18784f0a02
+          ref: 29142163c9934d373d2603fe8ceced6afae3f811
           path: candidate
           persist-credentials: false
       - name: Node runtime
@@ -89,10 +89,10 @@ jobs:
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: python infra/ops/pencils-down/deploy_frozen.py deploy
-      - name: Install browser for one customer-shell smoke
+      - name: Install browser for approved UI parity checks
         working-directory: candidate
         run: node node_modules/playwright/cli.js install --with-deps chromium
-      - name: Read-only customer-shell browser smoke (no orders or external calls)
+      - name: Reviewed UI parity on desktop and mobile (no payment)
         run: node infra/ops/pencils-down/frontend-smoke.cjs
       - name: Upload sanitized deployment evidence
         if: ${{ always() }}
@@ -106,6 +106,6 @@ jobs:
         if: ${{ success() }}
         run: |
           echo "Test frontend: ${{ steps.deploy.outputs.origin }}"
-          echo "Product: ab40dc009471e0fdac41b07034aaef18784f0a02"
+          echo "Product: 29142163c9934d373d2603fe8ceced6afae3f811"
           echo "Test/UAT only. Production activation requires approval after human testing."
           echo "Hosted checkout, authenticated booking and device checks remain NOT RUN."

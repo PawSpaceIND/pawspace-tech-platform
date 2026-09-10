@@ -11,9 +11,9 @@ from uuid import UUID
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 
-SHA = 'ab40dc009471e0fdac41b07034aaef18784f0a02'
-TREE = 'e153de34e5739dfe9f2a218525a83fb56e7dc514'
-WORKER = 'pawspace-beta-ab40dc00'
+SHA = '29142163c9934d373d2603fe8ceced6afae3f811'
+TREE = 'de2c238090e3f421ae45a4ee668419600d9b3545'
+WORKER = 'pawspace-beta-ui-5f12f6ef'
 ENVIRONMENT = 'pencils-down-preview'
 ROOT = Path(os.environ.get('GITHUB_WORKSPACE', '.')).resolve()
 CANDIDATE = ROOT / 'candidate'
@@ -69,6 +69,15 @@ def source_gate() -> None:
     require(git('rev-parse','HEAD')==SHA, 'Candidate SHA mismatch; no deployment.')
     require(git('rev-parse','HEAD^{tree}')==TREE, 'Candidate tree mismatch; no deployment.')
     require(not git('status','--porcelain'), 'Candidate source is modified; no deployment.')
+    manifest_path = Path(__file__).with_name('ui-source-manifest.json')
+    approved = json.loads(manifest_path.read_text())
+    require(approved['candidate'] == SHA and approved['tree'] == TREE, 'UI manifest candidate mismatch.')
+    require(approved['ui_source'] == '5f12f6efbe4545894f38f817154d798131145f16', 'Unreviewed UI reference.')
+    require(len(approved['files']) == 10, 'Incomplete presentation/artwork manifest.')
+    for item in approved['files']:
+        name = item['path']
+        require(name.startswith(('app/mobile-app/', 'public/assets/')) and '..' not in name, 'Invalid UI manifest path.')
+        require(hashlib.sha256((CANDIDATE / name).read_bytes()).hexdigest() == item['sha256'], 'Reviewed UI file mismatch: ' + name)
 
 def configured() -> tuple[str,str,dict]:
     # No production/shared-staging identifier is required or used as a fake comparator.
