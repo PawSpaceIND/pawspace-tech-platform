@@ -1,0 +1,44 @@
+name: Inspect Golden D1 reservation predicate read-only
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-d1-predicate-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: pawspace-release-preview
+    env:
+      TARGET_DB_NAME: pawspace-beta-golden-wallet-3218c3
+    steps:
+      - name: Read only D1 reservation predicate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          db_json=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100")
+          db_id=$(jq -r --arg n "$TARGET_DB_NAME" '.result[] | select(.name==$n) | (.uuid // .id)' <<<"$db_json" | head -1)
+          test -n "$db_id" && test "$db_id" != null
+          query(){
+            local sql="$1"
+            curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' \
+              "$api/d1/database/$db_id/query" \
+              --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" |
+              jq -c '{success,errors,result:[.result[]?.results]}'
+          }
+          echo 'ZONE_MAPPING'
+          query "SELECT pincode,zone_id,city,area,city_id FROM service_zone_mappings WHERE pincode='560038'"
+          echo 'GROOMING_PROFILES'
+          query "SELECT id,city_id,name,provider_model,services_json,zones_json,live,status,effective_from,effective_to,capacity,travel_buffer_minutes,max_daily_jobs FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active' ORDER BY quality_score DESC"
+          echo 'ROSTER_2026_10_10'
+          query "SELECT provider_id,date,zone_id,windows_json,source FROM scheduling_availability WHERE date='2026-10-10' ORDER BY provider_id"
+          echo 'COMMIT_PREDICATE_2026_10_10_15_17_IST'
+          query "WITH z AS (SELECT zone_id,COALESCE(NULLIF(city_id,''),'blr') city_id FROM service_zone_mappings WHERE pincode='560038') SELECT p.id,p.provider_model,p.max_daily_jobs, EXISTS(SELECT 1 FROM json_each(p.services_json) s WHERE s.value='grooming') service_ok, EXISTS(SELECT 1 FROM json_each(p.zones_json) j,z WHERE j.value=z.zone_id) zone_ok, CASE WHEN p.effective_from<='2026-10-10' AND (p.effective_to IS NULL OR p.effective_to>='2026-10-10') THEN 1 ELSE 0 END effective_ok, CASE WHEN NOT EXISTS(SELECT 1 FROM provider_unavailability u WHERE u.provider_id=p.id AND u.status='active' AND u.starts_at<'2026-10-10T11:30:00.000Z' AND u.ends_at>'2026-10-10T09:30:00.000Z') THEN 1 ELSE 0 END leave_ok, CASE WHEN NOT EXISTS(SELECT 1 FROM scheduling_reservations r WHERE r.provider_id=p.id AND r.status!='cancelled' AND r.scheduled_start<'2026-10-10T12:00:00.000Z' AND r.scheduled_end>'2026-10-10T09:00:00.000Z') THEN 1 ELSE 0 END buffered_slot_ok, (SELECT COUNT(*) FROM scheduling_reservations r WHERE r.provider_id=p.id AND r.status!='cancelled' AND substr(datetime(r.scheduled_start,'+330 minutes'),1,10)='2026-10-10') daily_jobs FROM provider_capacity_profiles p WHERE p.city_id='blr' AND p.live=1 AND p.status='active' ORDER BY p.quality_score DESC"
+          echo 'STATE_COUNTS'
+          query "SELECT (SELECT COUNT(*) FROM scheduling_reservations WHERE status!='cancelled') active_reservations,(SELECT COUNT(*) FROM scheduling_assignment_decisions) decisions,(SELECT COUNT(*) FROM provider_assignment_offers) offers,(SELECT COUNT(*) FROM scheduling_dispatch_assertions) assertions"
