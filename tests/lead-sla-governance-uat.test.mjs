@@ -18,7 +18,8 @@ test("SLA values are configuration rather than fixed operating constants",()=>{
  assert.match(lib,/quote_follow_up_minutes/);
  assert.match(lib,/high_intent_minutes/);
  assert.match(lib,/legacyFixed10And30MinuteRulesAuthoritative:false/);
- assert.match(crm,/30-minute lead response breached/);
+ assert.match(crm,/runLeadSlaGovernance\(db/);
+ assert.doesNotMatch(crm,/30-minute lead response breached/);
 });
 
 test("business-hour-aware SLA clocks are supported",()=>{
