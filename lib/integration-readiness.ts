@@ -33,7 +33,7 @@ export const integrationCodeBoundaryStates:CodeBoundaryStatus[]=["not_started","
 
 const seeds:Seed[]=[
  {code:"INT-PAY-01",capability:"Customer payment gateway",provider:"Razorpay",category:"payments",owner:"Finance + Engineering",backupOwner:"Operations",priority:"P0",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"code_ready",credentialDetector:"razorpay_sandbox",dataClassification:"financial + customer identifiers",launchGateCode:"PAY-01",notes:"Signed sandbox webhook and payment/refund reconciliation boundary exist; live mode remains disabled."},
- {code:"INT-PAY-02",capability:"Provider/customer payout rails",provider:"Provider not selected",category:"payments",owner:"Finance",backupOwner:"Engineering",priority:"P1",required:true,environment:"none",codeBoundaryStatus:"partial",readinessState:"production_setup_required",dataClassification:"financial + beneficiary data",launchGateCode:"FIN-01",notes:"Canonical settlement/refund readiness exists; live payout rail is not connected."},
+ {code:"INT-PAY-02",capability:"Provider/customer payout rails",provider:"RazorpayX",category:"payments",owner:"Finance",backupOwner:"Engineering",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"sandbox_setup_required",credentialDetector:"razorpayx_sandbox",dataClassification:"financial + beneficiary data",launchGateCode:"FIN-01",notes:"RazorpayX Test Mode payout creation, idempotent retry, signed payout webhook, canonical commission/settlement reconciliation and reversal handling are implemented. Live payouts remain disabled."},
  {code:"INT-COMMS-01",capability:"WhatsApp messaging",provider:"Meta WhatsApp",category:"communications",owner:"CRM/CX + Engineering",backupOwner:"Operations",priority:"P0",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"sandbox_setup_required",credentialDetector:"meta_whatsapp_uat",dataClassification:"customer contact + transactional content",launchGateCode:"COMMS-01",notes:"Canonical outbox, delivery events, retry/dead-letter and direct Meta WhatsApp UAT adapter readiness exist."},
  {code:"INT-COMMS-02",capability:"SMS messaging",provider:"Exotel SMS / configured SMS provider",category:"communications",owner:"CRM/CX + Engineering",backupOwner:"Operations",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"sandbox_setup_required",credentialDetector:"sms",dataClassification:"customer contact + transactional content",launchGateCode:"COMMS-01",notes:"Canonical communications adapter boundary exists."},
  {code:"INT-COMMS-03",capability:"Email delivery",provider:"Provider not selected",category:"communications",owner:"CRM/CX",backupOwner:"Finance",priority:"P1",required:true,environment:"none",codeBoundaryStatus:"code_ready",readinessState:"not_started",dataClassification:"customer contact + documents",launchGateCode:"COMMS-01",notes:"Canonical email channel exists; external provider execution is not connected."},
@@ -72,6 +72,7 @@ function configured(runtime:Record<string,unknown>,names:string[]){return names.
 function detectedCredentialStatus(runtime:Record<string,unknown>,detector:unknown):CredentialStatus|null{
  switch(String(detector||"")){
   case"razorpay_sandbox":return configured(runtime,["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX"])?"configured":"missing";
+  case"razorpayx_sandbox":return string(runtime.PAWSPACE_RAZORPAYX_ENV).trim().toLowerCase()==="sandbox"&&string(runtime.PAWSPACE_RAZORPAYX_LIVE_APPROVED).trim().toLowerCase()!=="true"&&configured(runtime,["RAZORPAYX_KEY_ID_SANDBOX","RAZORPAYX_KEY_SECRET_SANDBOX","RAZORPAYX_ACCOUNT_NUMBER_SANDBOX","RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX","RAZORPAYX_WEBHOOK_SECRET_SANDBOX"])?"configured":"missing";
   case"meta_whatsapp_uat":return string(runtime.PAWSPACE_COMMUNICATION_ENV).trim().toLowerCase()==="uat"&&string(runtime.META_WHATSAPP_UAT_DELIVERY_ENABLED).trim().toLowerCase()==="true"&&configured(runtime,META_WHATSAPP_UAT_SECRET_NAMES)?"configured":"missing";
   case"sms":return configured(runtime,["SMS_API_KEY","SMS_SENDER_ID"])?"configured":"missing";
   case"exotel":return configured(runtime,[...VOICE_TELEPHONY_SECRET_NAMES])?"configured":"missing";
@@ -129,6 +130,15 @@ async function advanceMetaWhatsAppCredentialSeed(db:Db,now:number){
   .bind(seed.provider,seed.credentialDetector??null,now).run();
 }
 
+/** Move the untouched legacy payout-registry row onto the now-implemented RazorpayX Test Mode
+ * boundary. This never marks provider proof verified and never rewrites a human-owned row. */
+async function advanceRazorpayXSandboxSeed(db:Db,now:number){
+ const seed=seeds.find(item=>item.code==="INT-PAY-02");
+ if(!seed)return;
+ await db.prepare("UPDATE integration_registry SET provider=?,environment=?,code_boundary_status=?,credential_detector=?,credential_status='unknown',secret_reference=NULL,readiness_state=?,notes=?,updated_at=? WHERE integration_code='INT-PAY-02' AND updated_by IN ('system_seed','runtime_presence_check') AND provider='Provider not selected' AND code_boundary_status='partial'")
+  .bind(seed.provider,seed.environment,seed.codeBoundaryStatus,seed.credentialDetector??null,seed.readinessState,seed.notes,now).run();
+}
+
 export async function ensureIntegrationReadinessTables(db:Db){
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS integration_registry (integration_code TEXT PRIMARY KEY,category TEXT NOT NULL,capability TEXT NOT NULL,provider TEXT NOT NULL,owner TEXT NOT NULL,backup_owner TEXT NOT NULL,priority TEXT NOT NULL,required INTEGER NOT NULL DEFAULT 1,launch_gate_code TEXT,environment TEXT NOT NULL DEFAULT 'none',code_boundary_status TEXT NOT NULL DEFAULT 'not_started',credential_status TEXT NOT NULL DEFAULT 'unknown',credential_detector TEXT,secret_reference TEXT,webhook_reference TEXT,auth_verification_status TEXT NOT NULL DEFAULT 'not_tested',webhook_verification_status TEXT NOT NULL DEFAULT 'not_tested',idempotency_status TEXT NOT NULL DEFAULT 'not_tested',idempotency_strategy TEXT,replay_status TEXT NOT NULL DEFAULT 'not_tested',replay_strategy TEXT,retry_status TEXT NOT NULL DEFAULT 'not_tested',retry_policy TEXT,dead_letter_status TEXT NOT NULL DEFAULT 'not_tested',dead_letter_reference TEXT,timeout_status TEXT NOT NULL DEFAULT 'not_tested',timeout_policy TEXT,rate_limit_status TEXT NOT NULL DEFAULT 'not_tested',rate_limit_policy TEXT,reconciliation_status TEXT NOT NULL DEFAULT 'not_tested',reconciliation_source TEXT,monitoring_status TEXT NOT NULL DEFAULT 'not_tested',monitoring_reference TEXT,audit_logging_status TEXT NOT NULL DEFAULT 'not_tested',data_classification TEXT NOT NULL,kill_switch_status TEXT NOT NULL DEFAULT 'not_tested',kill_switch_reference TEXT,readiness_state TEXT NOT NULL DEFAULT 'not_started',evidence_reference TEXT,blocker_reason TEXT,approval_reference TEXT,last_verified_at INTEGER,controlled_live_verified_at INTEGER,controlled_live_verified_by TEXT,notes TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -154,6 +164,7 @@ export async function ensureIntegrationReadinessTables(db:Db){
  await advanceVoiceBoundarySeed(db,now);
  await advanceIdfyBoundarySeed(db,now);
  await advanceMetaWhatsAppCredentialSeed(db,now);
+ await advanceRazorpayXSandboxSeed(db,now);
  for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO integration_registry (integration_code,category,capability,provider,owner,backup_owner,priority,required,launch_gate_code,environment,code_boundary_status,credential_status,credential_detector,data_classification,readiness_state,notes,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
