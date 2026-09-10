@@ -13,7 +13,7 @@ jobs:
     env:
       TARGET_DB_NAME: pawspace-beta-golden-wallet-3218c3
     steps:
-      - name: Read only D1 reservation predicate
+      - name: Read only D1 reservation predicate and batch schema
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -32,9 +32,12 @@ jobs:
               --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" |
               jq -c '{success,errors,result:[.result[]?.results]}'
           }
-          echo 'STATIC_ZONE_EXPECTATION=560038:blr-east'
+          echo 'BATCH_TABLE_SCHEMAS'
+          query "SELECT type,name,sql FROM sqlite_master WHERE name IN ('scheduling_assignment_decisions','provider_assignment_offers','scheduling_dispatch_assertions') OR tbl_name='scheduling_assignment_decisions' ORDER BY type,name"
+          echo 'DECISION_COLUMNS'
+          query "PRAGMA table_info(scheduling_assignment_decisions)"
           echo 'GROOMING_PROFILES'
-          query "SELECT id,city_id,name,provider_model,services_json,zones_json,live,status,effective_from,effective_to,capacity,travel_buffer_minutes,max_daily_jobs,quality_score FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active' AND EXISTS(SELECT 1 FROM json_each(services_json) s WHERE s.value='grooming') ORDER BY quality_score DESC"
+          query "SELECT id,provider_model,capacity,travel_buffer_minutes,max_daily_jobs,quality_score FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active' AND EXISTS(SELECT 1 FROM json_each(services_json) s WHERE s.value='grooming') ORDER BY quality_score DESC"
           echo 'ROSTER_2026_10_10'
           query "SELECT provider_id,date,zone_id,windows_json,source FROM scheduling_availability WHERE date='2026-10-10' AND provider_id LIKE 'groom_%' ORDER BY provider_id"
           echo 'COMMIT_PREDICATE_2026_10_10_15_17_IST'
