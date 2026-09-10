@@ -208,33 +208,36 @@ async function submitNetbankingSuccess(page: Page) {
         }
         if (netbankingSelected && !bankSelected) {
           const search = frame.locator('input[placeholder*="bank" i],input[aria-label*="bank" i]').first();
-          if (await search.isVisible().catch(() => false)) await search.fill("State Bank of India");
+          if (await search.isVisible().catch(() => false)) await search.fill("HDFC Bank");
           const bankChoices = [
-            frame.locator('[data-value="SBIN"], [data-testid="SBIN"], [data-value="HDFC"], [data-testid="HDFC"]').first(),
-            frame.getByText(/State Bank of India|HDFC Bank/i).first(),
-            frame.getByText(/^SBI$/i).first(),
-            frame.getByText(/^SBIN$/i).first(),
-            frame.getByRole("button", { name: /State Bank|HDFC|SBI|SBIN/i }).first(),
+            frame.getByRole("button", { name: /HDFC Bank/i }).first(),
+            frame.locator('[data-value="HDFC"], [data-testid="HDFC"]').first(),
+            frame.getByText(/^HDFC Bank$/i).first(),
+            frame.getByText(/^HDFC$/i).first(),
           ];
-          for (const choice of bankChoices) if (await choice.isVisible().catch(() => false)) {
-            await choice.click(); bankSelected = true; await page.waitForTimeout(700); break;
+          for (const choice of bankChoices) {
+            if (!await choice.isVisible().catch(() => false)) continue;
+            const label = await choice.innerText().catch(() => "");
+            if (/facing issues|unavailable|try with other payment options/i.test(label)) continue;
+            // Checkout v2 starts Netbanking processing when the bank itself is selected; there is no
+            // separate generic "Pay" click to make. Retrying a hidden bank row can stall under the
+            // processing overlay, so select one healthy Test bank once and wait for the mock bank UI.
+            await choice.click(); bankSelected = true; await page.waitForTimeout(900); break;
           }
           if (bankSelected) continue;
-        }
-        if (netbankingSelected && bankSelected) {
-          const pay = frame.getByRole("button", { name: /Pay|Proceed|Continue/i }).last();
-          if (await pay.isVisible().catch(() => false)) { await pay.click(); await page.waitForTimeout(900); }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) throw error;
       }
     }
-    for (const surface of [page, ...page.frames()]) {
-      try {
-        const success = surface.getByRole("button", { name: /^Success$/i }).first();
-        if (await success.isVisible().catch(() => false)) { await success.click(); return; }
-      } catch {}
+    for (const candidatePage of page.context().pages()) {
+      for (const surface of [candidatePage, ...candidatePage.frames()]) {
+        try {
+          const success = surface.getByRole("button", { name: /^Success$/i }).first();
+          if (await success.isVisible().catch(() => false)) { await success.click(); return; }
+        } catch {}
+      }
     }
     await page.waitForTimeout(500);
   }
