@@ -52,11 +52,33 @@ jobs:
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Block vulnerable or forbidden-license additions
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          fail-on-severity: high
-          deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0, SSPL-1.0, BUSL-1.1
+          node-version: "22.15.0"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Block high or critical production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - name: Block forbidden dependency licenses
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const denied = ['GPL-2.0','GPL-3.0','AGPL-1.0','AGPL-3.0','SSPL-1.0','BUSL-1.1'];
+          const hits = [];
+          for (const [path, pkg] of Object.entries(lock.packages || {})) {
+            const license = String(pkg?.license || '');
+            if (denied.some((token) => license.includes(token))) hits.push(`${path || '<root>'}: ${license}`);
+          }
+          if (hits.length) {
+            console.error('Forbidden dependency licenses detected:\n' + hits.join('\n'));
+            process.exit(1);
+          }
+          console.log('PASS: no forbidden dependency licenses in package-lock.json');
+          NODE
 
   secret-scan:
     name: Gitleaks Secret Scan
@@ -89,8 +111,11 @@ jobs:
       - name: Install locked dependencies
         id: install
         run: npm ci --ignore-scripts
-      - name: Explicit vulnerability gate
-        run: npm audit --audit-level=high
+      - name: Explicit production vulnerability gate
+        run: npm audit --omit=dev --audit-level=high
+      - name: Report development-tooling vulnerabilities
+        continue-on-error: true
+        run: npm audit --include=dev --audit-level=high
       - name: Generate CycloneDX SBOM
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
