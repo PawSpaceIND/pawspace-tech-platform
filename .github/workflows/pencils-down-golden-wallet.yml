@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: pawspace-golden-wallet-23f2ff7a
+  group: pawspace-golden-wallet-6876a275
   cancel-in-progress: false
 jobs:
   certify-deploy:
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout exact Wallet+Razorpay candidate
         uses: actions/checkout@v4
         with:
-          ref: 23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8
+          ref: 6876a27594a369e0df9f9baab741d6e45352b124
           path: candidate
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -44,10 +44,10 @@ jobs:
           script=Path('infra/ops/pencils-down/deploy_golden.py')
           text=script.read_text()
           replacements={
-            "8745bbca5e76185b65ca7c0a7fd4bda60acf35e6":"23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8",
-            "321312aec6e2a96060496bdf4401d41cf024e40d":"cec814df936f64bbb1aa84a942bfbba2ca50fe9d",
-            "pawspace-beta-golden-8745bbca":"pawspace-beta-golden-wallet-23f2ff7a",
-            "pawspace-golden-8745bbca":"pawspace-golden-wallet-23f2ff7a",
+            "8745bbca5e76185b65ca7c0a7fd4bda60acf35e6":"6876a27594a369e0df9f9baab741d6e45352b124",
+            "321312aec6e2a96060496bdf4401d41cf024e40d":"30cac6bb34c8992acc0a4b1555519f0be890b51e",
+            "pawspace-beta-golden-8745bbca":"pawspace-beta-golden-wallet-6876a275",
+            "pawspace-golden-8745bbca":"pawspace-golden-wallet-6876a275",
           }
           for old,new in replacements.items():
             if old not in text: raise SystemExit('expected deploy guard token missing: '+old)
@@ -58,8 +58,8 @@ jobs:
           script.write_text(text)
           manifest=Path('infra/ops/pencils-down/payment-ui-source-manifest.json')
           data=json.loads(manifest.read_text())
-          data['candidate']='23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8'
-          data['tree']='cec814df936f64bbb1aa84a942bfbba2ca50fe9d'
+          data['candidate']='6876a27594a369e0df9f9baab741d6e45352b124'
+          data['tree']='30cac6bb34c8992acc0a4b1555519f0be890b51e'
           data['payment_ui_wiring']='customer Wallet redemption -> Wallet-adjusted billing projection -> exact due-now -> /api/payment-order -> Razorpay Test checkout; webhook remains authoritative'
           manifest.write_text(json.dumps(data,indent=2)+'\n')
           print('Ephemeral deploy guard retargeted; repository product source unchanged.')
