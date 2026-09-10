@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const ORIGIN = "https://pawspace-checkout-674-34511118800-1.karthik-fce.workers.dev";
-const WORKER = "pawspace-checkout-674-34511118800-1";
+const ORIGIN = "https://pawspace-checkout-674-34511770192-1.karthik-fce.workers.dev";
+const WORKER = "pawspace-checkout-674-34511770192-1";
 const CANDIDATE = "8a920fb650be0144d453967e48f9a5daf174a794";
 const PHONE = "9000000674";
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || "";

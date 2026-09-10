@@ -85,7 +85,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-        run: PW_BASE_URL='https://pawspace-checkout-674-34511118800-1.karthik-fce.workers.dev' npx playwright test e2e/pr674-provider-webhook-proof.spec.ts --project=chromium --retries=0
+        run: PW_BASE_URL='https://pawspace-checkout-674-34511770192-1.karthik-fce.workers.dev' npx playwright test e2e/pr674-provider-webhook-proof.spec.ts --project=chromium --retries=0
       - name: Remove local secret bindings
         if: always()
         run: rm -f .dev.vars
