@@ -85,6 +85,31 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
         run: node --experimental-strip-types scripts/exotel-region-probe.mjs
 
+  observe:
+    name: Read-only Voice UAT staging state
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-observe' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Query sanitized UAT queue and provider state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          echo 'VOICE_UAT_QUEUE'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,status,call_id,last_state,failure_class,scheduled_for,started_at,finished_at,updated_at FROM voice_carrier_uat_queue ORDER BY updated_at DESC LIMIT 5"
+          echo 'VOICE_UAT_CALL'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,idempotency_key,provider,provider_call_id,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,requested_at,dialed_at,connected_at,ended_at,updated_at FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' ORDER BY requested_at DESC LIMIT 1"
+          echo 'VOICE_UAT_POLICY_COUNTS'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1)"
+          echo 'VOICE_UAT_PROVIDER_EVENTS'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT event_kind,provider_status,applied,created_at FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1) ORDER BY created_at DESC LIMIT 10"
+
   activate:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-uat' }}
     runs-on: ubuntu-latest
