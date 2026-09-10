@@ -1,16 +1,12 @@
 name: Power Dialler live UAT
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'Type power-dialler-uat to place one approved two-leg Exotel test call'
-        required: true
-        default: ''
+  push:
+    branches:
+      - fix/power-dialler-live-uat-closure-20260910
 
 jobs:
   certify:
-    if: ${{ github.event.inputs.confirm == 'power-dialler-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency: pawspace-staging-deploy
