@@ -33,7 +33,7 @@ jobs:
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
-          cat > "$RUNNER_TEMP/golden.mjs" <<'NODE'
+          cat > golden.mjs <<'NODE'
           import fs from 'node:fs';
           import {chromium,request} from 'playwright';
           const ORIGIN=process.env.ORIGIN, evidence='golden-transaction-evidence';fs.mkdirSync(evidence,{recursive:true});
@@ -68,11 +68,11 @@ jobs:
             let checkoutFrame=frames.find(f=>/razorpay|checkout/i.test(f.url())&&f!==page.mainFrame());if(!checkoutFrame){await page.waitForTimeout(3000);checkoutFrame=page.frames().find(f=>/razorpay|checkout/i.test(f.url())&&f!==page.mainFrame());}
             if(!checkoutFrame)throw new Error('Razorpay checkout frame not found');
             const upi=checkoutFrame.getByText(/UPI/i).first();if(await upi.isVisible().catch(()=>false))await upi.click();
-            const vpa=checkoutFrame.locator('input').filter({has:undefined});let vpaInput=checkoutFrame.getByPlaceholder(/UPI|VPA/i).first();if(!(await vpaInput.count()))vpaInput=checkoutFrame.locator('input').first();await vpaInput.fill('success@razorpay');const payButton=checkoutFrame.getByRole('button',{name:/Pay|Proceed|Continue/i}).last();await payButton.click();
+            let vpaInput=checkoutFrame.getByPlaceholder(/UPI|VPA/i).first();if(!(await vpaInput.count()))vpaInput=checkoutFrame.locator('input').first();await vpaInput.fill('success@razorpay');const payButton=checkoutFrame.getByRole('button',{name:/Pay|Proceed|Continue/i}).last();await payButton.click();
             await page.waitForTimeout(8000);await page.screenshot({path:`${evidence}/razorpay-after-submit.png`,fullPage:true});step('Razorpay Test checkout submitted',{method:'UPI test VPA'});
           } catch(error){report.failure=error instanceof Error?error.message:String(error);save();try{await page.screenshot({path:`${evidence}/failure.png`,fullPage:true});}catch{};console.error(error);process.exitCode=1;} finally{save();await browser.close();}
           NODE
-          node "$RUNNER_TEMP/golden.mjs"
+          node golden.mjs
       - name: Upload transaction evidence
         if: always()
         uses: actions/upload-artifact@v4
