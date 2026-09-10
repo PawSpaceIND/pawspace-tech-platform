@@ -1,0 +1,68 @@
+{
+  "candidate": "8745bbca5e76185b65ca7c0a7fd4bda60acf35e6",
+  "tree": "321312aec6e2a96060496bdf4401d41cf024e40d",
+  "base": "ab40dc009471e0fdac41b07034aaef18784f0a02",
+  "ui_source": "5f12f6efbe4545894f38f817154d798131145f16",
+  "files": [
+    {
+      "path": "app/mobile-app/premium-discovery-home.module.css",
+      "sha256": "802e209b4784f9589782c2afe11a9ddfac9e2f3ce02dad89eae8df86671a21cc"
+    },
+    {
+      "path": "app/mobile-app/premium-discovery-home.tsx",
+      "sha256": "04984258dd5d5023f3bc68515c977226f7692efcc0d561d37dbf469db8aa0c18"
+    },
+    {
+      "path": "app/mobile-app/service-banner.tsx",
+      "sha256": "e702f9f831790afbf7bfaf41d71ada9f3c24ac6e79c5ebc0c62e66460e3e18cb"
+    },
+    {
+      "path": "app/mobile-app/service-hero.tsx",
+      "sha256": "5bd4275199385dec0b6ed8ca16c66d7cdaaeac3945428fcee0796656a64466d1"
+    },
+    {
+      "path": "public/assets/pawspace-doorstep.png",
+      "sha256": "9d2ae1b6a3704c23f704a1f64d959943fb2d6a63c75209967606adec1c4e5be8"
+    },
+    {
+      "path": "public/assets/pawspace-grooming-editorial.webp",
+      "sha256": "e81225e6aecbeed51e636216e02068ff01db763d68dd60eed3ecb6f8ccc7a263"
+    },
+    {
+      "path": "public/assets/pawspace-home.png",
+      "sha256": "f1160d118be857f3ec3549ed46b6dc6f55fe9292d36c0d8d9d0300230532bba8"
+    },
+    {
+      "path": "public/assets/pawspace-icon.jpeg",
+      "sha256": "2debeaf5f9e8af7c298ea56a7109a73c0a10f1084f6a40d985866b03c783293e"
+    },
+    {
+      "path": "public/assets/pawspace-training-editorial.webp",
+      "sha256": "871fc5627d32085f4954ada03c00a4d6c25d68ab11b1568733b746025d3196d2"
+    },
+    {
+      "path": "public/assets/pawspace-walking-editorial.webp",
+      "sha256": "51c0503175ac2a6715c1cdbc13aa738b1787708be91c175366c4b1a3fe70476e"
+    }
+  ],
+  "validation": {
+    "commit": "29142163c9934d373d2603fe8ceced6afae3f811",
+    "tree": "de2c238090e3f421ae45a4ee668419600d9b3545",
+    "branch": "fix/pencils-down-reviewed-ui-20260910",
+    "base": "ab40dc009471e0fdac41b07034aaef18784f0a02",
+    "ui_source": "5f12f6efbe4545894f38f817154d798131145f16",
+    "product_presentation_files": 10,
+    "dependency_import_fix": "AddressAutofill",
+    "scoped_checks_passed": 52,
+    "scoped_checks_failed": 0,
+    "approved_reference_browser": 2,
+    "corrected_candidate_browser": 2,
+    "typecheck": "PASS",
+    "build": "PASS",
+    "outside_allowlist_changed": false,
+    "native_and_beta_ledger_logic_changed": false,
+    "published": true,
+    "production_deployment": false
+  },
+  "payment_ui_wiring": "customer billing -> /api/payment-order -> openMobileRazorpayCheckout; webhook remains authoritative"
+}

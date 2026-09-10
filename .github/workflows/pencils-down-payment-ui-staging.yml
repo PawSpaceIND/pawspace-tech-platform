@@ -1,0 +1,88 @@
+name: Pencils-down isolated payment UI (8745bbca)
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths:
+      - .github/workflows/pencils-down-payment-ui-staging.yml
+      - ops/pencils-down/deploy_payment_ui.py
+      - ops/pencils-down/payment-ui-source-manifest.json
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-payment-ui-8745bbca
+  cancel-in-progress: false
+jobs:
+  staging:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/ops/pencils-down-staging-ab40dc00'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 8745bbca5e76185b65ca7c0a7fd4bda60acf35e6
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate private test signing keys
+        id: test_keys
+        run: |
+          python - <<'PY2'
+          import os,secrets
+          for name in ('signing','identity'):
+            value=secrets.token_hex(32); print('::add-mask::'+value)
+            with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write(name+'='+value+'\n')
+          PY2
+      - name: Preflight fresh isolated namespace
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ steps.test_keys.outputs.signing }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ steps.test_keys.outputs.identity }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: python infra/ops/pencils-down/deploy_payment_ui.py preflight
+      - name: Install locked dependencies
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Build exact payment UI candidate
+        working-directory: candidate
+        run: npm run build
+      - name: Deploy dedicated payment-test Worker
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ steps.test_keys.outputs.signing }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ steps.test_keys.outputs.identity }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: python infra/ops/pencils-down/deploy_payment_ui.py deploy
+      - name: Upload sanitized deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payment-ui-staging-evidence
+          path: pencils-down-evidence/
+          retention-days: 7
+      - name: Test URL
+        if: success()
+        run: echo "Payment test frontend ${{ steps.deploy.outputs.origin }}"
