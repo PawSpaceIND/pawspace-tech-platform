@@ -138,15 +138,22 @@ export function exotelTelephony(env: Env): TelephonyProvider {
       if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
       if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
       const streamUrl = approvedStreamUrl(env);
-      const body = streamUrl
-        ? new URLSearchParams({ from: intent.toNumber, callerid: callerId, streamurl: streamUrl, streamtype: "bidirectional", statuscallback: intent.statusCallbackUrl, customfield: intent.callRef, record: intent.recordingAllowed ? "true" : "false", timelimit: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))) })
-        : new URLSearchParams({ From: intent.toNumber, CallerId: callerId, Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`, CallType: "trans", StatusCallback: intent.statusCallbackUrl, CustomField: intent.callRef, TimeOut: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))), Record: intent.recordingAllowed ? "true" : "false" });
+      const timeout = String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120)));
+      const body: FormData | URLSearchParams = streamUrl
+        ? (() => {
+            const form = new FormData();
+            for (const [name, value] of Object.entries({ from: intent.toNumber, callerid: callerId, streamurl: streamUrl, streamtype: "bidirectional", statuscallback: intent.statusCallbackUrl, customfield: intent.callRef, record: intent.recordingAllowed ? "true" : "false", timelimit: timeout })) form.set(name, value);
+            return form;
+          })()
+        : new URLSearchParams({ From: intent.toNumber, CallerId: callerId, Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`, CallType: "trans", StatusCallback: intent.statusCallbackUrl, CustomField: intent.callRef, TimeOut: timeout, Record: intent.recordingAllowed ? "true" : "false" });
       const endpoint = streamUrl ? `https://${subdomain}/v1/accounts/${encodeURIComponent(sid)}/calls/connect` : `https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`;
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
       try {
         let response: Response, responseText: string;
         try {
-          response = await fetch(endpoint, { method: "POST", signal: controller.signal, headers: { authorization: `Basic ${btoa(`${key}:${token}`)}`, "content-type": "application/x-www-form-urlencoded" }, body: body.toString() });
+          const headers: Record<string, string> = { authorization: `Basic ${btoa(`${key}:${token}`)}` };
+          if (!streamUrl) headers["content-type"] = "application/x-www-form-urlencoded";
+          response = await fetch(endpoint, { method: "POST", signal: controller.signal, headers, body: streamUrl ? body : body.toString() });
           responseText = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
         } catch (error) {
           throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
