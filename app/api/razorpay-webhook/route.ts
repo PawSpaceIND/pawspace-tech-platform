@@ -9,6 +9,7 @@ import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reco
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 import{postBookingRefundCollectionReversal}from"../../../lib/refund-collection-reversal";
+import{forwardVerifiedRazorpaySandboxWebhook}from"../../../lib/razorpay-sandbox-webhook-relay";
 
 type RazorEntity=Record<string,unknown>;
 type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{entity?:RazorEntity}>};
@@ -122,6 +123,12 @@ export async function POST(request:Request){
       if(message==="Signed Razorpay webhook body is not valid JSON")return json({error:"Invalid webhook JSON"},400);
       if(message.includes("replayed with a different payload"))return json({error:"Razorpay event ID payload mismatch"},409);
       throw error;
+    }
+    // Only a signature-verified sandbox body may be shadow-relayed. Relay failure never weakens or
+    // blocks the stable staging receiver; the exact isolated target remains independently HMAC-gated.
+    if(gate.environment==="sandbox"){
+      const relay=await forwardVerifiedRazorpaySandboxWebhook(runtime,{rawBody:raw,signature,eventId,contentType:request.headers.get("content-type")||"application/json"});
+      if(relay.enabled)console.log(`Razorpay sandbox relay ${relay.delivered?"delivered":"not-delivered"}; targetSha=${relay.targetSha}; status=${relay.status}`);
     }
     // The verified inbox identity also owns retries of subscription/refund domain effects.
     eventId=String(accepted.row.event_id||eventId);
