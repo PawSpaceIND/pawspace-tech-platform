@@ -82,6 +82,23 @@ test("Pet Sitting Gate 2 requires sitter acceptance before anything else happens
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Pet Sitting Gate 2 reveals the canonical doorstep only after sitter acceptance and hides it again during recovery", async () => {
+  const world = await sittingWorld({ runtime: {} });
+  let rows = await lifecycle.listSittingBookings(world.db, { bookingId: world.bookingId });
+  assert.equal(rows[0].serviceLocation, null, "an offered sitter must not receive the exact home location before acceptance");
+
+  await world.act("accept");
+  rows = await lifecycle.listSittingBookings(world.db, { bookingId: world.bookingId });
+  assert.equal(rows[0].serviceLocation.addressText, "12 MG Road, Bengaluru");
+  assert.equal(rows[0].serviceLocation.latitude, world.doorstep.latitude);
+  assert.equal(rows[0].serviceLocation.longitude, world.doorstep.longitude);
+
+  await world.act("sitter_unavailable", { reason: "vehicle issue before travel" });
+  rows = await lifecycle.listSittingBookings(world.db, { bookingId: world.bookingId });
+  assert.equal(rows[0].serviceLocation, null, "the failed sitter must lose exact doorstep visibility while Operations recovers the booking");
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 2 care plan needs emergency contact, vet AND home access", async () => {
   const world = await sittingWorld();
   await world.act("accept");
