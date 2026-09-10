@@ -25,30 +25,33 @@ try{
  if(state.booking.id!==bookingId||state.booking.providerId!==providerId)throw new Error('Same-record booking/provider identity changed');
  if(state.booking.paymentStatus!=='captured')throw new Error(`Payment is not captured: ${state.booking.paymentStatus}`);
  step('Same booking/provider/payment identity verified',{status:state.booking.status,paymentStatus:state.booking.paymentStatus});
- await call('/api/location-recovery',{method:'POST',body:{action:'save_policy',id:'PUNC-GOLDEN-GROOMING-43BA4002',serviceCode:'grooming',cityId:'blr',trackingEnabled:true,etaFreshnessSeconds:900,allowedAccuracyMeters:25,graceMinutes:0,customerAlertMinutes:15,opsEscalationMinutes:30,reassignmentMinutes:60,rawGpsRetentionDays:7,approvalState:'approved',effectiveFrom:'2026-08-01',evidenceRequirements:['trusted_gps','arrival_geofence']}});
- await call('/api/location-recovery',{method:'POST',body:{action:'set_controls',gpsIngestionEnabled:true,mapAdapterEnabled:false,mapEnvironment:'sandbox'}});
- step('UAT punctuality policy and sandbox GPS controls ready');
- await ensureStatus('confirmed','assigned','accept');
- await ensureStatus('assigned','on_the_way','on_the_way');
- const route=await call(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`);
- const point=route.data.data?.destinationCoordinates;if(!point||!Number.isFinite(Number(point.lat))||!Number.isFinite(Number(point.lng)))throw new Error('Governed doorstep coordinates unavailable');
- const gps=await call('/api/grooming-route',{method:'POST',body:{bookingId,providerId,latitude:Number(point.lat),longitude:Number(point.lng),accuracyMeters:5,capturedAt:Date.now(),idempotencyKey:`golden-arrival:${bookingId}`}});
- if(gps.data.data?.telemetryAccepted!==true)throw new Error('Trusted Grooming GPS was not accepted');
- step('Trusted server-bound GPS accepted at governed doorstep',{accuracyMeters:5});
- await ensureStatus('on_the_way','arrived','arrived');
- await ensureStatus('arrived','in_service','start_service');
- state=await lifecycle();
- if(!state.proof?.beforePhotoRef||!state.proof?.afterPhotoRef||!(state.proof?.checklist?.length)){
-   const proof=await mutate('add_proof',{beforePhotoRef:`uat://proof/${bookingId}/before`,afterPhotoRef:`uat://proof/${bookingId}/after`,checklist:['Bath completed','Coat dried','Nails checked'],completionNotes:'Golden-path UAT proof only; no production media.'});
-   if(!proof.data?.proof?.beforePhotoRef||!proof.data?.proof?.afterPhotoRef)throw new Error('UAT Grooming proof was not persisted');
-   step('UAT Grooming before/after proof and checklist recorded');
- }else step('UAT Grooming proof already present');
- state=await lifecycle();
- if(state.booking.status==='in_service'){
-   const completed=await mutate('complete');
-   if(completed.finance?.ledgerStatus!=='balanced'||completed.finance?.taxStatus!=='resolved'||completed.finance?.payoutStatus!=='accrued')throw new Error(`Completion finance not resolved: ${JSON.stringify(completed.finance)}`);
-   report.completionFinance=completed.finance;step('Canonical Grooming completion finance resolved',{ledgerStatus:completed.finance.ledgerStatus,taxStatus:completed.finance.taxStatus,payoutStatus:completed.finance.payoutStatus});
- }else if(state.booking.status!=='completed')throw new Error(`Unexpected final pre-completion state ${state.booking.status}`);
+ const alreadyCompleted=state.booking.status==='completed';
+ if(!alreadyCompleted){
+   await call('/api/location-recovery',{method:'POST',body:{action:'save_policy',id:'PUNC-GOLDEN-GROOMING-43BA4002',serviceCode:'grooming',cityId:'blr',trackingEnabled:true,etaFreshnessSeconds:900,allowedAccuracyMeters:25,graceMinutes:0,customerAlertMinutes:15,opsEscalationMinutes:30,reassignmentMinutes:60,rawGpsRetentionDays:7,approvalState:'approved',effectiveFrom:'2026-08-01',evidenceRequirements:['trusted_gps','arrival_geofence']}});
+   await call('/api/location-recovery',{method:'POST',body:{action:'set_controls',gpsIngestionEnabled:true,mapAdapterEnabled:false,mapEnvironment:'sandbox'}});
+   step('UAT punctuality policy and sandbox GPS controls ready');
+   await ensureStatus('confirmed','assigned','accept');
+   await ensureStatus('assigned','on_the_way','on_the_way');
+   const route=await call(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`);
+   const point=route.data.data?.destinationCoordinates;if(!point||!Number.isFinite(Number(point.lat))||!Number.isFinite(Number(point.lng)))throw new Error('Governed doorstep coordinates unavailable');
+   const gps=await call('/api/grooming-route',{method:'POST',body:{bookingId,providerId,latitude:Number(point.lat),longitude:Number(point.lng),accuracyMeters:5,capturedAt:Date.now(),idempotencyKey:`golden-arrival:${bookingId}`}});
+   if(gps.data.data?.telemetryAccepted!==true)throw new Error('Trusted Grooming GPS was not accepted');
+   step('Trusted server-bound GPS accepted at governed doorstep',{accuracyMeters:5});
+   await ensureStatus('on_the_way','arrived','arrived');
+   await ensureStatus('arrived','in_service','start_service');
+   state=await lifecycle();
+   if(!state.proof?.beforePhotoRef||!state.proof?.afterPhotoRef||!(state.proof?.checklist?.length)){
+     const proof=await mutate('add_proof',{beforePhotoRef:`uat://proof/${bookingId}/before`,afterPhotoRef:`uat://proof/${bookingId}/after`,checklist:['Bath completed','Coat dried','Nails checked'],completionNotes:'Golden-path UAT proof only; no production media.'});
+     if(!proof.data?.proof?.beforePhotoRef||!proof.data?.proof?.afterPhotoRef)throw new Error('UAT Grooming proof was not persisted');
+     step('UAT Grooming before/after proof and checklist recorded');
+   }else step('UAT Grooming proof already present');
+   state=await lifecycle();
+   if(state.booking.status==='in_service'){
+     const completed=await mutate('complete');
+     if(completed.finance?.ledgerStatus!=='balanced'||completed.finance?.taxStatus!=='resolved'||completed.finance?.payoutStatus!=='accrued')throw new Error(`Completion finance not resolved: ${JSON.stringify(completed.finance)}`);
+     report.completionFinance=completed.finance;step('Canonical Grooming completion finance resolved',{ledgerStatus:completed.finance.ledgerStatus,taxStatus:completed.finance.taxStatus,payoutStatus:completed.finance.payoutStatus});
+   }else if(state.booking.status!=='completed')throw new Error(`Unexpected final pre-completion state ${state.booking.status}`);
+ }else step('Booking already completed; service-side mutations not repeated');
  const final=await lifecycle();
  if(final.booking.status!=='completed'||final.booking.workOrderStatus!=='completed'||final.booking.paymentStatus!=='captured')throw new Error('Final booking/work-order/payment state mismatch');
  if(final.invoice?.status!=='issued'||final.taxReadiness?.taxRuleStatus!=='resolved'||final.payoutReadiness?.status!=='accrued')throw new Error(`Final invoice/tax/payout projection incomplete: ${JSON.stringify(final)}`);
