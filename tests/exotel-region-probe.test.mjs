@@ -21,3 +21,14 @@ test("probe fails closed if neither region authenticates and reports statuses on
 test("probe requires complete credentials before any network call",async()=>{
   let calls=0;await assert.rejects(()=>probeExotelRegion({key:"",token:"t",sid:"s",fetcher:async()=>{calls++;return response(200)}}),/requires API key/);assert.equal(calls,0);
 });
+test("caller-ID history check reads only Metadata.Total and never emits call details",async()=>{
+  const calls=[];
+  const result=await probeExotelRegion({key:"key",token:"token",sid:"sid",callerId:"08012345678",fetcher:async(url,init)=>{
+    calls.push(String(url));
+    if(String(url).includes("api.in.exotel.com"))return response(401);
+    if(String(url).includes("PhoneNumber="))return Response.json({Metadata:{Total:7},Calls:[{To:"secret-customer",From:"secret-agent"}]});
+    return response(200);
+  }});
+  assert.equal(result.host,"api.exotel.com");assert.equal(result.callerIdHistoryMatch,true);assert.equal(result.callerIdHistoryCount,7);
+  assert.equal(calls.length,3);assert.ok(calls[2].includes("PhoneNumber=08012345678"));
+});
