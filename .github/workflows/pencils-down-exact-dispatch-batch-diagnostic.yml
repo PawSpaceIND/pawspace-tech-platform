@@ -1,0 +1,108 @@
+name: Reproduce exact PawSpace dispatch batch on isolated D1
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-exact-dispatch-batch-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: pawspace-release-preview
+    env:
+      TARGET_DB_NAME: pawspace-beta-golden-wallet-3218c3
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run exact dispatch batch and clean it
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          db_json=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100")
+          db_id=$(jq -r --arg n "$TARGET_DB_NAME" '.result[] | select(.name==$n) | (.uuid // .id)' <<<"$db_json" | head -1)
+          subdomain=$(curl -fsS "${auth[@]}" "$api/workers/subdomain" | jq -r '.result.subdomain')
+          test -n "$db_id" && test "$db_id" != null && test -n "$subdomain"
+          work="$RUNNER_TEMP/pawspace-exact-dispatch"
+          mkdir -p "$work"
+          worker="pawspace-dispatch-diag-${GITHUB_RUN_ID}"
+          cat > "$work/wrangler.toml" <<EOF
+          name = "$worker"
+          main = "index.mjs"
+          compatibility_date = "2026-09-10"
+          workers_dev = true
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "$TARGET_DB_NAME"
+          database_id = "$db_id"
+          EOF
+          cat > "$work/index.mjs" <<'JS'
+          const PROFILE = `EXISTS (SELECT 1 FROM provider_capacity_profiles p WHERE p.id=? AND p.city_id=? AND p.live=1 AND p.status='active' AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?) AND EXISTS (SELECT 1 FROM json_each(p.services_json) s WHERE s.value=?) AND EXISTS (SELECT 1 FROM json_each(p.zones_json) z WHERE z.value=?)) AND NOT EXISTS (SELECT 1 FROM provider_unavailability u WHERE u.provider_id=? AND u.status='active' AND u.starts_at<? AND u.ends_at>?)`;
+          export default {
+            async fetch(_request, env) {
+              const token = crypto.randomUUID().replaceAll('-', '');
+              const groupId = `DIAG-${token}`;
+              const attemptId = `ATT-${token}`;
+              const assertionId = `ASSERT-${token}`;
+              const provider = 'groom_arun';
+              const city = 'blr', zone = 'blr-east', service = 'grooming';
+              const start = '2026-10-10T09:30:00.000Z', end = '2026-10-10T11:30:00.000Z';
+              const bufferedStart = '2026-10-10T09:00:00.000Z', bufferedEnd = '2026-10-10T12:00:00.000Z';
+              const createdAt = Date.now();
+              let outcome = { batchSucceeded:false, errorClass:null, reservationRows:null, decisionRows:null, assertionRows:null };
+              try {
+                const reservation = env.DB.prepare(`INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at,lease_expires_at,customer_session_id,attempt_id) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>?) AND (SELECT COUNT(*) FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND substr(datetime(scheduled_start,?),1,10)=?)<? AND ${PROFILE} ON CONFLICT(provider_id,scheduled_start,scheduled_end) WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight' DO NOTHING`).bind(
+                  `${groupId}_${provider}_1_${createdAt}`, groupId, provider, service, city, zone, 'DIAG-CUSTOMER', '["DIAG-PET"]', start, end, 1, 1, null, 'assigned', '{}', createdAt, createdAt+300000, null, attemptId,
+                  provider, bufferedEnd, bufferedStart, provider, '+330 minutes', '2026-10-10', 4,
+                  provider, city, '2026-10-10', '2026-10-10', service, zone, provider, end, start
+                );
+                const assertion = env.DB.prepare("INSERT INTO scheduling_dispatch_assertions (id,ok,created_at) SELECT ?,CASE WHEN (SELECT COUNT(*) FROM scheduling_reservations WHERE attempt_id=? AND status='assigned')=? THEN 1 ELSE 0 END,?").bind(assertionId, attemptId, 1, createdAt);
+                const decision = env.DB.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET strategy=excluded.strategy,shortlist_json=excluded.shortlist_json,selected_provider_id=excluded.selected_provider_id,status=excluded.status,actor_id=excluded.actor_id,reason=excluded.reason,updated_at=excluded.updated_at").bind(groupId,'auto','{"request":{"customerId":"DIAG-CUSTOMER"},"choices":[]}',provider,'assigned','system','diagnostic isolated dispatch',createdAt);
+                const eraseAssertion = env.DB.prepare("DELETE FROM scheduling_dispatch_assertions WHERE id=?").bind(assertionId);
+                await env.DB.batch([reservation, assertion, decision, eraseAssertion]);
+                outcome.batchSucceeded = true;
+                outcome.reservationRows = Number((await env.DB.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE group_id=?").bind(groupId).first())?.n||0);
+                outcome.decisionRows = Number((await env.DB.prepare("SELECT COUNT(*) n FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first())?.n||0);
+                outcome.assertionRows = Number((await env.DB.prepare("SELECT COUNT(*) n FROM scheduling_dispatch_assertions WHERE id=?").bind(assertionId).first())?.n||0);
+              } catch (error) {
+                const text=String(error instanceof Error?error.message:error);
+                outcome.errorClass=/CHECK/i.test(text)?'CHECK':/UNIQUE/i.test(text)?'UNIQUE':/NOT NULL/i.test(text)?'NOT_NULL':/FOREIGN KEY/i.test(text)?'FOREIGN_KEY':/CONSTRAINT/i.test(text)?'CONSTRAINT':'OTHER';
+              } finally {
+                await env.DB.batch([
+                  env.DB.prepare("DELETE FROM scheduling_dispatch_assertions WHERE id=?").bind(assertionId),
+                  env.DB.prepare("DELETE FROM provider_assignment_offers WHERE group_id=?").bind(groupId),
+                  env.DB.prepare("DELETE FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId),
+                  env.DB.prepare("DELETE FROM scheduling_reservations WHERE group_id=?").bind(groupId)
+                ]);
+              }
+              return Response.json(outcome,{status:outcome.batchSucceeded?200:500});
+            }
+          };
+          JS
+          cleanup(){ npx --yes wrangler@4 delete --config "$work/wrangler.toml" --force >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          npx --yes wrangler@4 deploy --config "$work/wrangler.toml" >/tmp/exact-dispatch-deploy.log
+          url="https://${worker}.${subdomain}.workers.dev"
+          result=''
+          for i in $(seq 1 20); do
+            result=$(curl -sS --max-time 15 "$url" 2>/dev/null || true)
+            if jq -e 'has("batchSucceeded")' >/dev/null 2>&1 <<<"$result"; then break; fi
+            sleep 1
+          done
+          echo "EXACT_DISPATCH_RESULT=$(jq -c . <<<"$result")"
+          test "$(jq -r '.batchSucceeded' <<<"$result")" = true
+          test "$(jq -r '.reservationRows' <<<"$result")" = 1
+          test "$(jq -r '.decisionRows' <<<"$result")" = 1
+          test "$(jq -r '.assertionRows' <<<"$result")" = 0
+          cleanup
+          trap - EXIT
+          residue=$(curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data '{"sql":"SELECT (SELECT COUNT(*) FROM scheduling_reservations WHERE customer_id='\''DIAG-CUSTOMER'\'') reservations,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE actor_id='\''system'\'' AND reason='\''diagnostic isolated dispatch'\'') decisions"}')
+          echo "RESIDUE=$(jq -c '[.result[]?.results[]?] | first' <<<"$residue")"
+          test "$(jq -r '[.result[]?.results[]?] | first | .reservations' <<<"$residue")" = 0
+          test "$(jq -r '[.result[]?.results[]?] | first | .decisions' <<<"$residue")" = 0
+          echo 'PASS: exact PawSpace dispatch batch succeeds on hosted Golden D1 and leaves no diagnostic rows.'
