@@ -35,7 +35,8 @@ jobs:
         run: |
           cat > complete-checkout.mjs <<'NODE'
           import fs from 'node:fs';
-          import {chromium} from './node_modules/playwright/index.js';
+          import playwright from './node_modules/playwright/index.js';
+          const {chromium}=playwright;
           const origin=process.env.ORIGIN,bookingId='PS-UAT-MTV9TAXL-D586',expectedOrder='order_TaGn7hheH3NbJT',phone='9000000939';
           const evidence='razorpay-completion-evidence';fs.mkdirSync(evidence,{recursive:true});
           const report={candidate:'43ba4002bacbd129b359bc6c8ec3fd4f260272bf',origin,bookingId,expectedOrder,testOnly:true,productionChanged:false,steps:[]};
