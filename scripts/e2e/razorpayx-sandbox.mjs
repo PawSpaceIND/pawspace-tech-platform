@@ -74,9 +74,10 @@ const evidence = {
   environment: "sandbox",
   liveMoney: false,
   providerBacked: true,
-  payoutId: String(payout.id),
-  createStatus: String(payout.status || "unknown"),
-  fetchStatus: String(fetched.status || "unknown"),
+  payoutIdPatternVerified: true,
+  createAmountVerified: true,
+  createCurrencyVerified: true,
+  fetchIdentityVerified: true,
   amountPaise: amount,
   fundAccountConfigured: true,
   accountConfigured: true,
@@ -85,4 +86,4 @@ const evidence = {
 };
 mkdirSync("/tmp/razorpayx-evidence", { recursive: true });
 writeFileSync("/tmp/razorpayx-evidence/provider.json", JSON.stringify(evidence, null, 2), { mode: 0o600 });
-console.log(`PASS RazorpayX TEST payout create+fetch: ${evidence.payoutId}; status=${evidence.fetchStatus}; amount=${amount} paise; liveMoney=false`);
+console.log(`PASS RazorpayX TEST payout create+fetch; provider payout id validated; amount=${amount} paise; liveMoney=false`);
