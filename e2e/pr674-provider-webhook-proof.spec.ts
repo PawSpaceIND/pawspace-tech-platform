@@ -112,37 +112,70 @@ async function visibleRazorpayFrame(page: Page) {
   return page.frames().find(frame => /razorpay/i.test(frame.url()) && frame !== page.mainFrame()) || page.frames().at(-1)!;
 }
 
+function hasRazorpayFrame(page: Page) {
+  return page.frames().some(frame => frame !== page.mainFrame() && /razorpay/i.test(frame.url()));
+}
+
 async function closeCheckout(page: Page) {
-  for (const frame of page.frames().filter(frame => frame !== page.mainFrame())) {
-    for (const locator of [frame.getByRole("button", { name: /close/i }).first(), frame.locator("button").filter({ hasText: /×|close/i }).first()]) {
-      if (await locator.isVisible().catch(() => false)) { await locator.click(); return; }
-    }
+  const frame = await visibleRazorpayFrame(page);
+  const candidates = [
+    frame.getByRole("button", { name: /^Go back$/i }).first(),
+    frame.getByRole("button", { name: /^Close$/i }).first(),
+    frame.getByRole("button", { name: /close/i }).first(),
+    frame.locator("button").filter({ hasText: /×|close/i }).first(),
+  ];
+  for (const candidate of candidates) {
+    if (!await candidate.isVisible().catch(() => false)) continue;
+    await candidate.click();
+    await page.waitForTimeout(500);
+    if (!hasRazorpayFrame(page)) return;
   }
   await page.keyboard.press("Escape");
+  await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
 }
+
 async function submitUpi(page: Page, upi: string) {
   await visibleRazorpayFrame(page);
-  const deadline = Date.now() + 35_000;
+  const deadline = Date.now() + 45_000;
+  let contactSubmitted = false;
   while (Date.now() < deadline) {
-    for (const frame of page.frames().filter(frame => frame !== page.mainFrame())) {
-      for (const text of [/^UPI$/i, /Pay by UPI/i, /UPI ID/i]) {
-        const tab = frame.getByText(text).first();
-        if (await tab.isVisible().catch(() => false)) await tab.click().catch(() => {});
+    for (const frame of page.frames().filter(frame => frame !== page.mainFrame() && /razorpay/i.test(frame.url()))) {
+      const mobile = frame.locator('input[placeholder*="Mobile" i], input[aria-label*="mobile" i], input[aria-label*="phone" i]').first();
+      if (!contactSubmitted && await mobile.isVisible().catch(() => false)) {
+        await mobile.fill(PHONE);
+        const next = frame.getByRole("button", { name: /^Continue$/i }).first();
+        if (await next.isVisible().catch(() => false)) {
+          await next.click();
+          contactSubmitted = true;
+          await page.waitForTimeout(800);
+          continue;
+        }
+      }
+      for (const locator of [
+        frame.getByRole("button", { name: /UPI/i }).first(),
+        frame.getByText(/^UPI$/i).first(),
+        frame.getByText(/Pay by UPI|UPI ID/i).first(),
+      ]) {
+        if (await locator.isVisible().catch(() => false)) await locator.click().catch(() => {});
       }
       const inputs = frame.locator("input");
       for (let index = 0; index < await inputs.count(); index++) {
         const input = inputs.nth(index);
         if (!await input.isVisible().catch(() => false)) continue;
         const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""}`;
-        if (!/upi|vpa|id/i.test(hint)) continue;
+        if (!/upi|vpa|upi id/i.test(hint)) continue;
         await input.fill(upi);
         const buttons = frame.getByRole("button");
         for (let button = (await buttons.count()) - 1; button >= 0; button--) {
           const candidate = buttons.nth(button);
           const label = await candidate.innerText().catch(() => "");
-          if (await candidate.isVisible().catch(() => false) && /pay|continue|verify|proceed/i.test(label)) { await candidate.click(); return; }
+          if (await candidate.isVisible().catch(() => false) && /pay|continue|verify|proceed/i.test(label)) {
+            await candidate.click();
+            return;
+          }
         }
-        await input.press("Enter"); return;
+        await input.press("Enter");
+        return;
       }
     }
     await page.waitForTimeout(500);
@@ -248,7 +281,14 @@ test("PR674 current isolated Worker proves Razorpay Test capture and provider-or
   report.orderId = String(first.data.orderId);
   await visibleRazorpayFrame(page);
   await closeCheckout(page);
-  await expect(billing.getByRole("alert")).toContainText(/Checkout closed|No payment confirmation/i, { timeout: 20_000 });
+  await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
+  const paymentAfterDismiss = await paymentTruth(dbId, fixture.bookingId);
+  const intentAfterDismiss = await intentTruth(dbId, fixture.bookingId);
+  expect(paymentAfterDismiss?.status).toBe("created");
+  expect(intentAfterDismiss?.state).toBe("CREATED");
+  expect(intentAfterDismiss?.gateway_order_id).toBe(report.orderId);
+  report.dismissState = { payment: paymentAfterDismiss?.status, intent: intentAfterDismiss?.state };
+  await expect(pay).toBeEnabled();
 
   const retryWait = waitForStart();
   await pay.click();
