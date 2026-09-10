@@ -41,3 +41,27 @@ test("Supermetrics GA4 rows land in canonical web analytics, never the ad-spend 
  const row=sqlite.prepare("SELECT * FROM marketing_web_metric_facts").get();assert.equal(row.source,"ga4");assert.equal(row.sessions,120);assert.equal(row.users,90);assert.equal(row.revenue_minor,540000);
  const snap=await mod.supermetricsWebAnalyticsSnapshot(db,{from:"2026-09-10",to:"2026-09-10"});assert.equal(snap.hasData,true);assert.equal(snap.sessions,120);assert.equal(snap.conversions,6);
 });
+
+
+test("Supermetrics completed window is idempotent and does not call provider twice",async()=>{
+ const {sqlite,db}=fresh();let calls=0;
+ const runtime={SUPERMETRICS_API_KEY:"secret-key",SUPERMETRICS_QUERY_CONFIG_JSON:config,PAWSPACE_SUPERMETRICS_SYNC_ENABLED:"true"};
+ const fetchImpl=async()=>{calls++;return new Response(JSON.stringify([{date:"2026-09-10",account_id:"123",campaign_id:"C1",campaign_name:"Grooming",impressions:"10",clicks:"1",spend:"10",conversions:"1",conversion_value:"20",currency:"INR"}]),{status:200});};
+ const first=await mod.syncSupermetricsMarketing(db,runtime,{from:"2026-09-10",to:"2026-09-10",fetchImpl});
+ const second=await mod.syncSupermetricsMarketing(db,runtime,{from:"2026-09-10",to:"2026-09-10",fetchImpl});
+ assert.equal(first.status,"completed");assert.equal(second.status,"completed");assert.equal(calls,1);
+ assert.equal(second.queries[0].duplicatePrevented,true);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_supermetrics_sync_runs").get().n,1);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_ad_metric_facts").get().n,1);
+});
+
+test("Supermetrics failed window retries using the same run identity",async()=>{
+ const {sqlite,db}=fresh();let calls=0;
+ const runtime={SUPERMETRICS_API_KEY:"secret-key",SUPERMETRICS_QUERY_CONFIG_JSON:config,PAWSPACE_SUPERMETRICS_SYNC_ENABLED:"true"};
+ const fetchImpl=async()=>{calls++;return calls===1?new Response("down",{status:503}):new Response(JSON.stringify([{date:"2026-09-10",account_id:"123",campaign_id:"C1",campaign_name:"Grooming",impressions:"10",clicks:"1",spend:"10",conversions:"1",conversion_value:"20",currency:"INR"}]),{status:200});};
+ const first=await mod.syncSupermetricsMarketing(db,runtime,{from:"2026-09-10",to:"2026-09-10",fetchImpl});
+ const second=await mod.syncSupermetricsMarketing(db,runtime,{from:"2026-09-10",to:"2026-09-10",fetchImpl});
+ assert.equal(first.status,"partial_failure");assert.equal(second.status,"completed");assert.equal(calls,2);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_supermetrics_sync_runs").get().n,1);
+ assert.equal(sqlite.prepare("SELECT status FROM marketing_supermetrics_sync_runs").get().status,"completed");
+});
