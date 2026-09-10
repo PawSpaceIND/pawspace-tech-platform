@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createPaymentOrderPaise, createPaymentRefund, createSandboxPaymentLink } from "../lib/razorpay-client.ts";
+import { fetchRazorpaySettlementReconDate } from "../lib/razorpay-settlement-reconciliation.ts";
 
 const env={
   PAWSPACE_PAYMENT_ENV:"sandbox",
@@ -9,7 +10,7 @@ const env={
   RAZORPAY_KEY_SECRET_SANDBOX:"edge-test-secret",
 };
 
-test("Razorpay provider requests use a redirect mode accepted by Cloudflare Workers",async()=>{
+test("Razorpay Worker-runtime requests use a Cloudflare-compatible non-following redirect mode",async()=>{
   const original=globalThis.fetch,redirects=[];
   globalThis.fetch=async(url,init={})=>{
     redirects.push(init.redirect);
@@ -18,6 +19,7 @@ test("Razorpay provider requests use a redirect mode accepted by Cloudflare Work
     if(path==="/v1/orders")return Response.json({id:"order_edgecompat",amount:100,currency:"INR",status:"created"});
     if(path==="/v1/payments/pay_edgecompat/refund")return Response.json({id:"rfnd_edgecompat",amount:100,currency:"INR",status:"processed"});
     if(path==="/v1/payment_links")return Response.json({id:"plink_edgecompat",short_url:"https://rzp.io/i/edgecompat",expire_by:Math.floor(Date.now()/1000)+3600});
+    if(path==="/v1/settlements/recon/combined")return Response.json({items:[]});
     throw new Error(`Unexpected Razorpay test URL: ${path}`);
   };
   try{
@@ -27,6 +29,8 @@ test("Razorpay provider requests use a redirect mode accepted by Cloudflare Work
     assert.equal(refund.connected,true,refund.connected?undefined:refund.reason);
     const link=await createSandboxPaymentLink(env,{bookingId:"BK-EDGE-1",paymentId:"PAY-EDGE-1",referenceId:"REF-EDGE-LINK",customerId:"CUS-EDGE",amount:1,currency:"INR",expiresAt:Date.now()+3600000});
     assert.equal(link.connected,true,link.connected?undefined:link.reason);
-    assert.deepEqual(redirects,["manual","manual","manual"]);
+    const recon=await fetchRazorpaySettlementReconDate(env,"2026-09-10");
+    assert.equal(recon.connected,true,recon.connected?undefined:recon.reason);
+    assert.deepEqual(redirects,["manual","manual","manual","manual"]);
   }finally{globalThis.fetch=original;}
 });
