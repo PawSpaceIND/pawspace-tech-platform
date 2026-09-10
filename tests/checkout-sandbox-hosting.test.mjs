@@ -84,7 +84,7 @@ function runnerFixture(scenario="success"){
 test("actual provisioning runner validates settings and HTTP surfaces while keeping secrets out of artifacts",()=>{
  const f=runnerFixture();try{
   assert.equal(f.result.status,0,f.result.stderr+f.result.stdout);
-  const report=JSON.parse(readFileSync(resolve(f.dir,"evidence/hosting-report.json"),"utf8"));assert.equal(report.hosted,true);assert.equal(report.capture,"NOT_RUN");assert.equal(report.providerWebhookDelivery,"NOT_RUN");
+  const report=JSON.parse(readFileSync(resolve(f.dir,"evidence/hosting-report.json"),"utf8"));assert.equal(report.hosted,true);assert.equal(report.customerUiVerified,false);assert.equal(report.capture,"NOT_RUN");assert.equal(report.providerWebhookDelivery,"NOT_RUN");
   assert.equal(f.requests.split("POST ").length-1,3); // D1 creation plus two negative application probes.
   assert.equal(existsSync(resolve(f.dir,"checkout-private-123456789-1/secrets.json")),false);
   for(const value of Object.values(checkoutSandboxPlan(base()).secrets))assert.equal(JSON.stringify(report).includes(value),false);
@@ -146,4 +146,22 @@ test("actual provisioning runner refuses missing protected inventory before any 
 });
 test("inventory reader has a bounded completion requirement even for unique repeated pages",async()=>{
  let calls=0;await assert.rejects(()=>readCheckoutDatabaseInventory(async page=>{calls++;return{result:[{uuid:`90000000-0000-4000-8000-${String(page).padStart(12,"0")}`,name:`db-${page}`}]};}),/bounded page limit/);assert.equal(calls,100);
+});
+
+test("hosted UI workflow uses actual UAT authentication and keeps provider secrets out of the browser step",()=>{
+ const workflow=readFileSync(new URL("../.github/workflows/deploy-checkout-sandbox.yml",import.meta.url),"utf8");
+ const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
+ const step=workflow.split("- name: Verify authenticated customer UI")[1].split("- name: Retain")[0];
+ assert.match(step,/PAWSPACE_UAT_ACCESS_CODE/);assert.doesNotMatch(step,/RAZORPAY_|CLOUDFLARE_|SIGNING_KEY/);
+ assert.ok(workflow.indexOf("npx playwright install")<workflow.indexOf("Create-only isolated root"));
+ assert.match(browser,/context.request.post\(origin\+"\/api\/staging-login"/);
+ assert.match(browser,/pawspace-prototype-converged/);assert.match(browser,/viewports.some\(row=>!row.pass\)/);
+ assert.doesNotMatch(browser,/setExtraHTTPHeaders|addCookies|\.route\(/);
+});
+
+test("hosted browser and assertions use the same installed Playwright runtime",()=>{
+ const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
+ assert.match(browser,/const \{chromium,expect\}=require\("@playwright\/test"\)/);
+ assert.doesNotMatch(browser,/require\("playwright"\)/);
+ assert.match(browser,/hostname.startsWith\(`\$\{hosting.worker\}\.`\)/);
 });
