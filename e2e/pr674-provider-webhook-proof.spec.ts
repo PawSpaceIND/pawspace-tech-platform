@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const ORIGIN = "https://pawspace-checkout-674-34511770192-1.karthik-fce.workers.dev";
-const WORKER = "pawspace-checkout-674-34511770192-1";
-const CANDIDATE = "8a920fb650be0144d453967e48f9a5daf174a794";
+const ORIGIN = String(process.env.PR674_WORKER_ORIGIN || "").trim();
+const WORKER = String(process.env.PR674_WORKER_NAME || "").trim();
+const CANDIDATE = String(process.env.PR674_CANDIDATE_SHA || "").trim();
 const PHONE = "9000000674";
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || "";
 const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN || "";
@@ -177,92 +177,68 @@ async function closeCheckout(page: Page) {
   }
   throw new Error("Razorpay checkout did not dismiss through its visible provider controls");
 }
-async function submitUpi(page: Page, upi: string) {
+async function submitNetbankingSuccess(page: Page) {
   await visibleRazorpayFrame(page);
-  const deadline = Date.now() + 45_000;
+  const deadline = Date.now() + 60_000;
   let contactSubmitted = false;
+  let netbankingSelected = false;
+  let bankSelected = false;
   while (Date.now() < deadline) {
     const frames = page.frames().filter(frame => frame !== page.mainFrame() && /razorpay/i.test(frame.url()));
     for (const frame of frames) {
       try {
-        const mobile = frame.locator('input[placeholder*="Mobile" i], input[aria-label*="mobile" i], input[aria-label*="phone" i]').first();
+        const mobile = frame.getByRole("textbox", { name: /Mobile number/i }).first();
         if (!contactSubmitted && await mobile.isVisible().catch(() => false)) {
           await mobile.fill(PHONE);
           const next = frame.getByRole("button", { name: /^Continue$/i }).first();
           if (await next.isVisible().catch(() => false)) {
-            await next.click();
-            contactSubmitted = true;
-            await page.waitForTimeout(800);
-            continue;
+            await next.click(); contactSubmitted = true; await page.waitForTimeout(700); continue;
           }
         }
-
-        // Razorpay Checkout v2 keeps the parent UPI row visible while its nested choices are open.
-        // Always consume the terminal VPA field first, then the nested "Apps & UPI ID" choice, and
-        // only fall back to the parent UPI row when neither deeper state is present.
-        const inputs = frame.locator("input");
-        const inputCount = await inputs.count();
-        for (let index = 0; index < inputCount; index++) {
-          const input = inputs.nth(index);
-          if (!await input.isVisible().catch(() => false)) continue;
-          const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""} ${await input.getAttribute("data-testid") || ""}`;
-          if (!/upi|vpa|upi id/i.test(hint)) continue;
-          await input.fill(upi);
-          const buttons = frame.getByRole("button");
-          const buttonCount = await buttons.count();
-          for (let button = buttonCount - 1; button >= 0; button--) {
-            const candidate = buttons.nth(button);
-            const label = await candidate.innerText().catch(() => "");
-            if (await candidate.isVisible().catch(() => false) && /pay|continue|verify|proceed/i.test(label)) {
-              await candidate.click();
-              return;
-            }
+        if (!netbankingSelected) {
+          const netbankingChoices = [
+            frame.locator('[data-testid="netbanking"]').first(),
+            frame.getByText(/^Netbanking$/i).first(),
+          ];
+          for (const netbanking of netbankingChoices) {
+            if (!await netbanking.isVisible().catch(() => false)) continue;
+            await netbanking.click(); netbankingSelected = true; await page.waitForTimeout(700); break;
           }
-          await input.press("Enter");
-          return;
+          if (netbankingSelected) continue;
         }
-
-        const appsAndUpiId = [
-          frame.getByRole("button", { name: /Apps & UPI ID/i }).first(),
-          frame.locator('[data-testid="more"]').first(),
-          frame.getByText(/^Apps & UPI ID$/i).first(),
-        ];
-        let selectedNestedUpi = false;
-        for (const locator of appsAndUpiId) {
-          if (!await locator.isVisible().catch(() => false)) continue;
-          await locator.click();
-          selectedNestedUpi = true;
-          break;
+        if (netbankingSelected && !bankSelected) {
+          const search = frame.locator('input[placeholder*="bank" i],input[aria-label*="bank" i]').first();
+          if (await search.isVisible().catch(() => false)) await search.fill("State Bank of India");
+          const bankChoices = [
+            frame.locator('[data-value="SBIN"], [data-testid="SBIN"], [data-value="HDFC"], [data-testid="HDFC"]').first(),
+            frame.getByText(/State Bank of India|HDFC Bank/i).first(),
+            frame.getByText(/^SBI$/i).first(),
+            frame.getByText(/^SBIN$/i).first(),
+            frame.getByRole("button", { name: /State Bank|HDFC|SBI|SBIN/i }).first(),
+          ];
+          for (const choice of bankChoices) if (await choice.isVisible().catch(() => false)) {
+            await choice.click(); bankSelected = true; await page.waitForTimeout(700); break;
+          }
+          if (bankSelected) continue;
         }
-        if (selectedNestedUpi) {
-          await page.waitForTimeout(800);
-          continue;
-        }
-
-        const topLevelUpi = [
-          frame.getByRole("button", { name: /^UPI$/i }).first(),
-          frame.getByText(/^UPI$/i).first(),
-        ];
-        let selectedTopLevelUpi = false;
-        for (const locator of topLevelUpi) {
-          if (!await locator.isVisible().catch(() => false)) continue;
-          await locator.click();
-          selectedTopLevelUpi = true;
-          break;
-        }
-        if (selectedTopLevelUpi) {
-          await page.waitForTimeout(800);
-          continue;
+        if (netbankingSelected && bankSelected) {
+          const pay = frame.getByRole("button", { name: /Pay|Proceed|Continue/i }).last();
+          if (await pay.isVisible().catch(() => false)) { await pay.click(); await page.waitForTimeout(900); }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) continue;
-        throw error;
+        if (!/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) throw error;
       }
+    }
+    for (const surface of [page, ...page.frames()]) {
+      try {
+        const success = surface.getByRole("button", { name: /^Success$/i }).first();
+        if (await success.isVisible().catch(() => false)) { await success.click(); return; }
+      } catch {}
     }
     await page.waitForTimeout(500);
   }
-  throw new Error("Razorpay Test UPI ID control was not found in Checkout v2");
+  throw new Error("Razorpay Test Netbanking mock-success control was not reached");
 }
 async function paymentRows(dbId: string, bookingId: string) {
   return d1(dbId, "SELECT event_type,gateway_order_id,gateway_payment_id,signature_verified,processing_status,amount_subunits,currency FROM payment_gateway_events WHERE booking_id=? ORDER BY received_at", [bookingId]);
@@ -303,6 +279,13 @@ async function waitForProviderWebhook(dbId: string, bookingId: string, paymentId
 test("PR674 current isolated Worker proves Razorpay Test capture and provider-origin webhook", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium");
   test.setTimeout(300_000);
+  expect(CANDIDATE).toMatch(/^[0-9a-f]{40}$/);
+  expect(WORKER).toMatch(/^pawspace-checkout-674-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/);
+  const target = new URL(ORIGIN);
+  expect(target.protocol).toBe("https:");
+  expect(target.hostname).toMatch(new RegExp(`^${WORKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.[a-z0-9-]+\\.workers\\.dev$`, "i"));
+  expect(target.username || target.password || target.port || target.search || target.hash).toBe("");
+  expect(["", "/"]).toContain(target.pathname);
   expect(ACCOUNT).toMatch(/^[a-f0-9]{32}$/i);
   expect(CF_TOKEN.length).toBeGreaterThan(20);
   expect(RZP_KEY).toMatch(/^rzp_test_[A-Za-z0-9]+$/);
@@ -364,7 +347,7 @@ test("PR674 current isolated Worker proves Razorpay Test capture and provider-or
   expect(String(first.data.orderId)).toMatch(/^order_/);
   report.orderId = String(first.data.orderId);
   report.negativeCheckoutSemantics = "covered_by_exact_head_pr674_ci";
-  await submitUpi(page, "success@razorpay");
+  await submitNetbankingSuccess(page);
   await expect(billing.getByRole("status")).toContainText(/pending|verified|confirmation/i, { timeout: 40_000 });
 
   const provider = await waitForProviderPayment(report.orderId, row => row.status === "captured" || row.captured === true, 50_000);
