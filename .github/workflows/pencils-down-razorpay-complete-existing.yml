@@ -53,12 +53,7 @@ jobs:
             const orderResponse=page.waitForResponse(r=>r.url().endsWith('/api/payment-order')&&r.request().method()==='POST',{timeout:30000});await record.getByRole('button',{name:'Pay securely (Test)'}).click();const response=await orderResponse;const orderBody=await response.json();if(!response.ok())throw new Error(`payment-order ${response.status()}: ${JSON.stringify(orderBody)}`);if(orderBody.data?.orderId!==expectedOrder||Number(orderBody.data?.amountPaise)!==84900)throw new Error(`unexpected reused order: ${JSON.stringify(orderBody.data)}`);step('Same Razorpay Test order reused',{orderId:orderBody.data.orderId,amountPaise:orderBody.data.amountPaise});
             let frame=await checkoutFrame();await page.screenshot({path:`${evidence}/01-contact.png`,fullPage:true});
             let mobile=await visibleInput(frame,/mobile number|phone|contact/i);if(!mobile)throw new Error('Razorpay contact mobile field not found');await mobile.fill(phone);const cont=frame.getByRole('button',{name:/^Continue$/i}).last();await cont.click();await page.waitForTimeout(1500);frame=await checkoutFrame();report.afterContactText=(await frame.locator('body').innerText()).slice(0,6000);save();await page.screenshot({path:`${evidence}/02-methods.png`,fullPage:true});step('Razorpay contact step completed');
-            let vpa=await visibleInput(frame,/UPI|VPA|upi id/i);
-            if(!vpa){const upiButtons=frame.getByText(/^UPI$/i);for(let i=0;i<await upiButtons.count();i++){const item=upiButtons.nth(i);if(await item.isVisible().catch(()=>false)){await item.click();break;}}await page.waitForTimeout(1200);frame=await checkoutFrame();const enterUpi=frame.getByText(/enter.*UPI ID|UPI ID/i).first();if(await enterUpi.isVisible().catch(()=>false)){await enterUpi.click();await page.waitForTimeout(500);}vpa=await visibleInput(frame,/UPI|VPA|upi id/i);}
-            if(!vpa){report.upiScreenText=(await frame.locator('body').innerText()).slice(0,6000);save();await page.screenshot({path:`${evidence}/03-upi-missing.png`,fullPage:true});throw new Error('Razorpay UPI ID field not available after contact step');}
-            await vpa.fill('success@razorpay');await page.screenshot({path:`${evidence}/03-upi-filled.png`,fullPage:true});const action=frame.getByRole('button',{name:/Pay|Verify|Continue|Proceed/i}).last();await action.click();step('Razorpay documented Test UPI submitted',{upi:'success@razorpay'});
-            const deadline=Date.now()+30000;let completed=false;while(Date.now()<deadline){await page.waitForTimeout(500);const frames=page.frames();const all=await Promise.all(frames.map(async f=>{try{return (await f.locator('body').innerText()).slice(0,3000)}catch{return''}}));if(all.some(t=>/success|payment successful|paid/i.test(t))||frames.length===1){completed=true;break;}}
-            await page.screenshot({path:`${evidence}/04-after-upi.png`,fullPage:true});report.checkoutCompletionSignal=completed;save();if(!completed)throw new Error('Razorpay checkout did not expose a completion signal within 30s');step('Razorpay browser checkout completion signal observed');
+            const netbanking=frame.getByText(/^Netbanking$/i).first();if(!(await netbanking.isVisible().catch(()=>false)))throw new Error('Razorpay Netbanking option not visible');await netbanking.click();await page.waitForTimeout(1200);frame=await checkoutFrame();report.netbankingText=(await frame.locator('body').innerText()).slice(0,8000);report.visibleButtons=await frame.getByRole('button').allTextContents();report.visibleLinks=await frame.getByRole('link').allTextContents();save();await page.screenshot({path:`${evidence}/03-netbanking-options.png`,fullPage:true});step('Razorpay Netbanking options captured without submitting payment');
           }catch(error){report.failure=error instanceof Error?error.message:String(error);save();try{await page.screenshot({path:`${evidence}/failure.png`,fullPage:true});}catch{};console.error(error);process.exitCode=1;}finally{save();await browser.close();}
           NODE
           node complete-checkout.mjs
@@ -66,7 +61,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: razorpay-existing-order-completion-43ba4002
+          name: razorpay-netbanking-diagnostic-43ba4002
           path: razorpay-completion-evidence/
           if-no-files-found: error
           retention-days: 7
