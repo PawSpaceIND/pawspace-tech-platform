@@ -3,13 +3,13 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from "nod
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, activeCheckoutVersion, CHECKOUT_REPOSITORY } from "../lib/checkout-sandbox-hosting.ts";
+import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, activeCheckoutVersion, readCheckoutDatabaseInventory, resolveCheckoutDatabaseGuards, CHECKOUT_REPOSITORY } from "../lib/checkout-sandbox-hosting.ts";
 
 const candidate = resolve(process.env.CANDIDATE_DIR || "candidate");
 const evidence = resolve(process.env.CHECKOUT_EVIDENCE_DIR || "checkout-sandbox-evidence");
 mkdirSync(evidence, { recursive: true });
 const report = { candidateSha: process.env.EXPECTED_SHA, hosted: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
-const plan = checkoutSandboxPlan(process.env); // All safety/secret requirements BEFORE any network or resource creation.
+let plan = checkoutSandboxPlan(process.env); // All safety/secret requirements BEFORE any network or resource creation.
 const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
 const token = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
 if (!/^[a-f0-9]{32}$/i.test(account) || !token) throw new Error("Cloudflare account authentication is required");
@@ -21,7 +21,7 @@ const cf = async (path, options = {}) => {
   const b = await r.json().catch(() => ({}));
   if (options.allow404 && r.status === 404) return null;
   if (!r.ok || b.success !== true) throw new Error(`Cloudflare request refused (${options.method || "GET"} ${path.replace(/[0-9a-f-]{32,}/gi, "[id]")}, HTTP ${r.status})`);
-  return b.result;
+  return options.includePagination ? b : b.result;
 };
 const app = async (origin, path, options = {}) => {
   const r = await fetch(origin + path, { ...options, redirect: "manual", signal: AbortSignal.timeout(30_000) });
@@ -40,7 +40,11 @@ try {
   if (dirty.status !== 0 || dirty.stdout.trim()) throw new Error("Candidate tracked source is modified");
   const artifactPath = resolve(candidate, "dist/server/wrangler.json");
   const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
-  // Validate artifact shape without allocating a resource. This UUID is validation-only, never deployed.
+  const inventory = await readCheckoutDatabaseInventory(page => cf(`/d1/database?per_page=100&page=${page}`, { includePagination: true }));
+  const frozenSettings = await cf(`/workers/scripts/${plan.frozenWorker}/settings`);
+  plan = resolveCheckoutDatabaseGuards(plan, inventory, frozenSettings);
+  report.databaseIsolation = { inventoryComplete: true, existingDatabaseCount: inventory.length, protectedTargetsResolved: 3 };
+  // Validate the artifact only after authoritative isolation is proved, still before any resource write.
   checkoutSandboxConfig(artifact, plan, "00000000-0000-4000-8000-000000000674");
   const frozenBefore = await cf(`/workers/scripts/${plan.frozenWorker}/deployments`);
   if (!frozenBefore.deployments?.[0]?.id) throw new Error("Cannot record frozen-preview deployment before provisioning");
