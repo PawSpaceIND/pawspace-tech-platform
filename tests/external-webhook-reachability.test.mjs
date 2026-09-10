@@ -106,10 +106,19 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     "/api/customer-account", "/api/booking-rating", "/api/customer-support-case", "/api/live-price-quote",
     "/api/training-requirements", "/api/host-trust", "/api/service-zone", "/api/partner-otp", "/api/pet-passport-public",
   ]);
+  // Customer inboxes authenticate inside the route; executed ownership/rejection tests
+  // live in the connected notification suites. They are not public webhook surfaces.
+  const customerSessionSurfaces = new Set(['/api/customer-notifications', '/api/order-notifications']);
   const unguarded = [];
   for (const path of exemptPaths) {
     if (knownPublicSurfaces.has(path)) continue;
     const name = path.replace("/api/", "");
+    if (customerSessionSurfaces.has(path)) {
+      const route = read(`app/api/${name}/route.ts`);
+      assert.match(route, /await\s+resolveActor\(request\)/);
+      assert.match(route, /await\s+requireCustomerOwnership\(db,\s*actor,\s*customerId\)/);
+      continue;
+    }
     if (!fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url))) continue;
     if (reachableModules(name).some(source => externalAuth(source).length)) continue;
     unguarded.push(path);
