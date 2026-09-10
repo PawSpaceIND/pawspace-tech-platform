@@ -36,8 +36,8 @@ test("the Team hub filters its workspaces by the role's permissions (no unfilter
 
 test("the Control panel filters its side-nav by the role's permissions", () => {
   const page = read("app/control/page.tsx");
-  assert.match(page, /visibleNav\s*=\s*approvals\.loaded\s*\?\s*nav\.filter/, "nav must be filtered by permission");
-  assert.match(page, /visibleNav\.map\(/, "the filtered nav is what renders");
+  assert.match(page, /visible\s*=\s*access\.loaded\s*\?\s*nav\.filter/, "nav must be filtered by permission");
+  assert.match(page, /visible\.map\(/, "the filtered nav is what renders");
   assert.ok(!/\{nav\.map\(/.test(page), "the raw nav must not be rendered unfiltered");
 });
 
