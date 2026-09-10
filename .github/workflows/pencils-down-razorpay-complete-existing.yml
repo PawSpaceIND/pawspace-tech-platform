@@ -33,7 +33,7 @@ jobs:
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
-          cat > /tmp/complete-checkout.mjs <<'NODE'
+          cat > complete-checkout.mjs <<'NODE'
           import fs from 'node:fs';
           import {chromium} from './node_modules/playwright/index.js';
           const origin=process.env.ORIGIN,bookingId='PS-UAT-MTV9TAXL-D586',expectedOrder='order_TaGn7hheH3NbJT',phone='9000000939';
@@ -60,7 +60,7 @@ jobs:
             await page.screenshot({path:`${evidence}/04-after-upi.png`,fullPage:true});report.checkoutCompletionSignal=completed;save();if(!completed)throw new Error('Razorpay checkout did not expose a completion signal within 30s');step('Razorpay browser checkout completion signal observed');
           }catch(error){report.failure=error instanceof Error?error.message:String(error);save();try{await page.screenshot({path:`${evidence}/failure.png`,fullPage:true});}catch{};console.error(error);process.exitCode=1;}finally{save();await browser.close();}
           NODE
-          node /tmp/complete-checkout.mjs
+          node complete-checkout.mjs
       - name: Upload Razorpay continuation evidence
         if: always()
         uses: actions/upload-artifact@v4
