@@ -8,7 +8,15 @@ const discoverySource = fs.readFileSync(new URL("../app/mobile-app/premium-disco
 test("customer acceptance waits for the asynchronous mobile shell before probing navigation", () => {
   assert.match(source, /async function bottomNav\(page\)/);
   assert.match(source, /await nav\.waitFor\(\{state:"visible",timeout:TIMEOUT\}\)/);
-  assert.match(source, /page\.locator\("nav"\)/);
+  assert.match(source, /page\.getByRole\("navigation",\{name:"Customer navigation"\}\)/);
+  assert.doesNotMatch(source, /page\.locator\("nav"\)/);
+});
+
+test("customer acceptance targets each premium service card before its generic CTA", () => {
+  assert.match(source, /const serviceCard=\(page,name\)=>care\(page\)\.locator\("article"\)\.filter/);
+  assert.match(source, /async function serviceAction\(page,name\)/);
+  assert.match(source, /const action=await serviceAction\(page,name\)/);
+  assert.doesNotMatch(source, /care\(page\)\.getByRole\("button",\{name:new RegExp\(name,"i"\)\}\)/);
 });
 
 test("customer acceptance waits for OTP verification to replace the login UI", () => {
@@ -48,10 +56,21 @@ test("customer acceptance observes async final mutations through the server time
 
 test("customer acceptance uses the governed east-zone UAT location for Training", () => {
   assert.match(source, /PIN="560038"/);
-  assert.match(source, /ADDRESS="12 Acceptance Road, Indiranagar, Bengaluru"/);
+  assert.match(source, /ADDRESS="42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru"/);
   assert.doesNotMatch(source, /PIN="560034"/);
+  assert.match(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
+  assert.match(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
+  assert.match(source, /getByText\("Verified service doorstep",\{exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
 });
 
+test("customer acceptance waits for Sitting rates and completes required stay consent fields", () => {
+  assert.match(source, /rateButtons\.first\(\)\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+  assert.match(source, /getByLabel\("Vet contact"\)\.fill\("UAT Vet contact"\)/);
+  assert.match(source, /getByLabel\("Emergency contact"\)\.fill\("UAT emergency contact"\)/);
+  assert.match(source, /getByLabel\("Home access instructions"\)\.fill\("UAT home access instructions"\)/);
+  assert.match(source, /getByRole\("checkbox",\{name:\/I agree to care\/i\}\)\.check\(\)/);
+});
 test("customer acceptance accepts the current Boarding empty-selection CTA", () => {
   assert.match(source, /name:\/Continue with\|Choose an available host\/i/);
 });
