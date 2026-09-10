@@ -31,9 +31,6 @@ jobs:
       FORBID_PRODUCTION: "true"
       PAWSPACE_DEPLOYMENT_ENV: sandbox_ci
       PAWSPACE_COMMUNICATION_ENV: sandbox
-      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +45,10 @@ jobs:
       # Fail loudly rather than silently "passing" with no credentials. A green run that never
       # contacted Razorpay would be worse than a red one.
       - name: Assert sandbox credentials are present
+        env:
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: |
           missing=0
           for v in RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET; do
@@ -60,6 +61,10 @@ jobs:
           [ "$missing" = "0" ]
 
       - name: Razorpay sandbox payment + refund E2E
+        env:
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: node --experimental-strip-types --test tests/integration/razorpay-sandbox.test.mjs
 
       - name: Upload evidence

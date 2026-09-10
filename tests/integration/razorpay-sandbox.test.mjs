@@ -24,10 +24,27 @@ const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 const LIVE = Boolean(KEY_ID && KEY_SECRET && WEBHOOK_SECRET);
 const WORKFLOW = readFileSync(new URL("../../.github/workflows/razorpay-sandbox-e2e.yml", import.meta.url), "utf8");
 
-test("sandbox workflow sources only the canonical *_SANDBOX repository secrets", () => {
+function workflowStep(name) {
+  const marker = `      - name: ${name}\n`;
+  const start = WORKFLOW.indexOf(marker);
+  assert.ok(start >= 0, `${name}: workflow step missing`);
+  const next = WORKFLOW.indexOf("\n      - ", start + marker.length);
+  return WORKFLOW.slice(start, next < 0 ? WORKFLOW.length : next);
+}
+
+test("sandbox workflow scopes canonical *_SANDBOX secrets only to the two Razorpay execution steps", () => {
+  const jobPrefix = WORKFLOW.slice(0, WORKFLOW.indexOf("    steps:"));
+  const intended = [workflowStep("Assert sandbox credentials are present"), workflowStep("Razorpay sandbox payment + refund E2E")];
+  const untrusted = [workflowStep("Install"), workflowStep("Upload evidence")];
   for (const name of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"]) {
-    assert.match(WORKFLOW, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}_SANDBOX\\s*\\}\\}`));
-    assert.doesNotMatch(WORKFLOW, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
+    const canonicalPattern = `${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}_SANDBOX\\s*\\}\\}`;
+    const canonical = new RegExp(canonicalPattern);
+    const generic = new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`);
+    assert.equal((WORKFLOW.match(new RegExp(canonicalPattern, "g")) || []).length, 2, `${name}: only the assert and E2E steps may receive the secret`);
+    assert.doesNotMatch(jobPrefix, canonical, `${name}: job scope must not expose provider credentials`);
+    for (const step of intended) assert.match(step, canonical);
+    for (const step of untrusted) assert.doesNotMatch(step, canonical);
+    assert.doesNotMatch(WORKFLOW, generic);
   }
 });
 
