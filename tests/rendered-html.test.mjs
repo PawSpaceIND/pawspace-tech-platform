@@ -325,7 +325,7 @@ test("provides a city geofence and city price-book launch control", async () => 
     ),
   );
   assert.match(control, /Cities & geofences/);
-  assert.match(control, /Geofence \+ city price book/);
+  assert.match(control, /CityControlPanel/);
   assert.match(cities, /Add new city/);
   assert.match(cities, /Coverage radius/);
   assert.match(cities, /Serviceable pincodes/);
@@ -513,25 +513,18 @@ test("provides one governed business, accounts, customer and report centre", asy
 });
 
 test("publishes an evidence-based full-platform audit without false production health claims", async () => {
-  const [control, audit] = await Promise.all(
-    ["app/control/page.tsx", "app/control/platform-audit-panel.tsx"].map((path) =>
+  const [control, auditPanel, auditSource] = await Promise.all(
+    ["app/control/page.tsx", "app/control/live-governance-panel.tsx", "lib/control-center-operations.ts"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
   assert.match(control, /Platform audit & release/);
   assert.match(control, /Auto-scheduling/);
-  assert.match(control, /Build healthy · production telemetry not connected/);
-  assert.doesNotMatch(control, /99\.94% healthy/);
-  for (const area of ["Customer app", "Provider apps", "CRM & sales", "Operations & dispatch", "HR", "Payroll", "Finance & accounts", "Security & privacy", "AI & automation", "Reliability & release"]) assert.match(audit, new RegExp(area));
-  for (const status of ["Verified prototype", "Partial", "Integration-ready", "Missing core"]) assert.match(audit, new RegExp(status));
-  assert.match(audit, /Current release decision/);
-  assert.match(audit, /not yet approved for unattended public production traffic/i);
-  assert.match(audit, /Access configuration and UAT/);
-  assert.match(audit, /Backup and recovery proof/);
-  assert.match(audit, /SAFE AUTOMATION ORDER/);
-  assert.match(audit, /Salesforce Sales Cloud/);
-  assert.match(audit, /Dynamics 365 Field Service/);
-  assert.match(audit, /India DPDP Rules 2025/);
+  assert.match(control, /LiveGovernancePanel mode="audit"/);
+  assert.match(control, /unavailable sources display as not connected/i);
+  assert.doesNotMatch(control, /99\.94% healthy|Build healthy · production telemetry not connected/);
+  assert.match(auditPanel, /Every metric below is read from the domain table that owns it/);
+  for (const source of ["security_audit_events", "integration_live_evidence", "integration_readiness_events", "integration_evidence_requests"]) assert.match(auditSource, new RegExp(source));
 });
 
 test("runs a persistent Revenue 100, lead SLA, RNR and customer-ticket foundation", async () => {

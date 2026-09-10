@@ -1,8 +1,13 @@
 type Db=D1Database;
-type PerformanceInput={providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown;createdAt?:number};
+type PerformanceInput={providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown;createdAt?:number;attemptNo?:number};
 
 const clean=(value:string|undefined)=>String(value??"").trim();
-const eventId=(input:PerformanceInput)=>`PPE:${clean(input.providerId)}:${clean(input.groupId)}:${clean(input.bookingId)}:${clean(input.eventType)}`;
+const attempt=(value:number|undefined)=>{
+ if(value===undefined)return ""; // Keep historical no-attempt keys byte-identical on replay.
+ if(!Number.isInteger(value)||value<1)throw new Error("Assignment attempt must be a positive integer");
+ return `:${value}`;
+};
+const eventId=(input:PerformanceInput)=>`PPE:${clean(input.providerId)}:${clean(input.groupId)}:${clean(input.bookingId)}:${clean(input.eventType)}${attempt(input.attemptNo)}`;
 
 /** Ensure retry-safe provider telemetry. Existing duplicate historical rows are left untouched. */
 export async function ensureProviderPerformanceTelemetry(db:Db){
@@ -15,7 +20,8 @@ export async function ensureProviderPerformanceTelemetry(db:Db){
 /**
  * Returns a statement suitable for the SAME D1 batch as the lifecycle mutation it describes.
  * The deterministic primary key makes a retried lifecycle request idempotent without losing the
- * first recorded event.
+ * first recorded event. Assignment attempt is part of the key when supplied so later legitimate
+ * attempts for the same booking/event type remain independently observable.
  */
 export function providerPerformanceStatement(db:Db,input:PerformanceInput){
   return db.prepare("INSERT OR IGNORE INTO provider_performance_events (id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
