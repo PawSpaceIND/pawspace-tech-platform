@@ -6,7 +6,7 @@ import{collectedForBooking}from"../../../lib/collected-funds";
 type Body={bookingId?:string;action?:SittingFinanceAction;idempotencyKey?:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;replacementGroupId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const customerActions=new Set<SittingFinanceAction>(["request_cancel","request_date_change"]);
-const financeActions=new Set<SittingFinanceAction>(["approve_cancel","apply_date_change","record_refund","prepare_settlement","reconcile"]);
+const financeActions=new Set<SittingFinanceAction>(["approve_cancel","apply_date_change","record_refund","prepare_settlement","approve_settlement","reconcile"]);
 
 export async function GET(request:Request){try{const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.view");await ensureSittingFinanceTables(db);const [booking,cancellations,changes,refunds,settlement,reconciliation]=await Promise.all([
  db.prepare(`SELECT b.id,b.customer_id,b.provider_id,b.status,b.package_name,b.scheduled_start,b.scheduled_end,b.total_amount,p.status payment_status FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'`).bind(bookingId).first<Record<string,unknown>>(),
