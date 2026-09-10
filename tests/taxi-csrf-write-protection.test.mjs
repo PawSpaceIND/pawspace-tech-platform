@@ -45,7 +45,7 @@ function makeD1(sqlite) {
   };
 }
 
-const TAXI_WRITE_ROUTES = ["taxi-bookings", "taxi-commercial", "taxi-finance",
+const TAXI_WRITE_ROUTES = ["taxi-bookings", "taxi-ride-bookings", "taxi-commercial", "taxi-adjustments", "taxi-fleet-control", "taxi-finance",
                            "taxi-lifecycle", "taxi-ops", "taxi-proof", "taxi-recovery"];
 
 let ready;
@@ -58,7 +58,7 @@ async function world() {
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   await ensureSecurityTables(db);
   const now = Date.now();
-  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-TAXI-OPS',?,?, 'admin','active',?,?)")
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-TAXI-OPS',?,?, 'founder','active',?,?)")
     .run(STAFF, STAFF, now, now);
   ready = { sqlite, db };
   return ready;
@@ -151,7 +151,7 @@ test("TAXI-CSRF-5: no Pet Taxi route regresses by losing its guard", () => {
     catch { return false; }
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     if (!/export async function POST/.test(code)) return false;
-    return !/sameOriginWrite\(request\)/.test(code);
+    return !/(?:sameOriginWrite|sameOrigin)\(request\)/.test(code);
   });
   assert.deepEqual(unguarded, [],
     `these Pet Taxi routes accept writes with no same-origin guard: ${unguarded.join(", ")}`);

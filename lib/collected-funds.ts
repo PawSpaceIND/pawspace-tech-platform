@@ -55,7 +55,9 @@ export async function collectedForBooking(db:Db,bookingId:string):Promise<number
 
  // A split booking's truth lives in its schedule: the first instalment always, plus the balance only
  // once it has actually been paid.
- const schedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const schedule=staySchedule??taxiSchedule;
  if(schedule){
   const paidNow=Number(schedule.paid_now_amount||0);
   const balance=String(schedule.status)==="paid"?Number(schedule.balance_amount||0):0;
