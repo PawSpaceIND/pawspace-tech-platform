@@ -191,8 +191,17 @@ export async function approveWalletCreditRequest(db: Db, input: { requestId: str
   return { ...requestView(completed || row), newlyApproved, alreadyApproved: !newlyApproved, credit };
 }
 
+function walletAppliedValue(balance:number){
+  const walletPaise=Math.round(balance*100);
+  const numerator=walletPaise*110,whole=Math.floor(numerator/100),remainder=numerator%100;
+  const appliedPaise=remainder<50?whole:remainder>50?whole+1:whole%2===0?whole:whole+1;
+  return appliedPaise/100;
+}
+
 export function quoteWalletRedemption(balance: number, bookingTotal: number) {
-  const maxAppliedByBalance = round(balance * (1 + WALLET_BONUS_RATE));
+  // The 10% bonus can land on half a paise. Use half-even at the applied-value boundary so a
+  // mathematically exact half-paise does not systematically overcharge PawSpace or the customer.
+  const maxAppliedByBalance = walletAppliedValue(balance);
   const appliedValue = round(Math.min(maxAppliedByBalance, bookingTotal));
   const walletUsed = round(appliedValue / (1 + WALLET_BONUS_RATE));
   const bonus = round(appliedValue - walletUsed);

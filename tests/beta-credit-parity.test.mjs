@@ -27,6 +27,18 @@ test('beta credit parity: a recorded INR 500 applied credit reduces due-now by e
   } finally { ctx.close(); }
 });
 
+test('beta Wallet half-paise tie reduces hosted cash due by exactly INR 500', async () => {
+  const ctx=betaD1(); try {
+    const id=betaBooking(ctx.sqlite,{amount:1349,due:1349});
+    await creditWallet(ctx.db,{customerId:'beta-customer',amount:454.55,source:'goodwill',idempotencyKey:'beta-exact-500-wallet',note:'Half-paise tie regression',actorId:'beta-fixture'});
+    const redemption=await redeemWalletForBooking(ctx.db,{customerId:'beta-customer',bookingId:id,walletAmount:454.55,actorId:'beta-customer'});
+    assert.deepEqual({walletUsed:redemption.walletUsed,bonus:redemption.bonus,appliedValue:redemption.appliedValue},{walletUsed:454.55,bonus:45.45,appliedValue:500});
+    const stage=await paymentStageAmount(ctx.db,id);
+    assert.equal(stage.dueNow,849);
+    assert.equal(stage.appliedCredits,500);
+  } finally { ctx.close(); }
+});
+
 test('beta wallet parity preserves the existing 10-percent bonus and its balanced ledger', async () => {
   const ctx=betaD1(); try {
     const id=betaBooking(ctx.sqlite);
