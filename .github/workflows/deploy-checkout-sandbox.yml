@@ -72,6 +72,9 @@ jobs:
       - name: Build root customer application without deployment secrets
         working-directory: candidate
         run: npm run build
+      - name: Install isolated browser without deployment secrets
+        working-directory: candidate
+        run: npx playwright install --with-deps chromium
       - name: Create-only isolated root Worker and D1 with encrypted TEST secrets
         env:
           CONFIRM: ${{ inputs.confirm }}
@@ -90,6 +93,13 @@ jobs:
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: node --experimental-strip-types infra/scripts/deploy-checkout-sandbox.mjs
+      - name: Verify authenticated customer UI on the exact hosted candidate
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-sandbox-evidence
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node --experimental-strip-types infra/scripts/verify-checkout-hosted-browser.mjs
       - name: Retain only redacted hosting evidence
         if: always()
         uses: actions/upload-artifact@v4
