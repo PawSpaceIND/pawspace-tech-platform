@@ -1,3 +1,4 @@
+import{assertCaseSopClosureReady,listCaseSopRequirements,syncCaseSopRequirements}from"./case-sop-governance";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export type CaseType="customer_complaint"|"refund"|"payment"|"provider_issue"|"safety_incident"|"lead_escalation"|"rebooking"|"reconciliation"|"operations";
@@ -45,7 +46,7 @@ export async function updateUnifiedCase(db:Db,input:{caseId:string;action:"assig
  if(input.action==="respond")result=await db.prepare("UPDATE unified_cases SET first_responded_at=COALESCE(first_responded_at,?),status=CASE WHEN status='open' THEN 'in_progress' ELSE status END,updated_by=?,updated_at=? WHERE id=? AND status=?").bind(now,input.actorId,now,input.caseId,current).run();
  if(input.action==="progress")result=await db.prepare("UPDATE unified_cases SET status='in_progress',updated_by=?,updated_at=? WHERE id=? AND status=?").bind(input.actorId,now,input.caseId,current).run();
  if(input.action==="wait")result=await db.prepare("UPDATE unified_cases SET status='waiting',updated_by=?,updated_at=? WHERE id=? AND status=?").bind(input.actorId,now,input.caseId,current).run();
- if(input.action==="resolve"){if(!input.resolutionCode?.trim()||!input.note?.trim())throw new Error("Resolution code and note are required");result=await db.prepare("UPDATE unified_cases SET status='resolved',resolved_at=?,closed_at=NULL,resolution_code=?,resolution_note=?,updated_by=?,updated_at=? WHERE id=? AND status=?").bind(now,input.resolutionCode.trim(),input.note.trim(),input.actorId,now,input.caseId,current).run();}
+ if(input.action==="resolve"){if(!input.resolutionCode?.trim()||!input.note?.trim())throw new Error("Resolution code and note are required");await assertCaseSopClosureReady(db,input.caseId);result=await db.prepare("UPDATE unified_cases SET status='resolved',resolved_at=?,closed_at=NULL,resolution_code=?,resolution_note=?,updated_by=?,updated_at=? WHERE id=? AND status=?").bind(now,input.resolutionCode.trim(),input.note.trim(),input.actorId,now,input.caseId,current).run();}
  if(input.action==="close")result=await db.prepare("UPDATE unified_cases SET status='closed',closed_at=?,updated_by=?,updated_at=? WHERE id=? AND status='resolved'").bind(now,input.actorId,now,input.caseId).run();
  if(input.action==="reopen")result=await db.prepare("UPDATE unified_cases SET status='open',resolved_at=NULL,closed_at=NULL,reopen_count=reopen_count+1,updated_by=?,updated_at=? WHERE id=? AND status=?").bind(input.actorId,now,input.caseId,current).run();
  if(Number(result?.meta?.changes||0)!==1)throw new Error("Case changed concurrently; reload before retrying");
@@ -56,7 +57,40 @@ export async function runUnifiedCaseEscalations(db:Db,input:{actorId:string;asOf
 
 export async function syncNativeCases(db:Db,actorId:string){await ensureUnifiedCaseTables(db);let created=0;const refunds=await db.prepare("SELECT id,booking_id,status,reason,amount,created_at FROM booking_refund_cases WHERE status NOT IN ('completed','rejected') ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const r of refunds.results){const result=await createUnifiedCase(db,{idempotencyKey:`refund:${text(r.id)}`,caseType:"refund",severity:"high",title:`Refund ${text(r.id)}`,description:text(r.reason)||"Refund case",bookingId:text(r.booking_id),sourceType:"booking_refund_case",sourceId:text(r.id),ownerTeam:"finance",actorId});if(!result.duplicatePrevented)created++;}
  const sla=await db.prepare("SELECT e.id,e.lead_id,e.event_type,e.detail_json,e.created_at FROM lead_sla_events e WHERE e.event_type IN ('breached','manager_escalation_due','reassignment_due') ORDER BY e.created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const e of sla.results){const sev=text(e.event_type)==="manager_escalation_due"?"high":"medium";const result=await createUnifiedCase(db,{idempotencyKey:`lead-sla:${text(e.id)}`,caseType:"lead_escalation",severity:sev as CaseSeverity,title:`Lead SLA ${text(e.event_type).replaceAll("_"," ")}`,description:text(e.detail_json),leadId:text(e.lead_id),sourceType:"lead_sla_event",sourceId:text(e.id),ownerTeam:"sales",actorId});if(!result.duplicatePrevented)created++;}
+ const legacy=await db.prepare("SELECT * FROM customer_experience_tickets ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));
+ for(const t of legacy.results){
+  const priority=text(t.priority),legacyStatus=text(t.status),severity=(priority==="critical"?"critical":priority==="high"?"high":priority==="low"?"low":"medium") as CaseSeverity;
+  const result=await createUnifiedCase(db,{idempotencyKey:`legacy-cx:${text(t.id)}`,caseType:"customer_complaint",severity,title:text(t.subject)||`Legacy CX ${text(t.id)}`,description:text(t.detail)||text(t.category)||"Legacy customer support ticket",customerId:text(t.customer_id)||null,bookingId:text(t.booking_id)||null,leadId:text(t.lead_id)||null,sourceType:"legacy_customer_experience_ticket",sourceId:text(t.id),ownerTeam:"customer_support",ownerEmail:text(t.owner)||null,actorId});
+  if(!result.duplicatePrevented)created++;
+  const mappedStatus=legacyStatus==="waiting_customer"?"waiting":legacyStatus==="reopened"?"open":["open","in_progress","resolved","closed"].includes(legacyStatus)?legacyStatus:"open";
+  const resolutionNote=text(t.resolution)||null,resolvedAt=mappedStatus==="resolved"||mappedStatus==="closed"?Number(t.resolved_at||t.updated_at||Date.now()):null,closedAt=mappedStatus==="closed"?Number(t.updated_at||Date.now()):null;
+  await db.prepare("UPDATE unified_cases SET status=?,owner_email=COALESCE(NULLIF(?,''),owner_email),resolution_code=?,resolution_note=?,resolved_at=?,closed_at=?,reopen_count=MAX(reopen_count,?),updated_by=?,updated_at=MAX(updated_at,?) WHERE idempotency_key=?")
+   .bind(mappedStatus,text(t.owner),resolutionNote?"legacy_resolution":null,resolutionNote,resolvedAt,closedAt,Number(t.reopened_count||0),actorId,Number(t.updated_at||Date.now()),`legacy-cx:${text(t.id)}`).run();
+  await event(db,text((result.case as Row).id),"legacy_ticket_synced",actorId,{legacyTicketId:text(t.id),legacyStatus,mappedStatus,rootCause:text(t.root_cause)||null,resolutionEvidence:text(t.resolution_evidence)||null},`legacy-ticket-sync:${text(t.id)}:${legacyStatus}:${Number(t.updated_at||0)}`);
+ }
  const recon=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const x of recon.results){const severity=(text(x.severity)==="critical"?"critical":"high") as CaseSeverity;const result=await createUnifiedCase(db,{idempotencyKey:`recon:${text(x.id)}`,caseType:"reconciliation",severity,title:`Payment reconciliation: ${text(x.exception_type)}`,description:text(x.detail_json),bookingId:text(x.booking_id),paymentId:text(x.payment_id),sourceType:"payment_reconciliation_exception",sourceId:text(x.id),ownerTeam:"finance",actorId});if(!result.duplicatePrevented)created++;}
+ await syncCaseSopRequirements(db,{actorId});
  return{created};}
 
-export async function unifiedCaseDirectory(db:Db){await ensureUnifiedCaseTables(db);const[cases,events,comments,policies]=await Promise.all([db.prepare("SELECT * FROM unified_cases ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,created_at DESC LIMIT 500").all<Row>(),db.prepare("SELECT * FROM unified_case_events ORDER BY created_at DESC LIMIT 500").all<Row>(),db.prepare("SELECT * FROM unified_case_comments ORDER BY created_at DESC LIMIT 300").all<Row>(),db.prepare("SELECT * FROM case_policies ORDER BY updated_at DESC").all<Row>()]);const open=cases.results.filter(r=>!["resolved","closed"].includes(text(r.status))),now=Date.now();return{summary:{open:open.length,critical:open.filter(r=>text(r.severity)==="critical").length,unowned:open.filter(r=>!text(r.owner_email)).length,firstResponseOverdue:open.filter(r=>!r.first_responded_at&&r.first_response_due_at!=null&&Number(r.first_response_due_at)<now).length,resolutionOverdue:open.filter(r=>r.resolution_due_at!=null&&Number(r.resolution_due_at)<now).length},cases:cases.results.map(r=>({...r,links:{customerId:r.customer_id||null,bookingId:r.booking_id||null,paymentId:r.payment_id||null,leadId:r.lead_id||null,providerId:r.provider_id||null}})),events:events.results,comments:comments.results,policies:policies.results.map(policy),truth:{source:"unified_cases + native case adapters",productionReady:false,automaticExternalNotification:false}};}
+export async function unifiedCaseDirectory(db:Db){
+ await ensureUnifiedCaseTables(db);
+ await syncCaseSopRequirements(db,{actorId:"system:case-directory"});
+ const[cases,events,comments,policies]=await Promise.all([
+  db.prepare("SELECT * FROM unified_cases ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,created_at DESC LIMIT 500").all<Row>(),
+  db.prepare("SELECT * FROM unified_case_events ORDER BY created_at DESC LIMIT 1000").all<Row>(),
+  db.prepare("SELECT * FROM unified_case_comments ORDER BY created_at DESC LIMIT 500").all<Row>(),
+  db.prepare("SELECT * FROM case_policies ORDER BY updated_at DESC").all<Row>(),
+ ]);
+ const open=cases.results.filter(r=>!["resolved","closed"].includes(text(r.status))),now=Date.now();
+ const enriched=await Promise.all(cases.results.map(async r=>{
+  const caseId=text(r.id);
+  const timeline=[
+   ...events.results.filter(e=>text(e.case_id)===caseId).map(e=>({kind:"event",type:text(e.event_type),actor:text(e.actor_id),detail:e.detail_json,at:Number(e.created_at)})),
+   ...comments.results.filter(c=>text(c.case_id)===caseId).map(c=>({kind:"comment",type:"comment",actor:text(c.actor_id),detail:text(c.body),at:Number(c.created_at)})),
+  ].sort((a,b)=>a.at-b.at);
+  let sourceState:null|Record<string,unknown>=null;
+  if(text(r.source_type)==="booking_refund_case"){const refund=await db.prepare("SELECT id,status,amount,gateway_reference,approved_by,updated_at FROM booking_refund_cases WHERE id=?").bind(r.source_id).first<Row>().catch(()=>null);if(refund)sourceState={kind:"refund",...refund};}
+  return{...r,sopRequirements:await listCaseSopRequirements(db,caseId),timeline,sourceState,links:{customerId:r.customer_id||null,bookingId:r.booking_id||null,paymentId:r.payment_id||null,leadId:r.lead_id||null,providerId:r.provider_id||null}};
+ }));
+ return{summary:{open:open.length,critical:open.filter(r=>text(r.severity)==="critical").length,unowned:open.filter(r=>!text(r.owner_email)).length,firstResponseOverdue:open.filter(r=>!r.first_responded_at&&r.first_response_due_at!=null&&Number(r.first_response_due_at)<now).length,resolutionOverdue:open.filter(r=>r.resolution_due_at!=null&&Number(r.resolution_due_at)<now).length},cases:enriched,events:events.results,comments:comments.results,policies:policies.results.map(policy),truth:{source:"unified_cases + native case adapters",productionReady:false,automaticExternalNotification:false}};
+}

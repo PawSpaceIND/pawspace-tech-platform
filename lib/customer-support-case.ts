@@ -16,7 +16,7 @@ import { createUnifiedCase } from "./unified-case-center";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
-export async function submitCustomerComplaint(db: Db, input: { customerId: string; bookingId?: string | null; title: string; description: string; severity?: "low" | "medium" | "high" }) {
+export async function submitCustomerComplaint(db: Db, input: { customerId: string; bookingId?: string | null; title: string; description: string; severity?: "low" | "medium" | "high"; requestId?: string | null }) {
   const title = input.title.trim(), description = input.description.trim();
   if (!title) throw new Error("A short title for your issue is required");
   if (!description || description.length < 10) throw new Error("Please describe the issue in a bit more detail (at least 10 characters)");
@@ -27,7 +27,8 @@ export async function submitCustomerComplaint(db: Db, input: { customerId: strin
     if (String(booking.customer_id) !== input.customerId) throw new Error("You can only report an issue on your own booking");
     providerId = String(booking.provider_id);
   }
-  const idempotencyKey = `customer-complaint:${input.customerId}:${input.bookingId || "general"}:${title.slice(0, 40)}:${Date.now()}`;
+  const requestId = String(input.requestId || "").trim();
+  const idempotencyKey = requestId ? `customer-complaint:${input.customerId}:${requestId}` : `customer-complaint:${input.customerId}:${input.bookingId || "general"}:${title.slice(0, 40)}:${Date.now()}`;
   const result = await createUnifiedCase(db, {
     idempotencyKey,
     caseType: "customer_complaint",

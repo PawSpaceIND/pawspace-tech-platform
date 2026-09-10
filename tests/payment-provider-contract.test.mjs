@@ -50,7 +50,7 @@ const environment = (url, extra = {}) => ({
   PAWSPACE_PAYMENT_ENV: "sandbox",
   PAWSPACE_PAYMENT_CONTRACT_TEST: "true",
   PAWSPACE_RAZORPAY_API_BASE_URL: url,
-  PAWSPACE_RAZORPAY_TIMEOUT_MS: "100",
+  PAWSPACE_RAZORPAY_TIMEOUT_MS: "500",
   RAZORPAY_KEY_ID_SANDBOX: "rzp_test_contract_only",
   RAZORPAY_KEY_SECRET_SANDBOX: "contract-test-secret",
   ...extra,

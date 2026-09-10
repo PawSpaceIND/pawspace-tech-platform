@@ -164,7 +164,7 @@ test("seeded policies are marked as UAT defaults, and a weak approval reference 
 
 test("seeding requires settings.manage and the coverage gap is visible to staff", () => {
   const route = read("app/api/unified-cases/route.ts");
-  assert.match(route, /action==="seed_default_policies"/);
+  assert.match(route, /seed_default_policies:async/);
   assert.match(route, /authorize\(request,"settings\.manage"\)/, "seeding governance config needs more than case-handling permission");
   assert.match(route, /case\.policy\.seed_defaults/, "the seed is written to the security audit trail");
   assert.match(route, /slaCoverage:await caseSlaCoverageGaps\(db\)/, "the directory surfaces uncovered pairs rather than hiding them");

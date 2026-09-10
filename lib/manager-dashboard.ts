@@ -57,6 +57,24 @@ async function classifyEmployee(db:Db,employee:Row,today:string){
   return{vertical:"other" as const,basis:"unclassified" as const,detail:null};
 }
 
+
+async function tableExists(db:Db,name:string){const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();return Boolean(row);}
+
+async function managerOperationsSnapshot(db:Db,scope:Scope,asOf:number){
+  const result={openCases:0,criticalCases:0,unownedCases:0,firstResponseOverdue:0,resolutionOverdue:0,managerEscalationsDue:0,refundsPending:0,refundsFailed:0,workQueueOpen:0,sopPending:0,legacyTicketsOpen:0};
+  if(await tableExists(db,"unified_cases")){
+    let rows:Row[]=[];
+    if(scope.mode==="all") rows=(await db.prepare("SELECT status,severity,owner_email,first_responded_at,first_response_due_at,resolution_due_at,manager_escalation_due_at FROM unified_cases WHERE status NOT IN ('resolved','closed')").all<Row>()).results;
+    else if(scope.employeeEmails.length){rows=await chunkedIn(scope.employeeEmails,async(chunk,placeholders)=>(await db.prepare(`SELECT status,severity,owner_email,first_responded_at,first_response_due_at,resolution_due_at,manager_escalation_due_at FROM unified_cases WHERE status NOT IN ('resolved','closed') AND lower(COALESCE(owner_email,'')) IN (${placeholders})`).bind(...chunk).all<Row>()).results);}
+    result.openCases=rows.length;result.criticalCases=rows.filter(r=>text(r.severity)==="critical").length;result.unownedCases=scope.mode==="all"?rows.filter(r=>!text(r.owner_email)).length:0;result.firstResponseOverdue=rows.filter(r=>!r.first_responded_at&&r.first_response_due_at!=null&&Number(r.first_response_due_at)<=asOf).length;result.resolutionOverdue=rows.filter(r=>r.resolution_due_at!=null&&Number(r.resolution_due_at)<=asOf).length;result.managerEscalationsDue=rows.filter(r=>r.manager_escalation_due_at!=null&&Number(r.manager_escalation_due_at)<=asOf).length;
+  }
+  if(scope.mode==="all"&&await tableExists(db,"booking_refund_cases")){const row=await db.prepare("SELECT SUM(CASE WHEN status IN ('requested','approved','processing') THEN 1 ELSE 0 END) pending,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed FROM booking_refund_cases").first<Row>();result.refundsPending=Number(row?.pending||0);result.refundsFailed=Number(row?.failed||0);}
+  if(scope.mode==="all"&&await tableExists(db,"ops_work_queue_tasks")){const row=await db.prepare("SELECT COUNT(*) count FROM ops_work_queue_tasks WHERE status IN ('open','acknowledged','in_progress')").first<Row>();result.workQueueOpen=Number(row?.count||0);}
+  if(scope.mode==="all"&&await tableExists(db,"unified_case_sop_requirements")){const row=await db.prepare("SELECT COUNT(*) count FROM unified_case_sop_requirements WHERE status='pending'").first<Row>();result.sopPending=Number(row?.count||0);}
+  if(scope.mode==="all"&&await tableExists(db,"customer_experience_tickets")){const row=await db.prepare("SELECT COUNT(*) count FROM customer_experience_tickets WHERE status NOT IN ('resolved','closed')").first<Row>();result.legacyTicketsOpen=Number(row?.count||0);}
+  return result;
+}
+
 function monthStartOf(date:string){return `${date.slice(0,7)}-01`;}
 function daysAgo(date:string,n:number){const d=new Date(`${date}T00:00:00Z`);d.setUTCDate(d.getUTCDate()-n);return d.toISOString().slice(0,10);}
 
@@ -115,8 +133,9 @@ export async function buildManagerDashboard(db:Db,input:{actorEmail:string;permi
     else if(classification.vertical==="trainer")trainers.push(await trainerRow(db,email,name,today,input.actorEmail));
     else other.push({employeeEmail:email,name,title:text(employee.title)});
   }
+  const operations=await managerOperationsSnapshot(db,scope,asOf);
   return{
-    asOf,today,scope:scope.mode,employeeCount:employees.length,
+    asOf,today,scope:scope.mode,employeeCount:employees.length,operations,
     verticals:{sales,groomers,trainers,other},
     classificationBasis,
     note:"Sales and Groomer classification comes from a real governed registry (their configured base vertical / bracket). Trainer classification falls back to matching 'trainer' in their real job title or team code, since no dedicated trainer registry exists yet - flagged in classificationBasis as title_heuristic rather than presented with equal confidence.",
