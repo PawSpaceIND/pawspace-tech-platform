@@ -105,8 +105,17 @@ async function setup(t) {
   const raw = (event, overrides = {}) => JSON.stringify({ event, created_at: Math.floor(Date.now() / 1000), payload: { payment: { entity: {
     id: PAYMENT_ID, order_id: ORDER_ID, amount: amountPaise, currency: "INR", status: event === "payment.authorized" ? "authorized" : "captured",
     notes: { booking_id: bookingId }, ...overrides } } } });
-  const deliver = (event, eventId, body = raw(event), secret = HOOK_SECRET) => request("/api/razorpay-webhook", { method: "POST", body,
-    headers: { "x-razorpay-event-id": eventId, "x-razorpay-signature": sign(body, secret) } });
+  // Gateway retries resend the original bytes. Rebuilding created_at on each delivery made a
+  // clock tick look like an event-ID body swap, which the production receiver correctly rejects.
+  // Keep explicit body/signature overrides for adversarial tests; never relax the receiver gate.
+  const deliveries = new Map();
+  const deliver = (event, eventId, body, secret = HOOK_SECRET) => {
+    const prior = deliveries.get(eventId);
+    const payload = body ?? (prior?.event === event ? prior.body : raw(event));
+    if (!prior) deliveries.set(eventId, { event, body: payload });
+    return request("/api/razorpay-webhook", { method: "POST", body: payload,
+      headers: { "x-razorpay-event-id": eventId, "x-razorpay-signature": sign(payload, secret) } });
+  };
   const timeline = () => sqlite.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? AND event_type='payment_captured'").all(bookingId);
   const billing = () => request("/api/customer-billing", { cookie: customerCookie });
   const partner = () => request(`/api/partner-grooming-jobs?providerId=${provider.id}`, { cookie: providerCookie });
@@ -302,4 +311,32 @@ test("without a browser callback: paid grooming reaches provider completion, cus
   t.diagnostic(JSON.stringify({ bookingId: w.bookingId, customer: "completed with invoice", partner: "completed", operations: "completed",
     financeCollected: final.finance.summary.collected, invoices: 1, paymentTimelineEvents: 1, browserCallback: "not invoked",
     evidence: "real handlers/gates/SQLite; synthetic provider/GPS/media boundaries; not live transport" }));
+});
+
+
+test("same gateway event replay survives a clock tick without weakening body-swap protection", async t => {
+  const w = await setup(t);
+  await authorizeCapture(w);
+  const original = w.sqlite.prepare("SELECT raw_payload,payload_sha256 FROM gateway_webhook_events WHERE event_id='evt_cross_captured'").get();
+  const before = captureCounts(w);
+  const originalHistory = w.timeline();
+  const later = Date.now() + 2_000;
+  t.mock.method(Date, "now", () => later);
+  const replay = await w.deliver("payment.captured", "evt_cross_captured");
+  assert.equal(replay.status, 200, JSON.stringify(replay));
+  assert.equal(replay.body.duplicate, true);
+  assert.deepEqual(captureCounts(w), before);
+  assert.deepEqual(w.timeline(), originalHistory);
+  assert.deepEqual(w.sqlite.prepare("SELECT raw_payload,payload_sha256 FROM gateway_webhook_events WHERE event_id='evt_cross_captured'").get(), original);
+  const wrongSignature = await w.deliver("payment.captured", "evt_cross_captured", undefined, "wrong-fixture-signature");
+  assert.equal(wrongSignature.status, 401);
+  assert.deepEqual(captureCounts(w), before);
+  // An explicitly changed, correctly signed body with the same event id is still an attack.
+  const changed = JSON.parse(original.raw_payload);
+  changed.created_at += 2;
+  const swapped = await w.deliver("payment.captured", "evt_cross_captured", JSON.stringify(changed));
+  assert.equal(swapped.status, 409);
+  assert.match(swapped.body.error, /payload mismatch/i);
+  assert.deepEqual(captureCounts(w), before);
+  assert.deepEqual(w.timeline(), originalHistory);
 });
