@@ -360,10 +360,10 @@ test("provides an end-to-end governed marketing command center", async () => {
   assert.match(panel, /Spend with proof\. Promote with control\./);
   assert.match(panel, /Google Ads/);
   assert.match(panel, /Meta Ads/);
-  assert.match(panel, /Unit economics/);
-  assert.match(panel, /Incremental \/ holdout/);
-  assert.match(panel, /AI & automation/);
-  assert.match(panel, /Select the reporting range/);
+  assert.match(panel, /CANONICAL DATA/);
+  assert.match(panel, /Direct \+ Supermetrics ingestion/);
+  assert.match(panel, /ATTRIBUTION \+ WEB TRUTH/);
+  assert.match(panel, /Human-approved optimization rules/);
   assert.match(route, /marketing_campaigns/);
   assert.match(route, /human_approval/);
   assert.match(schema, /marketingPromotions/);
