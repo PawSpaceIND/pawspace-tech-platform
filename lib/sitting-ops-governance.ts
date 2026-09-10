@@ -2,13 +2,14 @@ import{ensureSittingFinanceTables}from"./sitting-finance-governance";
 import{ensureSittingProofTables}from"./sitting-proof-governance";
 import{createAssignmentOffer}from"./provider-capacity-governance";
 import{collectedForBooking}from"./collected-funds";
+import{ensureGroomingMapTables}from"./grooming-maps";
 
 type Row=Record<string,unknown>;
 export type SittingOpsAction="assign_replacement"|"close_recovery"|"add_note";
 export type SittingOpsInput={bookingId:string;action:SittingOpsAction;actorId:string;idempotencyKey:string;reason?:string;note?:string;providerId?:string};
 const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??"")) as T}catch{return fallback}};
 
-export async function ensureSittingOpsTables(db:D1Database){await ensureSittingFinanceTables(db);await ensureSittingProofTables(db);await db.batch([
+export async function ensureSittingOpsTables(db:D1Database){await ensureSittingFinanceTables(db);await ensureSittingProofTables(db);await ensureGroomingMapTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS sitting_ops_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS sitting_ops_notes (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,note TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_sitting_ops_notes_booking ON sitting_ops_notes(booking_id,created_at)"),
@@ -41,6 +42,7 @@ export async function mutateSittingOps(db:D1Database,input:SittingOpsInput){if(!
    db.prepare("UPDATE sitting_recovery_cases SET status='replacement_offered',replacement_provider_id=?,detail_json=?,updated_at=? WHERE id=? AND status!='resolved'").bind(providerId,JSON.stringify({...parse<Record<string,unknown>>(recovery.detail_json,{}),replacementReason:reason,replacementOfferedBy:input.actorId,bookingPreserved:true}),now,recovery.id),
    db.prepare("UPDATE canonical_bookings SET provider_id=?,status='reassignment_offered',updated_at=? WHERE id=?").bind(providerId,now,booking.id),
    db.prepare("UPDATE provider_work_orders SET provider_id=?,provider_name=?,provider_model=?,status='reassignment_offered',updated_at=? WHERE booking_id=?").bind(providerId,candidate.name,candidate.model,now,booking.id),
+   db.prepare("UPDATE booking_service_locations SET provider_id=?,updated_at=? WHERE booking_id=? AND status='active'").bind(providerId,now,booking.id),
    db.prepare("UPDATE scheduling_reservations SET provider_id=?,status='assigned' WHERE id=? AND status='cancelled'").bind(providerId,reservationId),
    db.prepare("UPDATE scheduling_assignment_decisions SET selected_provider_id=?,status='reassignment_offered',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(providerId,input.actorId,reason,now,groupId),
   ]);const eventId=crypto.randomUUID();await db.prepare("INSERT INTO sitting_care_events (id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(eventId,booking.id,"replacement_sitter_offered",input.actorId,JSON.stringify({recoveryId:recovery.id,failedProviderId:recovery.failed_provider_id,replacementProviderId:providerId,reason,offerExpiresAt:offer.expiresAt,bookingPreserved:true}),now).run();await notify(db,booking,eventId,"PawSpace Operations has offered your existing Sitting booking to an eligible replacement sitter. The booking ID and paid care window are unchanged while acceptance is pending.");return remember(db,input,{bookingId:booking.id,status:"replacement_offered",recoveryId:recovery.id,replacementProviderId:providerId,offer,bookingPreserved:true});

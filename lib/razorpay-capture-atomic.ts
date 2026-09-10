@@ -44,10 +44,40 @@ function captureKey(input: AtomicRazorpayCaptureInput) {
   return text(input.gatewayPaymentId) || text(input.gatewayOrderId) || input.eventId;
 }
 
+async function ensureCaptureTimeline(db: Db) {
+  await db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)").run();
+}
+
+// Build timeline facts ONLY from a processed, signature-verified canonical gateway event.
+// The stable payment/capture key deduplicates event aliases; legacy timeline rows also count.
+// No browser callback, raw webhook notes or partner-visible contact data is used.
+function captureTimelineStatement(db: Db, input: { environment: string; paymentId: string; gatewayPaymentId?: string | null; gatewayOrderId?: string | null; eventId: string }) {
+  const paymentRef = text(input.gatewayPaymentId), orderRef = text(input.gatewayOrderId);
+  const key = `PAYLC:razorpay:${input.environment}:${input.paymentId}:${paymentRef || orderRef || input.eventId}`;
+  return db.prepare(`INSERT INTO booking_lifecycle_events
+    (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at)
+    SELECT ?,e.booking_id,'payment_captured','payment',e.booking_id,'razorpay_webhook',
+      json_object('gateway','razorpay','environment',e.environment,'gatewayPaymentId',e.gateway_payment_id,
+        'gatewayOrderId',e.gateway_order_id,'eventId',e.event_id,'amount',e.amount_subunits/100.0,
+        'currency',e.currency,'paymentStatus','captured','atomicCapture',1),COALESCE(e.processed_at,e.received_at)
+    FROM payment_gateway_events e
+    WHERE e.provider='razorpay' AND e.environment=? AND e.payment_id=?
+      AND e.signature_verified=1 AND e.processing_status='processed' AND e.event_type IN ${CAPTURE_TYPES}
+      AND ((?<>'' AND e.gateway_payment_id=?) OR (?<>'' AND e.gateway_order_id=?) OR e.event_id=?)
+      AND NOT EXISTS (SELECT 1 FROM booking_lifecycle_events l
+        WHERE l.booking_id=e.booking_id AND l.event_type='payment_captured'
+          AND (l.id=? OR json_extract(CASE WHEN json_valid(l.detail_json) THEN l.detail_json ELSE '{}' END,'$.eventId')=e.event_id
+            OR (?<>'' AND json_extract(CASE WHEN json_valid(l.detail_json) THEN l.detail_json ELSE '{}' END,'$.gatewayPaymentId')=?)))
+    ORDER BY e.received_at,e.id LIMIT 1 ON CONFLICT(id) DO NOTHING`)
+    .bind(key, input.environment, input.paymentId, paymentRef, paymentRef, orderRef, orderRef, input.eventId, key, paymentRef, paymentRef);
+}
+
 export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayCaptureInput) {
   await ensureFinancialRuntimeTables(db);
   if (!input.inboxId || !input.eventId || !input.bookingId || !input.paymentId) throw new Error("Atomic capture identity is incomplete");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Captured Razorpay amount must be positive integer paise");
+
+  await ensureCaptureTimeline(db);
 
   const [intent, payment, current, staySchedule, taxiSchedule] = await Promise.all([
     input.intentId ? db.prepare("SELECT id,booking_id,payment_id,state,version,amount_paise,currency,gateway_order_id,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
@@ -86,7 +116,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
         VALUES (?,'razorpay',?,?,?, ?,?,?,?,NULL,?,?,1,?,'processed','Repeat notification for a capture already collected',?,?,?)
         ON CONFLICT(provider,event_id) DO NOTHING`)
         .bind(`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`, input.environment, input.eventId, "payment.captured", input.bookingId, input.paymentId, input.gatewayOrderId || null, input.gatewayPaymentId || null, input.amountPaise, input.currency, input.payloadHash, JSON.stringify({ ...(input.detail || {}), atomicCapture: true, duplicateCapture: true }), now, now),
-      db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId),
+    db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId),
     ]);
     const existingEffects = await db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>();
     return { duplicateCapture: true, effectsOutboxId: text(existingEffects?.id), effectsStatus: text(existingEffects?.status), capturedTotal: Number(current?.captured_amount || 0), collectedInFull: true };
@@ -184,7 +214,20 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
   const claim = await db.prepare("UPDATE financial_outbox SET status='PROCESSING',lease_owner=?,lease_expires_at=?,attempts=attempts+1,updated_at=? WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND status IN ('PENDING','RETRY') AND next_attempt_at<=?")
     .bind(input.workerId, now + leaseMs, now, input.outboxId, now).run();
   if (Number(claim.meta?.changes || 0) !== 1) {
-    const current = await db.prepare("SELECT status,last_error FROM financial_outbox WHERE id=?").bind(input.outboxId).first<Row>();
+    const current = await db.prepare("SELECT status,last_error,payload_json FROM financial_outbox WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT'").bind(input.outboxId).first<Row>();
+    if (text(current?.status) === "SUCCEEDED") {
+      try {
+        const prior = JSON.parse(text(current?.payload_json) || "{}") as Row;
+        const source = await db.prepare("SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND signature_verified=1 AND processing_status='processed'")
+          .bind(text(prior.eventId), text(prior.paymentId)).first<Row>();
+        if (!source) throw new Error("Verified capture timeline source is missing");
+        await ensureCaptureTimeline(db);
+        await captureTimelineStatement(db, { environment: text(source.environment), paymentId: text(prior.paymentId),
+          gatewayPaymentId: text(prior.gatewayPaymentId), gatewayOrderId: text(prior.gatewayOrderId), eventId: text(prior.eventId) }).run();
+      } catch (error) {
+        return { claimed: false as const, completed: false, status: "SUCCEEDED", reason: error instanceof Error ? error.message : "Capture timeline recovery pending" };
+      }
+    }
     return { claimed: false as const, completed: text(current?.status) === "SUCCEEDED", status: text(current?.status), reason: text(current?.last_error) || undefined };
   }
   const work = await db.prepare("SELECT * FROM financial_outbox WHERE id=? AND lease_owner=?").bind(input.outboxId, input.workerId).first<Row>();

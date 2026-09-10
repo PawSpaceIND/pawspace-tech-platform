@@ -212,6 +212,59 @@ test("Pet Sitting Gate 3 date changes need a fresh quote, a fresh group and a re
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Pet Sitting Gate 3 applies a governed date change with the same booking/payment identity and no reschedule fee", async () => {
+  const world = await financeWorld({ amount: 399, amountDueNow: 399 });
+  const requestedStart = new Date(Date.now() + 72 * 3_600_000).toISOString();
+  const requestedEnd = new Date(Date.now() + 76 * 3_600_000).toISOString();
+  const requested = await world.act("request_date_change", {
+    reason: "customer needs a later visit", requestedStart, requestedEnd,
+  });
+  assert.equal(requested.status, "commercial_quote_required");
+
+  const governance = await import("../lib/sitting-governance.ts");
+  const quote = await governance.createSittingQuote(world.db, {
+    packageCode: "sitting-visit-60", petCount: 1, scheduledStart: requestedStart, scheduledEnd: requestedEnd,
+    paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east",
+  });
+  assert.equal(quote.totalAmount, 399, "same governed visit must not invent a reschedule surcharge");
+
+  const replacementGroupId = `GRP-SIT-CHANGE-${Date.now()}`;
+  const now = Date.now();
+  await world.db.batch([
+    world.db.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,updated_at) VALUES (?,'best_fit',?,?,'assigned','scheduler.test',?)").bind(replacementGroupId, JSON.stringify([world.providerId]), world.providerId, now),
+    world.db.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,'pet_sitting','blr','blr-east',?,'[]',?,?,'confirmed',?)").bind(`RES-${replacementGroupId}`, replacementGroupId, world.providerId, world.customerId, requestedStart, requestedEnd, now),
+  ]);
+
+  const applied = await world.act("apply_date_change", {
+    actorId: CHECKER, quoteId: quote.quoteId, replacementGroupId, reason: "fresh quote and replacement schedule verified",
+  });
+  assert.equal(applied.status, "date_changed");
+  assert.equal(applied.bookingId, world.bookingId);
+  assert.equal(applied.amountDelta, 0, "founder policy: unchanged server price means zero reschedule fee");
+
+  const booking = await world.db.prepare("SELECT schedule_group_id,provider_id,scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  assert.equal(booking.schedule_group_id, replacementGroupId);
+  assert.equal(booking.provider_id, world.providerId);
+  assert.equal(booking.scheduled_start, requestedStart);
+  assert.equal(booking.scheduled_end, requestedEnd);
+  assert.equal(Number(booking.total_amount), 399);
+  const payment = await world.db.prepare("SELECT id,amount,amount_due_now,detail_json FROM booking_payments WHERE booking_id=?").bind(world.bookingId).first();
+  assert.equal(payment.id, `PAY-${world.bookingId}`);
+  assert.equal(Number(payment.amount), 399);
+  assert.equal(Number(payment.amount_due_now), 399);
+  const detail = JSON.parse(String(payment.detail_json||"{}"));
+  assert.equal(detail.amountDelta, 0);
+  assert.equal(detail.paymentAdjustmentReference, null);
+  assert.equal(detail.liveMoney, false);
+  const oldReservation = await world.db.prepare("SELECT status FROM scheduling_reservations WHERE group_id=?").bind(world.groupId).first();
+  assert.equal(oldReservation.status, "cancelled");
+  const newReservation = await world.db.prepare("SELECT status,scheduled_start,scheduled_end FROM scheduling_reservations WHERE group_id=?").bind(replacementGroupId).first();
+  assert.equal(newReservation.status, "confirmed");
+  assert.equal(newReservation.scheduled_start, requestedStart);
+  assert.equal(newReservation.scheduled_end, requestedEnd);
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 3 sitter settlement waits for checkout and projects canonical completion finance", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
 

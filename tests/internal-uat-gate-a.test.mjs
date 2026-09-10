@@ -52,11 +52,11 @@ test("the notifications FAB does not cover the booking call to action", () => {
   // Both were pinned at bottom:18px with the FAB at z-index 80 over the bar at 16, and
   // "Confirm booking" is the bar's last flex child — so the FAB landed on it below ~950px.
   assert.match(css, /body:has\(\.checkout-bar\) \.ps-order-fab/, "the FAB must move clear of the bar");
-  assert.match(
-    read("app/components/order-notification-center.tsx"),
-    /className="ps-order-fab"/,
-    "the FAB needs a stable hook for that rule",
-  );
+  const fab = read("app/components/order-notification-center.tsx");
+  assert.match(fab, /className="ps-order-fab"/, "the FAB needs a stable hook for that rule");
+  const rootStyle = fab.match(/className="ps-order-fab" style=\{\{([^}]*)\}\}/)?.[1] ?? "";
+  assert.doesNotMatch(rootStyle, /\bbottom\s*:/, "an inline bottom value would override the customer-nav safe-area rule");
+  assert.match(css, /nav\[aria-label="Customer navigation"\]\) \.ps-order-fab\s*\{\s*bottom:\s*calc\(104px \+ env\(safe-area-inset-bottom/, "the FAB must clear the customer bottom navigation as well as the checkout bar");
   // The no-:has() fallback must cover the real overlap range. Bar right edge is vw/2 + W/2 with
   // W = min(920, vw-30); the FAB occupies [vw-70, vw-18]; they collide while W > vw-140, i.e. every
   // viewport below 1060px. A 950px breakpoint left 950-1059 uncovered on older engines.

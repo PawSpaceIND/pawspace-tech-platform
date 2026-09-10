@@ -185,7 +185,10 @@ async function sittingWorld(tag) {
   // PAWSPACE_SCHEDULING_ENV declared: /api/uat-scheduling no longer fabricates provider roster unless
   // the runtime says it is a UAT runtime (PTJA W1-F27), and this world reserves through the real path
   // with no Ops-published availability.
-  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" });
+  const { sqlite, db } = world({
+    PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat",
+    PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on", PAWSPACE_MAPS_ENV: "sandbox",
+  });
   sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedDefaultZones } = await import("../lib/service-zones.ts");
@@ -205,6 +208,7 @@ async function sittingWorld(tag) {
   const scheduled = await call("../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {
     clientRequestId: groupId, customerId, petIds: [`PTJAPET${tag}`], serviceCode: "pet_sitting",
     cityId: "blr", zoneId: "blr-east", scheduledStart, scheduledEnd, occurrences: 1, careMode: "visit",
+    serviceAddress: "42, Indiranagar Double Road, Stage 2, Bengaluru", servicePincode: "560038",
     preferredProviderId: "sit_sana",
   }, cookie);
   const provider = scheduled.body.data?.provider;

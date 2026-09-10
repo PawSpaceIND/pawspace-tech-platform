@@ -20,3 +20,12 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('sit_sana','blr','Sana F.','9000000945',NULL,'e2e_fixture',1,1),
  ('sit_neha','blr','Neha P.','9000000946',NULL,'e2e_fixture',1,1),
  ('sit_asha','blr','Asha R.','9000000947',NULL,'e2e_fixture',1,1);
+
+
+-- Disposable OTP identities for the existing governed Boarding hosts. These rows bind only identity;
+-- Boarding eligibility, verification, capacity and stay-window authority remain in the real host tables.
+INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
+ ('host_maya_rohan','blr','Maya & Rohan','9000000953',NULL,'e2e_fixture',1,1),
+ ('host_sana','blr','Sana','9000000954',NULL,'e2e_fixture',1,1),
+ ('host_arjun_tara','blr','Arjun & Tara','9000000955',NULL,'e2e_fixture',1,1),
+ ('host_priya_dev','blr','Priya & Dev','9000000956',NULL,'e2e_fixture',1,1);

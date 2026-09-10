@@ -1,5 +1,5 @@
 import type{SittingAction,SittingCarePlan}from"./sitting-lifecycle";
-export type SittingLifecycleBooking=Record<string,unknown>&{id:string;status:string;provider_id:string;customer_id:string;events?:Array<Record<string,unknown>>;carePlan?:Record<string,unknown>|null};
+export type SittingLifecycleBooking=Record<string,unknown>&{id:string;status:string;provider_id:string;customer_id:string;events?:Array<Record<string,unknown>>;carePlan?:Record<string,unknown>|null;serviceLocation?:{addressText:string;latitude:number;longitude:number;source:string}|null};
 
 export async function loadSittingLifecycle(input:{bookingId?:string;providerId?:string;customerId?:string;scope?:"customer"}){const query=new URLSearchParams();if(input.bookingId)query.set("bookingId",input.bookingId);if(input.providerId)query.set("providerId",input.providerId);if(input.customerId)query.set("customerId",input.customerId);if(input.scope)query.set("scope",input.scope);const response=await fetch(`/api/sitting-lifecycle?${query}`,{cache:"no-store"});const body=await response.json() as {data?:SittingLifecycleBooking[];error?:string};if(!response.ok||!body.data)throw new Error(body.error??"Unable to load Sitting lifecycle");return body.data;}
 export async function loadCustomerSittingLifecycle(bookingId:string){return loadSittingLifecycle({bookingId,scope:"customer"});}
