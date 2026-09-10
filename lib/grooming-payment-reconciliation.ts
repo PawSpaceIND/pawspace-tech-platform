@@ -4,6 +4,7 @@ import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
 import{activateSubscriptionOnCapture,failSubscriptionOnPaymentFailure}from"./subscription-payment-activation";
 import{tryQualifyLinkedReferral}from"./referral-booking-governance";
 import{createSandboxPaymentLink}from"./razorpay-client";
+import{verifyCurrentPaymentStageCaptureAmount}from"./payment-capture-amount-guard";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -257,7 +258,8 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
       await finish("processed","Repeat notification for a capture already collected");
       return{duplicate:false,status:"processed",ignored:true,reason:"capture_already_collected"};
     }
-    const variance=Math.round((amount-expected)*100)/100;if(Math.abs(variance)>0.009){await upsert("captured","amount_mismatch",amount,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,received:amount,variance}});await finish("exception","Capture amount mismatch");return{duplicate:false,status:"exception",reason:"capture_amount_mismatch"};}
+    const amountGuard=await verifyCurrentPaymentStageCaptureAmount(db,{bookingId,storedExpected:expected,receivedAmount:amount}),variance=Math.round((amount-amountGuard.expectedForCapture)*100)/100;
+    if(!amountGuard.ok){await upsert("captured","amount_mismatch",amount,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,variance,...amountGuard}});await finish("exception",amountGuard.reason||"Capture amount mismatch");return{duplicate:false,status:"exception",reason:amountGuard.reason||"capture_amount_mismatch"};}
     // A 50/50 stay pays in TWO captures against ONE payment row and ONE reconciliation record. The
     // variance check above is per ORDER and must stay that way, but what the record REPORTS has to be
     // the booking: captured_amount was being overwritten with the latest capture, so a fully paid

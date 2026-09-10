@@ -21,6 +21,41 @@ function missingTableOnly(table:string){
   throw error;
  };
 }
+function conversationMessagePreview(row:Row|null){
+ if(!row)return null;
+ const{payload_json,...metadata}=row;
+ let text="";
+ try{const payload=JSON.parse(String(payload_json||"{}"));if(payload&&typeof payload.text==="string")text=Array.from(payload.text.trim()).slice(0,240).join("");}catch{}
+ return{...metadata,text};
+}
+
+const communicationPendingStates=new Set(["queued","scheduled","retry_pending","dispatching","pending","retry"]);
+const communicationFailedStates=new Set(["dead_letter","dlq"]);
+async function bookingCommunicationState(db:D1Database,thread:Row){
+ const bookingId=String(thread.booking_id||"").trim();if(!bookingId)return null;
+ try{
+  const row=await db.prepare(`SELECT b.id booking_id,b.status booking_status,p.status payment_status,m.id message_id,m.template_key,m.status message_status,o.status outbox_status,o.attempt_count,o.max_attempts,o.next_attempt_at,o.last_error,dl.id dead_letter_id,dl.reason dead_letter_reason
+   FROM canonical_bookings b
+   JOIN booking_payments p ON p.booking_id=b.id
+   JOIN communication_messages m ON m.booking_id=b.id AND m.thread_id=? AND m.direction='outbound'
+   LEFT JOIN communication_outbox o ON o.message_id=m.id
+   LEFT JOIN communication_dead_letters dl ON dl.message_id=m.id AND dl.resolved_at IS NULL
+   WHERE b.id=? AND b.status IN ('confirmed','assigned','in_progress','completed') AND p.status='captured'
+     AND m.purpose IN ('transactional','service_recovery')
+     AND (lower(COALESCE(m.template_key,'')) LIKE '%payment_captured%' OR lower(COALESCE(m.template_key,'')) LIKE '%receipt%' OR lower(COALESCE(m.template_key,'')) LIKE '%paid%' OR lower(COALESCE(m.template_key,'')) LIKE '%confirm%')
+     AND (dl.id IS NOT NULL OR lower(COALESCE(o.status,'')) IN ('queued','scheduled','retry_pending','dispatching','pending','retry','dead_letter','dlq') OR lower(COALESCE(m.status,'')) IN ('queued','scheduled','retry_pending','pending','retry','dead_letter','dlq'))
+   ORDER BY CASE WHEN dl.id IS NOT NULL OR lower(COALESCE(o.status,'')) IN ('dead_letter','dlq') OR lower(COALESCE(m.status,'')) IN ('dead_letter','dlq') THEN 2 ELSE 1 END DESC,COALESCE(o.updated_at,m.updated_at) DESC LIMIT 1`).bind(thread.id,bookingId).first<Row>();
+  if(!row)return null;
+  const outboxStatus=String(row.outbox_status||"").toLowerCase(),messageStatus=String(row.message_status||"").toLowerCase();
+  const failed=Boolean(row.dead_letter_id)||communicationFailedStates.has(outboxStatus)||communicationFailedStates.has(messageStatus);
+  if(!failed&&!communicationPendingStates.has(outboxStatus)&&!communicationPendingStates.has(messageStatus))return null;
+  return{bookingId:String(row.booking_id),bookingStatus:String(row.booking_status),paymentStatus:String(row.payment_status),messageId:String(row.message_id),templateKey:String(row.template_key||""),state:failed?"failed":"pending",label:failed?"Communication Failed":"Confirmed - Communication Pending",outboxStatus:outboxStatus||messageStatus,attemptCount:Number(row.attempt_count||0),maxAttempts:Number(row.max_attempts||0),nextAttemptAt:row.next_attempt_at==null?null:Number(row.next_attempt_at),lastError:String(row.last_error||row.dead_letter_reason||"")};
+ }catch(error){
+  const message=error instanceof Error?error.message:String(error);
+  if(/no such table: (canonical_bookings|booking_payments)/i.test(message))return null;
+  throw error;
+ }
+}
 export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
@@ -29,7 +64,7 @@ export async function listConversationThreads(db:D1Database,input:{customerId?:s
   // screen showed nothing at all rather than the threads it does have.
   if(!/no such table: canonical_customers/i.test(error instanceof Error?error.message:String(error)))throw error;
   result=await db.prepare(query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t")).bind(...binds).all<Row>();
- }const threads=[];for(const row of result.results){const [lastMessage,openTicket]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>(),row.ticket_id?db.prepare("SELECT id,priority,status,subject,sla_due_at FROM customer_experience_tickets WHERE id=?").bind(row.ticket_id).first<Row>().catch(missingTableOnly("customer_experience_tickets")):Promise.resolve(null)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:lastMessage||null,ticket:openTicket||null});}return threads;}
+ }const threads=[];for(const row of result.results){const [lastMessage,openTicket,communicationState]=await Promise.all([db.prepare("SELECT id,direction,channel,purpose,status,created_at,payload_json FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(row.id).first<Row>(),row.ticket_id?db.prepare("SELECT id,priority,status,subject,sla_due_at FROM customer_experience_tickets WHERE id=?").bind(row.ticket_id).first<Row>().catch(missingTableOnly("customer_experience_tickets")):Promise.resolve(null),bookingCommunicationState(db,row)]);threads.push({...row,customer_name:String(row.customer_name||"Customer"),primary_phone:row.primary_phone?String(row.primary_phone):null,lastMessage:conversationMessagePreview(lastMessage),ticket:openTicket||null,communicationState});}return threads;}
 
 export async function getConversation(db:D1Database,threadId:string,scope:ConversationScope){await ensureConversationGovernance(db);const thread=await db.prepare("SELECT * FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread)return null;const [participants,messages,assignments]=await Promise.all([db.prepare("SELECT participant_type,participant_id,display_ref,role,created_at FROM communication_participants WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,created_by,created_at,updated_at FROM communication_messages WHERE thread_id=? ORDER BY created_at").bind(threadId).all<Row>(),db.prepare("SELECT id,assigned_to,assigned_by,status,reason,created_at,ended_at FROM conversation_assignments WHERE thread_id=? ORDER BY created_at DESC").bind(threadId).all<Row>()]);
  const visibleParticipants=participants.results.filter(item=>scope==="staff"||String(item.participant_type)!=="provider");

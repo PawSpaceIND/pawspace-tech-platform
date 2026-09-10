@@ -1,15 +1,16 @@
 "use client";
 
-import{useEffect,useState,type ReactNode}from"react";
+import { useEffect, type ReactNode } from "react";
 
-export default function CustomerExperienceLiveTemplate({children}:{children:ReactNode}){
- const[revision,setRevision]=useState(0);
- useEffect(()=>{
-  let active=true;let fallback:ReturnType<typeof setInterval>|undefined;const refresh=()=>{if(active)setRevision(value=>value+1);};
-  const startFallback=()=>{if(fallback)return;fallback=setInterval(refresh,5000);};
-  if(typeof EventSource==="undefined"){startFallback();return()=>{active=false;if(fallback)clearInterval(fallback);};}
-  const source=new EventSource("/api/conversations/stream");source.addEventListener("conversation",refresh);source.onerror=()=>startFallback();
-  return()=>{active=false;source.close();if(fallback)clearInterval(fallback);};
- },[]);
- return <div key={revision}>{children}</div>;
+export default function CustomerExperienceLiveTemplate({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    // The page owns draft and retry state. Refresh its data without remounting it.
+    // Its periodic polling continues when EventSource is absent or disconnected.
+    if (typeof EventSource === "undefined") return;
+    const source = new EventSource("/api/conversations/stream");
+    const refresh = () => window.dispatchEvent(new Event("pawspace:conversation-refresh"));
+    source.addEventListener("conversation", refresh);
+    return () => { source.removeEventListener("conversation", refresh); source.close(); };
+  }, []);
+  return <div>{children}</div>;
 }
