@@ -37,9 +37,9 @@ test("Exotel dialer selects direct bidirectional streaming when a governed wss e
 });
 
 test("one-shot carrier UAT remains consent, allowlist, idempotency and time gated", () => {
-  assert.match(scheduler, /2026-09-10T15:30:00\.000Z/);
+  assert.match(scheduler, /2026-09-11T04:30:00\.000Z/);
   assert.match(scheduler, /recordVoiceConsent/);
   assert.match(scheduler, /unique\.length !== 1/);
-  assert.match(scheduler, /voice-carrier-uat:2026-09-10:controlled-retry-6/);
+  assert.match(scheduler, /voice-carrier-uat:2026-09-11:controlled-retry-7/);
   assert.match(scheduler, /requestControlledCarrierUatCall/);
 });
