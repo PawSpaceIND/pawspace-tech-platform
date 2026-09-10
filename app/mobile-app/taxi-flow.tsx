@@ -1,248 +1,57 @@
 "use client";
-import { useEffect, useState } from "react";
+import {useEffect,useMemo,useState} from "react";
 import styles from "./taxi-flow.module.css";
-import { loadTaxiRouteClasses, createTaxiQuote, type TaxiRouteClass, type TaxiQuote } from "../../lib/taxi-commercial-client";
-import { createCanonicalTaxiBooking, reserveTaxiSchedule, type AssignedDriver, type TaxiBookingResult } from "../../lib/taxi-booking-client";
+import {createTaxiRideQuote,type TaxiRideQuote,type TaxiRideFareOption} from "../../lib/taxi-commercial-client";
+import {createCanonicalTaxiRideBooking,reserveTaxiSchedule,type AssignedDriver,type TaxiRideBookingResult} from "../../lib/taxi-booking-client";
+import {openMobileRazorpayCheckout} from "../../lib/mobile/razorpay";
 import PetManager from "./pet-manager";
-import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
-import type { LoggedInCustomer } from "./customer-login";
-import { resolveServiceCoverage } from "../../lib/service-zone-client";
+import {loadCustomerPets,type CustomerPet} from "../../lib/customer-account-client";
+import {resolveServiceCoverage} from "../../lib/service-zone-client";
+import type {LoggedInCustomer} from "./customer-login";
+import type {TaxiTripType,TaxiRidePurpose,TaxiVehicleClass} from "../../lib/taxi-business-rules";
 
-// Same prop contract as the other embedded flows: the shell passes the logged-in customer; pets
-// follow the UAT roster pattern. Pet Taxi carries dogs AND cats — one pet per trip (Gate 1 rule).
-const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
-const petDetail = (pet: CustomerPet) =>
-  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
-  "Profiles, health notes and service history included";
+const money=(n:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(n);
+const WAITING=Array.from({length:24},(_,i)=>i*30);
+const COUNT_0_6=Array.from({length:7},(_,i)=>i);
+const COUNT_1_6=Array.from({length:6},(_,i)=>i+1);
+const TIMES=Array.from({length:27},(_,i)=>{const mins=6*60+i*30;const h=Math.floor(mins/60),m=mins%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;});
+const localDate=(days=1)=>{const d=new Date();d.setDate(d.getDate()+days);return d.toISOString().slice(0,10)};
+const toIso=(date:string,time:string)=>new Date(`${date}T${time}:00+05:30`).toISOString();
+const petIcon=(species:string)=>species==="cat"?"🐈":species==="dog"?"🐕":"🐾";
+const carImage:Record<TaxiVehicleClass,string>={citroen_ec3:"/assets/banners/taxi-car-window.jpg",xuv:"/assets/banners/taxi-vintage-truck.jpg"};
 
-// The scheduler's pet_taxi roster window is 06:00-22:00 IST; the longest UAT route class runs
-// 90 minutes, so start chips stop at 20:00 to keep every trip's end inside the roster window.
-const PICKUP_HOURS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] as const;
-const IST_OFFSET = 330 * 60_000;
+type PayOrder={connected:boolean;reason?:string;orderId?:string;amountPaise?:number;currency?:string;keyId?:string;stage?:string};
+async function createPaymentOrder(customerId:string,bookingId:string){const response=await fetch("/api/payment-order",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({customerId,bookingId})});const body=await response.json() as{data?:PayOrder;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to open Taxi payment");return body.data;}
+async function maskedCall(bookingId:string){const response=await fetch("/api/communications/voice/bridge",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bookingId,idempotencyKey:`taxi-customer-call:${bookingId}:${Date.now()}`})});const body=await response.json() as{status?:string;error?:string};if(!response.ok)throw new Error(body.error||"Unable to start masked driver call");return body;}
 
-const money = (n: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-const hourLabel = (hour: number) => `${((hour + 11) % 12) + 1}:00 ${hour < 12 ? "AM" : "PM"}`;
-function istDate(daysAhead: number, hour: number) { const shifted = new Date(Date.now() + IST_OFFSET); return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate() + daysAhead, hour, 0) - IST_OFFSET); }
-const dayLabel = (value: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short" }).format(value);
-const slotLabel = (value: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(value);
-const timeLabel = (iso: string) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
-
-export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
-  const [stage, setStage] = useState(1);
-  const [routes, setRoutes] = useState<TaxiRouteClass[]>([]);
-  const [routeCode, setRouteCode] = useState("taxi-blr-east-short");
-  const [originLabel, setOriginLabel] = useState("");
-  const [destinationLabel, setDestinationLabel] = useState("");
-  const [dayOffset, setDayOffset] = useState(1);
-  const [hour, setHour] = useState(9);
-  const [selRaw, setSelectedPet] = useState("");
-  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
-  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
-  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
-  const pets = petsState ?? [];
-  // Selection is always reconciled against the accepted pet list.
-  const selectedPet = pets.some((p) => p.id === selRaw) ? selRaw : "";
-  const [petsLoading, setPetsLoading] = useState(true);
-  const [petsError, setPetsError] = useState("");
-  const [showPetManager, setShowPetManager] = useState(false);
-  const [quote, setQuote] = useState<TaxiQuote | null>(null);
-  const [driver, setDriver] = useState<AssignedDriver | null>(null);
-  const [booking, setBooking] = useState<TaxiBookingResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [pincode, setPincode] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    void loadTaxiRouteClasses({ scheduledStart: istDate(1, 9).toISOString() }).then(result => {
-      if (!active) return;
-      setRoutes(result.routes);
-      setRouteCode(current => result.routes.some(item => item.route_code === current) ? current : String(result.routes[0]?.route_code || ""));
-    }).catch(problem => { if (active) setError(problem instanceof Error ? problem.message : "Unable to load Pet Taxi routes"); });
-    return () => { active = false; };
-  }, []);
-
-  const selectedRoute = routes.find(item => item.route_code === routeCode) || null;
-  const scheduledStart = istDate(dayOffset, hour).toISOString();
-  const pet = pets.find(p => p.id === selectedPet) || pets[0];
-  useEffect(() => {
-    let active = true;
-    queueMicrotask(() => {
-      if (active) setPetsLoading(true);
-    });
-    loadCustomerPets(customer.customerId)
-      .then((loaded) => {
-        if (!active) return;
-        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
-        setPets((prev) => (prev === null ? loaded : prev));
-        setSelectedPet((prev) => (prev ? prev : loaded[0]?.id ?? ""));
-        setPetsError("");
-      })
-      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
-      .finally(() => { if (active) setPetsLoading(false); });
-    return () => { active = false; };
-  }, [customer.customerId]);
-  const onPetsChanged = (updated: CustomerPet[]) => {
-    setPets(updated);
-    setSelectedPet((prev) => (updated.some((p) => p.id === prev) ? prev : updated[0]?.id ?? ""));
-  };
-  // Mirror of the server rule: pickup and drop-off labels must be real (≥3 chars) and distinct.
-  const origin = originLabel.trim(), destination = destinationLabel.trim();
-  const locationsValid = origin.length >= 3 && destination.length >= 3 && origin.toLowerCase() !== destination.toLowerCase();
-
-  // Server-quoted price for the review screen — the server also owns the trip end time (route duration).
-  useEffect(() => {
-    if (stage !== 4 || !selectedRoute || !locationsValid) return;
-    let active = true;
-    void createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart })
-      .then(value => { if (active) { setQuote(value); setError(""); } })
-      .catch(problem => { if (active) { setQuote(null); setError(problem instanceof Error ? problem.message : "Unable to refresh the Pet Taxi quote"); } });
-    return () => { active = false; };
-  }, [stage, routeCode, origin, destination, scheduledStart, selectedRoute, locationsValid]);
-
-  async function confirm() {
-    setBusy(true); setError("");
-    try {
-      // Fresh server quote at confirmation time (the display quote may have aged past its expiry);
-      // the reservation must match the quote's window exactly, so both use the quote's own end time.
-      if (!pet) { setError("Add a pet to book a Pet Taxi trip."); setBusy(false); return; }
-      const fresh = await createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart });
-      const requestId = `taxi-${customer.customerId}-${fresh.routeCode}-${fresh.scheduledStart}`;
-      // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
-      const coverage = await resolveServiceCoverage(pincode);
-      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], cityId: coverage.cityId, zoneId: coverage.zoneId, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
-      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other" }], cityId: coverage.cityId, zoneId: coverage.zoneId, routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "sandbox_deferred", detail: "Payment remains pending until a verified payment event" } });
-      setQuote(fresh); setDriver(reservation.driver); setBooking(created);
-    } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Pet Taxi booking"); }
-    finally { setBusy(false); }
-  }
-
-  if (booking && driver) return (
-    <div className={styles.wrap}>
-      <article className={styles.success}>
-        <i>✓</i>
-        <small>CANONICAL BOOKING · {booking.bookingId}</small>
-        <h3>{pet?.name ?? "Your pet"}&apos;s taxi is booked.</h3>
-        <p style={{ margin: "4px 0 0", fontSize: 14 }}>{quote ? `${quote.routeName} · ${money(quote.totalAmount)} · ${money(0)} due today (sandbox deferred)` : "Sandbox deferred billing."}</p>
-      </article>
-      <span className={styles.label}>Your driver</span>
-      <article className={styles.driver}>
-        <i>{driver.name.split(" ").map(part => part[0]).join("")}</i>
-        <div>
-          <b>{driver.name}{driver.rating !== null ? <span className={styles.rating}> · {driver.rating.toFixed(1)} ★</span> : null}</b>
-          <small>{driver.rating !== null ? "Rating from the canonical capacity roster" : "Rating pending first reviews"} · {driver.model.replace("_", "-")} driver · auto-assigned with conflict checks</small>
-          <small>Vehicle: {booking.trip.id && booking.trip.status === "scheduled" ? "assigned before pickup — details shared in the app" : "assignment pending"}</small>
-        </div>
-      </article>
-      <span className={styles.label}>Trip window</span>
-      <div className={styles.trip}>
-        <span className={styles.tripLeg}><i>A</i><span><b>{booking.trip.originLabel}</b><small style={{ display: "block" }}>Pickup · {slotLabel(new Date(booking.trip.scheduledStart))}</small></span></span>
-        <span className={styles.tripLeg}><i>B</i><span><b>{booking.trip.destinationLabel}</b><small style={{ display: "block" }}>Drop-off by · {timeLabel(booking.trip.scheduledEnd)}</small></span></span>
-        <small>{booking.trip.syntheticDistanceKm} km UAT route class · ~{booking.trip.estimatedDurationMinutes} min · status {booking.trip.status}</small>
-      </div>
-      <p style={{ fontSize: 12, color: "#b8c6c0", marginTop: 12 }}>Sandbox / UAT — no live money, route distances are UAT route classes (not production maps).</p>
-    </div>
-  );
-
-  return (
-    <div className={styles.wrap}>
-      <header className={styles.journeyIntro}><span>PAWSPACE PET TAXI</span><div><h2>Every ride, calmly covered.</h2><small>Set the route, choose your pet and confirm a safe trip.</small></div><b>{stage}<i>/4</i></b></header>
-      <div className={styles.steps}>{[1, 2, 3, 4].map(n => <span key={n} className={stage >= n ? styles.active : ""}>{n}</span>)}</div>
-
-      {stage === 1 && (
-        <section>
-          <div className={styles.head}><h3>Choose a route class</h3><small>Route · 1 of 4</small></div>
-          {!routes.length && !error && <p><small>Loading the canonical Pet Taxi routes…</small></p>}
-          {routes.map(item => (
-            <button key={item.route_code} className={`${styles.card} ${routeCode === item.route_code ? styles.selected : ""}`} onClick={() => setRouteCode(String(item.route_code))}>
-              <span className={styles.cardTop}><b>{item.name}</b><span className={styles.price}>{money(Number(item.amount))}</span></span>
-              <span className={styles.meta}>~{Number(item.synthetic_distance_km)} km · ~{Number(item.estimated_duration_minutes)} min · {Number(item.max_pets)} pet per trip · pickup &amp; drop verified in-app</span>
-            </button>
-          ))}
-          {error && <p className={styles.alert} role="alert">{error}</p>}
-          <button className={styles.primary} disabled={!selectedRoute} onClick={() => setStage(2)}>Set pickup &amp; drop</button>
-        </section>
-      )}
-
-      {stage === 2 && (
-        <section>
-          <div className={styles.head}><h3>Where are we going?</h3><small>Trip · 2 of 4</small></div>
-          <span className={styles.label}>Pickup location</span>
-          <input className={styles.input} value={originLabel} onChange={event => setOriginLabel(event.target.value)} placeholder="e.g. Indiranagar, 100 Feet Road" maxLength={120} />
-          <span className={styles.label}>Drop-off location</span>
-          <input className={styles.input} value={destinationLabel} onChange={event => setDestinationLabel(event.target.value)} placeholder="e.g. Whitefield vet clinic" maxLength={120} />
-          {!locationsValid && (origin.length > 0 || destination.length > 0) && <p className={styles.note}>Pickup and drop-off need at least 3 characters each and must be different places.</p>}
-          <span className={styles.label}>Pickup date</span>
-          <div className={styles.chipRow}>
-            {[1, 2, 3, 4, 5, 6, 7].map(offset => (
-              <button key={offset} className={`${styles.chip} ${dayOffset === offset ? styles.selected : ""}`} onClick={() => setDayOffset(offset)}>{dayLabel(istDate(offset, hour))}</button>
-            ))}
-          </div>
-          <span className={styles.label}>Pickup time</span>
-          <div className={styles.chipRow}>
-            {PICKUP_HOURS.map(item => (
-              <button key={item} className={`${styles.chip} ${hour === item ? styles.selected : ""}`} onClick={() => setHour(item)}>{hourLabel(item)}</button>
-            ))}
-          </div>
-          <p className={styles.note}>Pet Taxi runs between 6:00 AM and 10:00 PM IST — the driver roster hours the scheduler enforces. Drop-off time comes from the route&apos;s canonical duration.</p>
-          <button className={styles.primary} disabled={!locationsValid} onClick={() => setStage(3)}>Choose your pet</button>
-          <button className={styles.back} onClick={() => setStage(1)}>← Route</button>
-        </section>
-      )}
-
-      {stage === 3 && (
-        <section>
-          <div className={styles.head}><h3>Who&apos;s riding?</h3><small>Your pet · 3 of 4</small></div>
-          <div className={styles.petGrid}>
-            {petsLoading && <p className={styles.note}>Loading your pets…</p>}
-            {petsError && <p className={styles.note} role="alert">{petsError}</p>}
-            {!petsLoading && !petsError && pets.length === 0 && <p className={styles.note}>No pets on your profile yet — add one below to book.</p>}
-            {pets.map(item => (
-              <button key={item.id} className={selectedPet === item.id ? styles.selected : ""} onClick={() => setSelectedPet(item.id)}>
-                <i>{petIcon(item.species)}</i>
-                <span>
-                  <b>{item.name}</b>
-                  <small>{petDetail(item)}</small>
-                </span>
-              </button>
-            ))}
-            <button onClick={() => setShowPetManager(v => !v)}>
-              <i>{showPetManager ? "−" : "＋"}</i>
-              <span><b>{showPetManager ? "Hide pet details" : "Add or edit pets"}</b></span>
-            </button>
-          </div>
-          {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
-          <p className={styles.note}>Dogs and cats welcome — one pet per trip so the driver&apos;s full attention stays on your companion. 🐾</p>
-          <button className={styles.primary} disabled={!pet} onClick={() => { setQuote(null); setStage(4); }}>Review &amp; confirm</button>
-          <button className={styles.back} onClick={() => setStage(2)}>← Trip</button>
-        </section>
-      )}
-
-      {stage === 4 && (
-        <section>
-          <div className={styles.head}><h3>Review your trip</h3><small>Confirm · 4 of 4</small></div>
-          <div className={styles.review}>
-            <div><span>Pet</span><b>{pet ? `${pet.name} (${pet.species})` : "—"}</b></div>
-            <div><span>Route class</span><b>{quote ? quote.routeName : selectedRoute?.name}</b></div>
-            <div><span>Pickup</span><b>{origin}</b></div>
-            <div><span>Drop-off</span><b>{destination}</b></div>
-            <div><span>Pickup time</span><b>{slotLabel(istDate(dayOffset, hour))}</b></div>
-            <div><span>Drop-off by</span><b>{quote ? timeLabel(quote.scheduledEnd) : "Server quote…"}</b></div>
-            <div><span>Distance / duration</span><b>{quote ? `~${quote.syntheticDistanceKm} km · ~${quote.estimatedDurationMinutes} min` : "Server quote…"}</b></div>
-            <div><span>Fare (sandbox deferred)</span><b>{quote ? money(quote.totalAmount) : "Server quote…"}</b></div>
-            <div><span>Due today</span><b>{quote ? money(quote.amountDueNow) : money(0)}</b></div>
-          </div>
-          <span className={styles.label}>Pickup service PIN code</span>
-          <input className={styles.input} value={pincode} inputMode="numeric" maxLength={6} onChange={event => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter six-digit PIN code" />
-          <p className={styles.note}>Coverage is checked from the pickup PIN code. Route distance and time are UAT route classes, not live maps or GPS.</p>
-          <p className={styles.note}>Sandbox-deferred billing: nothing is charged now. The fare is the server-quoted route-class price. Your driver is auto-assigned from the canonical roster with full conflict checks; vehicle details are shared before pickup.</p>
-          {error && <p className={styles.alert} role="alert">{error}</p>}
-          <button className={styles.primary} disabled={busy || !quote || pincode.length !== 6} onClick={() => void confirm()}>
-            {busy ? "Reserving your trip…" : !quote ? "Refreshing server quote…" : `Confirm trip · ${money(quote.totalAmount)} sandbox deferred`}
-          </button>
-          <button className={styles.back} onClick={() => { setQuote(null); setStage(3); }}>← Your pet</button>
-        </section>
-      )}
-    </div>
-  );
+export default function TaxiFlow({customer,sourceBookingId}:{customer:LoggedInCustomer;sourceBookingId?:string}){
+ const[stage,setStage]=useState(1),[pets,setPets]=useState<CustomerPet[]>([]),[selectedPets,setSelectedPets]=useState<string[]>([]),[petsLoading,setPetsLoading]=useState(true),[showPetManager,setShowPetManager]=useState(false);
+ const[passengers,setPassengers]=useState(1),[luggage,setLuggage]=useState(0),[tripType,setTripType]=useState<TaxiTripType>("one_way"),[purpose,setPurpose]=useState<TaxiRidePurpose>("regular"),[waiting,setWaiting]=useState(0),[hyperactive,setHyperactive]=useState(false);
+ const[pickup,setPickup]=useState(""),[drop,setDrop]=useState(""),[returnDrop,setReturnDrop]=useState(""),[date,setDate]=useState(()=>localDate(1)),[time,setTime]=useState("09:00"),[pincode,setPincode]=useState("");
+ const[quote,setQuote]=useState<TaxiRideQuote|null>(null),[vehicle,setVehicle]=useState<TaxiVehicleClass>("citroen_ec3"),[driver,setDriver]=useState<AssignedDriver|null>(null),[booking,setBooking]=useState<TaxiRideBookingResult|null>(null),[busy,setBusy]=useState(false),[paying,setPaying]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
+ useEffect(()=>{let active=true;loadCustomerPets(customer.customerId).then(rows=>{if(!active)return;setPets(rows);setSelectedPets(rows[0]?[rows[0].id]:[])}).catch(e=>active&&setError(e instanceof Error?e.message:"Unable to load pets")).finally(()=>active&&setPetsLoading(false));return()=>{active=false}},[customer.customerId]);
+ const chosenPets=useMemo(()=>pets.filter(p=>selectedPets.includes(p.id)),[pets,selectedPets]);
+ const scheduledStart=toIso(date,time),addressesValid=pickup.trim().length>=5&&drop.trim().length>=5&&(tripType==="one_way"||returnDrop.trim().length>=5),countsValid=chosenPets.length>=1&&chosenPets.length<=6;
+ const option=quote?.fareOptions[vehicle] as TaxiRideFareOption|undefined;
+ function togglePet(id:string){setSelectedPets(current=>current.includes(id)?current.filter(x=>x!==id):current.length<6?[...current,id]:current)}
+ async function calculate(){setBusy(true);setError("");try{const q=await createTaxiRideQuote({originLabel:pickup.trim(),destinationLabel:drop.trim(),returnDropLabel:tripType==="round_trip"?returnDrop.trim():undefined,passengerCount:passengers,petCount:chosenPets.length,luggageCount:luggage,scheduledStart,tripType,ridePurpose:purpose,waitingMinutes:tripType==="round_trip"?waiting:0});setQuote(q);setVehicle(q.recommendedVehicleClass);setStage(4)}catch(e){setError(e instanceof Error?e.message:"Unable to calculate Taxi fare")}finally{setBusy(false)}}
+ async function reserve(){if(!quote||!option?.eligible)return;setBusy(true);setError("");try{const coverage=await resolveServiceCoverage(pincode);const requestId=`taxi-v2-${customer.customerId}-${quote.quoteId}-${vehicle}`;const reservation=await reserveTaxiSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:chosenPets.map(p=>p.id),cityId:coverage.cityId,zoneId:coverage.zoneId,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd});const created=await createCanonicalTaxiRideBooking({idempotencyKey:requestId,groupId:reservation.groupId,taxiQuoteId:quote.quoteId,vehicleClass:vehicle,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:chosenPets.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other"})),cityId:coverage.cityId,zoneId:coverage.zoneId,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:reservation.driver,totalAmount:Number(option.quotedTotal),amountDueNow:Number(option.bookingFee),hyperactivePet:hyperactive,channel:sourceBookingId?"boarding_cross_sell":"customer_app",sourceBookingId:sourceBookingId||undefined});setDriver(reservation.driver);setBooking(created);setStage(5);setMessage("Vehicle and driver held for 3 hours. Pay the 50% booking fee to confirm the ride.")}catch(e){setError(e instanceof Error?e.message:"Unable to reserve Pet Taxi")}finally{setBusy(false)}}
+ async function payBookingFee(){if(!booking)return;setPaying(true);setError("");setMessage("");try{const order=await createPaymentOrder(customer.customerId,booking.bookingId);if(!order.connected||!order.orderId||!order.amountPaise||!order.keyId){setError(order.reason||"Razorpay sandbox is not connected");return}const result=await openMobileRazorpayCheckout({keyId:order.keyId,orderId:order.orderId,amountPaise:order.amountPaise,currency:order.currency||"INR",name:"PawSpace Pet Taxi",description:"50% Taxi booking fee",prefill:{name:customer.customerName,contact:customer.phone},notes:{booking_id:booking.bookingId,service:"pet_taxi"}});if(result.success)setMessage("Payment submitted to Razorpay. The Taxi becomes confirmed only after the signed Razorpay webhook verifies this capture.");else setError(result.description)}catch(e){setError(e instanceof Error?e.message:"Unable to complete Taxi payment")}finally{setPaying(false)}}
+ async function callDriver(){if(!booking)return;setBusy(true);setError("");try{await maskedCall(booking.bookingId);setMessage("Masked call bridge requested. Your number and the driver's number remain hidden.")}catch(e){setError(e instanceof Error?e.message:"Unable to call driver securely")}finally{setBusy(false)}}
+ return <div className={styles.wrap}>
+  <header className={styles.journeyIntro}><span>{sourceBookingId?"BOARDING → PET TAXI":"PAWSPACE PET TAXI"}</span><div><h2>Safe rides for pets and people.</h2><small>Verified PawSpace + partner fleet · trained drivers · GPS · masked calling</small></div><b>{Math.min(stage,5)}<i>/5</i></b></header>
+  <div className={styles.steps}>{[1,2,3,4,5].map(n=><span key={n} className={stage>=n?styles.active:""}>{n}</span>)}</div>
+  {stage===1&&<section><div className={styles.head}><h3>Who is travelling?</h3><small>Passengers & pets</small></div>
+   <div className={styles.formGrid}><label>Passengers<select className={styles.input} value={passengers} onChange={e=>setPassengers(Number(e.target.value))}>{COUNT_0_6.map(n=><option key={n} value={n}>{n===0?"0 · Driver handles pet":n>=4?`${n} · 4+ group`:n}</option>)}</select></label><label>Luggage<select className={styles.input} value={luggage} onChange={e=>setLuggage(Number(e.target.value))}>{COUNT_0_6.map(n=><option key={n} value={n}>{n>=4?`${n} · 4+ items`:n}</option>)}</select></label></div>
+   {passengers===0&&<p className={styles.note}>No passenger: the trained driver handles your pet. A flat {money(300)} handler charge is added.</p>}
+   <span className={styles.label}>Select 1–6 pets</span><div className={styles.petGrid}>{petsLoading?<p>Loading pets…</p>:pets.map(p=><button type="button" key={p.id} className={selectedPets.includes(p.id)?styles.selected:""} onClick={()=>togglePet(p.id)}><i>{petIcon(p.species)}</i><span><b>{p.name}</b><small>{p.species}</small></span></button>)}<button type="button" onClick={()=>setShowPetManager(v=>!v)}><i>＋</i><span><b>Add or edit pets</b></span></button></div>{showPetManager&&<PetManager customer={customer} onPetsChanged={rows=>{setPets(rows);setSelectedPets(current=>current.filter(id=>rows.some(p=>p.id===id)))}}/>}
+   <label className={styles.check}><input type="checkbox" checked={hyperactive} onChange={e=>setHyperactive(e.target.checked)}/><span><b>Hyperactive / reactive pet</b><small>PawSpace will use an appropriate leash/restraint for safer handling.</small></span></label>
+   <button className={styles.primary} disabled={!countsValid} onClick={()=>setStage(2)}>Continue to trip details</button></section>}
+  {stage===2&&<section><div className={styles.head}><h3>Trip details</h3><small>Route & schedule</small></div><div className={styles.segment}><button className={tripType==="one_way"?styles.selected:""} onClick={()=>{setTripType("one_way");setWaiting(0)}}>One-way</button><button className={tripType==="round_trip"?styles.selected:""} onClick={()=>setTripType("round_trip")}>Round trip</button></div><div className={styles.segment}><button className={purpose==="regular"?styles.selected:""} onClick={()=>setPurpose("regular")}>City / regular</button><button className={purpose==="airport"?styles.selected:""} onClick={()=>setPurpose("airport")}>Airport flat fare</button></div>
+   <span className={styles.label}>Pickup address</span><input className={styles.input} value={pickup} onChange={e=>setPickup(e.target.value)} placeholder="Full pickup address"/><span className={styles.label}>Drop address / Point 1</span><input className={styles.input} value={drop} onChange={e=>setDrop(e.target.value)} placeholder="Destination address"/>{tripType==="round_trip"&&<><span className={styles.label}>Return drop / Point 2</span><input className={styles.input} value={returnDrop} onChange={e=>setReturnDrop(e.target.value)} placeholder="Final return point for distance calculation"/><span className={styles.label}>Planned waiting</span><select className={styles.input} value={waiting} onChange={e=>setWaiting(Number(e.target.value))}>{WAITING.map(m=><option key={m} value={m}>{m===0?"No planned wait":m<60?`${m} minutes`:`${m/60} hour${m===60?"":"s"}`}</option>)}</select></>}
+   <div className={styles.formGrid}><label>Pickup date<input className={styles.input} type="date" min={localDate(0)} value={date} onChange={e=>setDate(e.target.value)}/></label><label>Pickup time<select className={styles.input} value={time} onChange={e=>setTime(e.target.value)}>{TIMES.map(t=><option key={t} value={t}>{t}</option>)}</select></label></div><p className={styles.note}>Each booking blocks one driver and one physical car for 3 hours. Extra waiting or route extension after pickup is added to the final balance.</p><button className={styles.primary} disabled={!addressesValid} onClick={()=>setStage(3)}>Review ride requirements</button><button className={styles.back} onClick={()=>setStage(1)}>← Passengers & pets</button></section>}
+  {stage===3&&<section><div className={styles.head}><h3>Ready for a live route quote?</h3><small>Server calculation</small></div><div className={styles.review}><div><span>Passengers</span><b>{passengers}</b></div><div><span>Pets</span><b>{chosenPets.map(p=>p.name).join(", ")}</b></div><div><span>Luggage</span><b>{luggage}</b></div><div><span>Trip</span><b>{tripType.replace("_"," ")}</b></div><div><span>Purpose</span><b>{purpose}</b></div><div><span>Pickup</span><b>{pickup}</b></div><div><span>Drop</span><b>{drop}</b></div>{tripType==="round_trip"&&<div><span>Return point</span><b>{returnDrop}</b></div>}<div><span>Pickup</span><b>{date} · {time}</b></div></div><p className={styles.note}>Google Routes UAT calculates distance. Airport rides use flat vehicle fares; handler and planned waiting charges still apply where relevant.</p>{error&&<p className={styles.alert}>{error}</p>}<button className={styles.primary} disabled={busy} onClick={()=>void calculate()}>{busy?"Calculating route…":"Calculate Citroën & XUV fares"}</button><button className={styles.back} onClick={()=>setStage(2)}>← Trip details</button></section>}
+  {stage===4&&quote&&<section><div className={styles.head}><h3>Choose your car</h3><small>{quote.distanceKm} km · ~{quote.estimatedDurationMinutes} min</small></div><div className={styles.vehicleGrid}>{(["citroen_ec3","xuv"] as TaxiVehicleClass[]).map(code=>{const f=quote.fareOptions[code] as TaxiRideFareOption;return <button key={code} disabled={!f.eligible} className={`${styles.vehicleCard} ${vehicle===code?styles.selected:""} ${!f.eligible?styles.disabled:""}`} onClick={()=>setVehicle(code)}><img src={carImage[code]} alt={f.vehicleLabel}/><div><span>{code==="citroen_ec3"?"MINI SUV":"SUV"}</span><h4>{f.vehicleLabel}</h4><strong>{money(f.quotedTotal)}</strong><small>{money(f.bookingFee)} booking fee · 50%</small><ul>{f.features.slice(0,4).map(x=><li key={x}>✓ {x}</li>)}</ul>{!f.eligible&&<em>{f.ineligibleReason}</em>}{quote.recommendedVehicleClass===code&&<b>Recommended for this ride</b>}</div></button>})}</div><div className={styles.review}><div><span>Distance fare</span><b>{money(Number(option?.distanceFare||0))}</b></div><div><span>Planned waiting</span><b>{money(Number(option?.waitingCharge||0))}</b></div><div><span>Handler</span><b>{money(Number(option?.handlerCharge||0))}</b></div><div><span>Total</span><b>{money(Number(option?.quotedTotal||0))}</b></div><div><span>Pay now to confirm</span><b>{money(Number(option?.bookingFee||0))}</b></div><div><span>Final base balance</span><b>{money(Number(option?.finalBalanceBeforeAdjustments||0))}</b></div></div><span className={styles.label}>Pickup PIN code</span><input className={styles.input} value={pincode} inputMode="numeric" maxLength={6} onChange={e=>setPincode(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="6-digit service PIN"/><p className={styles.note}>Parking is added only if incurred. Cleaning is a flat ₹500 only for pee/poop/vomit or similar incidents and requires driver photo proof. Additional waiting/distance is server-priced into the final balance.</p>{error&&<p className={styles.alert}>{error}</p>}<button className={styles.primary} disabled={busy||!option?.eligible||pincode.length!==6} onClick={()=>void reserve()}>{busy?"Reserving driver & car…":`Reserve · pay ${money(Number(option?.bookingFee||0))} next`}</button><button className={styles.back} onClick={()=>{setQuote(null);setStage(3)}}>← Requirements</button></section>}
+  {stage===5&&booking&&<section><article className={styles.success}><i>✓</i><small>{booking.status==="payment_pending"?"RIDE HELD · PAYMENT REQUIRED":"TAXI CONFIRMED"} · {booking.bookingId}</small><h3>{booking.reservedVehicle.label}</h3><p>{driver?.name||"Assigned driver"}{driver?.rating?` · ${driver.rating.toFixed(1)} ★`:""} · 3-hour reserved window</p></article><div className={styles.review}><div><span>Booking fee</span><b>{money(booking.amountDueNow)}</b></div><div><span>Base final balance</span><b>{money(booking.balanceAmount)}</b></div><div><span>Status</span><b>{booking.status.replace("_"," ")}</b></div><div><span>Car</span><b>{booking.reservedVehicle.label}</b></div></div><div className={styles.safetyGrid}><span>✓ AC</span><span>✓ Trained driver</span><span>✓ GPS tracking</span><span>✓ Masked calling</span><span>✓ Pet restraint</span><span>✓ Incident proof</span></div>{message&&<p className={styles.note}>{message}</p>}{error&&<p className={styles.alert}>{error}</p>}<button className={styles.primary} disabled={paying} onClick={()=>void payBookingFee()}>{paying?"Opening secure payment…":`Pay 50% booking fee · ${money(booking.amountDueNow)}`}</button><button className={styles.secondary} disabled={busy} onClick={()=>void callDriver()}>Call driver securely · masked number</button><p className={styles.note}>The app never self-confirms payment. Only the signed Razorpay capture webhook can change this Taxi from payment pending to confirmed.</p></section>}
+ </div>
 }

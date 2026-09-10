@@ -53,9 +53,10 @@ test("Pet Taxi Gate 1 extends the shared scheduler and governed provider model",
   await capacity.seedProviderCapacityDefaults(db);
   const drivers = await capacity.loadGovernedProviders(db, "blr", "blr-east", "pet_taxi");
   const ids = drivers.map((provider) => String(provider.id ?? provider.provider_id)).sort();
-  for (const expected of ["taxi_imran", "taxi_meera", "taxi_rahul"]) {
-    assert.ok(ids.includes(expected), `${expected} must be a governed pet_taxi provider, found: ${ids.join(", ")}`);
+  for (const expected of ["taxi_meera", "taxi_rahul"]) {
+    assert.ok(ids.includes(expected), `${expected} must be a governed core pet_taxi provider, found: ${ids.join(", ")}`);
   }
+  assert.equal(ids.includes("taxi_imran"),false,"the fixed core Taxi roster is intentionally two drivers; marketplace providers are onboarded dynamically");
   for (const driver of drivers) {
     const services = typeof driver.services === "string" ? JSON.parse(driver.services) : driver.services;
     assert.ok(Array.isArray(services) && services.includes("pet_taxi"), `${driver.id} was returned for pet_taxi without serving it`);
@@ -75,7 +76,7 @@ test("Pet Taxi commercial truth is server-owned UAT route-class truth", async ()
   const listedBody = await listed.json();
   assert.equal(listed.status, 200);
   assert.equal(listedBody.data.source, "canonical_taxi_governance");
-  assert.equal(listedBody.data.routeSource, "uat_route_class");
+  assert.equal(listedBody.data.routeSource, "google_routes_uat_for_new_rides");
   assert.equal(listedBody.data.productionMapsVerified, false, "Gate 1 must never claim a verified production Maps route");
   assert.equal(listedBody.data.liveMoney, false, "nor live money");
   assert.equal(listed.headers.get("cache-control"), "no-store", "a priced quote surface must not be cached");
