@@ -95,3 +95,52 @@ test("a clean clone can still install the backend, because its manifest and lock
   assert.ok(tracked.includes("package.json") && tracked.includes("package-lock.json"),
     "the root manifest and lockfile must stay tracked");
 });
+
+
+test("branch hygiene keeps deletion manual-only and exact-tip leased", async () => {
+  const fs = await import("node:fs");
+  const workflow = fs.readFileSync(new URL("../.github/workflows/branch-hygiene.yml", import.meta.url), "utf8");
+  const script = fs.readFileSync(new URL("../scripts/maintenance/prune-merged-remote-branches.sh", import.meta.url), "utf8");
+  const automatic = workflow.slice(workflow.indexOf("  delete-after-merge:"), workflow.indexOf("  explicit-delete:"));
+  const manual = workflow.slice(workflow.indexOf("  explicit-delete:"));
+  assert.match(automatic, /--dry-run/);
+  assert.doesNotMatch(automatic, /--execute/);
+  assert.match(manual, /DELETE_MERGED_BRANCHES/);
+  assert.match(manual, /--execute/);
+  assert.match(script, /\[ "\$1" = "\$BASE" \] && return 0/);
+  assert.match(script, /--force-with-lease="refs\/heads\/\$branch:\$tip"/);
+  assert.match(script, /skip newly active PR head/);
+});
+
+test("an exact-tip deletion lease refuses a branch that moved after discovery", async (t) => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pawspace-branch-lease-"));
+  const bare = path.join(root, "remote.git"), work = path.join(root, "work");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "--bare", bare], { stdio: "ignore" });
+  execFileSync("git", ["clone", bare, work], { stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "hygiene@test.invalid"], { cwd: work });
+  execFileSync("git", ["config", "user.name", "Hygiene Test"], { cwd: work });
+  fs.writeFileSync(path.join(work, "base.txt"), "base\n");
+  execFileSync("git", ["checkout", "-b", "main"], { cwd: work, stdio: "ignore" });
+  execFileSync("git", ["add", "base.txt"], { cwd: work });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: work, stdio: "ignore" });
+  const discovered = execFileSync("git", ["rev-parse", "HEAD"], { cwd: work, encoding: "utf8" }).trim();
+  execFileSync("git", ["branch", "feature"], { cwd: work });
+  execFileSync("git", ["push", "origin", "main", "feature"], { cwd: work, stdio: "ignore" });
+  fs.writeFileSync(path.join(work, "main.txt"), "merged base advanced\n");
+  execFileSync("git", ["add", "main.txt"], { cwd: work });
+  execFileSync("git", ["commit", "-m", "advance main"], { cwd: work, stdio: "ignore" });
+  execFileSync("git", ["push", "origin", "main"], { cwd: work, stdio: "ignore" });
+  execFileSync("git", ["checkout", "feature"], { cwd: work, stdio: "ignore" });
+  fs.writeFileSync(path.join(work, "new-work.txt"), "new unmerged work\n");
+  execFileSync("git", ["add", "new-work.txt"], { cwd: work });
+  execFileSync("git", ["commit", "-m", "new feature work"], { cwd: work, stdio: "ignore" });
+  const moved = execFileSync("git", ["rev-parse", "HEAD"], { cwd: work, encoding: "utf8" }).trim();
+  execFileSync("git", ["push", "--force", "origin", "feature"], { cwd: work, stdio: "ignore" });
+  assert.throws(() => execFileSync("git", ["push", `--force-with-lease=refs/heads/feature:${discovered}`, "origin", ":refs/heads/feature"], { cwd: work, stdio: "pipe" }));
+  const remote = execFileSync("git", ["ls-remote", "--heads", "origin", "refs/heads/feature"], { cwd: work, encoding: "utf8" });
+  assert.match(remote, new RegExp(`^${moved}\\s+refs/heads/feature`));
+});

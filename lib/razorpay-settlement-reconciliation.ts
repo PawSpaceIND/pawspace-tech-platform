@@ -98,7 +98,8 @@ export async function fetchRazorpaySettlementReconDate(env: Env, dateKey: string
       response = await fetch(`${providerBase(env, environment)}/v1/settlements/recon/combined?${query.toString()}`, {
         method: "GET",
         headers: { authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`, accept: "application/json" },
-        redirect: "error",
+        // Cloudflare Workers rejects `redirect: "error"`; manual preserves non-following semantics.
+        redirect: "manual",
       });
       const raw = await boundedBody(response);
       try {
