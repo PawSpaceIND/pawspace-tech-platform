@@ -151,6 +151,27 @@ projects=(chromium mobile-chromium)
 
 for journey in "${journeys[@]}"; do
   for project in "${projects[@]}"; do
+    if [ "$journey" = "e2e/journeys/04-multi-actor.spec.ts" ]; then
+      # This journey contains two full customer -> provider -> admin -> finance transactions. A single
+      # long-lived local workerd can lose its inspector/proxy pipe after the first heavy transaction,
+      # aborting the second before its first page load. Certify each mode exactly once, but with a fresh
+      # built-worker process; keep the same persisted D1 so this remains one correlated integration run.
+      for assignment_mode in auto admin_choice; do
+        echo "[e2e] running ${journey} (${project}, ${assignment_mode}) with a fresh built-worker server"
+        start_server
+        if ! npx playwright test --config playwright.e2e.config.ts --project="$project" \
+          --output="test-results/$(basename "$journey" .spec.ts)/$project/$assignment_mode" \
+          --grep="correlated journey.*${assignment_mode}" "$journey"; then
+          echo "[e2e] journey failed: ${journey} (${project}, ${assignment_mode})" >&2
+          log_tail
+          stop_server || true
+          exit 1
+        fi
+        stop_server
+      done
+      continue
+    fi
+
     echo "[e2e] running ${journey} (${project}) with a fresh built-worker server"
     start_server
     if ! npx playwright test --config playwright.e2e.config.ts --project="$project" --output="test-results/$(basename "$journey" .spec.ts)/$project" "$journey"; then
