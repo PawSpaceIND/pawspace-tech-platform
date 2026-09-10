@@ -117,7 +117,18 @@ function hasRazorpayFrame(page: Page) {
 }
 
 async function closeCheckout(page: Page) {
-  const frame = await visibleRazorpayFrame(page);
+  let frame = await visibleRazorpayFrame(page);
+  // Desktop Checkout v2 can open a contact-details sheet above the underlying Close Checkout control.
+  // Complete only that non-payment prerequisite so the real dismissal control becomes actionable.
+  const contact = frame.getByRole("textbox", { name: /Mobile number/i }).first();
+  if (await contact.isVisible().catch(() => false)) {
+    await contact.fill(PHONE);
+    const proceed = frame.getByRole("button", { name: /^Continue$/i }).first();
+    await expect(proceed).toBeVisible({ timeout: 10_000 });
+    await proceed.click();
+    await page.waitForTimeout(800);
+    frame = page.frames().find(item => item !== page.mainFrame() && /razorpay/i.test(item.url())) || frame;
+  }
   const candidates = [
     frame.locator('[data-testid="checkout-close"]').first(),
     frame.getByRole("button", { name: /^Go back$/i }).first(),
