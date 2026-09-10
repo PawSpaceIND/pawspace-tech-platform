@@ -16,7 +16,7 @@
 import{requestLeave,recordAttendance}from"./attendance-leave";
 import{salaryAdvanceDirectory}from"./salary-advance-governance";
 import{employeePerformanceCenter}from"./employee-performance-center";
-import{dailyIncentiveAccrualSummary,salesIncentivePeriodTruth}from"./daily-incentive-accrual";
+import{dailyIncentiveAccrualSummary,istMonthStart,salesIncentivePeriodTruth}from"./daily-incentive-accrual";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -83,7 +83,7 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
  const employee=await resolveEmployeeForActor(db,input.email);
  if(!employee)return{linked:false,email:text(input.email),productionReady:false};
  const employeeId=text(employee.id);
- const employeeEmail=text(employee.user_email||employee.work_email||input.email).toLowerCase(),monthStart=new Date().toISOString().slice(0,7)+"-01";
+ const employeeEmail=text(employee.user_email||employee.work_email||input.email).toLowerCase(),monthStart=istMonthStart();
  const[compensation,payslips,incentives,dailyIncentive,salesIncentiveTruth,advances,leave,performance,attendance]=await Promise.all([
   ownCompensation(db,employeeId),
   ownPayslips(db,employeeId),

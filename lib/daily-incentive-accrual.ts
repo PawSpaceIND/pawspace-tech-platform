@@ -20,6 +20,7 @@ const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 /** IST calendar date (YYYY-MM-DD) for a timestamp. */
 function istDate(ms:number){return new Date(ms+19800000).toISOString().slice(0,10);}
+export function istMonthStart(ms=Date.now()){return istDate(ms).slice(0,7)+"-01";}
 
 export async function ensureDailyIncentiveAccrualTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS daily_incentive_accruals (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,accrual_date TEXT NOT NULL,base_vertical TEXT NOT NULL,achieved_value REAL NOT NULL,base_incentive REAL NOT NULL,blitz INTEGER NOT NULL DEFAULT 0,incentive REAL NOT NULL,status TEXT NOT NULL DEFAULT 'accrued',source TEXT NOT NULL DEFAULT 'auto_daily_sweep',created_at INTEGER NOT NULL,UNIQUE(employee_id,accrual_date))"),
@@ -86,11 +87,13 @@ export async function buildSalesIncentivePeriodResult(db:Db,input:{employeeId:st
  return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE employee_id=? AND month_start=?").bind(input.employeeId,input.monthStart).first<Row>(),immutable:false};
 }
 
-export async function approveSalesIncentivePeriodResult(db:Db,input:{employeeId:string;monthStart:string;actorId:string}){
+export async function approveSalesIncentivePeriodResult(db:Db,input:{employeeId:string;monthStart:string;actorId:string;asOf?:number}){
  await ensureSalesIncentivePeriodTables(db);const row=await db.prepare("SELECT * FROM sales_incentive_period_results WHERE employee_id=? AND month_start=?").bind(input.employeeId,input.monthStart).first<Row>();
  if(!row)throw new Error("Generate the sales incentive period result before approval");if(text(row.status)==="payroll_included")return{result:row,duplicatePrevented:true};if(text(row.status)==="approved")return{result:row,duplicatePrevented:true};
- if(text(input.actorId).toLowerCase().startsWith("system:"))throw new Error("Sales incentive approval requires a human actor");
- const now=Date.now(),claim=await db.prepare("UPDATE sales_incentive_period_results SET status='approved',approved_by=?,approved_at=? WHERE id=? AND status='draft'").bind(input.actorId,now,row.id).run();
+ const actor=text(input.actorId).toLowerCase(),generator=text(row.generated_by).toLowerCase();if(actor.startsWith("system:"))throw new Error("Sales incentive approval requires a human actor");
+ if(generator&&!generator.startsWith("system:")&&generator===actor)throw new Error("Sales incentive maker cannot approve their own generated result");
+ const now=input.asOf??Date.now();if(input.monthStart>=istMonthStart(now))throw new Error("Sales incentive approval is allowed only after the month is complete");
+ const claim=await db.prepare("UPDATE sales_incentive_period_results SET status='approved',approved_by=?,approved_at=? WHERE id=? AND status='draft'").bind(input.actorId,now,row.id).run();
  if(!num(claim.meta?.changes))return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:true};
  return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:false};
 }
