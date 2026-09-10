@@ -31,15 +31,15 @@ test("carrier speech path keeps Whisper and avoids piping MeloTTS MP3 into Exote
 
 test("Exotel dialer selects direct bidirectional streaming when a governed wss endpoint is configured", () => {
   assert.match(provider, /PAWSPACE_VOICE_STREAM_URL/);
-  assert.match(provider, /streamurl: streamUrl/);
-  assert.match(provider, /streamtype: "bidirectional"/);
-  assert.match(provider, /customfield: intent\.callRef/);
+  assert.match(provider, /StreamUrl: streamUrl/);
+  assert.match(provider, /StreamType: "bidirectional"/);
+  assert.match(provider, /CustomField: intent\.callRef/);
 });
 
 test("one-shot carrier UAT remains consent, allowlist, idempotency and time gated", () => {
   assert.match(scheduler, /2026-09-06T02:30:00\.000Z/);
   assert.match(scheduler, /recordVoiceConsent/);
   assert.match(scheduler, /unique\.length !== 1/);
-  assert.match(scheduler, /voice-carrier-uat:2026-09-06:controlled-retry-3/);
+  assert.match(scheduler, /voice-carrier-uat:2026-09-10:controlled-retry-4/);
   assert.match(scheduler, /requestControlledCarrierUatCall/);
 });
