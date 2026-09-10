@@ -43,10 +43,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Prune verified merged inactive branches
+      - name: Audit merged inactive branches after merge
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/maintenance/prune-merged-remote-branches.sh --execute
+        run: bash scripts/maintenance/prune-merged-remote-branches.sh --dry-run
 
   explicit-delete:
     if: github.event_name == 'workflow_dispatch' && inputs.execute == 'DELETE_MERGED_BRANCHES'

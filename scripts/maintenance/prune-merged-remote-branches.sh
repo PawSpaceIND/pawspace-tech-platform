@@ -11,6 +11,7 @@ if [ "$MODE" != "--dry-run" ] && [ "$MODE" != "--execute" ]; then
 fi
 
 is_protected_branch() {
+  [ "$1" = "$BASE" ] && return 0
   case "$1" in
     main|master|develop|development|staging|production|release|release/*|hotfix|hotfix/*|uat|uat/*)
       return 0
@@ -53,13 +54,15 @@ while IFS= read -r ref; do
   # Only delete refs whose current remote tip is already an ancestor of current remote main.
   # This preserves divergent/unmerged work even when branch names look stale.
   if git merge-base --is-ancestor "$ref" "$BASE_REF"; then
-    candidates+=("$branch")
+    tip="$(git rev-parse "$ref")"
+    candidates+=("$branch:$tip")
   fi
 done < <(git for-each-ref --format='%(refname)' "refs/remotes/$REMOTE/")
 
 printf 'verified safely deletable merged remote branches: %d\n' "${#candidates[@]}"
-for branch in "${candidates[@]}"; do
-  printf '  %s\n' "$branch"
+for entry in "${candidates[@]}"; do
+  branch="${entry%%:*}"; tip="${entry#*:}"
+  printf '  %s @ %s\n' "$branch" "$tip"
 done
 
 if [ "$MODE" = "--dry-run" ]; then
@@ -68,11 +71,16 @@ if [ "$MODE" = "--dry-run" ]; then
   exit 0
 fi
 
-# Delete in bounded batches to avoid command-line size limits and make partial failures obvious.
-for ((i=0; i<${#candidates[@]}; i+=25)); do
-  batch=("${candidates[@]:i:25}")
-  [ "${#batch[@]}" -gt 0 ] || continue
-  git push "$REMOTE" --delete "${batch[@]}"
+# Recheck open PR heads immediately before the explicit manual deletion pass.
+gh pr list --state open --limit 1000 --json headRefName --jq '.[].headRefName' | sort -u > "$active_pr_file"
+
+# Delete one ref at a time with an exact-tip lease. If a branch moves after candidate discovery,
+# the remote rejects the stale deletion instead of removing newly pushed/unmerged work.
+for entry in "${candidates[@]}"; do
+  branch="${entry%%:*}"; tip="${entry#*:}"
+  is_protected_branch "$branch" && { echo "skip protected branch at delete time: $branch"; continue; }
+  grep -Fxq "$branch" "$active_pr_file" && { echo "skip newly active PR head: $branch"; continue; }
+  git push --force-with-lease="refs/heads/$branch:$tip" "$REMOTE" ":refs/heads/$branch"
 done
 
 git fetch "$REMOTE" --prune
