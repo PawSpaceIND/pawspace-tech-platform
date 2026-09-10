@@ -1,0 +1,68 @@
+name: Read Golden cross-module state
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-golden-crossmodule-readback.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: pawspace-release-preview
+    env:
+      TARGET_DB_NAME: pawspace-beta-golden-wallet-43ba4002
+      TARGET_WORKER: pawspace-beta-golden-wallet-43ba4002
+      BOOKING_ID: PS-UAT-MTV9TAXL-D586
+      CUSTOMER_ID: CUS-OTP-F9AFD3A3A8FA258381C282A7
+    steps:
+      - name: Query isolated D1 with SELECT only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          settings=$(curl -fsS "${auth[@]}" "$api/workers/scripts/$TARGET_WORKER/settings")
+          sandbox=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_PAYMENT_ENV" and .text=="sandbox")] | length' <<<"$settings")
+          forbid=$(jq -r '[.result.bindings[]? | select(.name=="FORBID_PRODUCTION" and .text=="true")] | length' <<<"$settings")
+          liveoff=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_PAYMENT_LIVE_APPROVED" and .text=="false")] | length' <<<"$settings")
+          test "$sandbox" = 1 && test "$forbid" = 1 && test "$liveoff" = 1
+          db_json=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100")
+          db_id=$(jq -r --arg n "$TARGET_DB_NAME" '.result[] | select(.name==$n) | (.uuid // .id)' <<<"$db_json" | head -1)
+          test -n "$db_id" && test "$db_id" != null
+          query(){
+            local sql="$1"
+            local body
+            body=$(jq -cn --arg sql "$sql" '{sql:$sql}')
+            curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$body" | jq -c 'if .success then ([.result[]?.results] | add // []) else {query_error:.errors} end'
+          }
+          relevant=$(query "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%booking%' OR name LIKE '%wallet%' OR name LIKE '%journal%' OR name LIKE '%collection%' OR name LIKE '%invoice%' OR name LIKE '%lead%' OR name LIKE '%crm%' OR name LIKE '%payout%') ORDER BY name")
+          booking=$(query "SELECT id,customer_id,provider_id,status,service_code,package_name,total_amount,currency,zone_id,scheduled_start,scheduled_end,schedule_group_id FROM canonical_bookings WHERE id='$BOOKING_ID'")
+          work_order=$(query "SELECT id,booking_id,provider_id,provider_name,provider_model,service_code,status,scheduled_start,scheduled_end FROM provider_work_orders WHERE booking_id='$BOOKING_ID'")
+          payment=$(query "SELECT id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,detail_json FROM booking_payments WHERE booking_id='$BOOKING_ID'")
+          wallet=$(query "SELECT id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,balance_after,actor_id,created_at FROM pawspace_wallet_ledger WHERE customer_id='$CUSTOMER_ID' ORDER BY created_at")
+          journal=$(query "SELECT source_type,source_id,account_code,vertical,debit,credit,narration,period_code,posted FROM finance_journal_entries WHERE narration LIKE '%$BOOKING_ID%' OR source_id IN (SELECT id FROM pawspace_wallet_ledger WHERE customer_id='$CUSTOMER_ID') ORDER BY created_at")
+          collection=$(query "SELECT group_key,event,payment_id,settlement_id,reversal_reference,amount,period_code,manual_entry,verification_status,created_by,created_at FROM collection_ledger_postings WHERE payment_id IN (SELECT id FROM booking_payments WHERE booking_id='$BOOKING_ID') ORDER BY created_at")
+          leads=$(query "SELECT id,customer_id,source,service,owner,status,stage,converted_booking_id,assigned_at,updated_at FROM lead_work_items WHERE customer_id='$CUSTOMER_ID' OR converted_booking_id='$BOOKING_ID' ORDER BY updated_at")
+          crm=$(query "SELECT id,name,area,stage,owner,source,lifetime_value,next_action,updated_at FROM crm_contacts WHERE id='$CUSTOMER_ID'")
+          invoice=$(query "SELECT id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id='$BOOKING_ID'")
+          lifecycle=$(query "SELECT event_type,entity_type,entity_id,actor_id,occurred_at FROM booking_lifecycle_events WHERE booking_id='$BOOKING_ID' ORDER BY occurred_at")
+          payout=$(query "SELECT booking_id,provider_id,service_code,order_value,provider_net_payout,platform_fee,platform_gst,provider_gst_deducted,pawspace_gst_on_order,term_id,computed_at FROM provider_payout_computations WHERE booking_id='$BOOKING_ID'")
+          jq -n \
+            --arg worker "$TARGET_WORKER" --arg db "$TARGET_DB_NAME" --arg bookingId "$BOOKING_ID" --arg customerId "$CUSTOMER_ID" \
+            --argjson relevant "$relevant" --argjson booking "$booking" --argjson workOrder "$work_order" --argjson payment "$payment" \
+            --argjson wallet "$wallet" --argjson journal "$journal" --argjson collection "$collection" --argjson leads "$leads" --argjson crm "$crm" \
+            --argjson invoice "$invoice" --argjson lifecycle "$lifecycle" --argjson payout "$payout" \
+            '{testOnly:true,productionChanged:false,readOnly:true,worker:$worker,database:$db,bookingId:$bookingId,customerId:$customerId,relevantTables:$relevant,booking:$booking,workOrder:$workOrder,payment:$payment,wallet:$wallet,financeJournal:$journal,collectionLedger:$collection,leads:$leads,crmContact:$crm,invoice:$invoice,lifecycle:$lifecycle,providerPayout:$payout}' > golden-crossmodule-readback.json
+          cat golden-crossmodule-readback.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: golden-crossmodule-readback-43ba4002
+          path: golden-crossmodule-readback.json
+          if-no-files-found: error
+          retention-days: 7
