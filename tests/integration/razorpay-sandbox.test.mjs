@@ -13,7 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { installWorkersHooks } from "../helpers/module-hooks.mjs";
 
 installWorkersHooks("__RZP_DB__", "__RZP_ENV__");
@@ -22,6 +22,15 @@ const KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 const LIVE = Boolean(KEY_ID && KEY_SECRET && WEBHOOK_SECRET);
+const WORKFLOW = readFileSync(new URL("../../.github/workflows/razorpay-sandbox-e2e.yml", import.meta.url), "utf8");
+
+test("sandbox workflow sources only the canonical *_SANDBOX repository secrets", () => {
+  for (const name of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"]) {
+    assert.match(WORKFLOW, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}_SANDBOX\\s*\\}\\}`));
+    assert.doesNotMatch(WORKFLOW, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
+  }
+});
+
 const EVIDENCE = "/tmp/razorpay-evidence";
 
 const auth = "Basic " + Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString("base64");

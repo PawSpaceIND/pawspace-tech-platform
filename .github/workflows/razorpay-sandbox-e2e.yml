@@ -31,9 +31,9 @@ jobs:
       FORBID_PRODUCTION: "true"
       PAWSPACE_DEPLOYMENT_ENV: sandbox_ci
       PAWSPACE_COMMUNICATION_ENV: sandbox
-      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
-      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
-      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
     steps:
       - uses: actions/checkout@v4
 
