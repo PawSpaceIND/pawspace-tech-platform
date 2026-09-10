@@ -75,29 +75,31 @@ jobs:
           SECOND_NUMBER: ${{ secrets.PAWSPACE_POWER_DIALLER_UAT_SECOND_NUMBER }}
         run: |
           node <<'NODE'
-          const fs=require('fs');
-          const clean=v=>String(v||'').replace(/\D/g,'').slice(-10);
-          const now=Date.now(), agent=clean(process.env.PRIMARY_NUMBER), customer=clean(process.env.SECOND_NUMBER);
+          const {execFileSync}=require('child_process');
+          const clean=v=>String(v||'').replace(/\D/g,'').slice(-10), now=Date.now();
+          const agent=clean(process.env.PRIMARY_NUMBER), customer=clean(process.env.SECOND_NUMBER);
           if(agent.length!==10||customer.length!==10||agent===customer) throw new Error('Approved numbers invalid');
           const q=s=>String(s).replaceAll("'","''");
-          const sql=[
+          const statements=[
+            "CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER,service_consent INTEGER,opt_out INTEGER DEFAULT 0)",
             "DELETE FROM outbound_routing_queue WHERE id='UAT-PD-Q1'",
             "DELETE FROM lead_scores WHERE lead_id='UAT-PD-L1'",
             "DELETE FROM lead_work_items WHERE id='UAT-PD-L1'",
             "DELETE FROM customer_contact_preferences WHERE customer_id='UAT-PD-C1'",
             "DELETE FROM canonical_customers WHERE id='UAT-PD-C1'",
-            `UPDATE employees SET phone='${q(agent)}',employment_status='active',updated_at=${now} WHERE lower(work_email)='founder@pawspace.in'`,
+            `INSERT INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES ('UAT-PD-EMP','founder@pawspace.in','UATPD','Power Dialler UAT Agent','founder@pawspace.in','${q(agent)}','active',${now},${now},${now}) ON CONFLICT(work_email) DO UPDATE SET phone=excluded.phone,employment_status='active',updated_at=excluded.updated_at`,
             `INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('UAT-PD-C1','BLR','Power Dialler UAT Customer','${q(customer)}',NULL,'power-dialler-uat@example.invalid','uat','{}',${now},${now})`,
-            "CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER,service_consent INTEGER,opt_out INTEGER DEFAULT 0)",
             "INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,opt_out) VALUES ('UAT-PD-C1',1,1,0)",
             `INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,first_action_at,call_attempts,whatsapp_attempts,opt_out,created_at,updated_at) VALUES ('UAT-PD-L1','UAT-PD-C1','uat','grooming','founder@pawspace.in','founder@pawspace.in','active','day_1',1,${now},${now},${now},${now},0,0,0,${now},${now})`,
             `INSERT INTO lead_scores (lead_id,engagement_score,profile_score,recency_score,value_score,total_score,grade,factors_json,computed_at) VALUES ('UAT-PD-L1',95,95,95,95,95,'A','{}',${now})`,
             `INSERT INTO outbound_routing_queue (id,source_key,customer_id,lead_id,source_type,lane,priority_score,high_intent,lifecycle_code,status,context_json,created_at,updated_at) VALUES ('UAT-PD-Q1','uat:power-dialler-live','UAT-PD-C1','UAT-PD-L1','grooming_renewal','human',95,1,'grooming_renewal','queued','{}',${now},${now})`
-          ].join(';\n')+';\n';
-          fs.writeFileSync('/tmp/pd-uat.sql',sql,{mode:0o600});
+          ];
+          for(let i=0;i<statements.length;i++){
+            try{execFileSync('npx',['wrangler','d1','execute','DB','--config','dist/server/wrangler.json','--remote','--command',statements[i]],{stdio:['ignore','ignore','pipe'],env:process.env,maxBuffer:4*1024*1024});}
+            catch(e){console.error(`seed_statement_failed=${i+1}`); throw new Error('Synthetic UAT seed failed');}
+          }
+          console.log('synthetic_power_dialler_seed=ready');
           NODE
-          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=/tmp/pd-uat.sql >/dev/null
-          rm -f /tmp/pd-uat.sql
       - name: Verify prepared UAT queue without exposing numbers
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
