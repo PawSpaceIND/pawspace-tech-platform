@@ -94,12 +94,53 @@ test("D1 backup and restore guard suites are tracked by the normal test glob", (
   assert.doesNotThrow(() => read("tests/d1-backup-restore-guards.test.mjs"));
 });
 
-test("production deploy reads the production D1 identifier from the protected secret source", () => {
-  const secretRefs = workflow.match(/PRODUCTION_D1_ID:\s*\$\{\{\s*secrets\.PRODUCTION_D1_ID\s*\}\}/g) || [];
-  assert.ok(secretRefs.length >= 2, "configuration and post-deploy certification must both use secrets.PRODUCTION_D1_ID");
-  assert.doesNotMatch(
-    workflow,
-    /PRODUCTION_D1_ID:\s*\$\{\{\s*vars\.PRODUCTION_D1_ID\s*\}\}/,
-    "production deployment must not read PRODUCTION_D1_ID from repository/environment variables",
-  );
+const d1Phases = [
+  "Configure production (name + D1 + explicit runtime modes + provider identifiers)",
+  "Certify the deployed configuration",
+];
+const d1Binding = "          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}";
+function assertD1PhaseBindings(source) {
+  const steps = source.split(/^      - /m).slice(1);
+  for (const title of d1Phases) {
+    const matching = steps.filter(step => step.split("\n")[0] === `name: ${title}`);
+    assert.equal(matching.length, 1, `${title}: exactly one phase is required`);
+    const lines = matching[0].split("\n");
+    const start = lines.findIndex(line => /^        env:[ \t]*$/.test(line));
+    assert.ok(start >= 0, `${title}: its own environment is required`);
+    const env = [];
+    for (const line of lines.slice(start + 1)) {
+      if (!line.trim()) continue;
+      if (!/^          /.test(line)) break;
+      env.push(line);
+    }
+    const ids = env.filter(line => /^          PRODUCTION_D1_ID:/.test(line));
+    assert.deepEqual(ids, [d1Binding], `${title}: exactly one protected D1 binding`);
+  }
+  assert.doesNotMatch(source, /\$\{\{\s*vars\.PRODUCTION_D1_ID\s*\}\}/);
+}
+
+test("production configuration and certification each read their protected D1 secret", () => {
+  assertD1PhaseBindings(workflow);
+});
+for (const [phase, title] of d1Phases.entries()) {
+  for (const mode of ["missing", "variable-backed"]) {
+    test(`D1 wiring regression refuses ${mode} binding in ${title}`, () => {
+      const index = phase === 0 ? workflow.indexOf(d1Binding) : workflow.lastIndexOf(d1Binding);
+      assert.ok(index >= 0);
+      const replacement = mode === "missing" ? "" : d1Binding.replace("secrets.", "vars.");
+      const changed = workflow.slice(0, index) + replacement + workflow.slice(index + d1Binding.length);
+      assert.throws(() => assertD1PhaseBindings(changed));
+    });
+  }
+}
+test("D1 regression refuses both references concentrated in configuration", () => {
+  const last = workflow.lastIndexOf(d1Binding);
+  const changed = (workflow.slice(0, last) + workflow.slice(last + d1Binding.length))
+    .replace(d1Binding, `${d1Binding}\n${d1Binding}`);
+  assert.throws(() => assertD1PhaseBindings(changed));
+});
+test("D1 regression refuses a reference moved outside the step environment", () => {
+  const changed = workflow.replace(`        env:\n${d1Binding}`, `        run: |\n${d1Binding}`);
+  assert.notEqual(changed, workflow);
+  assert.throws(() => assertD1PhaseBindings(changed));
 });
