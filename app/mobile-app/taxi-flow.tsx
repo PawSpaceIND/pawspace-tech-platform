@@ -13,7 +13,6 @@ import type {TaxiTripType,TaxiRidePurpose,TaxiVehicleClass} from "../../lib/taxi
 const money=(n:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(n);
 const WAITING=Array.from({length:24},(_,i)=>i*30);
 const COUNT_0_6=Array.from({length:7},(_,i)=>i);
-const COUNT_1_6=Array.from({length:6},(_,i)=>i+1);
 const TIMES=Array.from({length:27},(_,i)=>{const mins=6*60+i*30;const h=Math.floor(mins/60),m=mins%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;});
 const localDate=(days=1)=>{const d=new Date();d.setDate(d.getDate()+days);return d.toISOString().slice(0,10)};
 const toIso=(date:string,time:string)=>new Date(`${date}T${time}:00+05:30`).toISOString();

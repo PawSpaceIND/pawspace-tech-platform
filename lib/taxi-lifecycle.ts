@@ -1,6 +1,5 @@
 import{bridgeLifecycleCommunications}from"./lifecycle-communications";
 import{ensureTaxiGovernanceTables}from"./taxi-governance";
-import{resolveTaxiCompletionFinance}from"./taxi-completion-finance";
 import{resolveServiceCompletionFinance}from"./service-completion-finance";
 import{ensureTaxiRideTables}from"./taxi-ride-governance";
 import{ensureTaxiFleetTables}from"./taxi-fleet-governance";
