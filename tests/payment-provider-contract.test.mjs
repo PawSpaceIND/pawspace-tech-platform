@@ -21,6 +21,11 @@ async function contractServer() {
       requests.push({ path: request.url, headers: request.headers, body });
       const scenario = String(body.receipt || body.reference_id || "");
       if (scenario.includes("TIMEOUT")) return;
+      if (scenario.includes("REDIRECT")) {
+        response.writeHead(302, { location: `${server.address() && `http://127.0.0.1:${server.address().port}`}/redirect-target` });
+        response.end();
+        return;
+      }
       const match = scenario.match(/HTTP_(400|401|429|500|503)/);
       if (match) {
         response.writeHead(Number(match[1]), { "content-type": "application/json" });
@@ -85,6 +90,17 @@ test("external Razorpay contract: HTTP 400, 401, 429, 500 and 503 fail closed", 
       assert.equal(result.connected, false, String(status));
       assert.match(result.reason, new RegExp(String(status)));
     }
+  } finally { await server.close(); }
+});
+
+test("external Razorpay contract: redirects are not followed and cannot receive payment credentials", async () => {
+  const server = await contractServer();
+  try {
+    const result = await client.createPaymentOrder(environment(server.url), { bookingId: "BK-CONTRACT", paymentId: "PAY-REDIRECT", amount: 500, currency: "INR" });
+    assert.equal(result.connected, false);
+    assert.match(result.reason, /302/);
+    assert.equal(server.requests.length, 1, "manual redirect handling must not follow the Location target");
+    assert.equal(server.requests[0].path, "/v1/orders");
   } finally { await server.close(); }
 });
 

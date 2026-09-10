@@ -98,7 +98,7 @@ async function providerRequest(env: RazorEnv, environment: PaymentEnvironment, p
   const timeout = Math.max(50, Math.min(Number(env?.PAWSPACE_RAZORPAY_TIMEOUT_MS || 10_000), 30_000));
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(`${providerBase(env, environment)}${path}`, { ...init, redirect: "error", signal: controller.signal });
+    const response = await fetch(`${providerBase(env, environment)}${path}`, { ...init, redirect: "manual", signal: controller.signal });
     const raw = await boundedBody(response);
     let body: Record<string, unknown> = {};
     try { const parsed = JSON.parse(raw); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as Record<string, unknown>; } catch {}
