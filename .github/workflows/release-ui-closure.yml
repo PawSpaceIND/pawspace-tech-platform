@@ -73,7 +73,9 @@ jobs:
         run: npm run build
 
       - name: Install Chromium for the preview browser gate
-        run: npx playwright install --with-deps chromium
+        # Use the exact top-level Playwright package imported by the closure scripts.
+        # `npx playwright` can resolve @playwright/test's nested, older CLI when both are locked.
+        run: node ./node_modules/playwright/cli.js install --with-deps chromium
 
       - name: Run button, role and responsive visual closure against isolated preview
         env:
