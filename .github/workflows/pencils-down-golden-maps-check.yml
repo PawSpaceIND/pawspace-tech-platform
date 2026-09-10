@@ -1,0 +1,40 @@
+name: Verify Golden Maps after UAT login
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-golden-maps-check.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-golden-maps-readonly
+  cancel-in-progress: false
+jobs:
+  maps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pawspace-release-preview
+    env:
+      ORIGIN: https://pawspace-beta-golden-8745bbca.karthik-fce.workers.dev
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - name: Login to UAT and verify Maps server adapter read-only
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          node --input-type=module <<'NODE'
+          const origin=process.env.ORIGIN;
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',email:'founder@pawspace.in',code:process.env.PAWSPACE_UAT_ACCESS_CODE})});
+          if(!login.ok) throw new Error('UAT login failed HTTP '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0];
+          if(!cookie) throw new Error('UAT login produced no session cookie');
+          const url=new URL(origin+'/api/address-autocomplete');
+          url.searchParams.set('mode','search');url.searchParams.set('query','Indiranagar Bengaluru');url.searchParams.set('sessionToken','golden-readonly');
+          const response=await fetch(url,{headers:{cookie}}); const body=await response.json();
+          if(!response.ok) throw new Error('Maps route HTTP '+response.status+' '+JSON.stringify(body));
+          const result=body?.data;
+          console.log(JSON.stringify({http:response.status,status:result?.status,suggestions:Array.isArray(result?.suggestions)?result.suggestions.length:null,error:result?.error||null}));
+          if(result?.status!=='configured'||!result.suggestions?.length) throw new Error('Maps UAT not usable: '+JSON.stringify({status:result?.status,error:result?.error||null}));
+          NODE
