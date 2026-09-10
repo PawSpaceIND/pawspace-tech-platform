@@ -44,3 +44,23 @@ test("the boarding host surface renders", async ({ page }) => {
   const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
 });
+
+test("partner hub reaches every governed service workspace from one provider entry point", async ({ page, request }) => {
+  const hub = await page.goto("/partner", { waitUntil: "domcontentloaded" });
+  expect(hub?.status()).toBe(200);
+  const destinations = [
+    ["All assigned jobs", "/partner/jobs"],
+    ["Grooming", "/partner-app"],
+    ["Training", "/trainer"],
+    ["Dog Walking", "/walker"],
+    ["Pet Taxi", "/driver"],
+    ["Boarding", "/host"],
+    ["Pet Sitting", "/sitter"],
+  ] as const;
+  for (const [label, href] of destinations) {
+    await expect(page.getByRole("link", { name: label, exact: true }).first()).toHaveAttribute("href", href);
+    const response = await request.get(href);
+    expect(response.status(), `${href} must resolve for the authenticated provider test identity`).toBe(200);
+    expect(await response.text(), `${href} must not render a server application error`).not.toMatch(/Application error|Unhandled Runtime Error/i);
+  }
+});
