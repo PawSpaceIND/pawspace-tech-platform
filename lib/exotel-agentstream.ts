@@ -1,6 +1,7 @@
 import { aiProviderConnection, requestAiDraft } from "./ai-provider-adapter";
 import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from "./ai-conversation-orchestrator";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
+import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
 import type { AuthenticatedActor } from "./server-auth";
 
 // Exotel AgentStream is raw signed little-endian PCM over JSON/WebSocket. This module is deliberately
@@ -241,6 +242,12 @@ async function closeSession(env: Env, session: Session | null, reason: string) {
     env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN 'completed' ELSE status END,outcome=COALESCE(outcome,'carrier_ended'),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(reason, now, session.aiCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), session.aiCallId, "agentstream_stopped", JSON.stringify({ reason }), now),
   ]).catch(() => undefined);
+  try {
+    const disposition = await recordAgentStreamCompletionDisposition(env.DB,{ledgerCallId:session.ledgerCallId,aiCallId:session.aiCallId,providerCallId:session.providerCallId,reason,actorId:serviceActor.email});
+    await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(),session.aiCallId,"agentstream_crm_disposition",JSON.stringify(disposition),Date.now()).run();
+  } catch (error) {
+    await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(),session.aiCallId,"agentstream_crm_disposition_failed",JSON.stringify({reason:text((error as Error)?.message).slice(0,160)}),Date.now()).run().catch(()=>undefined);
+  }
 }
 
 export async function handleExotelAgentStream(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
