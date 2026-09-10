@@ -1,3 +1,4 @@
+import{remainingPayableForCredit}from"./booking-credit-application";
 /**
  * Universal post-service feedback. Every completed booking can receive five 1-5 questions. Completing
  * PawSpace feedback earns a customer-owned master reward independent of score. Public Google/App review
@@ -25,8 +26,11 @@ export async function ensureServiceReviewTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS review_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,service_code TEXT NOT NULL,customer_id TEXT NOT NULL,request_key TEXT NOT NULL UNIQUE,questions_json TEXT NOT NULL,channels_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'sent',created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS service_reviews (id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,stars INTEGER NOT NULL,answers_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS review_public_claims (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,platform TEXT NOT NULL,verification_status TEXT NOT NULL DEFAULT 'self_declared',reward_code TEXT,created_at INTEGER NOT NULL,UNIQUE(booking_id,platform))"),
-    db.prepare("CREATE TABLE IF NOT EXISTS review_reward_codes (code TEXT PRIMARY KEY,customer_id TEXT NOT NULL,reward_kind TEXT NOT NULL,discount_amount REAL NOT NULL,service_scope TEXT NOT NULL DEFAULT 'any',status TEXT NOT NULL DEFAULT 'issued',source_booking_id TEXT,expires_at INTEGER NOT NULL,redeemed_booking_id TEXT,redeemed_at INTEGER,created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS review_reward_codes (code TEXT PRIMARY KEY,customer_id TEXT NOT NULL,reward_kind TEXT NOT NULL,discount_amount REAL NOT NULL,applied_amount REAL,service_scope TEXT NOT NULL DEFAULT 'any',status TEXT NOT NULL DEFAULT 'issued',source_booking_id TEXT,expires_at INTEGER NOT NULL,redeemed_booking_id TEXT,redeemed_at INTEGER,created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS booking_feedback_addons (reward_code TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,addon_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,UNIQUE(booking_id,addon_code,reward_code))"),
   ]);
+  await db.prepare("ALTER TABLE review_reward_codes ADD COLUMN applied_amount REAL").run().catch((error)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error});
+
 }
 
 async function completedReviewBooking(db: Db, bookingId: string, customerId: string, serviceCode: string) {
@@ -137,19 +141,23 @@ export async function redeemReviewReward(db: Db, input: { code: string; customer
   if (String(reward.customer_id) !== input.customerId) throw new Error("This reward belongs to another account");
   if (String(reward.status) !== "issued") throw new Error("This reward has already been used");
   if (Number(reward.expires_at) < Date.now()) throw new Error("This reward has expired");
-  const booking = await db.prepare("SELECT customer_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+  const booking = await db.prepare("SELECT customer_id,service_code,total_amount,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
   if (!booking) throw new Error("Booking not found");
   if (String(booking.customer_id) !== input.customerId) throw new Error("You can only apply your reward to your own booking");
   if (String(reward.service_scope) === "grooming" && String(booking.service_code) !== "grooming") throw new Error("This reward is valid on grooming only");
+  const addOnCode=String(reward.reward_kind).startsWith("feedback_addon:")?String(reward.reward_kind).slice("feedback_addon:".length):null;
+  const discount=addOnCode?0:Math.min(Number(reward.discount_amount||0),await remainingPayableForCredit(db,input.bookingId,Number(booking.total_amount||0)));
+  if(!addOnCode&&!(discount>0))throw new Error("This booking has no remaining amount for the reward to cover");
   // The status='issued' guard is only half the protection: its result has to be checked, or two
   // concurrent redemptions both report the discount as applied while one row actually moved.
-  const claim = await db.prepare("UPDATE review_reward_codes SET status='redeemed',redeemed_booking_id=?,redeemed_at=? WHERE code=? AND status='issued'").bind(input.bookingId, Date.now(), String(reward.code)).run();
+  const claim = await db.prepare("UPDATE review_reward_codes SET status='redeemed',redeemed_booking_id=?,redeemed_at=?,applied_amount=? WHERE code=? AND status='issued'").bind(input.bookingId, Date.now(),discount,String(reward.code)).run();
   if (!Number(claim.meta.changes)) {
     const winner = await db.prepare("SELECT redeemed_booking_id FROM review_reward_codes WHERE code=?").bind(String(reward.code)).first<Row>();
-    if (winner && String(winner.redeemed_booking_id) === input.bookingId) return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), addOnCode:String(reward.reward_kind).startsWith("feedback_addon:")?String(reward.reward_kind).slice("feedback_addon:".length):null, serviceScope: String(reward.service_scope), duplicatePrevented: true };
+    if (winner && String(winner.redeemed_booking_id) === input.bookingId) return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number((await db.prepare("SELECT applied_amount FROM review_reward_codes WHERE code=?").bind(String(reward.code)).first<Row>())?.applied_amount||0), addOnCode, serviceScope: String(reward.service_scope), duplicatePrevented: true };
     throw new Error("This reward has already been used");
   }
-  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), addOnCode:String(reward.reward_kind).startsWith("feedback_addon:")?String(reward.reward_kind).slice("feedback_addon:".length):null, serviceScope: String(reward.service_scope), duplicatePrevented: false };
+  if(addOnCode)await db.prepare("INSERT OR IGNORE INTO booking_feedback_addons (reward_code,booking_id,customer_id,addon_code,status,created_at) VALUES (?,?,?,?, 'reserved',?)").bind(String(reward.code),input.bookingId,input.customerId,addOnCode,Date.now()).run();
+  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: discount, addOnCode, serviceScope: String(reward.service_scope), duplicatePrevented: false };
 }
 
 /**
