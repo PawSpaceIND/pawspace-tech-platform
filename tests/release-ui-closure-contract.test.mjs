@@ -80,6 +80,9 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /PAWSPACE_UAT_ACCESS_CODE/);
   assert.match(workflow, /node \.\/node_modules\/playwright\/cli\.js install --with-deps chromium/);
   assert.doesNotMatch(workflow, /run: npx playwright install/);
+  assert.match(workflow, /git cat-file blob "\$\{GITHUB_SHA\}:scripts\/customer-ui-acceptance-v2\.mjs"/);
+  assert.match(workflow, /ln -s "\$GITHUB_WORKSPACE\/node_modules" "\$TOOL_DIR\/node_modules"/);
+  assert.match(workflow, /node "\$TOOL_DIR\/customer-ui-acceptance-v2\.mjs"/);
   assert.doesNotMatch(workflow, /wrangler deploy/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
 });
