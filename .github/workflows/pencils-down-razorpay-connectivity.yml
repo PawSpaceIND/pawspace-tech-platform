@@ -1,0 +1,42 @@
+name: Pencils-down Razorpay Test Mode connectivity
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-razorpay-connectivity.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  razorpay:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/ops/pencils-down-staging-ab40dc00'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      RAZORPAY_SANDBOX_AMOUNT_PAISE: '100'
+    steps:
+      - name: Checkout exact corrected candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 29142163c9934d373d2603fe8ceced6afae3f811
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create one real Razorpay TEST order only
+        env:
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+        run: node scripts/e2e/razorpay-sandbox.mjs | tee razorpay-test-connectivity.txt
+      - name: Upload sanitized connectivity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-test-connectivity
+          path: razorpay-test-connectivity.txt
+          if-no-files-found: error
+          retention-days: 7
