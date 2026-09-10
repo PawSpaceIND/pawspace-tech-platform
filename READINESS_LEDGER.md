@@ -560,6 +560,51 @@ device QA, monitoring/backup/pen-testing, branch protection.
 
 ---
 
+## Day 31, wave 2 — the untested-module sweep (Claude, 2026-09-10)
+
+Follow-on to the Day-31 pass below. That one probed ten chosen areas; this one went at modules with
+**no test importing them at all**, worst-risk first. Nine new executing suites, 88 assertions.
+**Six more real defects found and fixed** (fourteen for the day).
+
+**Coverage moved:** modules with no importing test went 135 → 118; untested money modules 31 → 23.
+Full suite 5336 → 5415 tests, all passing.
+
+| # | Module | Defect | Status |
+|---|---|---|---|
+| 9 | `escrow-custody-settlement.ts` | `reconcileEscrowInvariants()` checked the ledger hash chain and the dispute/outbox machine but **never checked the custodial account against the money it holds**. Column CHECKs only enforce each amount >= 0 individually. An account allocating or releasing more than it took in reconciled clean with `ok:true` — and that row is what the payout guard reads: `requireEscrowProviderReleaseForPayout()` compares `released_provider_amount` only to the commission ceiling, never to custody. An inflated figure paid out money never collected while escrow reconciliation stayed green. | 🔧 `5c83411` — added `ESCROW_CUSTODY_CONSERVATION_BREACH` (P0) across four states, raised as a durable alarm |
+| 10 | `tcs-rate.ts` | Three ways the s.52 GST TCS rate resolver returned a rate it should not. (a) A string naming an INSTANT was sliced to ten chars while a number was IST-shifted first — `"2024-07-09T23:00:00Z"` gave **1%** and the same instant as epoch ms gave **0.5%**, a 2× difference decided by argument type. (b) `"2024-13-45"` passed the shape check and compared as a string. (c) `Number(null)` is 0 and 0 is finite, so a NULL timestamp resolved to 1970 and returned the **legacy 1%** — a live path, since `computeMonthlyTcsStatutory()` calls `tcsRateS52For(num(p.computed_at))`. | 🔧 `51dd56f` |
+| 11 | `automatic-booking-refund.ts` | The unattended refund sweep's over-refund guard summed only other refund CASES; `rec.refunded_amount` was SELECTed and never read. A refund issued from the Razorpay dashboard moves `refunded_amount` but opens no case — so against a ₹4,000 capture already refunded ₹3,000 that way, the sweep approved the full ₹4,000. **₹7,000 back on a ₹4,000 booking, no human in the loop.** Verified: pre-fix it cleared the guard and was stopped only by absent sandbox credentials. | 🔧 `851af0c` — already-refunded is now `max(cases, gateway)`, not a sum |
+| 12 | `walking-invoice.ts`, `taxi-invoice.ts` | Wrote `booking.total_amount` as the invoice `gross_amount`. That is the charged amount only on an INCLUSIVE tax policy, and Ops can publish exclusive. `service-output-tax.ts` derives taxable as exactly `gross_amount - tax_amount`, so measured end to end it **reported ₹820 taxable on a ₹1,000 supply** — the base understated by the whole tax. No-op for inclusive policies in use today. | 🔧 `da58d6f` |
+| 13 | `ai-runtime-kill-switch.ts` + `ai-business-configuration.ts` | The kill switch could be **engaged and do nothing**. Keys were compared with `===` and stored without case-folding, so an operator typing "WhatsApp" (how the UI spells it) against a runtime passing "whatsapp" wrote the row, showed the switch on, logged the audit event — and the AI kept talking to customers. A `global` switch filed as anything but exactly `"ai"` matched nothing at all. | 🔧 `a3b2393` — case/whitespace-insensitive both sides; any `global` row is global; stale differently-cased rows removed on write so a switch can still be turned back off |
+| 14 | `crm-pipeline-forecast.ts` | `historicalStageProbability()` counted samples with `COUNT(DISTINCT opportunity_id)` but summed wins across raw joined stage-history rows. Deals go backwards routinely, each pass writing another row, so one won deal that passed through negotiation 3× gave **0.909 vs 0.727** for the same deal passing once — and the weighted forecast came out ABOVE the unweighted pipeline, which no probability-weighted number can be. This is the figure hiring and spend are planned against. | 🔧 `9f3d36d` |
+| 15 | `grooming-replacement-capacity.ts` | Threw a raw `RangeError: Invalid time value` on an unreadable `scheduled_start`/`scheduled_end`, inside the assignment transaction on the provider-recovery path — an unexplained 500 exactly when a groomer has dropped out and a customer is waiting. | 🔧 `fa169e4` — refuses by name |
+
+**Verified clean under real execution — do not re-test without a specific new reason:**
+
+- **Escrow custody adjudication** (`day31w-escrow-custody-integrity`, 13 cases): custody never exceeds net capture, a refund shrinks what is holdable, an uncaptured payment holds nothing, an open dispute blocks release, arbitration requires a frozen dispute, a partial split must allocate exactly the full custody, an arbitration decision is final, release is idempotent, and payout requires the settlement rail to have confirmed with a real external reference.
+- **Service output-tax split**: marketplace vs principal supply, and an unsplittable invoice counted as PawSpace's own — erring towards over-declaring, never under.
+- **Trainer incentive engine** (10 cases, run under both `TZ=UTC` and `TZ=Asia/Kolkata`): the published ladder at its worked example, both threshold edges, every month boundary, Meet & Greet excluded from order value, conversions unclaimable against a colleague's booking, total equals its components.
+- **Rep daily-closure + talk-time** (8 cases): a colleague's attempt does not discharge my obligation, another rep's or day's calls do not count, no leads is not a free day, and the ledger refuses zero/negative/8-hour-plus segments.
+- **Communication delivery state machine** (10 cases): no late webhook can walk a status backwards, a stale failure on a delivered message neither rewrites it nor burns a retry, dedupe is per (provider, event_id), backoff doubles from 5 min and holds at the 4-hour cap, dead-lettering writes a durable operator-visible row.
+- **Shared boundary primitives** (11 cases): `sameInstant()` across offset spellings and unreadable input; `readBoundedText()` measured in BYTES not characters (ten characters of Hindi is thirty bytes), stops pulling a stream at the ceiling, treats 0/NaN/Infinity as a refusal not as unlimited.
+
+**Method note that keeps paying off:** three suites in this wave initially passed against a FAULT
+rather than behaviour — a missing-credentials error read as a refused over-refund, a
+misconfigured env var making an ad-platform call fail before it was attempted, a schema error
+read as a governance refusal. A bare `assert.rejects(fn, Error)` accepts any of them. Every
+refusal assertion in these suites now checks the specific reason and explicitly fails on a
+SQL/config fault. **Recommend auditing the existing suite for bare `Error` matchers on refusal
+paths.**
+
+**Still open and correctly so:** 118 modules have no importing test (23 of them money-handling —
+`statutory-tcs`, `provider-payout-statutory`, `subscription-payment-activation`,
+`refund-collection-reversal`, `razorpay-order-outbox-sweep` and the vertical `-client` modules are
+the ones worth doing next). 228 of 661 test files still assert on source text rather than
+executing anything. And a dangling SQL column reference remains invisible to build, typecheck and
+5415 tests — the CI check for that is not yet written.
+
+---
+
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
 - Real Razorpay, WhatsApp, Exotel, Maps, KYC, MFA — sandboxed by design, need live credentials
