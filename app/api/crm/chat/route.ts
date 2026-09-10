@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../../lib/server-auth";
+import { actorCanAccessConversation } from "../../../../lib/conversation-access";
 import { maskName } from "../../../../lib/platform-security";
 import { customerDataAccessResolver } from "../../../../lib/purpose-based-access";
 import {
@@ -27,6 +28,13 @@ function sameOrigin(request: Request) {
   }
 }
 
+async function crmSimulationAllowed() {
+  const { env } = await import("cloudflare:workers");
+  const runtime = env as unknown as Record<string, unknown>;
+  return ["local", "preview", "staging", "uat", "e2e"].includes(String(runtime.PAWSPACE_DEPLOYMENT_ENV || ""))
+    && runtime.PAWSPACE_PAYMENT_ENV === "sandbox" && runtime.PAWSPACE_COMMUNICATION_ENV === "uat";
+}
+
 export async function GET(request: Request) {
   try {
     const actor = await authorize(request, "communications.manage");
@@ -39,6 +47,7 @@ export async function GET(request: Request) {
     const threadId = url.searchParams.get("threadId");
 
     if (threadId) {
+      if (!(await actorCanAccessConversation(db, actor, threadId))) return json({ error: "Conversation access denied" }, 403);
       const data = await getConversation(db, threadId, "staff");
       if (!data) return json({ error: "Conversation not found" }, 404);
 
@@ -84,12 +93,7 @@ export async function GET(request: Request) {
           },
           routingMode: routingMode.mode,
           quickReplies: quickReplies.results,
-          sandboxLocks: {
-            paymentEnv: "sandbox",
-            forbidProduction: true,
-            communicationEnv: "uat",
-            externalDelivery: false,
-          },
+          simulationAllowed: await crmSimulationAllowed(),
         },
       });
     }
@@ -121,11 +125,7 @@ export async function GET(request: Request) {
       data: {
         threads: enriched,
         total: enriched.length,
-        sandboxLocks: {
-          paymentEnv: "sandbox",
-          forbidProduction: true,
-          liveDelivery: false,
-        },
+        simulationAllowed: await crmSimulationAllowed(),
       },
     });
   } catch (error) {
@@ -138,6 +138,7 @@ interface ChatActionBody {
   threadId?: string;
   customerId?: string;
   text?: string;
+  clientRequestId?: string;
   templateKey?: string;
   language?: string;
   provider?: string;
@@ -157,6 +158,16 @@ export async function POST(request: Request) {
       return json({ error: "Missing chat action" }, 400);
     }
 
+    if (["send_message", "simulate_inbound", "set_mode"].includes(body.action)) {
+      if (!body.threadId) return json({ error: "Thread ID is required" }, 400);
+      if (!(await actorCanAccessConversation(db, actor, body.threadId))) {
+        await securityAudit(db, actor, `crm.chat.${body.action}`, "conversation", body.threadId, "denied", { reason: "row_scope" });
+        return json({ error: "Conversation access denied" }, 403);
+      }
+      const thread = await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(body.threadId).first<Row>();
+      if (body.customerId && body.customerId !== String(thread?.customer_id || "")) return json({ error: "Conversation customer mismatch" }, 409);
+    }
+
     if (body.action === "send_message") {
       if (!body.threadId || !body.customerId || !body.text) {
         return json({ error: "threadId, customerId, and message text are required" }, 400);
@@ -168,15 +179,27 @@ export async function POST(request: Request) {
           : "meta_whatsapp"
       ) as WhatsAppUatProvider;
 
-      const idempotencyKey = `crm-chat-${body.threadId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+      const clientRequestId = String(body.clientRequestId || "").trim();
+      if (!/^[a-zA-Z0-9_-]{8,120}$/.test(clientRequestId)) return json({ error: "A stable client request ID is required" }, 400);
+      const message = body.text.trim();
+      if (!message || message.length > 4096) return json({ error: "Message must contain 1 to 4096 characters" }, 400);
+      const routing = await getWhatsAppConversationMode(db, body.threadId);
+      if (routing.mode !== "human_only") return json({ error: "Take over the conversation before sending a human reply" }, 409);
+      const idempotencyKey = `crm-chat:${body.threadId}:${actor.email}:${clientRequestId}`;
+      const requestFingerprint = JSON.stringify([body.threadId, body.customerId, provider, message, body.templateKey || null, body.language || "en"]);
+      const prior = await db.prepare("SELECT policy_json FROM communication_messages WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+      if (prior && (JSON.parse(String(prior.policy_json || "{}")) as Row).requestFingerprint !== requestFingerprint) {
+        return json({ error: "Client request ID is already bound to another message" }, 409);
+      }
       const result = await queueWhatsAppUatOutbound(db, {
         provider,
         threadId: body.threadId,
         customerId: body.customerId,
-        text: body.text.trim(),
+        text: message,
         templateKey: body.templateKey || null,
         language: body.language || "en",
         idempotencyKey,
+        requestFingerprint,
         createdBy: actor.email,
       });
 
@@ -196,11 +219,12 @@ export async function POST(request: Request) {
         }
       );
 
-      return json({ ok: true, data: result }, result.queued ? 201 : 400);
+      return json({ ok: true, data: result }, result.queued ? (result.duplicatePrevented ? 200 : 201) : 400);
     }
 
     if (body.action === "simulate_inbound") {
-      // Sandbox-only simulated inbound message from customer
+      if (!(await crmSimulationAllowed())) return json({ error: "Inbound simulation requires an explicitly configured test environment" }, 403);
+      // Simulated input must never open a real Meta customer-service session.
       if (!body.text || (!body.customerId && !body.threadId)) {
         return json({ error: "Text and either customerId or threadId are required for simulated inbound" }, 400);
       }
@@ -216,7 +240,7 @@ export async function POST(request: Request) {
       }
 
       const eventId = `sim-meta-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
-      const provider: WhatsAppUatProvider = "meta_whatsapp";
+      const provider: WhatsAppUatProvider = "sandbox_simulator";
       const result = await recordWhatsAppUatInbound(db, {
         provider,
         eventId,

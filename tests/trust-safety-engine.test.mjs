@@ -103,3 +103,32 @@ test("globally blocked customer is rejected by the shared Audio Bot pre-dial gat
   assert.equal(order.provider_call_id, null);
   assert.throws(() => sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id) VALUES (?,?)").run("BKG-BLOCK-2", seeded.contactId), /global_customer_blocked/);
 });
+test('provider chat replay rechecks assignment and trust before returning message content', async () => {
+ const {sqlite,db}=await freshTrustDb();
+ const input={providerId:'PRV-TS-1',threadId:'THREAD-TS-1',actorId:'provider:PRV-TS-1',idempotencyKey:'owned-replay',message:'I am on my way.'};
+ const first=await trust.recordProviderChatMessage(db,input);
+ assert.equal((await trust.recordProviderChatMessage(db,input)).messageId,first.messageId);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM provider_chat_activity').get().n,1);
+ sqlite.prepare("UPDATE provider_work_orders SET provider_id='PRV-OTHER' WHERE booking_id='BKG-TS-1'").run();
+ await assert.rejects(trust.recordProviderChatMessage(db,input),error=>error instanceof Response&&error.status===403);
+ await assert.rejects(trust.recordProviderChatMessage(db,{...input,providerId:'PRV-OTHER',actorId:'provider:PRV-OTHER'}),error=>error instanceof Response&&error.status===409);
+ sqlite.prepare("UPDATE provider_work_orders SET provider_id='PRV-TS-1' WHERE booking_id='BKG-TS-1'").run();
+ await trust.inspectTrustSafetyText(db,{text:'contact me direct on 9876543210',channel:'chat',sourceReference:'replay-strike-1',actorType:'provider',actorId:input.actorId,providerId:input.providerId,applyProviderStrikeImmediately:true});
+ await trust.inspectTrustSafetyText(db,{text:'contact me direct on 9876543210',channel:'chat',sourceReference:'replay-strike-2',actorType:'provider',actorId:input.actorId,providerId:input.providerId,applyProviderStrikeImmediately:true});
+ await assert.rejects(trust.recordProviderChatMessage(db,input),error=>error instanceof Response&&error.status===403);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM provider_chat_activity').get().n,1);
+});
+
+test('provider chat cannot reuse a staff message key from the same conversation', async () => {
+ const {sqlite,db}=await freshTrustDb();
+ const input={providerId:'PRV-TS-1',threadId:'THREAD-TS-1',actorId:'provider:PRV-TS-1',idempotencyKey:'staff-key',message:'Hello'};
+ const first=await trust.recordProviderChatMessage(db,input);
+ sqlite.prepare("UPDATE communication_messages SET template_key='internal_note',payload_json=? WHERE id=?").run(JSON.stringify({internalNote:'Private staff context'}),first.messageId);
+ await assert.rejects(trust.recordProviderChatMessage(db,input),error=>error instanceof Response&&error.status===409);
+});
+
+test('provider chat fails closed on assignment-store errors instead of trusting a stale fallback', async () => {
+ const {db}=await freshTrustDb();
+ const broken={...db,prepare:sql=>{if(sql.startsWith('SELECT provider_id FROM provider_work_orders'))return{bind:()=>({first:async()=>{throw new Error('injected assignment-store failure');}})};return db.prepare(sql);}};
+ await assert.rejects(trust.recordProviderChatMessage(broken,{providerId:'PRV-TS-1',threadId:'THREAD-TS-1',actorId:'provider:PRV-TS-1',idempotencyKey:'store-failure',message:'Hello'}),/injected assignment-store failure/);
+});

@@ -82,7 +82,7 @@ test("subscription refund maker-checker and provider proration remain capped and
   const refund=read("lib/subscription-refund-reconciliation.ts");
   assert.match(billing,/refund_self_approval_forbidden/);
   assert.match(billing,/UNIQUE\(refund_case_id,from_status\)/);
-  assert.match(refund,/kind='provider_proration'/);
+  // Concurrent refund ceilings and interrupted accounting execute in subscription-refund-recovery-runtime.test.mjs.
   assert.match(refund,/subscription_refunds_exceed_cycle_capture/);
   assert.match(refund,/issueAdjustment/);
   assert.match(refund,/subscription_proration_refund/);
