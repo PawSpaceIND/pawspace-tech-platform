@@ -149,3 +149,18 @@ test("Google Data Manager validate-only upload uses GCLID, conversion action des
   assert.equal(payload.consent.adPersonalization, "CONSENT_GRANTED");
   assert.equal(payload.validateOnly, true);
 });
+
+test("canonical marketing dashboard aggregates only primary metric dimensions and never emits sample data", async () => {
+  const { sqlite, db } = freshDb();
+  await mod.ensureMarketingAdConnectorTables(db);
+  const base = "INSERT INTO marketing_ad_metric_facts (dimension_key,platform,account_id,report_date,dimension_type,impressions,clicks,spend_minor,conversions,conversion_value_minor,currency,ctr_percent,cpc_minor,cpa_minor,pulled_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+  sqlite.prepare(base).run("g-key","google_ads","1","2026-09-10","keyword",100,10,10000,2,30000,"INR",10,1000,5000,10,10);
+  sqlite.prepare(base).run("g-age","google_ads","1","2026-09-10","age",100,10,10000,2,30000,"INR",10,1000,5000,10,10);
+  sqlite.prepare(base).run("m-ad","meta_ads","2","2026-09-10","demographic_ad",200,20,20000,4,50000,"INR",10,1000,5000,11,11);
+  const dashboard = await mod.marketingDashboardSnapshot(db,{from:"2026-09-10",to:"2026-09-10"});
+  assert.equal(dashboard.sampleData,false);
+  assert.equal(dashboard.hasLiveMetrics,true);
+  assert.equal(dashboard.totals.spendMinor,30000,"Google age duplicate must not double-count spend");
+  assert.equal(dashboard.totals.conversionValueMinor,80000);
+  assert.equal(dashboard.platforms.length,2);
+});
