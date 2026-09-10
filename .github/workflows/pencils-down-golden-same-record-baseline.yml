@@ -1,0 +1,47 @@
+name: Read same-record Golden baseline
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-golden-same-record-baseline.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pawspace-release-preview
+    env:
+      TARGET_DB_NAME: pawspace-golden-wallet-43ba4002
+      BOOKING_ID: PS-UAT-MTV9TAXL-D586
+    steps:
+      - name: Read isolated D1 only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"; auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          db_json=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100")
+          db_id=$(jq -r --arg n "$TARGET_DB_NAME" '.result[] | select(.name==$n) | (.uuid // .id)' <<<"$db_json" | head -1); test -n "$db_id" && test "$db_id" != null
+          query(){ local sql="$1"; curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" | jq -c '[.result[]?.results[]?]'; }
+          booking=$(query "SELECT id,customer_id,provider_id,service_code,status,total_amount,currency,city_id,zone_id,schedule_group_id FROM canonical_bookings WHERE id='$BOOKING_ID'")
+          customer=$(jq -r '.[0].customer_id // empty' <<<"$booking"); test -n "$customer"
+          payment=$(query "SELECT id,status,amount,amount_due_now,currency,method,gateway,json_extract(detail_json,'$.gatewayOrderId') gateway_order_id,json_extract(detail_json,'$.gatewayPaymentId') gateway_payment_id FROM booking_payments WHERE booking_id='$BOOKING_ID'")
+          work_order=$(query "SELECT id,booking_id,provider_id,provider_name,provider_model,status,service_code,schedule_group_id FROM provider_work_orders WHERE booking_id='$BOOKING_ID'")
+          gateway_link=$(query "SELECT booking_id,payment_id,provider,environment,gateway_order_id,status FROM payment_gateway_links WHERE booking_id='$BOOKING_ID'")
+          recon=$(query "SELECT payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id FROM payment_reconciliation_records WHERE booking_id='$BOOKING_ID'")
+          wallet=$(query "SELECT id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,balance_after FROM pawspace_wallet_ledger WHERE customer_id='$customer' AND source_type='booking' AND source_id='$BOOKING_ID'")
+          wallet_finance=$(query "SELECT f.source_type,f.account_code,ROUND(SUM(f.debit),2) debit,ROUND(SUM(f.credit),2) credit FROM finance_journal_entries f JOIN pawspace_wallet_ledger w ON w.id=f.source_id WHERE w.source_type='booking' AND w.source_id='$BOOKING_ID' GROUP BY f.source_type,f.account_code ORDER BY f.account_code")
+          collection=$(query "SELECT event,payment_id,amount,period_code,verification_status FROM collection_ledger_postings WHERE payment_id=(SELECT id FROM booking_payments WHERE booking_id='$BOOKING_ID')")
+          leads=$(query "SELECT id,status,stage,service,source,owner,converted_booking_id FROM lead_work_items WHERE customer_id='$customer' ORDER BY updated_at DESC LIMIT 10")
+          crm=$(query "SELECT id,stage,owner,source,lifetime_value FROM crm_contacts WHERE id='$customer'")
+          invoice=$(query "SELECT booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id='$BOOKING_ID'")
+          tax=$(query "SELECT booking_id,gross_amount,tax_amount,tax_rule_status,reason FROM booking_tax_readiness WHERE booking_id='$BOOKING_ID'")
+          jq -n --argjson booking "$booking" --argjson payment "$payment" --argjson workOrder "$work_order" --argjson gatewayLink "$gateway_link" --argjson reconciliation "$recon" --argjson wallet "$wallet" --argjson walletFinance "$wallet_finance" --argjson collection "$collection" --argjson leads "$leads" --argjson crm "$crm" --argjson invoice "$invoice" --argjson tax "$tax" '{testOnly:true,productionChanged:false,booking:$booking,payment:$payment,partnerWorkOrder:$workOrder,gatewayLink:$gatewayLink,reconciliation:$reconciliation,wallet:$wallet,walletFinance:$walletFinance,collectionLedger:$collection,crmLeads:$leads,crmContact:$crm,bookingInvoice:$invoice,taxReadiness:$tax}' | tee same-record-baseline.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: same-record-golden-baseline
+          path: same-record-baseline.json
+          retention-days: 7
