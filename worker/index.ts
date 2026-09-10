@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import{authorizePlatformSessionRequest}from"../lib/session-api-gateway";
+import{runtimeControlBlock}from"../lib/control-runtime-switches";
 import{blockDisabledServiceRequest}from"../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
 import {runCommunicationOutboxDispatcher} from "../lib/communication-outbox-dispatcher";
@@ -87,6 +88,8 @@ const worker = {
         ?{actor:{email:providerEmail,roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
         :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return secureApiResponse(access);
+      const emergencyBlock=await runtimeControlBlock(env.DB,inspectionRequest);
+      if(emergencyBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,emergencyBlock.clone()));return secureApiResponse(emergencyBlock);}
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
 
