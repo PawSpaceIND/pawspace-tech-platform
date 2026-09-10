@@ -163,28 +163,16 @@ async function submitUpi(page: Page, upi: string) {
             continue;
           }
         }
-        const upiEntries = [
-          frame.getByRole("button", { name: /UPI/i }).first(),
-          frame.getByText(/^UPI$/i).first(),
-          frame.getByText(/Pay by UPI|UPI ID/i).first(),
-        ];
-        let selectedUpi = false;
-        for (const locator of upiEntries) {
-          if (!await locator.isVisible().catch(() => false)) continue;
-          await locator.click();
-          selectedUpi = true;
-          break;
-        }
-        if (selectedUpi) {
-          await page.waitForTimeout(800);
-          continue;
-        }
+
+        // Razorpay Checkout v2 keeps the parent UPI row visible while its nested choices are open.
+        // Always consume the terminal VPA field first, then the nested "Apps & UPI ID" choice, and
+        // only fall back to the parent UPI row when neither deeper state is present.
         const inputs = frame.locator("input");
         const inputCount = await inputs.count();
         for (let index = 0; index < inputCount; index++) {
           const input = inputs.nth(index);
           if (!await input.isVisible().catch(() => false)) continue;
-          const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""}`;
+          const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""} ${await input.getAttribute("data-testid") || ""}`;
           if (!/upi|vpa|upi id/i.test(hint)) continue;
           await input.fill(upi);
           const buttons = frame.getByRole("button");
@@ -200,6 +188,39 @@ async function submitUpi(page: Page, upi: string) {
           await input.press("Enter");
           return;
         }
+
+        const appsAndUpiId = [
+          frame.getByRole("button", { name: /Apps & UPI ID/i }).first(),
+          frame.locator('[data-testid="more"]').first(),
+          frame.getByText(/^Apps & UPI ID$/i).first(),
+        ];
+        let selectedNestedUpi = false;
+        for (const locator of appsAndUpiId) {
+          if (!await locator.isVisible().catch(() => false)) continue;
+          await locator.click();
+          selectedNestedUpi = true;
+          break;
+        }
+        if (selectedNestedUpi) {
+          await page.waitForTimeout(800);
+          continue;
+        }
+
+        const topLevelUpi = [
+          frame.getByRole("button", { name: /^UPI$/i }).first(),
+          frame.getByText(/^UPI$/i).first(),
+        ];
+        let selectedTopLevelUpi = false;
+        for (const locator of topLevelUpi) {
+          if (!await locator.isVisible().catch(() => false)) continue;
+          await locator.click();
+          selectedTopLevelUpi = true;
+          break;
+        }
+        if (selectedTopLevelUpi) {
+          await page.waitForTimeout(800);
+          continue;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) continue;
@@ -208,7 +229,7 @@ async function submitUpi(page: Page, upi: string) {
     }
     await page.waitForTimeout(500);
   }
-  throw new Error("Razorpay Test UPI control was not found on mobile web");
+  throw new Error("Razorpay Test UPI ID control was not found on mobile web");
 }
 async function paymentRows(dbId: string, bookingId: string) {
   return d1(dbId, "SELECT event_type,gateway_order_id,gateway_payment_id,signature_verified,processing_status,amount_subunits,currency FROM payment_gateway_events WHERE booking_id=? ORDER BY received_at", [bookingId]);
