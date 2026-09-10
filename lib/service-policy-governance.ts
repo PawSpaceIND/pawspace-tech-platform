@@ -132,6 +132,11 @@ export async function seedServicePolicyScope(db:Db,domain:string,serviceCode:str
   if(problem)throw new Error(`Seed for ${domain}/${serviceCode}/${cityId} is invalid: ${problem}`);
   await ensureServicePolicyTables(db);
   const service=normalise(serviceCode),city=normalise(cityId);
+  // Scope identity is (domain, service, city), not the generated row id. An operator may save this
+  // scope before its default seeder has ever run; in that case the operator row is authoritative and
+  // the seed must not create a second same-scope row that could win resolution on timestamp.
+  const existing=await db.prepare("SELECT id FROM service_policy_configs WHERE policy_domain=? AND service_code=? AND city_id=? LIMIT 1").bind(domain,service,city).first<Row>();
+  if(existing)return;
   await db.prepare("INSERT OR IGNORE INTO service_policy_configs (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,1,?,NULL,'founder_seed',?)")
     .bind(`spolicy_${domain}_${service}_${city}`.replace(/\*/g,"any"),domain,service,city,JSON.stringify({...spec.defaults,...config}),notes,effectiveFrom,Date.now()).run();
 }

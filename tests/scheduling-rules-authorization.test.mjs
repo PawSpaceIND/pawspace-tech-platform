@@ -85,7 +85,7 @@ async function assertDeniedWrites(sqlite, email) {
   const attempts = [
     ["POST", () => route.POST(request(jsonInit("POST", { name: "blocked", conditions: [VALID_RULE] })))],
     ["PATCH", () => route.PATCH(request(jsonInit("PATCH", { id: EXISTING, active: false, priority: 999 })))],
-    ["DELETE", () => route.DELETE(request({ method: "DELETE", url: `${ENDPOINT}?id=${EXISTING}` }))],
+    ["DELETE", () => route.DELETE(request({ method: "DELETE", url: `${ENDPOINT}?id=${EXISTING}&reason=retire%20obsolete%20rule` }))],
   ];
   for (const [method, attempt] of attempts) {
     const response = await attempt();
@@ -165,7 +165,7 @@ test("an authorized operator can read the rules", async () => {
 test("an authorized operator can create a valid rule", async () => {
   const { sqlite } = await world();
   const email = operator(sqlite);
-  const response = await route.POST(asStaff(email, jsonInit("POST", { name: "Quality floor", conditions: [VALID_RULE], priority: 20 })));
+  const response = await route.POST(asStaff(email, jsonInit("POST", { name: "Quality floor", conditions: [VALID_RULE], priority: 20, reason: "raise quality floor" })));
   assert.equal(response.status, 201);
   const created = sqlite.prepare("SELECT priority,created_by,condition_json FROM scheduling_rules WHERE name=?").get("Quality floor");
   assert.ok(created);
@@ -177,7 +177,7 @@ test("an authorized operator can create a valid rule", async () => {
 test("created_by cannot be spoofed through the request body", async () => {
   const { sqlite } = await world();
   const email = operator(sqlite);
-  const response = await route.POST(asStaff(email, jsonInit("POST", { name: "Attributed rule", conditions: [VALID_RULE], createdBy: "someone.else@pawspace.in" })));
+  const response = await route.POST(asStaff(email, jsonInit("POST", { name: "Attributed rule", conditions: [VALID_RULE], createdBy: "someone.else@pawspace.in", reason: "verify actor attribution" })));
   assert.equal(response.status, 201);
   const created = sqlite.prepare("SELECT created_by FROM scheduling_rules WHERE name=?").get("Attributed rule");
   assert.equal(created.created_by, email);
@@ -186,7 +186,7 @@ test("created_by cannot be spoofed through the request body", async () => {
 test("an authorized operator can update a rule", async () => {
   const { sqlite } = await world();
   const email = operator(sqlite);
-  const response = await route.PATCH(asStaff(email, jsonInit("PATCH", { id: EXISTING, active: false, priority: 5 })));
+  const response = await route.PATCH(asStaff(email, jsonInit("PATCH", { id: EXISTING, active: false, priority: 5, reason: "tighten allocation rule" })));
   assert.equal(response.status, 200);
   const row = sqlite.prepare("SELECT active,priority FROM scheduling_rules WHERE id=?").get(EXISTING);
   assert.equal(row.active, 0);
@@ -196,9 +196,25 @@ test("an authorized operator can update a rule", async () => {
 test("an authorized operator can delete a rule", async () => {
   const { sqlite } = await world();
   const email = operator(sqlite);
-  const response = await route.DELETE(asStaff(email, { method: "DELETE", url: `${ENDPOINT}?id=${EXISTING}` }));
+  const response = await route.DELETE(asStaff(email, { method: "DELETE", url: `${ENDPOINT}?id=${EXISTING}&reason=retire%20obsolete%20rule` }));
   assert.equal(response.status, 200);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_rules").get().c, 0);
+});
+
+test("authorized scheduling-rule changes require a reason and keep immutable audit evidence", async () => {
+  const { sqlite } = await world();
+  const email = operator(sqlite, "audit.ops@pawspace.in");
+  const refusedCreate = await route.POST(asStaff(email, jsonInit("POST", { name: "No reason", conditions: [VALID_RULE] })));
+  assert.equal(refusedCreate.status, 400);
+  const createdResponse = await route.POST(asStaff(email, jsonInit("POST", { name: "Audited rule", conditions: [VALID_RULE], reason: "capacity protection" })));
+  assert.equal(createdResponse.status, 201);
+  const createdId = String((await createdResponse.json()).data.id);
+  const patchResponse = await route.PATCH(asStaff(email, jsonInit("PATCH", { id: createdId, active: false, reason: "temporary pause" })));
+  assert.equal(patchResponse.status, 200);
+  const audit = sqlite.prepare("SELECT action,actor_id,reason FROM scheduling_rule_audit WHERE rule_id=? ORDER BY created_at,id").all(createdId);
+  assert.equal(audit.length, 2);
+  assert.deepEqual(new Set(audit.map(row=>row.action)), new Set(["created","updated"]));
+  assert.ok(audit.every(row=>row.actor_id===email&&String(row.reason).length>=5));
 });
 
 test("authorization precedes request validation", async () => {
@@ -333,6 +349,7 @@ test("an authorized write on a fresh database bootstraps the table and persists 
   const response = await route.POST(asStaff(email, jsonInit("POST", {
     name: "First rule on a fresh database",
     conditions: [{ code: "min_rating", field: "rating", operator: "gte", value: 4 }],
+    reason: "bootstrap first scheduling rule",
   })));
   assert.equal(response.status, 201, `a write must bootstrap its own schema, got ${response.status}`);
   assert.ok(schedulingTables(sqlite).includes("scheduling_rules"), "the write must have created the table");

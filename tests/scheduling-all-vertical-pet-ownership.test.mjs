@@ -18,7 +18,7 @@ async function world(t, serviceCode) {
   const cookie = await sessionCookie(ctx.db,"customer","CUSTOMER-A","customer:CUSTOMER-A");
   const start = new Date(Date.now()+9*86400000); start.setUTCHours(5,30,0,0);
   const duration = serviceCode==="boarding" ? 86400000 : serviceCode==="grooming" ? 7200000 : 3600000;
-  const body = {clientRequestId:`OWNED-${serviceCode}`,customerId:"CUSTOMER-A",petIds:["MY-PET"],serviceCode,serviceAddress:"42 Test Road, Indiranagar, Bengaluru 560038",servicePincode:"560038",scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+duration).toISOString(),occurrences:1,...(serviceCode==="pet_sitting" ? {preferredProviderId:"sit_sana",careMode:"visit"} : {}),...(serviceCode==="boarding" ? {preferredProviderId:"host_maya_rohan"} : {})};
+  const body = {clientRequestId:`OWNED-${serviceCode}`,customerId:"CUSTOMER-A",petIds:["MY-PET"],serviceCode,serviceAddress:"42 Test Road, Indiranagar, Bengaluru 560038",servicePincode:"560038",scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+duration).toISOString(),occurrences:1,...(serviceCode==="dog_training" ? {preferredProviderId:"train_kiran"} : {}),...(serviceCode==="pet_sitting" ? {preferredProviderId:"sit_sana",careMode:"visit"} : {}),...(serviceCode==="boarding" ? {preferredProviderId:"host_maya_rohan"} : {})};
   return {...ctx,cookie,body};
 }
 for (const service of ["grooming","dog_training","pet_taxi","pet_sitting","boarding"]) {
