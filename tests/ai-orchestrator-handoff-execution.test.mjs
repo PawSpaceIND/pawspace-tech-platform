@@ -321,3 +321,65 @@ test("the prompt context handed to the provider is scoped to the one customer in
   assert.ok(!context.includes("CUS-2"), "another customer's identity must not be in the model's context");
   assert.ok(!context.includes("9876500002"), "another customer's phone number must not be in the model's context");
 });
+
+test('completed AI turn replay requires current ownership and the exact canonical input',async()=>{
+ const {sqlite,db}=await world();
+ seedCustomer(sqlite,'CUS-2','Other customer','9876500002');
+ const owner=customerActor(sqlite,'CUS-1'),other=customerActor(sqlite,'CUS-2');
+ const message=await inboundMessage(sqlite,db,{threadId:'THREAD-1',customerId:'CUS-1',text:'I need a human',idempotencyKey:'replay-message'});
+ const original={actor:owner,threadId:'THREAD-1',customerId:'CUS-1',inputMessageId:message,idempotencyKey:'protected-turn',channel:'chat'};
+ const first=await orchestrator.orchestrateAiTurn(db,original);
+ assert.equal((await orchestrator.orchestrateAiTurn(db,original)).turn.id,first.turn.id);
+ await assert.rejects(()=>orchestrator.orchestrateAiTurn(db,{...original,actor:other}),error=>error instanceof Response && error.status===403);
+ const secondMessage=await inboundMessage(sqlite,db,{threadId:'THREAD-1',customerId:'CUS-1',text:'What is grooming?',idempotencyKey:'different-message'});
+ await assert.rejects(()=>orchestrator.orchestrateAiTurn(db,{...original,inputMessageId:secondMessage}),error=>error instanceof Response && error.status===409);
+ const otherMessage=await inboundMessage(sqlite,db,{threadId:'THREAD-2',customerId:'CUS-2',text:'I need a human',idempotencyKey:'other-message'});
+ await assert.rejects(()=>orchestrator.orchestrateAiTurn(db,{...original,actor:other,threadId:'THREAD-2',customerId:'CUS-2',inputMessageId:otherMessage}),error=>error instanceof Response && error.status===409);
+ sqlite.prepare("UPDATE customer_identity_links SET status='revoked' WHERE email=?").run(owner.email);
+ await assert.rejects(()=>orchestrator.orchestrateAiTurn(db,original),error=>error instanceof Response && error.status===403);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,1);
+});
+
+test('conflicting AI retry does not claim another canonical turn reservation',async()=>{
+ const {sqlite,db}=await world();
+ const message=await inboundMessage(sqlite,db,{threadId:'THREAD-1',customerId:'CUS-1',text:'What is grooming?',idempotencyKey:'reservation-message'});
+ sqlite.exec("INSERT INTO ai_turn_reservations(idempotency_key,owner_token,thread_id,customer_id,input_message_id,channel,status,created_at,updated_at) VALUES ('reserved-key','original-owner','OTHER-THREAD','OTHER-CUSTOMER','OTHER-MESSAGE','chat','retryable',1,1)");
+ const before=sqlite.prepare("SELECT * FROM ai_turn_reservations WHERE idempotency_key='reserved-key'").get();
+ await assert.rejects(()=>orchestrator.orchestrateAiTurn(db,{actor:customerActor(sqlite,'CUS-1'),threadId:'THREAD-1',customerId:'CUS-1',inputMessageId:message,idempotencyKey:'reserved-key',channel:'chat'}),error=>error instanceof Response&&error.status===409);
+ assert.deepEqual(sqlite.prepare("SELECT * FROM ai_turn_reservations WHERE idempotency_key='reserved-key'").get(),before);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
+});
+
+test('staff takeover during a model request prevents the late draft from being recorded or returned',async()=>{
+ const {sqlite,db}=await world();
+ const handoff=await import('../lib/ai-human-handoff.ts');
+ const stub=provider(async()=>{
+   await handoff.requestAiHumanHandoff(db,{actorEmail:staffActor.email,threadId:'THREAD-1',customerId:'CUS-1',reason:'customer_requested_human'});
+   await handoff.manageAiHumanHandoff(db,{actor:staffActor,threadId:'THREAD-1',customerId:'CUS-1',action:'take_over'});
+   return {text:'Late model draft',provider:'stub_model',modelRef:'stub-v1',confidence:.95,latencyMs:1};
+ });
+ await assert.rejects(()=>turn(sqlite,db,{text:'what is the price of grooming',stub,key:'inflight-takeover'}),error=>error instanceof Response&&error.status===409);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_suggestions').get().n,0);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
+ assert.equal(sqlite.prepare("SELECT status FROM ai_turn_reservations WHERE idempotency_key='inflight-takeover'").get().status,'retryable');
+ assert.equal(sqlite.prepare("SELECT status FROM ai_conversation_sessions WHERE thread_id='THREAD-1'").get().status,'staff_active');
+});
+
+for(const boundary of ['ai_suggestions','ai_conversation_turns'])test(`handoff immediately before ${boundary} commit wins over the model draft`,async()=>{
+ const {sqlite,db}=await world();
+ const handoff=await import('../lib/ai-human-handoff.ts');
+ const prepare=db.prepare.bind(db),batch=db.batch.bind(db);
+ let pending=false,injected=false;
+ db.prepare=sql=>{if(sql.startsWith(`INSERT INTO ${boundary} `)&&!injected)pending=true;return prepare(sql);};
+ db.batch=async items=>{
+   if(pending&&!injected){pending=false;injected=true;await handoff.requestAiHumanHandoff(db,{actorEmail:staffActor.email,threadId:'THREAD-1',customerId:'CUS-1',reason:'customer_requested_human'});}
+   return batch(items);
+ };
+ await assert.rejects(()=>turn(sqlite,db,{text:'what is the price of grooming',stub:answered('ok'),key:`commit-race-${boundary}`}),error=>error instanceof Response&&error.status===409);
+ assert.equal(injected,true);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_turns').get().n,0);
+ const expected=boundary==='ai_suggestions'?0:1;
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM ai_suggestions').get().n,expected);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_audit_events WHERE action='suggestion_recorded'").get().n,expected);
+ assert.equal(sqlite.prepare('SELECT status FROM ai_turn_reservations').get().status,'retryable');
+});

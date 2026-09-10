@@ -1,3 +1,4 @@
+import { createUnifiedCase } from "./unified-case-center";
 /**
  * Service review collection + public-review rewards, driven by the per-service Control config
  * (review-configuration-governance.ts).
@@ -18,6 +19,11 @@
 
 import { getActiveReviewConfig, DEFAULT_SINGLE_REVIEW_DISCOUNT, DEFAULT_DOUBLE_REVIEW_DISCOUNT, DEFAULT_GOOGLE_REVIEW_LINK, DEFAULT_APP_REVIEW_LINK } from "./review-configuration-governance";
 
+export class ServiceReviewError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.name = "ServiceReviewError"; this.status = status; }
+}
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -34,12 +40,20 @@ export async function ensureServiceReviewTables(db: Db) {
   ]);
 }
 
+async function completedReviewBooking(db: Db, bookingId: string, customerId: string, serviceCode: string) {
+  const booking = await db.prepare("SELECT customer_id,provider_id,service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
+  if (!booking || String(booking.customer_id) !== customerId || String(booking.service_code) !== serviceCode) throw new ServiceReviewError("Review booking does not match the customer and service", 403);
+  if (booking.status !== "completed") throw new ServiceReviewError("Only completed bookings can be reviewed", 409);
+  return booking;
+}
+
 /**
  * Raise a review request for a completed service, respecting the service's configured cadence.
  * For every_n_sessions services (e.g. training every 3), pass completedSessionCount. Idempotent.
  */
 export async function requestServiceReview(db: Db, input: { bookingId: string; serviceCode: string; customerId: string; completedSessionCount?: number }) {
   await ensureServiceReviewTables(db);
+  await completedReviewBooking(db, input.bookingId, input.customerId, input.serviceCode);
   const config = await getActiveReviewConfig(db, input.serviceCode);
   if (!config) return { requested: false, reason: "no_active_review_config" };
   let sequence = 1;
@@ -63,15 +77,27 @@ export async function requestServiceReview(db: Db, input: { bookingId: string; s
 export async function submitServiceReview(db: Db, input: { requestId: string; customerId: string; stars: number; answers?: Record<string, unknown> }) {
   await ensureServiceReviewTables(db);
   const stars = Number(input.stars);
-  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error("Rating must be a whole number from 1 to 5");
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new ServiceReviewError("Rating must be a whole number from 1 to 5", 400);
   const req = await db.prepare("SELECT * FROM review_requests WHERE id=?").bind(input.requestId).first<Row>();
-  if (!req) throw new Error("Review request not found");
-  if (String(req.customer_id) !== input.customerId) throw new Error("You can only submit your own review");
+  if (!req) throw new ServiceReviewError("Review request not found", 404);
+  if (String(req.customer_id) !== input.customerId) throw new ServiceReviewError("You can only submit your own review", 403);
+  const booking = await completedReviewBooking(db, String(req.booking_id), input.customerId, String(req.service_code));
   const done = await db.prepare("SELECT id FROM service_reviews WHERE request_id=?").bind(input.requestId).first<Row>();
-  if (done) throw new Error("This review has already been submitted");
-  await db.prepare("INSERT INTO service_reviews (id,request_id,booking_id,customer_id,stars,answers_json,created_at) VALUES (?,?,?,?,?,?,?)")
-    .bind(uid("REV"), input.requestId, String(req.booking_id), input.customerId, stars, JSON.stringify(input.answers || {}), Date.now()).run();
-  await db.prepare("UPDATE review_requests SET status='reviewed' WHERE id=?").bind(input.requestId).run();
+  if (done) throw new ServiceReviewError("This review has already been submitted", 409);
+  const reviewId = uid("REV"), now = Date.now();
+  const statements = [
+    db.prepare("INSERT INTO service_reviews (id,request_id,booking_id,customer_id,stars,answers_json,created_at) VALUES (?,?,?,?,?,?,?)")
+      .bind(reviewId, input.requestId, String(req.booking_id), input.customerId, stars, JSON.stringify(input.answers || {}), now),
+    db.prepare("UPDATE review_requests SET status='reviewed' WHERE id=?").bind(input.requestId),
+  ];
+  if (stars <= 2) {
+    await createUnifiedCase(db, {
+      idempotencyKey: `low-service-review:${input.requestId}`, caseType: "customer_complaint", severity: "high",
+      title: `${stars}-star service review`, description: `Customer rated booking ${String(req.booking_id)} ${stars} out of 5. Contact the customer for service recovery.`,
+      customerId: input.customerId, bookingId: String(req.booking_id), providerId: booking.provider_id == null ? null : String(booking.provider_id),
+      sourceType: "service_review", sourceId: reviewId, ownerTeam: "customer_support", actorId: input.customerId,
+    }, statements);
+  } else await db.batch(statements);
   const config = await getActiveReviewConfig(db, String(req.service_code));
   if (stars === 5) {
     return { submitted: true, stars, fiveStar: true, bookingId: String(req.booking_id), googleReviewLink: config?.googleReviewLink || DEFAULT_GOOGLE_REVIEW_LINK, appReviewLink: config?.appReviewLink || DEFAULT_APP_REVIEW_LINK, publicReviewRewardAvailable: true };

@@ -63,10 +63,35 @@ function makeD1(sqlite) {
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    batch: async (list) => {
+      sqlite.exec("BEGIN");
+      try {
+        const out = [];
+        for (const item of list) out.push(await item.run());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
     exec: async (sql) => { sqlite.exec(sql); },
   };
 }
+
+test("journey adapter rolls back earlier domain writes when a later batch statement fails", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  sqlite.exec("CREATE TABLE journey_events (id TEXT PRIMARY KEY, booking_id TEXT NOT NULL)");
+  await assert.rejects(db.batch([
+    db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1"),
+    db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1"),
+  ]), /UNIQUE/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM journey_events").get().count, 0);
+  await db.batch([db.prepare("INSERT INTO journey_events VALUES (?,?)").bind("EVT-1", "BK-1")]);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM journey_events").get().count, 1);
+  sqlite.close();
+});
 
 function applyOwnedDdl(sqlite, path) {
   const source = read(path);
@@ -408,4 +433,222 @@ test("journey: missing payment and provider data is reported as a gap rather tha
   assert.equal(dashboard.services.grooming.costAmount, null);
   assert.equal(dashboard.services.grooming.marginPct, null, "margin is never guessed from a partial cost picture");
   assert.equal(dashboard.services.grooming.costTracked, true, "grooming cost IS trackable - it is simply not known yet here");
+});
+
+for (const surface of ["service-review", "booking-rating"]) test(`connected ${surface} API: low rating reaches Operations, customer record and analytics; recovery never changes money`, async () => {
+  const {sqlite,db}=world();
+  const reviewRoute=await import(`../app/api/${surface}/route.ts`);
+  const commandRoute=await import('../app/api/booking-command-center/route.ts');
+  const reviews=await import('../lib/service-review-governance.ts');
+  const cases=await import('../lib/unified-case-center.ts');
+  const analytics=await import('../lib/company-analytics.ts');
+  const customer360=await import('../lib/customer-360.ts');
+  const auth=await import('../lib/server-auth.ts');
+  const identity=await import('../lib/identity-binding.ts');
+  const session=await import('../lib/platform-session.ts');
+  seedCustomer(sqlite,{customerId:'C-REVIEW-FLOW',name:'Review journey',phone:'9876511009',email:'review@example.test'});
+  createBooking(sqlite,{bookingId:'B-REVIEW-FLOW',customerId:'C-REVIEW-FLOW',serviceCode:'grooming',amount:1800,start:'2026-07-16T05:00:00Z',end:'2026-07-16T06:00:00Z',status:'completed'});
+  simulateCapture(sqlite,{bookingId:'B-REVIEW-FLOW',customerId:'C-REVIEW-FLOW',amount:1800});
+  applyOwnedDdl(sqlite,'app/api/booking-command-center/route.ts');
+  sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES ('W-REVIEW','B-REVIEW-FLOW','grp-B-REVIEW-FLOW','PROV-1','Demo provider','freelancer','grooming','2026-07-16T05:00:00Z','2026-07-16T06:00:00Z','completed',?,?)").run(NOW,NOW);
+  await reviews.ensureServiceReviewTables(db);
+  await cases.ensureUnifiedCaseTables(db);
+  await auth.ensureSecurityTables(db);
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('REVIEW-OPS',?,'Review operations','superuser','active',?,?)").run(OPS,NOW,NOW);
+  sqlite.exec("INSERT INTO review_requests VALUES ('R-FLOW','B-REVIEW-FLOW','grooming','C-REVIEW-FLOW','B-REVIEW-FLOW:1','[]','[]','sent',1)");
+  const binding=await identity.upsertIdentityBinding(db,{identitySource:'workspace',principalType:'email',principalKey:'review@example.test',subjectType:'customer',subjectId:'C-REVIEW-FLOW',actorId:OPS,reason:'verified test identity'});
+  const issued=await session.issuePlatformSession(db,{bindingId:binding.id,identitySource:'workspace',principalType:'email',principalKey:'review@example.test',subjectType:'customer',subjectId:'C-REVIEW-FLOW'});
+  const policy=await cases.saveCasePolicy(db,{name:'Connected review SLA',caseType:'customer_complaint',severity:'high',firstResponseMinutes:15,resolutionMinutes:60,managerEscalationMinutes:30,effectiveFrom:1,actorId:OPS});
+  await cases.activateCasePolicy(db,{policyId:policy.id,approvalReference:'TEST-APPROVAL',actorId:OPS});
+  const before=(await analytics.buildCompanyAnalytics(db)).money;
+  const paymentBefore=sqlite.prepare('SELECT * FROM booking_payments').all();
+  const request=()=>new Request(`https://app.pawspace.in/api/${surface}`,{method:'POST',headers:{'content-type':'application/json',origin:'https://app.pawspace.in',cookie:`${session.PLATFORM_SESSION_COOKIE}=${issued.token}`},body:JSON.stringify({requestId:'R-FLOW',bookingId:'B-REVIEW-FLOW',stars:1})});
+  if (surface === 'booking-rating') {
+    sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,updated_by,updated_at) VALUES ('PROV-1','blr','Demo provider','freelancer','[\"grooming\"]','[\"blr-east\"]',?,?)").run(OPS,NOW);
+    sqlite.exec("CREATE TRIGGER fail_provider_score BEFORE UPDATE ON provider_capacity_profiles BEGIN SELECT RAISE(ABORT,'injected provider score failure'); END");
+    const failed=await reviewRoute.POST(request());
+    assert.equal(failed.status,500);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM booking_ratings').get().n,0);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,0);
+    sqlite.exec('DROP TRIGGER fail_provider_score');
+  }
+  const response=await reviewRoute.POST(request());
+  assert.equal(response.status,201,await response.clone().text());
+  const ticket=sqlite.prepare("SELECT * FROM unified_cases WHERE booking_id='B-REVIEW-FLOW'").get();
+  assert.ok(ticket);
+  if (surface === 'booking-rating') assert.equal(sqlite.prepare("SELECT rating FROM provider_capacity_profiles WHERE id='PROV-1'").get().rating,1);
+  const staffRequest=new Request('https://app.pawspace.in/api/booking-command-center',{headers:{'oai-authenticated-user-email':OPS}});
+  const deniedCommand=await commandRoute.GET(new Request('https://app.pawspace.in/api/booking-command-center',{headers:{cookie:`${session.PLATFORM_SESSION_COOKIE}=${issued.token}`}}));
+  assert.equal(deniedCommand.status,403,"a customer must not read the operations directory");
+  const command=await commandRoute.GET(staffRequest);
+  assert.equal(command.status,200,await command.clone().text());
+  const shown=(await command.json()).bookings.find(row=>row.id==='B-REVIEW-FLOW');
+  assert.equal(shown.tickets.find(row=>row.id===ticket.id).priority,'high');
+  const dashboard=await analytics.buildCompanyAnalytics(db);
+  assert.equal(dashboard.cx.open,1);
+  assert.equal((await customer360.buildCustomer360(db,'C-REVIEW-FLOW'))[0].openTicketCount,1);
+  assert.deepEqual(dashboard.money,before);
+  const duplicate=await reviewRoute.POST(request());
+  assert.equal(duplicate.status,409);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,1);
+  const breach=await cases.runUnifiedCaseEscalations(db,{actorId:OPS,asOf:ticket.created_at+31*60000});
+  assert.equal(breach.managerEscalations,1);
+  assert.equal((await cases.runUnifiedCaseEscalations(db,{actorId:OPS,asOf:ticket.created_at+31*60000})).managerEscalations,0);
+  // Execute the real overdue-case sweep, outbox worker, and authenticated customer inbox.
+  const alerts=await import('../lib/staff-alert-center.ts');
+  const dispatcher=await import('../lib/communication-outbox-dispatcher.ts');
+  const inbox=await import('../app/api/customer-notifications/route.ts');
+  const gateway=await import('../lib/api-gateway.ts');
+  const readInbox=async request=>{const access=await gateway.authorizeApiRequest(request,{DB:db});assert.ok(!(access instanceof Response),'gateway must reach the route-owned customer authorization');return inbox.GET(request);};
+  const engine=await import('../lib/communication-engine.ts');
+  sqlite.prepare("UPDATE unified_cases SET first_response_due_at=?,resolution_due_at=? WHERE id=?").run(Date.now()-10000,Date.now()+3600000,ticket.id);
+  const swept=await alerts.runStaffAlertSweep(db,{actorId:OPS});
+  assert.equal(swept.customerNotifications.enqueued,1,JSON.stringify(swept));
+  const notice=sqlite.prepare("SELECT * FROM communication_messages WHERE template_key='case_first_response_overdue'").get();
+  assert.equal(notice.ticket_id,ticket.id);
+  const inboxRequest=(extra='')=>new Request('https://app.pawspace.in/api/customer-notifications'+extra,{headers:{cookie:`${session.PLATFORM_SESSION_COOKIE}=${issued.token}`}});
+  assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,0,'queued notices are not delivered');
+  assert.equal((await readInbox(inboxRequest('?customerId=someone-else'))).status,403);
+  assert.equal((await readInbox(inboxRequest('?cursor=bad'))).status,400);
+  assert.ok((await inbox.GET(new Request('https://app.pawspace.in/api/customer-notifications'))).status>=400);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error('Internal delivery must never call an external provider');};
+  try {
+    // An event-write failure rolls back inbox delivery and can be retried safely.
+    sqlite.exec("CREATE TRIGGER fail_inbox_event BEFORE INSERT ON communication_message_delivery_events BEGIN SELECT RAISE(ABORT,'injected inbox event failure'); END");
+    const failedDispatch=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.ok(failedDispatch.errors.some(value=>value.includes('injected inbox event failure')));
+    assert.equal(sqlite.prepare("SELECT status FROM communication_messages WHERE id=?").get(notice.id).status,'retry_pending');
+    assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,0);
+    sqlite.exec('DROP TRIGGER fail_inbox_event');
+    sqlite.prepare("UPDATE communication_outbox SET next_attempt_at=0 WHERE message_id=?").run(notice.id);
+    const delivered=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(delivered.internalDelivered,1,JSON.stringify(delivered));
+    assert.equal(delivered.externalDelivery,false);
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+  } finally { globalThis.fetch=originalFetch; }
+  const notices=(await (await readInbox(inboxRequest())).json()).data.items;
+  assert.equal(notices.length,1);
+  assert.equal(notices[0].bookingId,'B-REVIEW-FLOW');
+  assert.equal(notices[0].caseId,ticket.id);
+  assert.equal(notices[0].payload,undefined,'raw internal payload is never exposed');
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?").get(notice.id).n,1);
+  assert.equal((await alerts.runStaffAlertSweep(db,{actorId:OPS})).customerNotifications.duplicatePrevented,1);
+  // Revoking service updates between enqueue and delivery suppresses the pending notice.
+  const pending=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',ticketId:ticket.id,channel:'chat',purpose:'service_recovery',templateKey:'case_resolution_overdue',idempotencyKey:'revoked-notice',payload:{caseId:ticket.id},createdBy:OPS});
+  await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:false,source:'customer'});
+  await dispatcher.runCommunicationOutboxDispatcher(db,{});
+  assert.equal(sqlite.prepare("SELECT status FROM communication_messages WHERE id=?").get(pending.messageId).status,'suppressed');
+  assert.equal((await (await readInbox(inboxRequest())).json()).data.items.length,1);
+  if (surface === 'booking-rating') {
+    await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:true,source:'customer'});
+    const future=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',channel:'chat',purpose:'service_recovery',templateKey:'case_resolution_overdue',idempotencyKey:'future-notice',payload:{},scheduledAt:Date.now()+3600000,createdBy:OPS});
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+    assert.equal(sqlite.prepare("SELECT status FROM communication_outbox WHERE message_id=?").get(future.messageId).status,'scheduled');
+    // More than one page, with identical timestamps, must neither omit nor duplicate notices.
+    for (let i=0;i<51;i++) sqlite.prepare("INSERT INTO communication_messages SELECT ?,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,?,policy_json,created_by,created_at,updated_at FROM communication_messages WHERE id=?").run(`PAGE-${i.toString().padStart(3,'0')}`,`page-${i}`,notice.id);
+    const firstPage=(await (await readInbox(inboxRequest())).json()).data;
+    assert.equal(firstPage.items.length,50);
+    assert.ok(firstPage.nextCursor);
+    const nextPage=(await (await readInbox(inboxRequest('?cursor='+encodeURIComponent(JSON.stringify(firstPage.nextCursor))))).json()).data;
+    assert.equal(nextPage.items.length,2);
+    assert.equal(new Set([...firstPage.items,...nextPage.items].map(row=>row.id)).size,52);
+    assert.equal(nextPage.nextCursor,null);
+  }
+  await cases.updateUnifiedCase(db,{caseId:ticket.id,action:'resolve',resolutionCode:'callback_completed',note:'Customer contacted; no refund requested.',actorId:OPS});
+  await cases.updateUnifiedCase(db,{caseId:ticket.id,action:'close',actorId:OPS});
+  await engine.setCommunicationPreference(db,{customerId:'C-REVIEW-FLOW',serviceUpdates:true,source:'customer'});
+  const late=await engine.enqueueCommunication(db,{customerId:'C-REVIEW-FLOW',cityId:'blr',bookingId:'B-REVIEW-FLOW',ticketId:ticket.id,channel:'chat',purpose:'service_recovery',templateKey:'case_first_response_overdue',idempotencyKey:'resolved-late-notice',payload:{caseId:ticket.id},createdBy:OPS});
+  await dispatcher.runCommunicationOutboxDispatcher(db,{});
+  assert.equal(sqlite.prepare("SELECT status,last_error FROM communication_outbox WHERE message_id=?").get(late.messageId).last_error,'case_notice_no_longer_actionable');
+  assert.equal((await analytics.buildCompanyAnalytics(db)).cx.open,0);
+  assert.equal((await customer360.buildCustomer360(db,'C-REVIEW-FLOW'))[0].openTicketCount,0);
+  assert.deepEqual(sqlite.prepare('SELECT * FROM booking_payments').all(),paymentBefore);
+});
+
+test('order notification journey: gateway ownership, customer read, repeat acknowledgement and no page-triggered delivery', async () => {
+  const {sqlite,db}=world();
+  const notifications=await import('../lib/order-notification-governance.ts');
+  const route=await import('../app/api/order-notifications/route.ts');
+  const gateway=await import('../lib/api-gateway.ts');
+  const identity=await import('../lib/identity-binding.ts');
+  const sessions=await import('../lib/platform-session.ts');
+  seedCustomer(sqlite,{customerId:'C-ORDER-NOTICE',name:'Order notification demo',phone:'9876500117',email:'order-notice@example.test'});
+  createBooking(sqlite,{bookingId:'B-ORDER-NOTICE',customerId:'C-ORDER-NOTICE',serviceCode:'grooming',amount:1200,start:'2026-07-16T05:00:00Z',end:'2026-07-16T06:00:00Z',status:'cancelled'});
+  const binding=await identity.upsertIdentityBinding(db,{identitySource:'workspace',principalType:'email',principalKey:'order-notice@example.test',subjectType:'customer',subjectId:'C-ORDER-NOTICE',actorId:OPS,reason:'verified fixture identity'});
+  const issued=await sessions.issuePlatformSession(db,{bindingId:binding.id,identitySource:'workspace',principalType:'email',principalKey:'order-notice@example.test',subjectType:'customer',subjectId:'C-ORDER-NOTICE'});
+  const event={key:'cancel-order-notice',customerId:'C-ORDER-NOTICE',cityId:'blr',bookingId:'B-ORDER-NOTICE',serviceCode:'grooming',eventType:'booking_cancelled',title:'Booking cancelled',body:'Your booking cancellation is recorded.',severity:'warning',sourceType:'booking_lifecycle_event',sourceId:'EVENT-CANCEL-NOTICE',actorId:OPS};
+  const created=await notifications.emitOrderNotification(db,event);
+  assert.equal((await notifications.emitOrderNotification(db,event)).duplicatePrevented,true);
+  const counts=()=>['order_notifications','communication_messages','communication_outbox','staff_alerts'].map(table=>sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n);
+  const before=counts();
+  const request=(path='',data)=>new Request('https://app.pawspace.in/api/order-notifications'+path,{method:data?'POST':'GET',headers:{cookie:`${sessions.PLATFORM_SESSION_COOKIE}=${issued.token}`,origin:'https://app.pawspace.in','content-type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
+  const call=async req=>{const access=await gateway.authorizeApiRequest(req,{DB:db});if(access instanceof Response)return access;return req.method==='POST'?route.POST(req):route.GET(req);};
+  const read=await call(request('?customerId=C-ORDER-NOTICE'));
+  assert.equal(read.status,200,await read.clone().text());
+  const visible=(await read.json()).data.items[0];assert.equal(visible.id,created.notificationId);assert.equal(visible.payload_json,undefined);assert.equal(visible.delivery_error,undefined);
+  assert.deepEqual(counts(),before,'customer reads do not enqueue or generate other notifications');
+  assert.equal((await call(request('?customerId=another-customer'))).status,403);
+  assert.ok((await route.GET(new Request('https://app.pawspace.in/api/order-notifications?customerId=C-ORDER-NOTICE'))).status>=400);
+  const body={customerId:'C-ORDER-NOTICE',notificationId:created.notificationId,action:'mark_read'};
+  assert.equal((await call(request('',{...body,customerId:'another-customer'}))).status,403);
+  assert.equal((await call(request('',{...body,notificationId:'missing-notice'}))).status,404);
+  const crossOrigin=request('',body);crossOrigin.headers.set('origin','https://other.example');
+  assert.equal((await call(crossOrigin)).status,403);
+  const acknowledged=await call(request('',body));
+  assert.equal(acknowledged.status,200);
+  const first=(await acknowledged.json()).data.readAt;
+  // Repeating a read must preserve the original acknowledgement time.
+  sqlite.prepare('UPDATE order_notifications SET read_at=? WHERE id=?').run(first-1000,created.notificationId);
+  assert.equal((await (await call(request('',body))).json()).data.readAt,first-1000);
+  assert.equal((await (await call(request('?customerId=C-ORDER-NOTICE'))).json()).data.unread,0);
+  assert.deepEqual(counts(),before);
+  const second=await notifications.emitOrderNotification(db,{...event,key:'older-unread',occurredAt:1});
+  const limited=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1'))).json()).data;
+  assert.equal(limited.items.length,1);assert.equal(limited.items[0].status,'read');assert.equal(limited.unread,1,'unread count includes notices outside the current page');
+  assert.ok(limited.nextCursor);
+  const older=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1&cursor='+encodeURIComponent(JSON.stringify(limited.nextCursor))))).json()).data;
+  assert.equal(older.items[0].id,second.notificationId);assert.equal(older.nextCursor,null);
+  for(const invalid of ['null','{}','{"at":-1,"id":"x"}','{"at":1,"id":""}'])assert.equal((await call(request('?customerId=C-ORDER-NOTICE&cursor='+encodeURIComponent(invalid)))).status,400);
+  for(const limit of ['0','201','NaN','1.5'])assert.equal((await call(request('?customerId=C-ORDER-NOTICE&limit='+limit))).status,400);
+  // Identical timestamps must still traverse deterministically; acknowledgement must not move a row.
+  sqlite.prepare('UPDATE order_notifications SET created_at=100 WHERE customer_id=?').run('C-ORDER-NOTICE');
+  const page1=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1'))).json()).data;
+  await call(request('',{...body,notificationId:page1.items[0].id}));
+  const page2=(await (await call(request('?customerId=C-ORDER-NOTICE&limit=1&cursor='+encodeURIComponent(JSON.stringify(page1.nextCursor))))).json()).data;
+  assert.equal(new Set([...page1.items,...page2.items].map(item=>item.id)).size,2);
+  assert.equal(page2.nextCursor,null);
+
+  const dispatcher=await import('../lib/communication-outbox-dispatcher.ts');
+  const engine=await import('../lib/communication-engine.ts');
+  const internal=await notifications.emitOrderNotification(db,{...event,key:'internal-completed',severity:'info',eventType:'service_completed'});
+  const message=sqlite.prepare("SELECT id FROM communication_messages WHERE idempotency_key='internal-completed:customer'").get();
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{throw new Error('Internal inbox must not send externally');};
+  try{
+    sqlite.exec("CREATE TRIGGER fail_order_delivery BEFORE UPDATE OF delivery_status ON order_notifications WHEN NEW.delivery_status='delivered' BEGIN SELECT RAISE(ABORT,'injected notification delivery failure'); END");
+    const failed=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.ok(failed.errors.some(error=>error.includes('injected notification delivery failure')));
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?').get(message.id).n,0);
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(internal.notificationId).delivery_status,'retry_pending');
+    sqlite.exec('DROP TRIGGER fail_order_delivery');
+    sqlite.prepare('UPDATE communication_outbox SET next_attempt_at=0 WHERE message_id=?').run(message.id);
+    const done=await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(done.internalDelivered,1);assert.equal(done.externalDelivery,false);
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(internal.notificationId).delivery_status,'delivered');
+    assert.equal((await dispatcher.runCommunicationOutboxDispatcher(db,{})).internalDelivered,0);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_message_delivery_events WHERE message_id=?').get(message.id).n,1);
+    const revoke=await notifications.emitOrderNotification(db,{...event,key:'internal-revoked',severity:'info',eventType:'service_completed'});
+    await engine.setCommunicationPreference(db,{customerId:'C-ORDER-NOTICE',serviceUpdates:false,source:'customer'});
+    await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(revoke.notificationId).delivery_status,'suppressed');
+    // Simulated external receipt updates must reach the order status projection too.
+    const external=sqlite.prepare("SELECT id FROM communication_messages WHERE idempotency_key='cancel-order-notice:customer'").get();
+    await engine.recordDeliveryEvent(db,{messageId:external.id,provider:'test_receipt',eventId:'order-delivered',eventType:'delivered'});
+    await dispatcher.runCommunicationOutboxDispatcher(db,{});
+    assert.equal(sqlite.prepare('SELECT delivery_status FROM order_notifications WHERE id=?').get(created.notificationId).delivery_status,'delivered');
+  }finally{globalThis.fetch=originalFetch;}
+  await notifications.runOrderNotificationSweep(db,{actorId:OPS});
+  const creation=sqlite.prepare("SELECT body FROM order_notifications WHERE idempotency_key='booking:B-ORDER-NOTICE:created'").get();
+  assert.match(creation.body,/recorded/);assert.doesNotMatch(creation.body,/confirmed/, 'a creation record must not claim confirmation for a cancelled or unpaid booking');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,0,'notification acknowledgement never moves money');
 });
