@@ -46,3 +46,15 @@ test('classic Voicebot call keeps the existing urlencoded Connect API contract',
  assert.equal(fields.Record,'false');
  assert.equal(fields.TimeOut,'45');
 });
+test('provider 400 retains only a bounded error code, never provider message/body',async()=>{
+ const prior=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>Response.json({error_data:{code:'10815',message:'SECRET customer phone +919999999999',description:'SECRET provider detail'}},{status:400});
+  const provider=exotelTelephony({...baseEnv,PAWSPACE_VOICE_STREAM_URL:'wss://voice.example.test/agentstream'});
+  await assert.rejects(()=>provider.createCall(intent),error=>{assert.match(error.message,/400; code 10815/);assert.doesNotMatch(error.message,/SECRET|9999999999|provider detail/);return true;});
+ }finally{globalThis.fetch=prior;}
+});
+test('provider 400 without a safe code stays generic',async()=>{
+ const prior=globalThis.fetch;
+ try{globalThis.fetch=async()=>new Response('<html>sensitive rejection</html>',{status:400});const provider=exotelTelephony({...baseEnv,PAWSPACE_VOICE_STREAM_URL:'wss://voice.example.test/agentstream'});await assert.rejects(()=>provider.createCall(intent),/rejected the call request \(400\)$/);}finally{globalThis.fetch=prior;}
+});
