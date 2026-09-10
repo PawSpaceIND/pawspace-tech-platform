@@ -16,7 +16,7 @@
 import{requestLeave,recordAttendance}from"./attendance-leave";
 import{salaryAdvanceDirectory}from"./salary-advance-governance";
 import{employeePerformanceCenter}from"./employee-performance-center";
-import{dailyIncentiveAccrualSummary}from"./daily-incentive-accrual";
+import{dailyIncentiveAccrualSummary,salesIncentivePeriodTruth}from"./daily-incentive-accrual";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -83,11 +83,13 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
  const employee=await resolveEmployeeForActor(db,input.email);
  if(!employee)return{linked:false,email:text(input.email),productionReady:false};
  const employeeId=text(employee.id);
- const[compensation,payslips,incentives,dailyIncentive,advances,leave,performance,attendance]=await Promise.all([
+ const employeeEmail=text(employee.user_email||employee.work_email||input.email).toLowerCase(),monthStart=new Date().toISOString().slice(0,7)+"-01";
+ const[compensation,payslips,incentives,dailyIncentive,salesIncentiveTruth,advances,leave,performance,attendance]=await Promise.all([
   ownCompensation(db,employeeId),
   ownPayslips(db,employeeId),
   ownIncentives(db,employeeId),
-  dailyIncentiveAccrualSummary(db,{employeeId}).catch(()=>({list:[] as Row[],total:0})),
+  dailyIncentiveAccrualSummary(db,{employeeId:employeeEmail}).catch(()=>({list:[] as Row[],total:0})),
+  salesIncentivePeriodTruth(db,{employeeId:employeeEmail,monthStart}).catch(()=>null),
   salaryAdvanceDirectory(db,{employeeId}).catch(()=>[] as Row[]),
   ownLeave(db,employeeId),
   ownPerformance(db,text(employee.work_email)),
@@ -101,11 +103,12 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
   payslips,
   incentives,
   dailyIncentive:{list:(dailyIncentive as {list:Row[]}).list.slice(0,30),total:money((dailyIncentive as {total:number}).total)},
+  salesIncentiveTruth,
   advances:{list:advanceRows,outstanding:money(advanceRows.reduce((a,r)=>a+r.outstanding,0))},
   leave,
   attendance:attendance.results.map(a=>({workDate:text(a.work_date),status:text(a.status),workedMinutes:num(a.worked_minutes),exception:a.exception_code?text(a.exception_code):null})),
   performance,
-  truth:{ownRecordOnly:true,payslipSource:"payroll_runs",incentiveSource:"approved_scheme_results_only",rankingType:"operational_metric_sort",productionReady:false},
+  truth:{ownRecordOnly:true,payslipSource:"payroll_runs",incentiveSource:"approved_scheme_results_plus_canonical_sales_period_results",rankingType:"operational_metric_sort",productionReady:false},
  };
 }
 

@@ -1,3 +1,4 @@
+import{salesIncentivePeriodTruth}from"../../../lib/daily-incentive-accrual";
 import { authError, authorize, database } from "../../../lib/server-auth";
 import { scheduleLeadCallback, completeLeadCallback, dueLeadCallbacks, ensureLeadCallbackTables } from "../../../lib/lead-callback-governance";
 import { checkRnrAutoReassignment } from "../../../lib/lead-assignment-governance";
@@ -85,9 +86,9 @@ async function refreshLeaderboard(db:Db){
   facts.sort((a,b)=>(b.collections-b.refunds)-(a.collections-a.refunds));
   // INSERT OR IGNORE so a row written by a real module is never clobbered; the follow-up UPDATE
   // refreshes only rows still in 'provisional' state so the day's canonical numbers stay live.
-  for(let index=0;index<facts.length;index++){const fact=facts[index],eligible=Math.max(0,fact.collections-fact.refunds);
-    await db.prepare("INSERT OR IGNORE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${fact.name}`,date,fact.name,perOwnerTarget,eligible,fact.collections,fact.conversions,0,fact.slaPercent,fact.rnrPercent,fact.refunds,0,index+1,now).run();
-    await db.prepare("UPDATE sales_performance_daily SET target_revenue=?,eligible_revenue=?,collections=?,conversions=?,sla_percent=?,rnr_percent=?,refunds=?,rank=?,updated_at=? WHERE id=? AND status='provisional' AND updated_at<?").bind(perOwnerTarget,eligible,fact.collections,fact.conversions,fact.slaPercent,fact.rnrPercent,fact.refunds,index+1,now,`PERF-${date}-${fact.name}`,now).run();
+  for(let index=0;index<facts.length;index++){const fact=facts[index],eligible=Math.max(0,fact.collections-fact.refunds),monthStart=`${date.slice(0,7)}-01`,incentiveTruth=await salesIncentivePeriodTruth(db,{employeeId:fact.name.toLowerCase(),monthStart}).catch(()=>null),incentiveAmount=incentiveTruth?Number(incentiveTruth.total||0):0,incentiveStatus=incentiveTruth?String(incentiveTruth.status||"provisional"):"provisional";
+    await db.prepare("INSERT OR IGNORE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${fact.name}`,date,fact.name,perOwnerTarget,eligible,fact.collections,fact.conversions,0,fact.slaPercent,fact.rnrPercent,fact.refunds,incentiveAmount,index+1,now).run();
+    await db.prepare("UPDATE sales_performance_daily SET target_revenue=?,eligible_revenue=?,collections=?,conversions=?,sla_percent=?,rnr_percent=?,refunds=?,incentive_amount=?,status=?,rank=?,updated_at=? WHERE id=?").bind(perOwnerTarget,eligible,fact.collections,fact.conversions,fact.slaPercent,fact.rnrPercent,fact.refunds,incentiveAmount,incentiveStatus,index+1,now,`PERF-${date}-${fact.name}`).run();
   }
 }
 
