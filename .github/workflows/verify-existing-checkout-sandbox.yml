@@ -1,0 +1,93 @@
+name: Verify existing isolated checkout sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type verify-checkout-sandbox-674'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact current PR674 head'
+        required: true
+        default: ''
+      worker_name:
+        description: 'Existing run-derived isolated Worker name'
+        required: true
+        default: ''
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+concurrency:
+  group: pawspace-checkout-sandbox-674-verify
+  cancel-in-progress: false
+jobs:
+  verify-existing:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'verify-checkout-sandbox-674' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pawspace-release-preview
+    steps:
+      - name: Checkout verification infrastructure
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Revalidate exact checkout candidate certification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const sha=process.env.EXPECTED_SHA;
+          if(!/^[a-f0-9]{40}$/.test(sha||''))throw Error('Exact SHA required');
+          const base='https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform';
+          const get=async path=>{const r=await fetch(base+path,{headers:{authorization:'Bearer '+process.env.GH_TOKEN},redirect:'error',signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error('GitHub verification failed');return r.json();};
+          const pr=await get('/pulls/674');
+          if(pr.state!=='open'||pr.head.sha!==sha||pr.head.ref!=='fix/customer-sandbox-checkout-wiring-20260909'||pr.head.repo.full_name!=='PawSpaceIND/pawspace-tech-platform')throw Error('PR674 moved or identity mismatches');
+          const runs=(await get('/actions/runs?event=pull_request&head_sha='+sha+'&per_page=100')).workflow_runs;
+          for(const name of ['Release CI','Pre-UAT Staging Protocol','Browser E2E (hardened, preview superuser disabled)','Browser E2E (personas, sandbox locked)']){const run=runs.filter(r=>r.name===name).sort((a,b)=>b.id-a.id)[0];if(!run||run.status!=='completed'||run.conclusion!=='success')throw Error('Candidate certification incomplete: '+name);}
+          console.log('Exact PR674 head and four required workflow groups verified.');
+          NODE
+      - name: Checkout immutable product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          path: candidate
+      - name: Install candidate locked dependencies
+        working-directory: candidate
+        run: npm ci
+      - name: Install isolated browser
+        working-directory: candidate
+        run: npx playwright install --with-deps chromium
+      - name: Verify existing Worker, D1, Maps and negative payment surfaces read-only
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_NAME: ${{ inputs.worker_name }}
+          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-existing-evidence
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node --experimental-strip-types infra/scripts/verify-existing-checkout-sandbox.mjs
+      - name: Verify authenticated approved customer UI on desktop and mobile
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_NAME: ${{ inputs.worker_name }}
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-existing-evidence
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node --experimental-strip-types infra/scripts/verify-checkout-hosted-browser.mjs
+      - name: Retain redacted verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-existing-verification-${{ inputs.expected_sha }}
+          path: checkout-existing-evidence/
+          if-no-files-found: warn
+          retention-days: 14

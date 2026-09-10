@@ -25,7 +25,15 @@ const cf = async (path, options = {}) => {
 };
 const app = async (origin, path, options = {}) => {
   const r = await fetch(origin + path, { ...options, redirect: "manual", signal: AbortSignal.timeout(30_000) });
-  return { status: r.status, type: r.headers.get("content-type") || "", text: await r.text() };
+  return { status: r.status, type: r.headers.get("content-type") || "", text: await r.text(), setCookie: r.headers.get("set-cookie") || "" };
+};
+const appEventually = async (origin, path, predicate, options = {}) => {
+  let last = { status: 0, type: "", text: "", setCookie: "" };
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try { last = await app(origin, path, options); if (predicate(last)) return last; } catch { /* deployment can need propagation time */ }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+  return last;
 };
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Hosted check failed: ${name}`); };
 try {
@@ -82,11 +90,15 @@ try {
   for (const name of Object.keys(plan.secrets)) check(`secret:${name}`, bindings.some(b => b.name === name && b.type === "secret_text"));
   const schedules = await cf(`/workers/scripts/${plan.worker}/schedules`);
   check("noBackgroundCron", Array.isArray(schedules.schedules) ? schedules.schedules.length === 0 : Array.isArray(schedules) && schedules.length === 0);
-  const home = await app(origin, "/mobile-app");
-  check("rootDocumentReachable", home.status === 200 && /text\/html/i.test(home.type) && /pawspace/i.test(home.text));
-  const login = await app(origin, "/staging-login");
+  const htmlReady = result => result.status === 200 && /text\/html/i.test(result.type) && /pawspace/i.test(result.text);
+  const home = await appEventually(origin, "/mobile-app", htmlReady);
+  check("rootDocumentReachable", htmlReady(home));
+  const login = await appEventually(origin, "/staging-login", result => result.status === 200 && /text\/html/i.test(result.type));
   check("uatLoginPage", login.status === 200 && /text\/html/i.test(login.type));
-  const maps = await app(origin, "/api/address-autocomplete?mode=search&query=Indiranagar%2C%20Bengaluru%20560038");
+  const loginApi = await app(origin, "/api/staging-login", { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ email: "founder@pawspace.in", code: plan.secrets.PAWSPACE_UAT_ACCESS_CODE }) });
+  check("uatLoginApi", loginApi.status === 200 && Boolean(loginApi.setCookie));
+  const sessionCookie = loginApi.setCookie.split(";", 1)[0];
+  const maps = await app(origin, "/api/address-autocomplete?mode=search&query=Indiranagar%2C%20Bengaluru%20560038", { headers: { cookie: sessionCookie } });
   let mapsBody = {}; try { mapsBody = JSON.parse(maps.text); } catch { /* check below fails closed */ }
   check("mapsAutocompleteConfigured", maps.status === 200 && mapsBody?.data?.status === "configured" && Array.isArray(mapsBody?.data?.suggestions) && mapsBody.data.suggestions.length > 0);
   const anonymous = await app(origin, "/api/customer-checkout", { method: "POST", headers: { "content-type": "application/json", origin }, body: "{}" });
