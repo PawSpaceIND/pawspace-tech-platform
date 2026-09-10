@@ -25,6 +25,7 @@ function transpileTsx(source, fileName) {
 
 const CSS_STUB =
   'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
+const NEXT_LINK_STUB_URL = new URL("./next-link-stub.mjs", import.meta.url).href;
 
 function splitSpecifierSuffix(specifier) {
   const queryIndex = specifier.indexOf("?");
@@ -40,6 +41,9 @@ function splitSpecifierSuffix(specifier) {
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "cloudflare:workers") {
     return { url: workersUrl, shortCircuit: true };
+  }
+  if (specifier === "next/link" || specifier === "next/link.js") {
+    return { url: NEXT_LINK_STUB_URL, shortCircuit: true };
   }
 
   try {
