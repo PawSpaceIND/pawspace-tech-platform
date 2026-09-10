@@ -29,9 +29,9 @@ import { createUnifiedCase } from "./unified-case-center";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
-const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 const text = (v: unknown) => String(v ?? "").trim();
 const digits = (v: unknown) => text(v).replace(/[^0-9]/g, "");
+async function stableId(prefix:string,key:string){const bytes=new TextEncoder().encode(key);const digest=await crypto.subtle.digest("SHA-256",bytes);const hex=Array.from(new Uint8Array(digest)).slice(0,10).map(v=>v.toString(16).padStart(2,"0")).join("").toUpperCase();return `${prefix}-${hex}`;}
 
 /** The CRM's existing lead_attempts vocabulary (app/api/revenue-crm/route.ts) - bot tags map onto it. */
 export type CrmAttemptOutcome = "RNR" | "Connected" | "Interested" | "Not interested" | "Invalid" | "Opt-out";
@@ -100,6 +100,7 @@ export async function ensureBotCallDispositionTables(db: Db) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bot_call_disposition_lead ON bot_call_dispositions(lead_id,created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bot_call_disposition_tag ON bot_call_dispositions(primary_tag,created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bot_call_disposition_reconcile ON bot_call_dispositions(reconciliation_status,created_at)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS bot_call_disposition_operations (idempotency_key TEXT PRIMARY KEY,owner_token TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'processing',disposition_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS lead_attempts (id TEXT PRIMARY KEY, lead_id TEXT NOT NULL, channel TEXT NOT NULL, sequence_number INTEGER NOT NULL, outcome TEXT NOT NULL, note TEXT, provider_status TEXT NOT NULL DEFAULT 'uat_queued', created_by TEXT NOT NULL, created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS crm_activities (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL)"),
   ]);
@@ -177,6 +178,21 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   const prior = await db.prepare("SELECT * FROM bot_call_dispositions WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
   if (prior) return { duplicatePrevented: true, id: text(prior.id), leadId: text(prior.lead_id), primaryTag: text(prior.primary_tag), tags: JSON.parse(text(prior.tags_json) || "[]") as string[], crmOutcome: text(prior.crm_outcome), callbackId: prior.callback_id ? text(prior.callback_id) : null, caseId: prior.case_id ? text(prior.case_id) : null, reconciliationStatus: text(prior.reconciliation_status) };
 
+  const ownerToken=crypto.randomUUID(),reservedAt=input.asOf??Date.now();
+  await db.prepare("INSERT OR IGNORE INTO bot_call_disposition_operations (idempotency_key,owner_token,status,created_at,updated_at) VALUES (?,?,'processing',?,?)").bind(idempotencyKey,ownerToken,reservedAt,reservedAt).run();
+  let operation=await db.prepare("SELECT * FROM bot_call_disposition_operations WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+  if(!operation)throw new Error("Bot call disposition reservation failed");
+  if(text(operation.owner_token)!==ownerToken&&text(operation.status)==="retryable"){
+    await db.prepare("UPDATE bot_call_disposition_operations SET owner_token=?,status='processing',updated_at=? WHERE idempotency_key=? AND owner_token=? AND status='retryable'").bind(ownerToken,reservedAt,idempotencyKey,text(operation.owner_token)).run();
+    operation=await db.prepare("SELECT * FROM bot_call_disposition_operations WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+  }
+  if(!operation||text(operation.owner_token)!==ownerToken){
+    const completed=await db.prepare("SELECT * FROM bot_call_dispositions WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+    if(completed)return{duplicatePrevented:true,id:text(completed.id),leadId:text(completed.lead_id),primaryTag:text(completed.primary_tag),tags:JSON.parse(text(completed.tags_json)||"[]")as string[],crmOutcome:text(completed.crm_outcome),callbackId:completed.callback_id?text(completed.callback_id):null,caseId:completed.case_id?text(completed.case_id):null,reconciliationStatus:text(completed.reconciliation_status)};
+    return{duplicatePrevented:true,pending:true,retryable:true,id:"",leadId:"",primaryTag:"",tags:[],crmOutcome:"",callbackId:null,caseId:null,reconciliationStatus:"processing"};
+  }
+
+  try {
   const { primary, definitions, tags, services, callbackAt } = validateTags(input);
   const { leadId, contactId, phone } = await resolveLead(db, input);
   const now = input.asOf ?? Date.now();
@@ -193,9 +209,10 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   //    3-RNR-in-48h auto-reassignment rule counts bot attempts exactly like human ones.
   const attemptChannel = channel === "voice" ? "call" : "whatsapp";
   const sequenceRow = await db.prepare("SELECT COALESCE(MAX(sequence_number),0) n FROM lead_attempts WHERE lead_id=? AND channel=?").bind(leadId, attemptChannel).first<Row>();
-  const attemptId = uid("ATT");
-  await db.prepare("INSERT INTO lead_attempts (id,lead_id,channel,sequence_number,outcome,note,provider_status,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+  const attemptId = await stableId("ATT-BOT", idempotencyKey);
+  const attemptWrite=await db.prepare("INSERT OR IGNORE INTO lead_attempts (id,lead_id,channel,sequence_number,outcome,note,provider_status,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
     .bind(attemptId, leadId, attemptChannel, Number(sequenceRow?.n || 0) + 1, primary.crmOutcome, notes || `${input.botProvider} bot call: ${tags.join(", ")}`, "bot_completed", input.actorId, now).run();
+  const attemptInserted=Number(attemptWrite.meta?.changes||0)>0;
 
   // 2. A callback the customer actually asked for goes through the governed callback ledger, which
   //    supersedes any earlier open promise and keeps the worklist and callback queue in agreement.
@@ -237,16 +254,17 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   const nextActionAt = callbackAt ?? (terminal ? null : now + 24 * 3600_000);
   const leadStatus = optsOut || terminal ? "closed" : positive ? "qualified" : null;
   await db.prepare(
-    `UPDATE lead_work_items SET last_outcome=?,${channel === "voice" ? "call_attempts=call_attempts+1" : "whatsapp_attempts=whatsapp_attempts+1"},first_action_at=COALESCE(first_action_at,?),next_action_at=?,opt_out=?,status=COALESCE(?,status),updated_at=? WHERE id=?`
-  ).bind(primary.code, contacted ? now : null, nextActionAt, optsOut ? 1 : 0, leadStatus, now, leadId).run();
+    `UPDATE lead_work_items SET last_outcome=?,${channel === "voice" ? "call_attempts=call_attempts+?" : "whatsapp_attempts=whatsapp_attempts+?"},first_action_at=COALESCE(first_action_at,?),next_action_at=?,opt_out=?,status=COALESCE(?,status),updated_at=? WHERE id=?`
+  ).bind(primary.code, attemptInserted?1:0, contacted ? now : null, nextActionAt, optsOut ? 1 : 0, leadStatus, now, leadId).run();
   await db.prepare("UPDATE crm_contacts SET stage=?,next_action=?,updated_at=? WHERE id=?")
     .bind(optsOut ? "Do not contact" : terminal ? "Closed" : positive ? "Qualified" : "Contacted", escalates ? "Human follow-up required" : callbackAt ? "Callback scheduled" : terminal ? "No further action" : "Follow up", now, contactId).run();
-  await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)")
-    .bind(uid("ACT"), contactId, "bot_call", `${input.botProvider} bot call · ${primary.label}`, JSON.stringify({ tags, crmOutcome: primary.crmOutcome, callbackAt, crossSellServices: services, claimTags, notes, transcriptRef: text(input.transcriptRef) || null, talkTimeSeconds: input.talkTimeSeconds ?? null, sentiment: text(input.sentiment) || null }), now).run();
+  const activityId=await stableId("ACT-BOT",idempotencyKey);
+  await db.prepare("INSERT OR IGNORE INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)")
+    .bind(activityId, contactId, "bot_call", `${input.botProvider} bot call · ${primary.label}`, JSON.stringify({ tags, crmOutcome: primary.crmOutcome, callbackAt, crossSellServices: services, claimTags, notes, transcriptRef: text(input.transcriptRef) || null, talkTimeSeconds: input.talkTimeSeconds ?? null, sentiment: text(input.sentiment) || null }), now).run();
 
   // 6. The bot's own governed record.
-  const id = uid("BCD");
-  await db.prepare("INSERT INTO bot_call_dispositions (id,idempotency_key,lead_id,contact_id,phone,channel,bot_provider,call_ref,primary_tag,tags_json,crm_outcome,contacted,escalated,opted_out,cross_sell_services_json,claim_tags_json,reconciliation_status,callback_at,callback_id,case_id,attempt_id,talk_time_seconds,sentiment,notes,transcript_ref,recorded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  const id = await stableId("BCD",idempotencyKey);
+  await db.prepare("INSERT OR IGNORE INTO bot_call_dispositions (id,idempotency_key,lead_id,contact_id,phone,channel,bot_provider,call_ref,primary_tag,tags_json,crm_outcome,contacted,escalated,opted_out,cross_sell_services_json,claim_tags_json,reconciliation_status,callback_at,callback_id,case_id,attempt_id,talk_time_seconds,sentiment,notes,transcript_ref,recorded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(id, idempotencyKey, leadId, contactId, phone, channel, text(input.botProvider) || "unknown_bot", text(input.callRef) || null, primary.code, JSON.stringify(tags), primary.crmOutcome, contacted ? 1 : 0, escalates ? 1 : 0, optsOut ? 1 : 0, JSON.stringify(services), JSON.stringify(claimTags), reconciliationStatus, callbackAt, callbackId, caseId, attemptId, input.talkTimeSeconds == null ? null : Number(input.talkTimeSeconds), text(input.sentiment) || null, notes, text(input.transcriptRef) || null, input.actorId, now).run();
 
   // 7. A no-contact attempt feeds the real escalation rule: 3 RNRs within 48h of assignment moves
@@ -256,7 +274,12 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
     autoReassignment = await checkRnrAutoReassignment(db, { leadId, actorId: input.actorId, asOf: now }).catch(() => null);
   }
 
+  await db.prepare("UPDATE bot_call_disposition_operations SET status='completed',disposition_id=?,updated_at=? WHERE idempotency_key=? AND owner_token=?").bind(id,Date.now(),idempotencyKey,ownerToken).run();
   return { duplicatePrevented: false, id, leadId, contactId, primaryTag: primary.code, tags, crmOutcome: primary.crmOutcome, contacted, escalated: escalates, optedOut: optsOut, crossSellServices: services, claimTags, reconciliationStatus, callbackId, caseId, attemptId, autoReassignment, moneyVerified: false };
+  } catch(error) {
+    await db.prepare("UPDATE bot_call_disposition_operations SET status='retryable',updated_at=? WHERE idempotency_key=? AND owner_token=? AND status='processing'").bind(Date.now(),idempotencyKey,ownerToken).run().catch(()=>undefined);
+    throw error;
+  }
 }
 
 /** Ops reconciles a bot's converted/paid CLAIM against the real booking/payment record. */
