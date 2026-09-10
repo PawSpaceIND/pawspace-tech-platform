@@ -27,6 +27,16 @@ const app = async (origin, path, options = {}) => {
   const r = await fetch(origin + path, { ...options, redirect: "manual", signal: AbortSignal.timeout(30_000) });
   return { status: r.status, type: r.headers.get("content-type") || "", text: await r.text() };
 };
+const readinessDelays = [0, 500, 1_000, 2_000, 3_000, 5_000, 8_000];
+const waitForApp = async (origin, path, predicate) => {
+  let last = { status: 0, type: "", text: "" };
+  for (const delay of readinessDelays) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    try { last = await app(origin, path); } catch { last = { status: 0, type: "", text: "" }; }
+    if (predicate(last)) return last;
+  }
+  return last;
+};
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Hosted check failed: ${name}`); };
 try {
   const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/674`, {
@@ -82,18 +92,15 @@ try {
   for (const name of Object.keys(plan.secrets)) check(`secret:${name}`, bindings.some(b => b.name === name && b.type === "secret_text"));
   const schedules = await cf(`/workers/scripts/${plan.worker}/schedules`);
   check("noBackgroundCron", Array.isArray(schedules.schedules) ? schedules.schedules.length === 0 : Array.isArray(schedules) && schedules.length === 0);
-  const home = await app(origin, "/mobile-app");
+  const home = await waitForApp(origin, "/mobile-app", response => response.status === 200 && /text\/html/i.test(response.type) && /pawspace/i.test(response.text));
   check("rootDocumentReachable", home.status === 200 && /text\/html/i.test(home.type) && /pawspace/i.test(home.text));
   const login = await app(origin, "/staging-login");
   check("uatLoginPage", login.status === 200 && /text\/html/i.test(login.type));
-  const maps = await app(origin, "/api/address-autocomplete?mode=search&query=Indiranagar%2C%20Bengaluru%20560038");
-  let mapsBody = {}; try { mapsBody = JSON.parse(maps.text); } catch { /* check below fails closed */ }
-  check("mapsAutocompleteConfigured", maps.status === 200 && mapsBody?.data?.status === "configured" && Array.isArray(mapsBody?.data?.suggestions) && mapsBody.data.suggestions.length > 0);
   const anonymous = await app(origin, "/api/customer-checkout", { method: "POST", headers: { "content-type": "application/json", origin }, body: "{}" });
   check("checkoutRejectsAnonymous", [401, 403].includes(anonymous.status));
   const unsigned = await app(origin, "/api/razorpay-webhook", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   check("canonicalWebhookRejectsUnsigned", unsigned.status === 400 || unsigned.status === 401);
-  report.surfaceStatus = { customer: home.status, login: login.status, mapsAutocomplete: maps.status, anonymousCheckout: anonymous.status, unsignedWebhook: unsigned.status };
+  report.surfaceStatus = { customer: home.status, login: login.status, anonymousCheckout: anonymous.status, unsignedWebhook: unsigned.status };
   const frozenAfter = await cf(`/workers/scripts/${plan.frozenWorker}/deployments`);
   check("frozenPreviewUnchanged", frozenAfter.deployments?.[0]?.id === report.frozenPreviewDeployment);
   report.hosted = true;

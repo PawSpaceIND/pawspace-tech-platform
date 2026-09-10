@@ -26,6 +26,10 @@ try{
    // Use the application's real protected UAT sign-in; do not manufacture an auth cookie.
    const login=await context.request.post(origin+"/api/staging-login",{headers:{origin},data:{email:"founder@pawspace.in",code:accessCode},timeout:20000});
    if(login.status()!==200)throw Error(`Hosted UAT sign-in refused with HTTP ${login.status()}`);
+   const maps=await context.request.get(origin+"/api/address-autocomplete?mode=search&query=Indiranagar%2C%20Bengaluru%20560038",{timeout:20000});
+   const mapsBody=await maps.json().catch(()=>({}));
+   if(maps.status()!==200||mapsBody?.data?.status!=="configured"||!Array.isArray(mapsBody?.data?.suggestions)||mapsBody.data.suggestions.length===0)throw Error(`Hosted authenticated Maps probe refused with HTTP ${maps.status()}`);
+   row.mapsAutocomplete=true;
    const response=await page.goto(origin+"/mobile-app",{waitUntil:"domcontentloaded"});expect(response.status()).toBe(200);
    const home=page.locator('[data-home-design="pawspace-prototype-converged"]');await expect(home).toBeVisible();
    await expect(page.locator('[data-home-design="option-5-premium-visual"]')).toHaveCount(0);
