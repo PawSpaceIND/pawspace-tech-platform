@@ -1,3 +1,4 @@
+import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -142,12 +143,33 @@ export async function runInboundWebhookAttempt(db:Db,input:{queueId:string;worke
  }catch(error){const failure=await failInboundWebhook(db,{queueId:input.queueId,workerId:input.workerId,error,now:input.now});return{claimed:true as const,ok:false as const,error,failure};}
 }
 
+function reapplyGatewayInboundDue(candidates:Row[],limit:number){
+ return [...candidates]
+  .sort((a,b)=>Number(a.next_attempt_at||0)-Number(b.next_attempt_at||0)||Number(a.received_at||0)-Number(b.received_at||0))
+  .slice(0,limit);
+}
+
 export async function drainGatewayInboundQueue(db:Db,handlers:Record<string,GatewayInboundHandler>,input:{limit?:number;now?:number;workerPrefix?:string}={}){
- await ensureGatewayInboundQueueTables(db);const now=input.now??Date.now(),limit=Math.max(1,Math.min(100,Math.floor(input.limit??25))),due=rows(await db.prepare("SELECT id,route_key FROM gateway_inbound_queue WHERE status IN ('RECEIVED','RETRY') AND next_attempt_at<=? ORDER BY next_attempt_at,received_at LIMIT ?").bind(now,limit).all<Row>());let processed=0,retried=0,deadLettered=0,unhandled=0;
- for(const item of due){const routeKey=text(item.route_key),handler=handlers[routeKey],workerId=`${text(input.workerPrefix)||"gateway-inbound"}:${crypto.randomUUID()}`;
-  const chosen:GatewayInboundHandler=handler??(async()=>{throw new Error(`No retry handler registered for inbound route ${routeKey}`);});const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler:chosen,now});if(!handler)unhandled++;if(result.claimed&&result.ok)processed++;else if(result.claimed&&"failure"in result&&result.failure?.status==="DEAD_LETTER")deadLettered++;else if(result.claimed)retried++;
+ await ensureGatewayInboundQueueTables(db);
+ const now=input.now??Date.now(),limit=Math.max(1,Math.min(100,Math.floor(input.limit??25))),routeKeys=Object.keys(handlers).filter(Boolean);
+ if(!routeKeys.length)return{examined:0,processed:0,retried:0,deadLettered:0,unhandled:0};
+
+ const due=reapplyGatewayInboundDue(await chunkedIn(routeKeys,async(chunk,placeholders)=>
+  rows(await db.prepare(`SELECT id,route_key,next_attempt_at,received_at FROM gateway_inbound_queue WHERE route_key IN (${placeholders}) AND status IN ('RECEIVED','RETRY') AND next_attempt_at<=? ORDER BY next_attempt_at,received_at LIMIT ?`)
+   .bind(...chunk,now,limit).all<Row>())
+ ),limit);
+
+ let processed=0,retried=0,deadLettered=0;
+ for(const item of due){
+  const routeKey=text(item.route_key),handler=handlers[routeKey];
+  if(!handler)continue;
+  const workerId=`${text(input.workerPrefix)||"gateway-inbound"}:${crypto.randomUUID()}`;
+  const result=await runInboundWebhookAttempt(db,{queueId:text(item.id),workerId,handler,now});
+  if(result.claimed&&result.ok)processed++;
+  else if(result.claimed&&"failure"in result&&result.failure?.status==="DEAD_LETTER")deadLettered++;
+  else if(result.claimed)retried++;
  }
- return{examined:due.length,processed,retried,deadLettered,unhandled};
+ return{examined:due.length,processed,retried,deadLettered,unhandled:0};
 }
 
 export async function purgeExpiredInboundPayloads(db:Db,now=Date.now()){

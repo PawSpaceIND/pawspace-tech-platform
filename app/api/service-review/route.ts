@@ -1,6 +1,6 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
-import{requestServiceReview,submitServiceReview,claimPublicReview,verifyPublicReview,redeemReviewReward,listReviewRewards}from"../../../lib/service-review-governance";
+import{ServiceReviewError,requestServiceReview,submitServiceReview,claimPublicReview,verifyPublicReview,redeemReviewReward,listReviewRewards}from"../../../lib/service-review-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin review write blocked",{status:403});}
@@ -52,5 +52,5 @@ export async function POST(request:Request){
     const data=await submitServiceReview(db,{requestId:body.requestId,customerId,stars:Number(body.stars),answers:body.answers});
     await securityAudit(db,actor,"review.submit","customer",customerId,"completed",{requestId:body.requestId,stars:body.stars});
     return json({data},201);
-  }catch(error){return authError(error,"Unable to complete review request");}
+  }catch(error){if(error instanceof ServiceReviewError)return json({error:error.message},error.status);return authError(error,"Unable to complete review request");}
 }

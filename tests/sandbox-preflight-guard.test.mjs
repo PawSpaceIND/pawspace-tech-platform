@@ -99,3 +99,35 @@ test("guard: tamperHex always returns a DIFFERENT digest", async () => {
   assert.notEqual(tamperHex(prefixed), prefixed);
   assert.throws(() => tamperHex(""), /non-empty/, "an empty digest is a mistake, not something to tamper with");
 });
+
+// Separate processes exercise the real node:test exit status without failing this parent suite.
+for (const scenario of ['absent', 'rejected', 'unreachable', 'optional']) {
+  test(`strict ${scenario} preflight fails explicitly without executing blocked bodies`, async () => {
+    const { spawnSync } = await import('node:child_process');
+    const moduleUrl = new URL('./integration/sandbox-preflight.mjs', import.meta.url).href;
+    const source = `
+      import test from 'node:test';
+      import { preflight } from ${JSON.stringify(moduleUrl)};
+      const scenario = ${JSON.stringify(scenario)};
+      delete process.env.PAWSPACE_GATE_ABSENT;
+      process.env.PAWSPACE_GATE_PRESENT = 'synthetic';
+      let fetches = 0, blockedBodies = 0, allowedBodies = 0;
+      globalThis.fetch = async () => { fetches++; if(scenario==='unreachable') throw new Error('offline'); return new Response('',{status:401}); };
+      const state = await preflight({suite:'strict guard',required:[{name:scenario==='absent'?'PAWSPACE_GATE_ABSENT':'PAWSPACE_GATE_PRESENT'}],probe:['rejected','unreachable'].includes(scenario)?{url:'https://sandbox.invalid',authenticated:true}:null});
+      const gate = () => scenario==='optional'?state.gateOn('PAWSPACE_GATE_ABSENT'):state.gate();
+      test('blocked body one',gate(),()=>{blockedBodies++;});
+      test('blocked body two',gate(),()=>{blockedBodies++;});
+      if(scenario==='optional') test('independent body',state.gate(),()=>{allowedBodies++;});
+      process.on('exit',()=>console.log('COUNTS '+JSON.stringify({fetches,blockedBodies,allowedBodies})));
+    `;
+    const env = { ...process.env, PAWSPACE_SANDBOX_TESTS_STRICT: 'true' };
+    delete env.NODE_TEST_CONTEXT;
+    const run = spawnSync(process.execPath, ['--test-reporter=tap', '--input-type=module', '--eval', source], { env, encoding: 'utf8', timeout: 15000 });
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    const counts = JSON.parse(run.stdout.match(/COUNTS (\{[^\n]+\})/)[1]);
+    assert.deepEqual(counts, {fetches:['rejected','unreachable'].includes(scenario)?1:0, blockedBodies:0, allowedBodies:scenario==='optional'?1:0});
+    assert.match(run.stdout, /sandbox preflight/);
+    assert.match(run.stdout, /# fail 1/);
+    assert.match(run.stdout, /# skipped 2/);
+  });
+}

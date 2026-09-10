@@ -17,6 +17,7 @@
  * anyone who reads a log.
  */
 import { createHash } from "node:crypto";
+import test from "node:test";
 
 export const STRICT = String(process.env.PAWSPACE_SANDBOX_TESTS_STRICT || "").toLowerCase() === "true";
 // Clamped, because this value decides whether a sandbox is called unreachable. Left raw, a malformed
@@ -156,18 +157,25 @@ function finalise(state) {
   // the runner reports nothing but "ok ... # SKIP".
   console.log(diagnostics);
 
+  const failures = new Set();
+  const failGate = reason => {
+    if (!STRICT || failures.has(reason)) return;
+    failures.add(reason);
+    test(`${state.suite}: sandbox preflight — ${reason}`, () => { throw new Error(reason); });
+  };
+  const reason = state.ready ? null : `${state.kind}: ${REASONS[state.kind] ?? "unknown"}`;
+  if (reason) failGate(reason);
   return {
     ...state,
     diagnostics,
-    reason: state.ready ? null : `${state.kind}: ${REASONS[state.kind] ?? "unknown"}`,
+    reason,
     /**
      * Spread into a node:test call: `test(name, gate(state), fn)`.
      *
-     * In strict mode this deliberately returns no skip, so the body runs, throws on the unconfigured
-     * client and reports a real failure — rather than a passing skip that a pipeline would read as
-     * "the sandbox is fine".
+     * Strict mode records an explicit failing preflight test. Dependent bodies always skip
+     * until their prerequisites are available, so an absent key never reaches a provider.
      */
-    gate() { return state.ready || STRICT ? {} : { skip: this.reason }; },
+    gate() { return state.ready ? {} : { skip: reason }; },
     /**
      * Gate for a test that additionally needs specific variables from `optional`. The suite gate still
      * applies first, so this only ever narrows.
@@ -176,8 +184,10 @@ function finalise(state) {
       const suiteGate = this.gate();
       if (suiteGate.skip) return suiteGate;
       const absent = names.filter(name => !present(name));
-      if (!absent.length || STRICT) return {};
-      return { skip: `credentials_absent: ${absent.join(", ")} not configured - this test needs it, the rest of the suite does not` };
+      if (!absent.length) return {};
+      const reason = `credentials_absent: ${absent.sort().join(", ")} not configured - this test needs it, the rest of the suite does not`;
+      failGate(reason);
+      return { skip: reason };
     },
   };
 }
