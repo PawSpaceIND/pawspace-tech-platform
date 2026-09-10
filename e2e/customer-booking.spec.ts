@@ -240,7 +240,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await sandboxLogin(page,mode==="boarding"?"9000000943":"9000000944");await ensureCustomerPet(page);await page.goto(`/${mode}`);
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
- const offset=5+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
+ const offset=5+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Verify map",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
