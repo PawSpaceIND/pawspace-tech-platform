@@ -13,28 +13,25 @@ jobs:
     env:
       ORIGIN: https://pawspace-beta-golden-wallet-3218c3.karthik-fce.workers.dev
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Inspect next 31 UAT scheduling days read-only
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
-          python - <<'PY'
-          import os,json,urllib.request,http.cookiejar,datetime
-          origin=os.environ['ORIGIN']; jar=http.cookiejar.CookieJar(); op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-          def req(path,method='GET',body=None):
-            r=urllib.request.Request(origin+path,method=method,headers={'content-type':'application/json'},data=None if body is None else json.dumps(body).encode())
-            with op.open(r,timeout=30) as x:return json.load(x)
-          req('/api/staging-login','POST',{'code':os.environ['PAWSPACE_UAT_ACCESS_CODE'],'email':'founder@pawspace.in'})
-          today=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5,minutes=30))).date()
-          print('date\tactive_reservations\t15-17_overlaps')
-          best=[]
-          for i in range(1,31):
-            d=today+datetime.timedelta(days=i); data=req('/api/uat-scheduling?date='+d.isoformat())['data']; rows=[r for p in data.get('providers',[]) for r in p.get('reservations',[]) if r.get('status')!='cancelled']
-            overlaps=[]
-            for r in rows:
-              s=datetime.datetime.fromisoformat(r['scheduledStart'].replace('Z','+00:00')).astimezone(datetime.timezone(datetime.timedelta(hours=5,minutes=30)))
-              e=datetime.datetime.fromisoformat(r['scheduledEnd'].replace('Z','+00:00')).astimezone(datetime.timezone(datetime.timedelta(hours=5,minutes=30)))
-              if s.hour<17 and (e.hour>15 or (e.hour==15 and e.minute>0)): overlaps.append(r)
-            print(f'{d.isoformat()}\t{len(rows)}\t{len(overlaps)}')
-            if not overlaps: best.append(d.isoformat())
-          print('BEST_LATE_SLOT_DATES='+','.join(best[-10:]))
-          PY
+          node --input-type=module <<'NODE'
+          const origin=process.env.ORIGIN;
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json','user-agent':'Mozilla/5.0 PawSpace-UAT-Scheduler-Probe'},body:JSON.stringify({code:process.env.PAWSPACE_UAT_ACCESS_CODE,email:'founder@pawspace.in'})});
+          if(!login.ok)throw new Error(`UAT login HTTP ${login.status}: ${await login.text()}`);
+          const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0]; if(!cookie)throw new Error('UAT login cookie missing');
+          const get=async path=>{const r=await fetch(origin+path,{headers:{cookie,'user-agent':'Mozilla/5.0 PawSpace-UAT-Scheduler-Probe','cache-control':'no-cache'}});if(!r.ok)throw new Error(`${path} HTTP ${r.status}: ${await r.text()}`);return r.json();};
+          const istNow=new Date(Date.now()+330*60000);const base=new Date(Date.UTC(istNow.getUTCFullYear(),istNow.getUTCMonth(),istNow.getUTCDate()));
+          console.log('date\tactive_reservations\t15-17_overlaps');const best=[];
+          for(let i=1;i<31;i++){
+            const d=new Date(base.getTime()+i*86400000);const iso=d.toISOString().slice(0,10);const data=(await get('/api/uat-scheduling?date='+iso)).data;const rows=(data.providers||[]).flatMap(p=>p.reservations||[]).filter(r=>r.status!=='cancelled');
+            const overlaps=rows.filter(r=>{const s=new Date(r.scheduledStart).getTime(),e=new Date(r.scheduledEnd).getTime(),start=new Date(`${iso}T15:00:00+05:30`).getTime(),end=new Date(`${iso}T17:00:00+05:30`).getTime();return s<end&&e>start;});
+            console.log(`${iso}\t${rows.length}\t${overlaps.length}`);if(!overlaps.length)best.push(iso);
+          }
+          console.log('BEST_LATE_SLOT_DATES='+best.slice(-10).join(','));
+          NODE
