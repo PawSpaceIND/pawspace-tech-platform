@@ -1,0 +1,80 @@
+name: Golden synthetic capture downstream proof
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-synthetic-capture-regression.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pawspace-release-preview
+    env:
+      ORIGIN: https://pawspace-beta-golden-wallet-43ba4002.karthik-fce.workers.dev
+      BOOKING_ID: PS-UAT-MTV9TAXL-D586
+      ORDER_ID: order_TaGn7hheH3NbJT
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - name: Send one HMAC-valid synthetic capture regression event
+        env:
+          WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, hmac, json, os, urllib.request
+          booking=os.environ['BOOKING_ID']; order=os.environ['ORDER_ID']; secret=os.environ['WEBHOOK_SECRET']
+          event_id='evt_regression_golden_43ba4002_01'
+          payment_id='pay_regression_golden_43ba4002'
+          payload={
+            'event':'payment.captured',
+            'created_at':1789032000,
+            'payload':{'payment':{'entity':{
+              'id':payment_id,'order_id':order,'amount':84900,'currency':'INR',
+              'notes':{'booking_id':booking,'test_only':'synthetic_downstream_regression'}
+            }}}
+          }
+          raw=json.dumps(payload,separators=(',',':')).encode()
+          signature=hmac.new(secret.encode(),raw,hashlib.sha256).hexdigest()
+          req=urllib.request.Request(os.environ['ORIGIN']+'/api/razorpay-webhook',data=raw,method='POST',headers={
+            'content-type':'application/json','x-razorpay-signature':signature,'x-razorpay-event-id':event_id})
+          with urllib.request.urlopen(req,timeout=30) as response:
+            body=json.loads(response.read().decode() or '{}'); status=response.status
+          print(json.dumps({'httpStatus':status,'response':body},indent=2))
+          if status!=200 or not body.get('ok'): raise SystemExit('Synthetic regression capture was not accepted')
+          open('synthetic-capture-response.json','w').write(json.dumps({'testOnly':True,'providerDelivered':False,'eventId':event_id,'paymentId':payment_id,'response':body},indent=2)+'\n')
+          PY
+      - name: Read same isolated booking after synthetic capture
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          db_id=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100" | jq -r '.result[]|select(.name=="pawspace-golden-wallet-43ba4002")|(.uuid // .id)' | head -1)
+          test -n "$db_id"
+          query(){ curl -sS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$(jq -cn --arg sql "$1" '{sql:$sql}')" | jq -c 'if .success then ([.result[]?.results] | add // []) else {query_error:(.errors // [])} end'; }
+          payment=$(query "SELECT id,status,amount,amount_due_now,gateway,detail_json FROM booking_payments WHERE booking_id='$BOOKING_ID'")
+          recon=$(query "SELECT payment_id,expected_amount,captured_amount,refunded_amount,gateway_status,reconciliation_status,variance_amount,last_event_id FROM payment_reconciliation_records WHERE booking_id='$BOOKING_ID'")
+          work_order=$(query "SELECT id,booking_id,provider_id,status,service_code FROM provider_work_orders WHERE booking_id='$BOOKING_ID'")
+          collection=$(query "SELECT event,payment_id,amount,verification_status FROM collection_ledger_postings WHERE payment_id=(SELECT id FROM booking_payments WHERE booking_id='$BOOKING_ID')")
+          leads=$(query "SELECT id,status,stage,converted_booking_id FROM lead_work_items WHERE customer_id=(SELECT customer_id FROM canonical_bookings WHERE id='$BOOKING_ID')")
+          invoice=$(query "SELECT booking_id,invoice_number,status,gross_amount,tax_amount,net_amount FROM booking_invoices WHERE booking_id='$BOOKING_ID'")
+          tax=$(query "SELECT * FROM booking_tax_readiness WHERE booking_id='$BOOKING_ID'")
+          jq -n --argjson payment "$payment" --argjson recon "$recon" --argjson workOrder "$work_order" --argjson collection "$collection" --argjson leads "$leads" --argjson invoice "$invoice" --argjson tax "$tax" '{testOnly:true,providerDelivered:false,payment:$payment,reconciliation:$recon,partnerWorkOrder:$workOrder,collectionLedger:$collection,crmLeads:$leads,bookingInvoice:$invoice,taxReadiness:$tax}' | tee downstream-regression-readback.json
+          test "$(jq -r '.[0].status // empty' <<<"$payment")" = captured
+          test "$(jq -r '.[0].reconciliation_status // empty' <<<"$recon")" = matched
+          test "$(jq -r '.[0].variance_amount // 999' <<<"$recon")" = 0
+      - name: Upload downstream regression proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-synthetic-capture-downstream-proof
+          path: |
+            synthetic-capture-response.json
+            downstream-regression-readback.json
+          if-no-files-found: warn
+          retention-days: 7
