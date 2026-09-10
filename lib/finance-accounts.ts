@@ -109,7 +109,7 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
  */
 export type JournalMetadata = Partial<Record<"bookingId"|"customerId"|"cityId"|"serviceCode"|"paymentId"|"settlementId"|"paymentMethod"|"collectorId"|"reversalReference"|"verificationStatus", string|null>> & Partial<Record<"taxAmount"|"gatewayFee"|"transactionAt", number|null>>;
 
-export async function postJournal(db: Db, input: { groupKey: string; entryDate: string; periodCode: string; sourceType: string; sourceId: string; narration: string; lines: JournalLine[]; metadata?: JournalMetadata }) {
+export async function prepareJournalPosting(db: Db, input: { groupKey: string; entryDate: string; periodCode: string; sourceType: string; sourceId: string; narration: string; lines: JournalLine[]; metadata?: JournalMetadata }) {
   await ensureFinanceJournalTable(db);
   const lines = input.lines.filter(l => (Number(l.debit) || 0) !== 0 || (Number(l.credit) || 0) !== 0);
   if (!lines.length) throw new Error("A journal needs at least one non-zero line");
@@ -134,21 +134,30 @@ export async function postJournal(db: Db, input: { groupKey: string; entryDate: 
     db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null),
     db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>(),
   ]);
+  // An already posted group is a read-only replay, including after month close. New groups
+  // still require an open period; the date and balance checks above are never bypassed.
+  if (existing) return { journalGroup, statements: [] as D1PreparedStatement[], lines: lines.length };
   if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
-  // every group always writes its first line as `${journalGroup}-1`, so an exact hit means already posted
-  if (existing) return { journalGroup, posted: false, duplicatePrevented: true };
   const now = Date.now();
   const meta = input.metadata ?? {};
   // The read above is a fast replay path, not the concurrency boundary. Two checkers can both observe
   // no row before either writes, so the insert itself must be idempotent. D1 batches serialize the
   // complete journal; INSERT OR IGNORE makes the losing batch a clean duplicate instead of surfacing a
   // UNIQUE violation from finance_journal_entries.id.
-  const results=await db.batch(lines.map((l, i) => db.prepare("INSERT OR IGNORE INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  const statements=lines.map((l, i) => db.prepare("INSERT OR IGNORE INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(`${journalGroup}-${i + 1}`, input.entryDate, input.sourceType, input.sourceId, l.accountCode, l.costCentre ?? null, l.vertical ?? null, round2(Number(l.debit) || 0), round2(Number(l.credit) || 0), input.narration, input.periodCode, now,
       meta.bookingId ?? null, meta.customerId ?? null, meta.cityId ?? null, meta.serviceCode ?? null, meta.paymentId ?? null, meta.settlementId ?? null, meta.paymentMethod ?? null,
-      meta.taxAmount ?? null, meta.gatewayFee ?? null, meta.collectorId ?? null, meta.reversalReference ?? null, meta.transactionAt ?? null, meta.verificationStatus ?? null)));
-  if(Number(results[0]?.meta?.changes||0)===0)return { journalGroup, posted: false, duplicatePrevented: true };
-  return { journalGroup, posted: true, lines: lines.length };
+      meta.taxAmount ?? null, meta.gatewayFee ?? null, meta.collectorId ?? null, meta.reversalReference ?? null, meta.transactionAt ?? null, meta.verificationStatus ?? null));
+  return { journalGroup, statements, lines: lines.length };
+}
+
+/** Execute the canonical prepared journal; callers may also compose it into a larger transaction. */
+export async function postJournal(db: Db, input: Parameters<typeof prepareJournalPosting>[1]) {
+  const plan = await prepareJournalPosting(db, input);
+  if (!plan.statements.length) return { journalGroup: plan.journalGroup, posted: false, duplicatePrevented: true };
+  const results = await db.batch(plan.statements);
+  if (Number(results[0]?.meta?.changes || 0) === 0) return { journalGroup: plan.journalGroup, posted: false, duplicatePrevented: true };
+  return { journalGroup: plan.journalGroup, posted: true, lines: plan.lines };
 }
 
 export const periodOf = (isoDate: string) => isoDate.slice(0, 7);

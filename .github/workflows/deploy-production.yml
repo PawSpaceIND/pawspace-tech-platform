@@ -85,8 +85,8 @@ jobs:
           META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
           INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: node scripts/assert-production-readiness.mjs
 
   deploy:
@@ -147,7 +147,7 @@ jobs:
 
       - name: Configure production (name + D1 + explicit runtime modes + provider identifiers)
         env:
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
           PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
@@ -160,8 +160,8 @@ jobs:
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
           IDFY_URL: ${{ vars.IDFY_URL }}
           PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: node scripts/prod-config.mjs
 
       # No continue-on-error. A production deploy with no recorded rollback reference is a
@@ -243,13 +243,13 @@ jobs:
 
       - name: Certify the deployed configuration
         env:
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
           EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
           IDFY_URL: ${{ vars.IDFY_URL }}
           PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
         run: |
           set -euo pipefail
           node - <<'NODE'

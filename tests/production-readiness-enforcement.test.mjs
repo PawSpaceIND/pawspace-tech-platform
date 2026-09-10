@@ -38,6 +38,9 @@ test("protected production workflows enforce canonical production credentials an
   assert.match(workflow,/PAWSPACE_PAYMENT_ENV: 'sandbox'/);
   assert.match(workflow,/PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'/);
   assert.doesNotMatch(workflow,/IDFY_API_KEY_SANDBOX|META_WHATSAPP_UAT_ACCESS_TOKEN|INTERAKT_API_KEY_SANDBOX/);
+  assert.match(workflow,/secrets\.META_WHATSAPP_WABA_ID/);
+  assert.match(workflow,/secrets\.META_WHATSAPP_PHONE_NUMBER_ID/);
+  assert.doesNotMatch(workflow,/vars\.META_WHATSAPP_(?:WABA_ID|PHONE_NUMBER_ID)/);
  }
 });
 
