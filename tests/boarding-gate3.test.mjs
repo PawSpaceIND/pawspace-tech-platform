@@ -202,7 +202,7 @@ test("Boarding Gate 3 refund ledger is sandbox-only and refuses a reused referen
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Boarding Gate 3 host settlement waits for checkout and invents neither payout nor tax", async () => {
+test("Boarding Gate 3 host settlement waits for checkout and projects canonical completion finance with the 5-day SLA", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
 
   const early = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
@@ -212,25 +212,29 @@ test("Boarding Gate 3 host settlement waits for checkout and invents neither pay
   const rows = await world.db.prepare("SELECT COUNT(*) n FROM boarding_host_settlement_ledger WHERE booking_id=?").bind(world.bookingId).all();
   assert.equal(Number(rows.results[0].n), 0, "a refused settlement writes no ledger row");
 
-  // Drive the stay to a real checkout, then settle.
+  // A status-only completion is insufficient: Boarding settlement must be sourced from the canonical
+  // payout computation + posted provider-payable journal created by service completion.
   await world.db.prepare("UPDATE boarding_stays SET status='completed',check_out_status='complete' WHERE id=?").bind(world.stayId).run();
   await world.db.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").bind(world.bookingId).run();
+  const unresolved = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
+  assert.equal(unresolved?.status, 409);
+  assert.match(unresolved.message, /completion finance must be resolved/i);
+
+  const resolvedAt = Date.now();
+  await world.db.exec("CREATE TABLE provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT,service_code TEXT,provider_net_payout REAL,breakdown_json TEXT,computed_at INTEGER); CREATE TABLE finance_journal_entries (id TEXT PRIMARY KEY,source_type TEXT,source_id TEXT,account_code TEXT,debit REAL,credit REAL,posted INTEGER,created_at INTEGER)");
+  await world.db.prepare("INSERT INTO provider_payout_computations VALUES (?,?, 'boarding',1400,'{}',?)").bind(world.bookingId, world.providerId, resolvedAt).run();
+  await world.db.prepare("INSERT INTO finance_journal_entries VALUES ('J-BRD-PAY','service_completion',?,'2110-Provider Payable',0,1380,1,?)").bind(world.bookingId, resolvedAt).run();
 
   const prepared = await world.act("prepare_settlement", { actorId: CHECKER });
   assert.ok(prepared);
   const settlement = await world.db.prepare("SELECT * FROM boarding_host_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
-  // Every one of these is a refusal to guess. A payout rule, a tax status and an approval that say
-  // anything else are money moving on an assumption.
-  //
-  // TWO EQUIVALENT MUTATIONS, recorded rather than chased. Changing the DDL DEFAULTs for
-  // payout_rule_status and tax_status survives, because the INSERT always names both columns
-  // explicitly — the defaults are unreachable. Changing the INSERT's values instead turns this test
-  // red, which is checked: 'ready' payout rule, 'gst_18' tax, 'ready' approval and 'instructed'
-  // payout each fail here. The assertion is on the row that is actually written.
-  assert.equal(settlement.payout_rule_status, "rule_pending");
-  assert.equal(settlement.tax_status, "configuration_required");
-  assert.equal(settlement.approval_status, "not_ready");
-  assert.equal(settlement.payout_status, "not_instructed");
+  assert.equal(Number(settlement.base_payout), 1400);
+  assert.equal(Number(settlement.payout_amount), 1380, "the settlement amount is the posted canonical provider payable after statutory withholding");
+  assert.equal(settlement.payout_rule_status, "rule_applied");
+  assert.equal(settlement.tax_status, "resolved");
+  assert.equal(settlement.approval_status, "awaiting_finance_approval");
+  assert.equal(settlement.payout_status, "not_instructed", "projection must not bypass Finance approval");
+  assert.equal(Number(settlement.eligible_at), resolvedAt + 5 * 24 * 60 * 60 * 1000, "host payout is eligible exactly five days after canonical completion finance");
 });
 
 // ---------------------------------------------------------------------------------------------
