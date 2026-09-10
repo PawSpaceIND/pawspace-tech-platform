@@ -50,3 +50,5 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  console.log(`[PR674-MODAL] ${JSON.stringify(frames)}`);await testInfo.attach("pr674-razorpay-modal-structure",{body:JSON.stringify(frames,null,2),contentType:"application/json"});await page.screenshot({path:testInfo.outputPath("pr674-razorpay-modal-loaded.png"),fullPage:true});
  expect(frames.some(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url))).toBe(true);
 });
+
+// Harness refresh marker: exact PR674 external modal diagnostic only.
