@@ -149,43 +149,52 @@ async function submitUpi(page: Page, upi: string) {
   const deadline = Date.now() + 45_000;
   let contactSubmitted = false;
   while (Date.now() < deadline) {
-    for (const frame of page.frames().filter(frame => frame !== page.mainFrame() && /razorpay/i.test(frame.url()))) {
-      const mobile = frame.locator('input[placeholder*="Mobile" i], input[aria-label*="mobile" i], input[aria-label*="phone" i]').first();
-      if (!contactSubmitted && await mobile.isVisible().catch(() => false)) {
-        await mobile.fill(PHONE);
-        const next = frame.getByRole("button", { name: /^Continue$/i }).first();
-        if (await next.isVisible().catch(() => false)) {
-          await next.click();
-          contactSubmitted = true;
-          await page.waitForTimeout(800);
-          continue;
-        }
-      }
-      for (const locator of [
-        frame.getByRole("button", { name: /UPI/i }).first(),
-        frame.getByText(/^UPI$/i).first(),
-        frame.getByText(/Pay by UPI|UPI ID/i).first(),
-      ]) {
-        if (await locator.isVisible().catch(() => false)) await locator.click().catch(() => {});
-      }
-      const inputs = frame.locator("input");
-      for (let index = 0; index < await inputs.count(); index++) {
-        const input = inputs.nth(index);
-        if (!await input.isVisible().catch(() => false)) continue;
-        const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""}`;
-        if (!/upi|vpa|upi id/i.test(hint)) continue;
-        await input.fill(upi);
-        const buttons = frame.getByRole("button");
-        for (let button = (await buttons.count()) - 1; button >= 0; button--) {
-          const candidate = buttons.nth(button);
-          const label = await candidate.innerText().catch(() => "");
-          if (await candidate.isVisible().catch(() => false) && /pay|continue|verify|proceed/i.test(label)) {
-            await candidate.click();
-            return;
+    const frames = page.frames().filter(frame => frame !== page.mainFrame() && /razorpay/i.test(frame.url()));
+    for (const frame of frames) {
+      try {
+        const mobile = frame.locator('input[placeholder*="Mobile" i], input[aria-label*="mobile" i], input[aria-label*="phone" i]').first();
+        if (!contactSubmitted && await mobile.isVisible().catch(() => false)) {
+          await mobile.fill(PHONE);
+          const next = frame.getByRole("button", { name: /^Continue$/i }).first();
+          if (await next.isVisible().catch(() => false)) {
+            await next.click();
+            contactSubmitted = true;
+            await page.waitForTimeout(800);
+            continue;
           }
         }
-        await input.press("Enter");
-        return;
+        for (const locator of [
+          frame.getByRole("button", { name: /UPI/i }).first(),
+          frame.getByText(/^UPI$/i).first(),
+          frame.getByText(/Pay by UPI|UPI ID/i).first(),
+        ]) {
+          if (await locator.isVisible().catch(() => false)) await locator.click().catch(() => {});
+        }
+        const inputs = frame.locator("input");
+        const inputCount = await inputs.count();
+        for (let index = 0; index < inputCount; index++) {
+          const input = inputs.nth(index);
+          if (!await input.isVisible().catch(() => false)) continue;
+          const hint = `${await input.getAttribute("placeholder") || ""} ${await input.getAttribute("aria-label") || ""} ${await input.getAttribute("name") || ""}`;
+          if (!/upi|vpa|upi id/i.test(hint)) continue;
+          await input.fill(upi);
+          const buttons = frame.getByRole("button");
+          const buttonCount = await buttons.count();
+          for (let button = buttonCount - 1; button >= 0; button--) {
+            const candidate = buttons.nth(button);
+            const label = await candidate.innerText().catch(() => "");
+            if (await candidate.isVisible().catch(() => false) && /pay|continue|verify|proceed/i.test(label)) {
+              await candidate.click();
+              return;
+            }
+          }
+          await input.press("Enter");
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/Frame was detached|Execution context was destroyed/i.test(message)) continue;
+        throw error;
       }
     }
     await page.waitForTimeout(500);
