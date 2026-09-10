@@ -1,0 +1,49 @@
+name: RazorpayX Sandbox Provider Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type razorpayx-test-payout"
+        required: true
+permissions:
+  contents: read
+
+jobs:
+  provider-proof:
+    if: inputs.confirm == 'razorpayx-test-payout'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_RAZORPAYX_ENV: sandbox
+      PAWSPACE_RAZORPAYX_LIVE_APPROVED: "false"
+      RAZORPAYX_KEY_ID_SANDBOX: ${{ secrets.RAZORPAYX_KEY_ID_SANDBOX }}
+      RAZORPAYX_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAYX_KEY_SECRET_SANDBOX }}
+      RAZORPAYX_ACCOUNT_NUMBER_SANDBOX: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX }}
+      RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Refuse non-test credentials
+        run: |
+          set -euo pipefail
+          case "$RAZORPAYX_KEY_ID_SANDBOX" in
+            rzp_test_*) ;;
+            *) echo "::error::TEST RazorpayX key required"; exit 1 ;;
+          esac
+          [ "$PAWSPACE_PAYMENT_ENV" = sandbox ]
+          [ "$PAWSPACE_RAZORPAYX_ENV" = sandbox ]
+          [ "$PAWSPACE_RAZORPAYX_LIVE_APPROVED" = false ]
+      - name: Create and fetch one INR 1 RazorpayX Test Mode payout
+        run: node scripts/e2e/razorpayx-sandbox.mjs
+      - name: Upload sanitized provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: razorpayx-sandbox-provider-evidence
+          path: /tmp/razorpayx-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
