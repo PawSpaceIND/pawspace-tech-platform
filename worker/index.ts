@@ -20,6 +20,7 @@ import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-conse
 import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
 import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
+import {runExotelStaleCallReconciliationSweep} from "../lib/exotel-call-reconciliation";
 import {runTrustSafetySweep} from "../lib/trust-safety-governance";
 import {handleAiVoiceSelfTestNegotiate,handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-harness";
@@ -138,7 +139,7 @@ const worker = {
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const supermetrics=result.supermetricsSync as Record<string,unknown>;const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(supermetrics?.status||"")==="partial_failure"||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,supermetrics,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -154,6 +155,7 @@ const worker = {
         runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
         runDiamondCrmScheduledSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
         runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
+        runExotelStaleCallReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:10}),
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
@@ -172,6 +174,7 @@ const worker = {
       if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(diamondCrm.status==="rejected")errors.push(`diamond crm: ${diamondCrm.reason instanceof Error?diamondCrm.reason.message:String(diamondCrm.reason)}`);
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
+      if(exotelVoiceReconciliation.status==="rejected")errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.reason instanceof Error?exotelVoiceReconciliation.reason.message:String(exotelVoiceReconciliation.reason)}`);else if(exotelVoiceReconciliation.value.failed)errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.value.failed} call(s) failed authoritative refresh`);
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
       if(templateSyncError)errors.push(templateSyncError);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
