@@ -2,6 +2,7 @@ import{authError,authorize,requirePermission,securityAudit}from"../../../lib/ser
 // Through the barrel, NOT the kernel: importing lib/service-policy-governance alone leaves the domain
 // registry empty in a cold worker, which is what this route answered before. [PTJA-W2-B4-M04]
 import{listServicePolicies,servicePolicyAudit,servicePolicyDomain,servicePolicyDomains,writeServicePolicy}from"../../../lib/service-policy-domains";
+import{ASSIGNMENT_POLICY_DOMAIN,assignmentModeSupported,type AssignmentMode}from"../../../lib/provider-assignment-policy";
 
 /*
  * Control Center: business policy by vertical and city.
@@ -67,6 +68,7 @@ export async function POST(request:Request){
     if(!spec)return json({error:`Unknown policy domain ${domain||"(none)"}`,code:"unknown_policy_domain"},400);
     requirePermission(actor,spec.managePermission);
     if(!body.config||typeof body.config!=="object")return json({error:"A policy configuration object is required"},400);
+    if(domain===ASSIGNMENT_POLICY_DOMAIN){const serviceCode=String(body.serviceCode||"*").trim(),mode=String(body.config.assignmentMode||"") as AssignmentMode;if(serviceCode!=="*"&&!assignmentModeSupported(serviceCode,mode))return json({error:`Assignment mode ${mode} is not supported for ${serviceCode}`,code:"unsupported_assignment_mode"},400);}
     const reason=String(body.reason||"").trim();
     if(reason.length<5)return json({error:"A clear change reason is required"},400);
     const record=await writeServicePolicy(db,{
