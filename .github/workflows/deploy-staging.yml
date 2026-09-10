@@ -53,6 +53,14 @@ on:
         options:
           - disabled
           - approved
+      razorpay_relay_target_origin:
+        description: 'Optional exact PR674 isolated workers.dev origin for sandbox webhook shadow relay'
+        required: false
+        default: ''
+      razorpay_relay_target_sha:
+        description: 'Required exact PR674 SHA when relay target origin is supplied'
+        required: false
+        default: ''
 
 jobs:
   deploy:
@@ -90,6 +98,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify optional Razorpay sandbox relay target
+        env:
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ github.event.inputs.razorpay_relay_target_origin }}
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: ${{ github.event.inputs.razorpay_relay_target_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-razorpay-sandbox-relay-target.mjs
       - name: Install
         run: npm run install:ci
       - name: Build (vinext)
@@ -105,6 +121,8 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ github.event.inputs.razorpay_relay_target_origin }}
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: ${{ github.event.inputs.razorpay_relay_target_sha }}
         run: node scripts/stage-config.mjs
       # Captured BEFORE the deploy, so a rollback target exists even when this deploy is the bad one.
       # Certification requires it: a deploy with no recorded predecessor has no way back, and the moment
