@@ -17,7 +17,7 @@ async function call(path,{method='GET',body}={}){
 }
 async function lifecycle(){return (await call(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(bookingId)}`)).data.data;}
 async function mutate(action,extra={}){return (await call('/api/grooming-lifecycle',{method:'POST',body:{bookingId,action,...extra}})).data;}
-async function ensureStatus(from,to,action){const before=await lifecycle();const current=before.booking.status;if(current===to){step(`Lifecycle ${to} already reached`);return before;}if(current!==from)throw new Error(`Expected ${from} before ${action}, found ${current}`);await mutate(action);const after=await lifecycle();if(after.booking.status!==to)throw new Error(`${action} did not reach ${to}`);step(`Lifecycle ${from} -> ${to}`);return after;}
+async function ensureStatus(from,to,action){const before=await lifecycle();const current=before.booking.status;if(current==='completed'){step(`Lifecycle already completed; ${action} not repeated`);return before;}if(current===to){step(`Lifecycle ${to} already reached`);return before;}if(current!==from)throw new Error(`Expected ${from} before ${action}, found ${current}`);await mutate(action);const after=await lifecycle();if(after.booking.status!==to)throw new Error(`${action} did not reach ${to}`);step(`Lifecycle ${from} -> ${to}`);return after;}
 try{
  const login=await call('/api/staging-login',{method:'POST',body:{code:process.env.PAWSPACE_UAT_ACCESS_CODE,email:'founder@pawspace.in'}});
  const setCookie=login.response.headers.get('set-cookie')||'';cookie=setCookie.split(';')[0];if(!cookie.startsWith('pawspace_uat='))throw new Error('UAT staff cookie not issued');step('Founder UAT staff session');
