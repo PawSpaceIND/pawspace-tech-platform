@@ -99,7 +99,7 @@ test("walking and taxi premium presentation still prices from their commercial A
   hasAll(walking, [/loadWalkingCatalogue/, /createWalkingQuote/, /reserveWalkingSchedule/, /createCanonicalWalkingBooking/, /AddressPicker/, /serviceAddress:serviceLocation.address/, /servicePincode:serviceLocation.assignment.pincode/], "Walking");
   hasAll(read("app/mobile-app/address-picker.tsx"), [/resolveServiceCoverage/, /resolveAddress/, /onZoneResolved/], "Walking verified address picker");
   const taxi = read("app/mobile-app/taxi-flow.tsx");
-  hasAll(taxi, [/loadTaxiRouteClasses/, /createTaxiQuote/, /reserveTaxiSchedule/, /createCanonicalTaxiBooking/, /resolveServiceCoverage/], "Taxi");
+  hasAll(taxi, [/createTaxiRideQuote/, /reserveTaxiSchedule/, /createCanonicalTaxiRideBooking/, /resolveServiceCoverage/, /Pay 50% booking fee/, /reservedVehicle/], "Taxi v2");
   assert.doesNotMatch(walking, /customerId\s*:\s*["']TST-101["']/);
   assert.doesNotMatch(taxi, /customerId\s*:\s*["']TST-101["']/);
 });

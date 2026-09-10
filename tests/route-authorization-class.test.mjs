@@ -268,6 +268,7 @@ const AUTHORIZED_PROBE_VALIDATION = new Map([
   ["customer-grooming-summary.GET", "customer probe holds scheduling.book; missing selector validates after authorization"],
   ["grooming-booking-change.GET", "customer probe holds scheduling.book; missing booking selector is validated only after authorization"],
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
+  ["taxi-ride-bookings.POST", "customer probe holds scheduling.book; Taxi v2 payload validation happens only after authentication and scheduling authorization"],
   ["subscription-billing.GET", "customer probe holds scheduling.book; missing subscription selector is validated only after authorization"],
 ]);
 
@@ -377,6 +378,14 @@ test("canonical-bookings authorizes before validating while preserving the custo
     "an anonymous canonical booking must reach a 401/403 before body validation");
   assert.ok(lowPrivilegeSweep.validatedFirst.some((entry) => entry.startsWith("canonical-bookings.POST -> 400")),
     "the customer probe legitimately passes scheduling.book and only then receives payload validation");
+});
+
+
+test("Taxi v2 authorizes before validating while preserving the customer booking path", async () => {
+  assert.ok(anonymousSweep.refused.includes("taxi-ride-bookings.POST"),
+    "an anonymous Taxi v2 booking must reach a 401/403 before body validation");
+  assert.ok(lowPrivilegeSweep.validatedFirst.some((entry) => entry.startsWith("taxi-ride-bookings.POST -> 400")),
+    "the customer probe legitimately passes scheduling.book and only then receives Taxi v2 payload validation");
 });
 
 test("every loadable handler answers with a Response instead of throwing", async () => {

@@ -54,7 +54,9 @@ export async function paymentStageAmount(db:Db,bookingId:string):Promise<Payment
  const credits=await creditBreakdownAppliedToBooking(db,bookingId);
  const base={bookingBase:true,currency:String(payment.currency||"INR"),paymentId:String(payment.id),paymentStatus,bookingTotal,creditsApplied:credits.totalApplied,walletCreditApplied:credits.walletApplied,pawPointsCreditApplied:credits.pawPointsApplied};
 
- const schedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status,'stay' schedule_kind FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status,'taxi' schedule_kind FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const schedule=staySchedule??taxiSchedule;
  if(!schedule){
   const stage:PaymentStage=firstCaptured?"settled":"full";
   const cashDue=firstCaptured?0:money(dueNowStored-credits.totalApplied);

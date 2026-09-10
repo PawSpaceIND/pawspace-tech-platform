@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderCustomer, type AssistedOrderPet, type AssistedOrderResult } from "../../lib/assisted-orders-client";
 import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
+import AssistedTaxiPanel from "./assisted-taxi-panel";
 
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
 const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
@@ -41,7 +42,7 @@ export default function AssistedBooking(){
       const body=await response.json().catch(()=>({})) as {data?:{records?:Customer360Record[]};error?:string};
       if(!response.ok)throw new Error(body.error||"Selected CRM customer could not be loaded");
       const record=body.data?.records?.[0];if(!record||record.customerId!==requested)throw new Error("Selected CRM customer was not found");
-      const canonicalPets=(record.pets||[]).filter(p=>String(p.name||"").trim()).map(p=>({sourceId:String(p.sourceId||p.name||p.id||"").trim(),name:String(p.name||"Pet").trim(),species:species(p.species),breed:p.breed?String(p.breed):undefined,vaccinationStatus:p.vaccinationStatus?String(p.vaccinationStatus):undefined})).filter(p=>p.sourceId);
+      const canonicalPets=(record.pets||[]).filter(p=>String(p.name||"").trim()).map(p=>({sourceId:String(p.sourceId||p.name||p.id||"").trim(),canonicalId:p.id?String(p.id):undefined,name:String(p.name||"Pet").trim(),species:species(p.species),breed:p.breed?String(p.breed):undefined,vaccinationStatus:p.vaccinationStatus?String(p.vaccinationStatus):undefined})).filter(p=>p.sourceId);
       let pendingPetName="";
       if(!canonicalPets.length){
         const crmResponse=await fetch("/api/crm",{cache:"no-store"});const crmBody=await crmResponse.json().catch(()=>({})) as {contacts?:CrmRow[];error?:string};
@@ -92,6 +93,7 @@ export default function AssistedBooking(){
             <div className={styles.stage}><small>CUSTOMER AUTHORITY</small><h3>Capture consent evidence</h3><div className={styles.two}><label>Consent method<select value={consentMethod} onChange={e=>setConsentMethod(e.target.value as typeof consentMethod)}><option value="recorded_call">Recorded call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option></select></label><label>Evidence reference<input value={consentReference} onChange={e=>setConsentReference(e.target.value)} required minLength={5}/></label></div><label className={styles.consent}><input type="checkbox" checked={consentCaptured} onChange={e=>setConsentCaptured(e.target.checked)}/> Customer explicitly authorized PawSpace staff to create this test booking.</label></div>
             <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured||(crmNeedsSpecies&&!crmSpecies)}>{busy?"Creating canonical test order…":requestedCustomerId?"Create CRM-assisted UAT order":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
           </form>
+          <AssistedTaxiPanel customer={customer} consentCaptured={consentCaptured} consentMethod={consentMethod} consentReference={consentReference} />
           {result&&<div className={styles.stage}><small>CANONICAL RESULT</small><h3>{result.bookingId}</h3><div className={styles.review}><div><small>Assisted order</small><b>{result.assistedOrderId}</b></div><div><small>Provider</small><b>{result.provider.name}</b></div><div><small>Governed total</small><b>{money(result.totalAmount)}</b></div><div><small>Due now</small><b>{money(result.amountDueNow)}</b></div><div><small>Duplicate safe</small><b>{result.duplicatePrevented?"Existing order reused":"New order"}</b></div><div><small>Live money</small><b>{result.liveMoney?"Unexpected":"No"}</b></div></div></div>}
         </section>
       </div>
