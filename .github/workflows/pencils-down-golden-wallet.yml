@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: pawspace-golden-wallet-3218c3
+  group: pawspace-golden-wallet-23f2ff7a
   cancel-in-progress: false
 jobs:
   certify-deploy:
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout exact Wallet+Razorpay candidate
         uses: actions/checkout@v4
         with:
-          ref: 3218c383ef3afd947847b87b7319600e359e4f9e
+          ref: 23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8
           path: candidate
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -44,20 +44,23 @@ jobs:
           script=Path('infra/ops/pencils-down/deploy_golden.py')
           text=script.read_text()
           replacements={
-            "8745bbca5e76185b65ca7c0a7fd4bda60acf35e6":"3218c383ef3afd947847b87b7319600e359e4f9e",
-            "321312aec6e2a96060496bdf4401d41cf024e40d":"9836754d40e305925deb4d87cbaba663dc80d039",
-            "pawspace-beta-golden-8745bbca":"pawspace-beta-golden-wallet-3218c3",
-            "pawspace-golden-8745bbca":"pawspace-golden-wallet-3218c3",
+            "8745bbca5e76185b65ca7c0a7fd4bda60acf35e6":"23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8",
+            "321312aec6e2a96060496bdf4401d41cf024e40d":"cec814df936f64bbb1aa84a942bfbba2ca50fe9d",
+            "pawspace-beta-golden-8745bbca":"pawspace-beta-golden-wallet-23f2ff7a",
+            "pawspace-golden-8745bbca":"pawspace-golden-wallet-23f2ff7a",
           }
           for old,new in replacements.items():
             if old not in text: raise SystemExit('expected deploy guard token missing: '+old)
             text=text.replace(old,new)
+          fixture_needle="    'PAWSPACE_STAGING_LIVE_CUSTOMER_OTP':'false',"
+          if fixture_needle not in text: raise SystemExit('expected sandbox fixture insertion point missing')
+          text=text.replace(fixture_needle,"    'PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE':'on',\n"+fixture_needle,1)
           script.write_text(text)
           manifest=Path('infra/ops/pencils-down/payment-ui-source-manifest.json')
           data=json.loads(manifest.read_text())
-          data['candidate']='3218c383ef3afd947847b87b7319600e359e4f9e'
-          data['tree']='9836754d40e305925deb4d87cbaba663dc80d039'
-          data['payment_ui_wiring']='customer Wallet redemption -> exact due-now -> /api/payment-order -> Razorpay Test checkout; webhook remains authoritative'
+          data['candidate']='23f2ff7a31acbae5bb03c0ddb84f58160e7d14a8'
+          data['tree']='cec814df936f64bbb1aa84a942bfbba2ca50fe9d'
+          data['payment_ui_wiring']='customer Wallet redemption -> Wallet-adjusted billing projection -> exact due-now -> /api/payment-order -> Razorpay Test checkout; webhook remains authoritative'
           manifest.write_text(json.dumps(data,indent=2)+'\n')
           print('Ephemeral deploy guard retargeted; repository product source unchanged.')
           PY
@@ -90,6 +93,7 @@ jobs:
         run: >-
           node --experimental-strip-types --test --test-concurrency=1
           tests/customer-payment-ui-wiring.test.mjs
+          tests/customer-billing.test.mjs
           tests/beta-credit-parity.test.mjs
           tests/payment-order-cross-customer-runtime.test.mjs
           tests/mobile-native-ecosystem.test.mjs
