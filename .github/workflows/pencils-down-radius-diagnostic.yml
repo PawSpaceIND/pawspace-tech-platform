@@ -1,0 +1,43 @@
+name: Inspect Golden provider radius state read-only
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-radius-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: pawspace-release-preview
+    env:
+      TARGET_DB_NAME: pawspace-beta-golden-wallet-3218c3
+      TARGET_WORKER: pawspace-beta-golden-wallet-3218c3
+    steps:
+      - name: Read test Worker bindings and provider home bases
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          settings=$(curl -fsS "${auth[@]}" "$api/workers/scripts/$TARGET_WORKER/settings")
+          echo "FIXTURE_BINDING_PRESENT=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE")] | length' <<<"$settings")"
+          echo "FIXTURE_BINDING_ON=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE" and .type=="plain_text" and .text=="on")] | length' <<<"$settings")"
+          echo "SCHEDULING_UAT=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_SCHEDULING_ENV" and .type=="plain_text" and .text=="uat")] | length' <<<"$settings")"
+          echo "PAYMENT_SANDBOX=$(jq -r '[.result.bindings[]? | select(.name=="PAWSPACE_PAYMENT_ENV" and .type=="plain_text" and .text=="sandbox")] | length' <<<"$settings")"
+          db_json=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100")
+          db_id=$(jq -r --arg n "$TARGET_DB_NAME" '.result[] | select(.name==$n) | (.uuid // .id)' <<<"$db_json" | head -1)
+          test -n "$db_id" && test "$db_id" != null
+          query(){
+            local sql="$1"
+            curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" | jq -c '{success,errors,result:[.result[]?.results]}'
+          }
+          echo 'HOME_BASE_TABLE'
+          query "SELECT name,sql FROM sqlite_master WHERE type='table' AND name='provider_home_base'"
+          echo 'GROOMER_HOME_BASES'
+          query "SELECT provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by FROM provider_home_base WHERE provider_id IN ('groom_arun','groom_kiran','groom_sanjay') ORDER BY provider_id"
+          echo 'CUSTOMER_GEOCODE_COUNT'
+          query "SELECT COUNT(*) n FROM customer_service_address_geocodes WHERE pincode='560038' AND zone_id='blr-east'"
