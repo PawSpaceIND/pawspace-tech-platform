@@ -17,10 +17,10 @@ export async function GET(request:Request){
 export async function POST(request:Request){
   try{
     sameOrigin(request);
-    const body=await request.json() as {customerId?:string;bookingId?:string;title?:string;description?:string};
+    const body=await request.json() as {customerId?:string;bookingId?:string;title?:string;description?:string;requestId?:string};
     if(!body.title||!body.description)return json({error:"A title and description are required"},400);
     const{db,actor,customerId}=await ownedContext(request,body.customerId);
-    const result=await submitCustomerComplaint(db,{customerId,bookingId:body.bookingId||null,title:body.title,description:body.description});
+    const result=await submitCustomerComplaint(db,{customerId,bookingId:body.bookingId||null,title:body.title,description:body.description,requestId:body.requestId||null});
     await securityAudit(db,actor,"customer.complaint.submit","customer",customerId,"completed",{bookingId:body.bookingId||null,caseId:(result.case as{id?:string})?.id});
     return json({data:result},result.duplicatePrevented?200:201);
   }catch(error){return authError(error,"Unable to submit your report");}
