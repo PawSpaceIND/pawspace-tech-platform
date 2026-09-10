@@ -38,12 +38,13 @@ def main():
  invoice=one(query(db,f"SELECT invoice_number,status,gross_amount,tax_amount,net_amount FROM booking_invoices WHERE booking_id='{BOOKING}'"))
  tax=one(query(db,f"SELECT gross_amount,tax_amount,tax_rule_status,reason FROM booking_tax_readiness WHERE booking_id='{BOOKING}'"))
  payout=one(query(db,f"SELECT provider_id,order_value,provider_net_payout,platform_fee,platform_gst,provider_gst_deducted,pawspace_gst_on_order,term_id FROM provider_payout_computations WHERE booking_id='{BOOKING}'"))
+ term=one(query(db,f"SELECT id,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed FROM provider_commercial_terms WHERE id=(SELECT term_id FROM provider_payout_computations WHERE booking_id='{BOOKING}')"))
  settlement=one(query(db,f"SELECT provider_id,payout_amount,status,rule_version,reason FROM provider_settlement_readiness WHERE booking_id='{BOOKING}'"))
  parity=one(query(db,f"SELECT customer_gross_collection,pawspace_entitlement,statutory_liabilities,provider_settlement,variance,status FROM booking_settlement_reconciliations WHERE booking_id='{BOOKING}'"))
  journal=query(db,f"SELECT account_code,debit,credit,period_code,posted FROM finance_journal_entries WHERE source_type='service_completion' AND source_id='{BOOKING}' ORDER BY account_code")
  attribution=one(query(db,f"SELECT attribution_type,lead_id,source,detail_json FROM booking_attribution WHERE booking_id='{BOOKING}'"))
  leads=query(db,f"SELECT id,service,status,lifecycle_state,initiated_booking_id,converted_booking_id FROM lead_work_items WHERE customer_id=(SELECT customer_id FROM canonical_bookings WHERE id='{BOOKING}') ORDER BY updated_at DESC LIMIT 20")
- expected=[booking,work,payment,gateway,recon,invoice,tax,payout,settlement,parity,attribution]
+ expected=[booking,work,payment,gateway,recon,invoice,tax,payout,term,settlement,parity,attribution]
  if any(x is None for x in expected):raise RuntimeError('one or more required same-record finance rows are missing')
  if booking['status']!='completed' or booking['provider_id']!=PROVIDER or work['status']!='completed':raise RuntimeError('booking/work-order completion mismatch')
  if payment['status']!='captured' or gateway['gateway_order_id']!=ORDER or gateway['environment']!='sandbox':raise RuntimeError('payment/order identity mismatch')
@@ -52,7 +53,13 @@ def main():
  if applied!=500:raise RuntimeError(f'Wallet applied value is {applied}, expected 500')
  if not any(r['event']=='online_payment_captured' and round(float(r['amount']),2)==849 and r['verification_status']=='posted' for r in collection):raise RuntimeError('posted ₹849 collection missing')
  if invoice['status']!='issued' or round(float(invoice['gross_amount']),2)!=1349 or tax['tax_rule_status']!='resolved':raise RuntimeError('invoice/GST readiness mismatch')
- if round(float(payout['order_value']),2)!=1349 or float(payout['provider_net_payout'])<=0 or settlement['status']!='accrued':raise RuntimeError('provider payout accrual mismatch')
+ if round(float(payout['order_value']),2)!=1349 or settlement['status']!='accrued':raise RuntimeError('provider payout accrual mismatch')
+ model=term['engagement_model']; provider_net=round(float(payout['provider_net_payout']),2); settlement_amount=round(float(settlement['payout_amount']),2)
+ if model=='direct_employee':
+  if provider_net!=0 or settlement_amount!=0 or round(float(payout['pawspace_gst_on_order']),2)<=0:raise RuntimeError('direct-employee payout/GST semantics mismatch')
+ elif model in ('commission_groomer','commission_standard'):
+  if provider_net<=0 or settlement_amount<=0:raise RuntimeError('commission-provider payout accrual mismatch')
+ else:raise RuntimeError(f'unsupported commercial model in Golden readback: {model}')
  if parity['status']!='reconciled' or round(float(parity['variance']),2)!=0:raise RuntimeError('settlement parity is not reconciled')
  debit=round(sum(float(r.get('debit') or 0) for r in journal),2);credit=round(sum(float(r.get('credit') or 0) for r in journal),2)
  if not journal or debit!=credit or debit!=1349 or not all(int(r['posted'])==1 for r in journal):raise RuntimeError(f'completion journal mismatch {debit}/{credit}')
@@ -65,9 +72,9 @@ def main():
   if linked:raise RuntimeError('direct booking unexpectedly mutated a lead')
   crm='direct_booking_correctly_left_unrelated_leads_untouched'
  else:raise RuntimeError('unknown booking attribution type')
- result={'testOnly':True,'productionChanged':False,'bookingId':BOOKING,'providerId':PROVIDER,'gatewayOrderId':ORDER,'walletApplied':applied,'cashCaptured':849,'serviceValue':1349,'booking':booking,'workOrder':work,'payment':payment,'reconciliation':recon,'collectionLedger':collection,'invoice':invoice,'taxReadiness':tax,'providerPayout':payout,'settlementReadiness':settlement,'settlementParity':parity,'completionJournal':journal,'completionJournalDebit':debit,'completionJournalCredit':credit,'bookingAttribution':attribution,'crmResult':crm,'leads':leads,'outcome':'SAME_RECORD_DOWNSTREAM_PASS'}
+ result={'testOnly':True,'productionChanged':False,'bookingId':BOOKING,'providerId':PROVIDER,'gatewayOrderId':ORDER,'walletApplied':applied,'cashCaptured':849,'serviceValue':1349,'booking':booking,'workOrder':work,'payment':payment,'reconciliation':recon,'collectionLedger':collection,'invoice':invoice,'taxReadiness':tax,'providerPayout':payout,'commercialTerm':term,'settlementReadiness':settlement,'settlementParity':parity,'completionJournal':journal,'completionJournalDebit':debit,'completionJournalCredit':credit,'bookingAttribution':attribution,'crmResult':crm,'leads':leads,'outcome':'SAME_RECORD_DOWNSTREAM_PASS'}
  os.makedirs(os.path.dirname(OUT),exist_ok=True);open(OUT,'w').write(json.dumps(result,indent=2)+'\n')
- print(json.dumps({'outcome':result['outcome'],'booking':BOOKING,'walletApplied':applied,'cashCaptured':849,'journal':f'{debit}/{credit}','crmResult':crm,'invoice':invoice['invoice_number'],'taxStatus':tax['tax_rule_status'],'payoutStatus':settlement['status']}))
+ print(json.dumps({'outcome':result['outcome'],'booking':BOOKING,'walletApplied':applied,'cashCaptured':849,'journal':f'{debit}/{credit}','crmResult':crm,'invoice':invoice['invoice_number'],'taxStatus':tax['tax_rule_status'],'payoutStatus':settlement['status'],'engagementModel':model,'providerPayoutAmount':provider_net}))
 
 if __name__=='__main__':
  try:main()
