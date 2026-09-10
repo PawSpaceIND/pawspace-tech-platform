@@ -116,3 +116,26 @@ export async function recordVoiceProviderEventFromExotelReconciliation(db:Db,env
   return{accepted:false,status:503,reason:text(reason).slice(0,200),duplicate:false};
  }
 }
+
+
+/**
+ * Provider callbacks are best-effort. Reconcile stale live Exotel calls from the scheduled worker so a
+ * dropped callback cannot leave the canonical ledger in dialing/ringing/connected forever. The sweep is
+ * deliberately bounded and reuses the same authenticated Call Details reconciliation path as callbacks.
+ */
+export async function runExotelStaleCallReconciliationSweep(db:Db,env:Env,input:{asOf?:number;limit?:number;staleAfterMs?:number}={}){
+ await ensureVoiceCallTables(db);
+ const asOf=input.asOf??Date.now();
+ const limit=Math.max(1,Math.min(Number(input.limit||10),25));
+ const staleAfterMs=Math.max(60_000,Math.min(Number(input.staleAfterMs||120_000),3_600_000));
+ const rows=await db.prepare("SELECT provider_call_id FROM voice_call_orders WHERE provider='exotel' AND provider_call_id IS NOT NULL AND state IN ('dialing','ringing','connected') AND updated_at<=? ORDER BY updated_at ASC LIMIT ?").bind(asOf-staleAfterMs,limit).all<Row>();
+ let processed=0,applied=0,failed=0;
+ for(const row of rows.results){
+  const callSid=text(row.provider_call_id);
+  if(!callSid)continue;
+  processed++;
+  const result=await recordVoiceProviderEventFromExotelReconciliation(db,env,new URLSearchParams({CallSid:callSid}).toString());
+  if(!result.accepted)failed++;else if(result.applied)applied++;
+ }
+ return{processed,applied,failed,staleAfterMs,limit};
+}
