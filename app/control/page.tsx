@@ -1053,7 +1053,7 @@ export default function Control() {
                   "Mixed DB + fixtures",
                 ],
                 ["Razorpay events", "Sandbox contract", "—", "Not connected"],
-                ["RazorpayX payouts", "Sandbox contract", "—", "Not connected"],
+                ["RazorpayX payouts", "Test Mode adapter", "—", "Credential + provider-proof gated"],
                 [
                   "WhatsApp / LimeChat",
                   "Integration-ready",
