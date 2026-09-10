@@ -61,7 +61,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
   await home.click();
-  await expect(page.getByText("Everything they need", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Care services", exact: true })).toBeVisible();
 
   const grooming = serviceCard(page, "Grooming");
   const training = serviceCard(page, "Training");
