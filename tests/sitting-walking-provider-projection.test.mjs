@@ -29,16 +29,18 @@ async function providerWorld(email, providerId) {
 const providerRequest = (path, email) => new Request(`https://ops.pawspace.example${path}`, { headers: { "oai-authenticated-user-email": email } });
 
 test("sitting projection preserves the wire contract while redacting provider-sensitive care/event data", () => {
-  const out = projectSittingProviderBooking({ id:"B1",status:"in_progress",service_code:"pet_sitting",package_code:"visit",package_name:"Visit",schedule_group_id:"G1",city_id:"blr",zone_id:"blr-east",scheduled_start:"2026-09-10T10:00:00Z",scheduled_end:"2026-09-10T11:00:00Z",provider_id:"sit_1",customer_id:"cust_1",work_order_id:"wo_1",work_order_status:"in_progress",total_amount:499,currency:"INR",carePlan:{status:"ready",plan:{feeding:"Morning kibble",medication:"None",emergencyContact:"+91 98765 43210 Mom",vet:"Dr Rao 9988776655",homeAccess:"Gate code 4455, key under mat",specialInstructions:"Dog is friendly"},updatedAt:1},events:[{id:"e1",event_type:"checked_in",actor_id:"ops@pawspace.in",detail:{distanceMeters:12,staffNote:"called customer 9876543210"},created_at:2}],recovery:null });
+  const out = projectSittingProviderBooking({ id:"B1",status:"in_progress",service_code:"pet_sitting",package_code:"visit",package_name:"Visit",schedule_group_id:"G1",city_id:"blr",zone_id:"blr-east",scheduled_start:"2026-09-10T10:00:00Z",scheduled_end:"2026-09-10T11:00:00Z",provider_id:"sit_1",customer_id:"cust_1",work_order_id:"wo_1",work_order_status:"in_progress",total_amount:499,currency:"INR",carePlan:{status:"ready",plan:{feeding:"Morning kibble",medication:"None",emergencyContact:"+91 98765 43210 Mom",vet:"Dr Rao 9988776655",homeAccess:"Gate code 4455, key under mat",specialInstructions:"Dog is friendly",internalStaffNote:"Never expose this"},updatedAt:1},events:[{id:"e1",event_type:"checked_in",actor_id:"ops@pawspace.in",detail:{distanceMeters:12,staffNote:"called customer 9876543210"},created_at:2}],recovery:null });
   assert.equal(out.provider_id,"sit_1");
   assert.equal(out.scheduled_start,"2026-09-10T10:00:00Z");
   assert.equal(out.events[0].event_type,"checked_in");
   assert.equal(out.events[0].actor_id,"provider_or_system");
   assert.equal(out.carePlan.plan.feeding,"Morning kibble");
-  assert.equal(out.carePlan.plan.hasEmergencyContact,true);
+  assert.equal(out.carePlan.plan.emergencyContact,"+91 98765 43210 Mom");
+  assert.equal(out.carePlan.plan.vet,"Dr Rao 9988776655");
+  assert.equal(out.carePlan.plan.homeAccess,"Gate code 4455, key under mat");
   assert.equal(out.providerId,undefined);
   const serialized=JSON.stringify(out);
-  for(const secret of["98765","ops@pawspace.in","Gate code","staffNote"])assert.ok(!serialized.includes(secret));
+  for(const secret of["ops@pawspace.in","staffNote","Never expose this","internalStaffNote"])assert.ok(!serialized.includes(secret));
 });
 
 test("walking projection keeps snake_case UI fields, safe owner care and only safe payment fields", () => {
@@ -67,8 +69,24 @@ test("booking-only Sitting provider GET uses the redacted provider projection", 
   assert.equal(response.status,200,await response.clone().text());
   const row=(await response.json()).data[0];
   assert.equal(row.provider_id,providerId); assert.equal(row.providerId,undefined); assert.equal(row.events[0].actor_id,"provider_or_system");
-  assert.equal(row.carePlan.plan.hasEmergencyContact,true); assert.equal(row.carePlan.plan.emergencyContact,undefined);
-  assert.ok(!JSON.stringify(row).includes("9876543210"));
+  assert.equal(row.carePlan.plan.emergencyContact,"9876543210"); assert.equal(row.carePlan.plan.vet,"9999999999"); assert.equal(row.carePlan.plan.homeAccess,"PIN 4455");
+  assert.ok(!JSON.stringify(row).includes("ops@pawspace.in")); assert.ok(!JSON.stringify(row).includes("staffNote"));
+});
+
+test("booking-only Sitting read refuses a different provider before governed care fields are returned", async t => {
+  const email="other.sitter@pawspace.test", assigned="sitter_ananya", other="sitter_neha";
+  const { sqlite, db } = await providerWorld(email, other); t.after(()=>sqlite.close());
+  await seedSittingBooking(db,sqlite,{bookingId:"SIT-CROSS-PROVIDER",providerId:assigned});
+  const response=await runWithWorkersDb(db,()=>sittingRoute.GET(providerRequest("/api/sitting-lifecycle?bookingId=SIT-CROSS-PROVIDER",email)));
+  assert.equal(response.status,403);
+});
+
+test("booking-only Walking read refuses a different provider before owner care is returned", async t => {
+  const email="other.walker@pawspace.test", assigned="walker_dev", other="walker_asha";
+  const { sqlite, db } = await providerWorld(email, other); t.after(()=>sqlite.close());
+  await seedWalkingBooking(db,sqlite,{bookingId:"WALK-CROSS-PROVIDER",providerId:assigned});
+  const response=await runWithWorkersDb(db,()=>walkingRoute.GET(providerRequest("/api/walking-lifecycle?bookingId=WALK-CROSS-PROVIDER",email)));
+  assert.equal(response.status,403);
 });
 
 test("booking-only Walking provider GET is redacted without breaking walker-required fields", async t => {
