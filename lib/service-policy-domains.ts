@@ -19,6 +19,7 @@ import"./collection-ledger";
 import"./media-scan-boundary";
 import"./media-upload-boundary";
 import"./provider-verification-policy";
+import"./provider-assignment-policy";
 import"./purpose-based-access";
 import"./quiet-hours-override";
 import"./refund-policy-governance";
