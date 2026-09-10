@@ -10,7 +10,8 @@ const server = await import('../lib/customer-checkout-server.ts');
 const { CustomerCheckoutController } = await import('../lib/customer-checkout-client.ts');
 const locks = { PAWSPACE_PAYMENT_ENV: 'sandbox', FORBID_PRODUCTION: 'true', PAWSPACE_PAYMENT_LIVE_APPROVED: 'false' };
 // Deliberately synthetic keys. All external SDK/network calls below are controlled test doubles.
-const env = { ...locks, RAZORPAY_KEY_ID_SANDBOX: 'rzp_test_fixtureOnly', RAZORPAY_KEY_SECRET_SANDBOX: 'checkout-fixture-secret-not-a-credential' };
+const env = { ...locks, RAZORPAY_KEY_ID_SANDBOX: 'rzp_test_fixtureOnly', RAZORPAY_KEY_SECRET_SANDBOX: 'checkout-fixture-secret-not-a-credential',
+  RAZORPAY_WEBHOOK_SECRET_SANDBOX: 'checkout-fixture-webhook-not-a-credential' };
 const opts = { keyId: env.RAZORPAY_KEY_ID_SANDBOX, orderId: 'order_fixture', amountPaise: 49950, currency: 'INR' };
 const receipt = { bookingId: 'B1', orderId: 'order_fixture', paymentId: 'pay_fixture',
   signature: createHmac('sha256', env.RAZORPAY_KEY_SECRET_SANDBOX).update('order_fixture|pay_fixture').digest('hex') };

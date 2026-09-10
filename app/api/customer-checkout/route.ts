@@ -2,6 +2,7 @@ import { authError, database, requireCustomerOwnership, resolveActor } from "../
 import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
 import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
+import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
 import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 export async function POST(request: Request) {
@@ -40,6 +41,13 @@ export async function POST(request: Request) {
       if (!stage) return json({ error: "Payment record was not found." }, 404);
       if (stage.stage === "settled" || stage.dueNow <= 0) return json({ data: { connected: false, status: "nothing_due", bookingId, environment: "sandbox", locks } });
       if (stage.currency !== "INR") return json({ error: "This checkout currently supports INR payments only." }, 409);
+      // Do not open a payment the receiver cannot verify. This is configuration readiness only,
+      // not proof of gateway delivery. Existing receipts and settled balances remain readable.
+      const receiver = resolvePaymentWebhookGate(runtime);
+      if (!receiver.ok || receiver.environment !== "sandbox") return json({
+        error: "Payment confirmation is not configured. Contact billing support before paying.",
+        code: "checkout_webhook_unconfigured",
+      }, 503);
       const data = await createBookingPaymentOrder(db, runtime, { bookingId, customerId: session.subjectId, actorId: session.subjectId });
       if (!data.connected) return json({ error: "Secure checkout is unavailable or needs reconciliation. Contact billing support before retrying." }, 503);
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);

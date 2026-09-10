@@ -24,12 +24,13 @@ const env = {
 const origin = "https://checkout-recovery.pawspace.test";
 const sign = (secret, raw) => createHmac("sha256", secret).update(raw).digest("hex");
 
-async function setup(t) {
+async function setup(t, { createOrder = true, runtimePatch = {} } = {}) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
   const db = d1(sqlite); enterWorkersDbScope(db);
   globalThis.__CHECKOUT_RECOVERY_DB__ = db;
-  globalThis.__CHECKOUT_RECOVERY_ENV__ = { ...env };
+  const runtime = { ...env, ...runtimePatch };
+  globalThis.__CHECKOUT_RECOVERY_ENV__ = runtime;
   sqlite.exec(`
     CREATE TABLE canonical_customers(id TEXT PRIMARY KEY,city_id TEXT,name TEXT,primary_phone TEXT,email TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,idempotency_key TEXT,customer_id TEXT,pet_ids_json TEXT,source_pet_ids_json TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,channel TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,created_by TEXT,created_at INTEGER,updated_at INTEGER);
@@ -60,9 +61,11 @@ async function setup(t) {
     }));
     return { status: response.status, body: await response.json() };
   }
-  const order = await customer({ action: "start", bookingId: "B1" });
-  assert.equal(order.status, 201, JSON.stringify(order.body));
-  assert.equal(order.body.data.orderId, "order_recoveryFixture");
+  if (createOrder) {
+    const order = await customer({ action: "start", bookingId: "B1" });
+    assert.equal(order.status, 201, JSON.stringify(order.body));
+    assert.equal(order.body.data.orderId, "order_recoveryFixture");
+  }
   const receipt = { bookingId: "B1", orderId: "order_recoveryFixture", paymentId: "pay_recoveryFixture",
     signature: sign(env.RAZORPAY_KEY_SECRET_SANDBOX, "order_recoveryFixture|pay_recoveryFixture") };
   function payload(event) {
@@ -77,7 +80,7 @@ async function setup(t) {
     return { status: response.status, body: await response.json() };
   }
   const confirm = () => customer({ action: "confirm", ...receipt });
-  return { sqlite, db, deliver, confirm, customer, payload, receipt, providerCalls: () => providerCalls };
+  return { sqlite, db, runtime, deliver, confirm, customer, payload, receipt, providerCalls: () => providerCalls };
 }
 
 for (const captureType of ["payment.captured", "order.paid"]) {
@@ -168,3 +171,78 @@ for (const state of ["FAILED", "CANCELLED"]) {
     assert.equal(w.providerCalls(), 1);
   });
 }
+
+// Opening checkout without a receiver secret strands a valid receipt: the actual webhook
+// route cannot accept any capture. These cases join both real routes, not just a config read.
+for (const [name, patch] of [
+  ["absent", { RAZORPAY_WEBHOOK_SECRET_SANDBOX: undefined }],
+  ["empty", { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "" }],
+  ["whitespace", { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "  " }],
+  ["live-only", { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "", RAZORPAY_WEBHOOK_SECRET_LIVE: "synthetic-live-secret" }],
+  ["legacy-only", { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "", RAZORPAY_WEBHOOK_SECRET: "synthetic-legacy-secret" }],
+]) {
+  test(`checkout refuses a payable order when its sandbox webhook secret is ${name}`, async t => {
+    const w = await setup(t, { createOrder: false, runtimePatch: patch });
+    const paymentBefore = w.sqlite.prepare("SELECT * FROM booking_payments").all();
+    const rejectedWebhook = await w.deliver("payment.captured", "evt_missing_receiver");
+    assert.equal(rejectedWebhook.status, 503, "the real receiver cannot process this configuration");
+    const start = await w.customer({ action: "start", bookingId: "B1" });
+    assert.equal(start.status, 503, `checkout must refuse before creating an unconfirmable order: ${JSON.stringify(start)}`);
+    assert.equal(start.body.code, "checkout_webhook_unconfigured");
+    assert.match(start.body.error, /confirmation.*not configured/i);
+    assert.equal(w.providerCalls(), 0, "no provider request when the receiver is unavailable");
+    const { ensureFinancialRuntimeTables } = await import("../lib/financial-runtime-schema.ts");
+    await ensureFinancialRuntimeTables(w.db);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payment_intents").get().n, 0);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM financial_outbox").get().n, 0);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM gateway_webhook_events").get().n, 0);
+    assert.deepEqual(w.sqlite.prepare("SELECT * FROM booking_payments").all(), paymentBefore);
+    assert.doesNotMatch(JSON.stringify(start.body), /synthetic-|rzp_test_|RAZORPAY_WEBHOOK_SECRET/);
+  });
+}
+
+test("restoring receiver configuration allows the same customer intent to retry without a duplicate order", async t => {
+  const w = await setup(t, { createOrder: false, runtimePatch: { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "" } });
+  const blocked = await w.customer({ action: "start", bookingId: "B1" });
+  assert.equal(blocked.status, 503);
+  assert.equal(w.providerCalls(), 0);
+  w.runtime.RAZORPAY_WEBHOOK_SECRET_SANDBOX = env.RAZORPAY_WEBHOOK_SECRET_SANDBOX;
+  for (let i = 0; i < 2; i++) {
+    const started = await w.customer({ action: "start", bookingId: "B1" });
+    assert.equal(started.status, 201, JSON.stringify(started));
+    assert.equal(started.body.data.orderId, w.receipt.orderId);
+    assert.equal(started.body.data.amountPaise, 49950);
+  }
+  assert.equal(w.providerCalls(), 1);
+  assert.equal((await w.confirm()).body.data.status, "awaiting_confirmation");
+  assert.equal((await w.deliver("payment.authorized", "evt_restored_authorized")).status, 200);
+  assert.equal((await w.deliver("payment.captured", "evt_restored_capture")).status, 200);
+  assert.equal((await w.confirm()).body.data.status, "captured");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE status='POSTED'").get().n, 1);
+});
+
+test("receiver outage never prevents confirmation of a capture that was already verified and recorded", async t => {
+  const w = await setup(t);
+  assert.equal((await w.deliver("payment.authorized", "evt_recorded_authorized")).status, 200);
+  assert.equal((await w.deliver("payment.captured", "evt_recorded_capture")).status, 200);
+  w.runtime.RAZORPAY_WEBHOOK_SECRET_SANDBOX = "";
+  const confirmed = await w.confirm();
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.body.data.status, "captured");
+  const settled = await w.customer({ action: "start", bookingId: "B1" });
+  assert.equal(settled.status, 200);
+  assert.equal(settled.body.data.status, "nothing_due");
+  assert.equal(w.providerCalls(), 1, "status recovery must not open another order");
+});
+
+test("receiver outage leaves an existing receipt pending rather than manufacturing a payment or starting another order", async t => {
+  const w = await setup(t);
+  w.runtime.RAZORPAY_WEBHOOK_SECRET_SANDBOX = "";
+  const pending = await w.confirm();
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.data.status, "awaiting_confirmation");
+  assert.equal((await w.deliver("payment.captured", "evt_receiver_offline")).status, 503);
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
+  assert.equal(w.providerCalls(), 1);
+});
