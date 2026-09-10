@@ -81,6 +81,9 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
       bookingTotal: stage.bookingTotal,
       dueNow: amount,
       outstandingBalance: stage.outstandingBalance,
+      creditsApplied: stage.creditsApplied,
+      walletCreditApplied: stage.walletCreditApplied,
+      pawPointsCreditApplied: stage.pawPointsCreditApplied,
     },
   });
 
@@ -124,6 +127,9 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
     stage: stage.stage,
     bookingTotal: stage.bookingTotal,
     outstandingBalance: stage.outstandingBalance,
+    creditsApplied: stage.creditsApplied,
+    walletCreditApplied: stage.walletCreditApplied,
+    pawPointsCreditApplied: stage.pawPointsCreditApplied,
   };
 }
 

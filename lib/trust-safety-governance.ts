@@ -252,19 +252,20 @@ export async function recordProviderChatMessage(db: Db, input: {
   await ensureTrustSafetyTables(db);
   const providerId = text(input.providerId), threadId = text(input.threadId), idempotencyKey = text(input.idempotencyKey), message = text(input.message);
   if (!providerId || !threadId || !idempotencyKey || !message) throw new Response("Provider, thread, idempotency key and message are required", { status: 400 });
-  const prior = await db.prepare("SELECT id,thread_id,payload_json FROM communication_messages WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-  if (prior) {
-    if (text(prior.thread_id) !== threadId) throw new Response("Idempotency key is already bound to another conversation", { status: 409 });
-    return { duplicatePrevented: true, messageId: text(prior.id), threadId, payload: JSON.parse(text(prior.payload_json) || "{}") };
-  }
   const thread = await db.prepare("SELECT customer_id,booking_id,status FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
   if (!thread || text(thread.status) !== "open") throw new Response("Open conversation thread not found", { status: 404 });
   if (!text(thread.booking_id)) throw new Response("Provider chat is available only for a booked service", { status: 409 });
-  let assigned = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
+  let assigned = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(error => { if (/no such table: provider_work_orders/i.test(error instanceof Error ? error.message : String(error))) return null; throw error; });
   if (!assigned) assigned = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
   if (!assigned || text(assigned.provider_id) !== providerId) throw new Response("Provider is not assigned to this conversation", { status: 403 });
   const trust = await db.prepare("SELECT status,suspended_until FROM provider_trust_state WHERE provider_id=?").bind(providerId).first<Row>();
   if (trust && ["suspended", "banned_permanent"].includes(text(trust.status))) throw new Response("Provider messaging is suspended by Trust & Safety", { status: 403 });
+  // Retries must pass current assignment/trust checks before looking up prior content.
+  const prior = await db.prepare("SELECT m.id,m.thread_id,m.payload_json,m.template_key,a.provider_id FROM communication_messages m LEFT JOIN provider_chat_activity a ON a.message_id=m.id WHERE m.idempotency_key=?").bind(idempotencyKey).first<Row>();
+  if (prior) {
+    if (text(prior.thread_id) !== threadId || text(prior.provider_id) !== providerId || text(prior.template_key) !== "provider_in_app_chat") throw new Response("Idempotency key is already bound to another sender or conversation", { status: 409 });
+    return { duplicatePrevented: true, messageId: text(prior.id), threadId, payload: JSON.parse(text(prior.payload_json) || "{}") };
+  }
   const now = input.asOf ?? Date.now(), messageId = uid("MSG-PCHAT");
   const inspected = await inspectTrustSafetyText(db, {
     text: message,

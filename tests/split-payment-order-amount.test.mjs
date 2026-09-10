@@ -65,6 +65,11 @@ function seed({ total = TOTAL, dueNow = TOTAL, paymentStatus = "created", schedu
   return { sqlite, db };
 }
 
+function applyWalletCredit(sqlite, amount) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS pawspace_wallet_ledger (id TEXT PRIMARY KEY,entry_type TEXT NOT NULL,applied_value REAL NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO pawspace_wallet_ledger VALUES ('WAL-PAY-STAGE','redeem',?,'booking','BK-1')").run(amount);
+}
+
 /** Captures the order body Razorpay would receive, and returns the paise figure. */
 function stubGateway() {
   const calls = [];
@@ -91,6 +96,19 @@ test("Test 1 — a 50/50 first payment charges the half due, not the booking tot
     assert.equal(gateway.paise(), 500000, "Razorpay must receive 500000 paise (Rs 5,000), not 1000000");
     assert.equal(result.amount, HALF);
     assert.equal(result.stage, "first_instalment");
+  } finally { gateway.restore(); }
+});
+
+test("FIN-CREDIT — a Rs 500 wallet redemption reduces the actual Razorpay payload by exactly Rs 500", async () => {
+  const { sqlite, db } = seed({ dueNow: TOTAL });
+  applyWalletCredit(sqlite, 500);
+  const gateway = stubGateway();
+  try {
+    const result = await openOrder(db);
+    assert.equal(gateway.paise(), 950000, "Razorpay must receive Rs 9,500 after Rs 500 wallet credit");
+    assert.equal(result.amount, 9500);
+    assert.equal(result.walletCreditApplied, 500);
+    assert.equal(result.creditsApplied, 500);
   } finally { gateway.restore(); }
 });
 
