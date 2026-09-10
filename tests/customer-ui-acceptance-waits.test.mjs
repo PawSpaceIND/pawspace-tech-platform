@@ -64,6 +64,13 @@ test("customer acceptance uses the governed east-zone UAT location for Training"
   assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
 });
 
+test("customer acceptance waits for Sitting rates and completes required stay consent fields", () => {
+  assert.match(source, /rateButtons\.first\(\)\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+  assert.match(source, /getByLabel\("Vet contact"\)\.fill\("UAT Vet contact"\)/);
+  assert.match(source, /getByLabel\("Emergency contact"\)\.fill\("UAT emergency contact"\)/);
+  assert.match(source, /getByLabel\("Home access instructions"\)\.fill\("UAT home access instructions"\)/);
+  assert.match(source, /getByRole\("checkbox",\{name:\/I agree to care\/i\}\)\.check\(\)/);
+});
 test("customer acceptance accepts the current Boarding empty-selection CTA", () => {
   assert.match(source, /name:\/Continue with\|Choose an available host\/i/);
 });
