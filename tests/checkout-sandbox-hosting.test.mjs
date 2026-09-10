@@ -156,6 +156,7 @@ test("hosted UI workflow uses actual UAT authentication and keeps provider secre
  assert.ok(workflow.indexOf("npx playwright install")<workflow.indexOf("Create-only isolated root"));
  assert.match(browser,/context.request.post\(origin\+"\/api\/staging-login"/);
  assert.match(browser,/pawspace-prototype-converged/);assert.match(browser,/viewports.some\(row=>!row.pass\)/);
+ assert.match(browser,/expect\.poll\(\(\)=>img\.evaluate\(n=>n\.complete&&n\.naturalWidth>0\),\{timeout:20_000\}\)\.toBe\(true\)/,"hosted artwork readiness must keep the full-load assertion and use the verifier’s bounded 20s timeout");
  assert.doesNotMatch(browser,/setExtraHTTPHeaders|addCookies|\.route\(/);
 });
 

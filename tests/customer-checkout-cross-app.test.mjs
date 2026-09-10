@@ -191,35 +191,50 @@ function captureCounts(w) {
   };
 }
 
-test("delayed authorization and invalid signatures cannot publish a paid partner/Operations timeline early", async t => {
+test("invalid signatures cannot publish payment truth, while verified capture-first delivery can", async t => {
   const w = await setup(t);
-  const early = await w.deliver("payment.captured", "evt_cross_captured");
-  assert.equal(early.status, 503); assert.equal(w.timeline().length, 0);
   const bad = await w.deliver("payment.captured", "evt_cross_bad", w.raw("payment.captured"), "wrong-fixture-signature");
   assert.equal(bad.status, 401); assert.equal(w.timeline().length, 0);
   const unpaid = (await w.partner()).body.jobs.find(j => j.bookingId === w.bookingId);
   assert.equal(unpaid.payment.status, "created");
   assert.equal(unpaid.events.filter(e => e.eventType === "payment_captured").length, 0);
-  await authorizeCapture(w);
+  const capture = await w.deliver("payment.captured", "evt_cross_captured");
+  assert.equal(capture.status, 200, JSON.stringify(capture));
+  assert.equal(capture.body.atomicCapture, true);
+  assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CAPTURED");
+  assert.equal(w.timeline().length, 1);
+  const lateAuthorization = await w.deliver("payment.authorized", "evt_cross_authorized");
+  assert.equal(lateAuthorization.status, 200, JSON.stringify(lateAuthorization));
+  assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CAPTURED", "late authorization cannot downgrade capture");
   await verifySurfaces(w);
   assert.equal(w.timeline().length, 1);
 });
 
-test("timeline insertion failure rolls back capture, reconciliation and journal; signed replay recovers once", async t => {
+test("timeline side-effect failure keeps core capture durable and signed replay completes effects once", async t => {
   const w = await setup(t);
   assert.equal((await w.deliver("payment.authorized", "evt_cross_authorized")).status, 200);
   w.sqlite.exec(`CREATE TRIGGER reject_capture_timeline BEFORE INSERT ON booking_lifecycle_events
     WHEN NEW.event_type='payment_captured' BEGIN SELECT RAISE(ABORT,'injected_capture_timeline_failure'); END`);
   const failed = await w.deliver("payment.captured", "evt_cross_captured");
-  assert.ok(failed.status >= 400, JSON.stringify(failed));
+  assert.equal(failed.status, 503, JSON.stringify(failed));
+  assert.equal(failed.body.coreCommitted, true);
+  assert.equal(failed.body.captureEffectsRetry, true);
   assert.equal(w.timeline().length, 0);
-  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
-  assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "AUTHORIZED");
-  assert.equal(w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records").get().captured_amount, 0);
-  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE status='POSTED'").get().n, 0);
-  assert.equal(w.sqlite.prepare("SELECT processing_status FROM gateway_webhook_events WHERE event_id='evt_cross_captured'").get().processing_status, "FAILED");
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "captured");
+  assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CAPTURED");
+  assert.equal(w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records").get().captured_amount, w.amount);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE status='POSTED'").get().n, 1);
+  assert.equal(w.sqlite.prepare("SELECT processing_status FROM gateway_webhook_events WHERE event_id='evt_cross_captured'").get().processing_status, "PROCESSED");
+  assert.equal(w.sqlite.prepare("SELECT status FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").get().status, "RETRY");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='online_payment_captured'").get().n, 1, "collection posting is idempotently durable before timeline retry");
   w.sqlite.exec("DROP TRIGGER reject_capture_timeline");
-  assert.equal((await w.deliver("payment.captured", "evt_cross_captured")).status, 200);
+  // The post-commit worker intentionally backs off after a side-effect failure. Make the retry due
+  // rather than bypassing the production next_attempt_at contract.
+  w.sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=0 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+  const repaired = await w.deliver("payment.captured", "evt_cross_captured");
+  assert.equal(repaired.status, 200, JSON.stringify(repaired));
+  assert.equal(repaired.body.duplicate, true);
+  assert.equal(repaired.body.captureEffectsRecovered, true);
   await verifySurfaces(w);
   assert.deepEqual(captureCounts(w), { timelines: 1, journals: 1, collections: 1, captured: w.amount, orders: 1 });
 });
@@ -228,6 +243,7 @@ test("same-event replay repairs a historical missing timeline without reposting 
   const w = await setup(t);
   await authorizeCapture(w);
   const originalTime = w.timeline()[0].occurred_at;
+  const gatewayProcessedAt = w.sqlite.prepare("SELECT processed_at FROM payment_gateway_events WHERE event_id='evt_cross_captured'").get().processed_at;
   const before = captureCounts(w);
   // Reproduce the pre-repair state: durable capture/outbox succeeded but no lifecycle event existed.
   w.sqlite.exec("DELETE FROM booking_lifecycle_events WHERE event_type='payment_captured'");
@@ -243,7 +259,8 @@ test("same-event replay repairs a historical missing timeline without reposting 
   assert.equal(repaired.body.duplicate, true);
   assert.equal(repaired.body.captureEffectsRecovered, true);
   assert.deepEqual(captureCounts(w), before);
-  assert.equal(w.timeline()[0].occurred_at, originalTime, "history records original processing time, not replay time");
+  assert.equal(w.timeline()[0].occurred_at, gatewayProcessedAt, "history repair uses the original verified gateway processing time");
+  assert.ok(w.timeline()[0].occurred_at <= originalTime, "repair must not stamp the later replay time onto the original capture");
   await verifySurfaces(w);
 });
 

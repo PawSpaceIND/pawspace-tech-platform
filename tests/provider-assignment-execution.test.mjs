@@ -68,7 +68,14 @@ function slot(daysAhead = 4, istHour = 11, durationMinutes = 120) {
 
 async function reserve(body) {
   const route = await import("../app/api/uat-scheduling/route.ts");
-  return attempt(() => route.POST(asActor(OPS, "/api/uat-scheduling", { method: "POST", body: JSON.stringify(body) })));
+  // Assignment is not the address-policy subject of this suite. Supply a complete synthetic service
+  // location so the production SERVICE_ADDRESS_REQUIRED gate stays active instead of being bypassed.
+  const requestBody = {
+    serviceAddress: "42 Test Road, Indiranagar, Bengaluru 560038",
+    servicePincode: "560038",
+    ...body,
+  };
+  return attempt(() => route.POST(asActor(OPS, "/api/uat-scheduling", { method: "POST", body: JSON.stringify(requestBody) })));
 }
 
 const parsed = (result) => { try { return JSON.parse(result.body ?? "{}"); } catch { return {}; } };

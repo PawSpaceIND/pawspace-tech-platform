@@ -4,6 +4,8 @@ import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"
 import{requireSittingQuoteSandboxCapture}from"../../../lib/sitting-payment-governance";
 import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution";
 import{BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,findCustomerReplay,hasForeignReplayConflict,hasReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer}from"../../../lib/booking-replay-governance";
+import{ensureGroomingMapTables}from"../../../lib/grooming-maps";
+import{validGpsCoordinates}from"../../../lib/gps-telemetry-policy";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -26,10 +28,19 @@ async function ensureTables(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
-]);}
+]);await ensureGroomingMapTables(db);}
 function validate(input:Input){if(!input.idempotencyKey||!input.scheduleGroupId||!input.sittingQuoteId)return"Sitting quote and request identity are required";if(!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone)return"Customer identity is required";if(!Array.isArray(input.pets)||!input.pets.length)return"At least one pet is required";if(!input.packageCode||!input.packageName||!input.scheduledStart||!input.scheduledEnd)return"Complete Sitting service details are required";if(!input.provider?.id||!input.provider?.name)return"Assigned sitter is required";if(!Number.isFinite(input.totalAmount)||!Number.isFinite(input.amountDueNow))return"Valid Sitting amounts are required";return null;}
 async function readBundle(db:D1Database,booking:Row,duplicatePrevented:boolean){const[workOrder,payment]=await Promise.all([db.prepare("SELECT id FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Row>(),db.prepare("SELECT id FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Row>()]);return{bookingId:String(booking.id),customerId:String(booking.customer_id),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
 async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Sitting booking failed"},error.status||500);}return json({error:error instanceof Error?error.message:"Sitting booking failed"},500);}
+
+function governedDoorstepFromScheduling(assignment:Row,input:Input){
+ let request:Record<string,unknown>;try{const parsed=JSON.parse(String(assignment.shortlist_json||"{}")) as{request?:Record<string,unknown>};request=parsed.request??{};}catch{throw new Response("Sitting scheduling address evidence is unreadable",{status:409});}
+ const customerId=String(request.customerId||""),serviceCode=String(request.serviceCode||""),cityId=String(request.cityId||""),zoneId=String(request.zoneId||""),address=String(request.serviceAddress||"").trim(),pincode=String(request.servicePincode||"").trim(),latitude=Number(request.latitude),longitude=Number(request.longitude);
+ if(customerId!==input.customer.id||serviceCode!=="pet_sitting")throw new Response("Sitting scheduling address evidence does not belong to this booking",{status:409});
+ if(cityId!==input.cityId||zoneId!==input.zoneId)throw new Response("Sitting scheduling address evidence does not match the canonical city/zone",{status:409});
+ if(address.length<8||!/^[1-9]\d{5}$/.test(pincode)||!validGpsCoordinates(latitude,longitude))throw new Response("Sitting scheduling address evidence is incomplete",{status:409});
+ return{addressText:address.includes(pincode)?address:`${address}, ${pincode}`,latitude,longitude};
+}
 
 export async function POST(request:Request){try{
  sameOriginWrite(request);const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);
@@ -38,6 +49,7 @@ export async function POST(request:Request){try{
  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Row>();
  if(!assignment||String(assignment.status)!=="assigned")return json({error:"Scheduling must be assigned before Sitting confirmation"},409);
  if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The sitter does not match the scheduling decision"},409);
+ const doorstep=governedDoorstepFromScheduling(assignment,input);
  const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Row>();
  if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);
  if(reservations.results.length!==1)return json({error:"Sitting Gate 1 requires exactly one canonical care reservation"},409);
@@ -56,6 +68,7 @@ export async function POST(request:Request){try{
   db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,'assigned',?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,"pet_sitting",canonicalStart,canonicalEnd,JSON.stringify({source:"canonical_sitting_gate1",reservationId:reservation.id}),now,now),
   db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,'INR',?,?,'captured','uat_sandbox',?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,input.payment.method,input.payment.mode,`sitting:${input.idempotencyKey}`,JSON.stringify({detail:input.payment.detail,quotePaymentReference:capture.reference,liveMoney:false}),now,now),
   db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(`EVT-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,bookingId,"sitting_booking_confirmed","booking",bookingId,actor.email,JSON.stringify({quoteId:input.sittingQuoteId,scheduleGroupId:input.scheduleGroupId,providerId:input.provider.id,paymentReference:capture.reference}),now),
+  db.prepare("INSERT INTO booking_service_locations (booking_id,customer_id,provider_id,address_text,latitude,longitude,source,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'active',?,?)").bind(bookingId,input.customer.id,input.provider.id,doorstep.addressText,doorstep.latitude,doorstep.longitude,"sitting_scheduling_authority",now,now),
   db.prepare("INSERT INTO sitting_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)").bind(input.sittingQuoteId,bookingId,now),
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];

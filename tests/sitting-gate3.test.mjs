@@ -212,7 +212,60 @@ test("Pet Sitting Gate 3 date changes need a fresh quote, a fresh group and a re
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Pet Sitting Gate 3 sitter settlement waits for checkout and invents neither payout nor tax", async () => {
+test("Pet Sitting Gate 3 applies a governed date change with the same booking/payment identity and no reschedule fee", async () => {
+  const world = await financeWorld({ amount: 399, amountDueNow: 399 });
+  const requestedStart = new Date(Date.now() + 72 * 3_600_000).toISOString();
+  const requestedEnd = new Date(Date.now() + 76 * 3_600_000).toISOString();
+  const requested = await world.act("request_date_change", {
+    reason: "customer needs a later visit", requestedStart, requestedEnd,
+  });
+  assert.equal(requested.status, "commercial_quote_required");
+
+  const governance = await import("../lib/sitting-governance.ts");
+  const quote = await governance.createSittingQuote(world.db, {
+    packageCode: "sitting-visit-60", petCount: 1, scheduledStart: requestedStart, scheduledEnd: requestedEnd,
+    paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east",
+  });
+  assert.equal(quote.totalAmount, 399, "same governed visit must not invent a reschedule surcharge");
+
+  const replacementGroupId = `GRP-SIT-CHANGE-${Date.now()}`;
+  const now = Date.now();
+  await world.db.batch([
+    world.db.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,updated_at) VALUES (?,'best_fit',?,?,'assigned','scheduler.test',?)").bind(replacementGroupId, JSON.stringify([world.providerId]), world.providerId, now),
+    world.db.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,'pet_sitting','blr','blr-east',?,'[]',?,?,'confirmed',?)").bind(`RES-${replacementGroupId}`, replacementGroupId, world.providerId, world.customerId, requestedStart, requestedEnd, now),
+  ]);
+
+  const applied = await world.act("apply_date_change", {
+    actorId: CHECKER, quoteId: quote.quoteId, replacementGroupId, reason: "fresh quote and replacement schedule verified",
+  });
+  assert.equal(applied.status, "date_changed");
+  assert.equal(applied.bookingId, world.bookingId);
+  assert.equal(applied.amountDelta, 0, "founder policy: unchanged server price means zero reschedule fee");
+
+  const booking = await world.db.prepare("SELECT schedule_group_id,provider_id,scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  assert.equal(booking.schedule_group_id, replacementGroupId);
+  assert.equal(booking.provider_id, world.providerId);
+  assert.equal(booking.scheduled_start, requestedStart);
+  assert.equal(booking.scheduled_end, requestedEnd);
+  assert.equal(Number(booking.total_amount), 399);
+  const payment = await world.db.prepare("SELECT id,amount,amount_due_now,detail_json FROM booking_payments WHERE booking_id=?").bind(world.bookingId).first();
+  assert.equal(payment.id, `PAY-${world.bookingId}`);
+  assert.equal(Number(payment.amount), 399);
+  assert.equal(Number(payment.amount_due_now), 399);
+  const detail = JSON.parse(String(payment.detail_json||"{}"));
+  assert.equal(detail.amountDelta, 0);
+  assert.equal(detail.paymentAdjustmentReference, null);
+  assert.equal(detail.liveMoney, false);
+  const oldReservation = await world.db.prepare("SELECT status FROM scheduling_reservations WHERE group_id=?").bind(world.groupId).first();
+  assert.equal(oldReservation.status, "cancelled");
+  const newReservation = await world.db.prepare("SELECT status,scheduled_start,scheduled_end FROM scheduling_reservations WHERE group_id=?").bind(replacementGroupId).first();
+  assert.equal(newReservation.status, "confirmed");
+  assert.equal(newReservation.scheduled_start, requestedStart);
+  assert.equal(newReservation.scheduled_end, requestedEnd);
+});
+
+// ---------------------------------------------------------------------------------------------
+test("Pet Sitting Gate 3 sitter settlement waits for checkout and projects canonical completion finance", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
 
   const early = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
@@ -222,22 +275,63 @@ test("Pet Sitting Gate 3 sitter settlement waits for checkout and invents neithe
   const none = await world.db.prepare("SELECT COUNT(*) n FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(world.bookingId).all();
   assert.equal(Number(none.results[0].n), 0, "a refused settlement writes no ledger row");
 
+  // A completed status alone is not enough. Settlement must have canonical completion finance behind it.
   await world.db.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").bind(world.bookingId).run();
-  const prepared = await world.act("prepare_settlement", { actorId: CHECKER });
-  assert.equal(prepared.status, "not_ready");
-  assert.equal(prepared.payoutRule, "rule_pending");
-  assert.equal(prepared.tax, "configuration_required");
-  assert.equal(prepared.payout, "not_instructed");
+  const missingFinance = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
+  assert.equal(missingFinance?.status, 409);
+  assert.match(missingFinance.message, /completion finance must be resolved/i);
+
+  const terms = await import("../lib/provider-commercial-terms.ts");
+  await terms.ensureCommercialTermsTables(world.db);
+  const now = Date.now();
+  await world.db.prepare("INSERT OR REPLACE INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed,onboarding_fee,renewal_fee,renewal_months,effective_from,reason,created_by,approved_by,approval_reference,created_at,updated_at) VALUES ('SIT-G3-TERM','pet_sitting',NULL,1,'active','commission_standard',0.70,'provider_gst_on_behalf',0.18,0,0,0,12,'2026-04-01','sitting settlement convergence','ops','finance','SIT-G3-APR',?,?)").bind(now,now).run();
+  const completion = await import("../lib/service-completion-finance.ts");
+  await completion.resolveServiceCompletionFinance(world.db,{bookingId:world.bookingId,actorId:CHECKER,completedAt:now});
+
+  const settlementKey = nextKey("G3-SETTLE");
+  const prepared = await world.act("prepare_settlement", { actorId: CHECKER, idempotencyKey: settlementKey });
+  assert.equal(prepared.status, "settlement_prepared");
+  assert.equal(prepared.payoutRule, "rule_applied");
+  assert.equal(prepared.tax, "resolved");
+  assert.equal(prepared.approvalStatus, "awaiting_finance_approval");
+  assert.equal(prepared.payoutStatus, "not_instructed");
+  assert.equal(prepared.payoutSlaDays, 5);
 
   const settlement = await world.db.prepare("SELECT * FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
-  assert.equal(settlement.payout_rule_status, "rule_pending");
-  assert.equal(settlement.tax_status, "configuration_required");
-  assert.equal(settlement.approval_status, "not_ready");
+  const payable = await world.db.prepare("SELECT ROUND(COALESCE(SUM(credit-debit),0),2) amount,MAX(created_at) resolved_at FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? AND account_code='2110-Provider Payable' AND posted=1").bind(world.bookingId).first();
+  assert.equal(Number(settlement.payout_amount), Number(payable.amount), "Sitting settlement must equal the canonical provider payable");
+  assert.ok(Number(settlement.payout_amount) > 0);
+  assert.equal(settlement.payout_rule_status, "rule_applied");
+  assert.equal(settlement.tax_status, "resolved");
+  assert.equal(settlement.approval_status, "awaiting_finance_approval");
   assert.equal(settlement.payout_status, "not_instructed");
-  // Not one money field is guessed either.
-  for (const column of ["base_payout", "travel_allowance", "incentives", "penalties", "payout_amount"]) {
-    assert.equal(settlement[column], null, `${column} must stay unset until a payout rule exists`);
-  }
+  assert.equal(Number(settlement.eligible_at), Number(payable.resolved_at) + 5 * 24 * 60 * 60 * 1000, "eligibility is exactly five days after canonical completion finance");
+
+  const replay = await world.act("prepare_settlement", { actorId: CHECKER, idempotencyKey: settlementKey });
+  assert.equal(replay.duplicatePrevented, true, "same action key must replay without creating a second obligation");
+  const refreshed = await world.act("prepare_settlement", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-REFRESH") });
+  assert.equal(refreshed.status, "settlement_prepared", "a fresh Finance action may safely refresh the same canonical projection");
+  const count = await world.db.prepare("SELECT COUNT(*) n FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
+  assert.equal(Number(count.n), 1, "replay and refresh still leave exactly one sitter settlement projection");
+  const tooEarly = await refusal(world.act("approve_settlement", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-APPROVE-EARLY"), reason: "finance reviewed canonical sitter payable" }));
+  assert.equal(tooEarly?.status, 409);
+  assert.match(tooEarly.message, /not yet eligible under the 5-day payout policy/i);
+
+  await world.db.prepare("UPDATE sitting_sitter_settlement_ledger SET eligible_at=? WHERE booking_id=?").bind(Date.now()-1,world.bookingId).run();
+  const approved = await world.act("approve_settlement", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-APPROVE"), reason: "finance reviewed canonical sitter payable" });
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.payoutStatus, "not_instructed", "approval must not move money automatically");
+  assert.equal(approved.liveMoney, false);
+  const approvedRow = await world.db.prepare("SELECT approval_status,approved_by,payout_status,payout_amount FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
+  assert.equal(approvedRow.approval_status, "approved");
+  assert.equal(approvedRow.approved_by, CHECKER);
+  assert.equal(approvedRow.payout_status, "not_instructed");
+  assert.equal(Number(approvedRow.payout_amount), Number(payable.amount));
+
+  const reconciled = await world.act("reconcile", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-RECON") });
+  assert.equal(reconciled.status, "balanced", "approved canonical settlement reconciles without a false configuration gap");
+  assert.equal(reconciled.settlementState, "approved");
+  assert.equal(reconciled.taxState, "resolved");
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -122,6 +122,12 @@ test("Boarding Gate 2 requires a complete care plan before check-in", async () =
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Boarding Gate 2 refuses host check-in before the scheduled stay begins", async () => {
+  const start=Date.now()+3_600_000,world=await readyForCheckIn(await stayWorld({bookingId:"BKG-BOARD-FUTURE",window:{scheduledStart:new Date(start).toISOString(),scheduledEnd:new Date(start+2*3_600_000).toISOString()}}));
+  const early=await refusal(world.act("check_in"));assert.equal(early?.status,409);assert.match(early.message,/before the Boarding stay window starts/);assert.equal((await world.stayRow()).status,"confirmed");
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Boarding Gate 2 checks a stay in once, inside its window", async () => {
   const world = await readyForCheckIn(await stayWorld());
 
@@ -309,6 +315,10 @@ test("Boarding Gate 2 host and customer surfaces call canonical stay actions, no
     readFile(new URL("../app/mobile-app/boarding-customer-stay-panel.tsx", import.meta.url), "utf8"),
   ]);
   for (const action of ["accept", "decline", "check_in", "check_out"]) assert.match(host, new RegExp(`"${action}"`));
+  assert.match(host, /\["awaiting_host_acceptance","recovery_pending"\]\.includes\(item\.status\)/,
+    "the replacement host must see the same recovery-pending stay in the response queue");
+  assert.match(host, /Accept replacement & lock capacity/,
+    "the replacement offer must expose the canonical host acceptance action");
   assert.match(panel, /saveCustomerBoardingCare/);
   const careClient = await readFile(new URL("../lib/boarding-customer-care.ts", import.meta.url), "utf8");
   assert.match(careClient, /submit_care_plan/);

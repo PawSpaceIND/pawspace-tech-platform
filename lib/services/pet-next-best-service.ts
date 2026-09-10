@@ -93,6 +93,8 @@ export function evaluatePetNextBestService(
   const intent = new Set(input.statedIntent ?? []);
   const youngDog = input.pet.species.toLowerCase() === "dog"
     && input.pet.ageMonths != null
+    && Number.isFinite(input.pet.ageMonths)
+    && input.pet.ageMonths >= 0
     && input.pet.ageMonths <= 24;
 
   if (youngDog && hasUsed(input, "training") && !hasUsed(input, "grooming") && isSafe(input, "grooming")) {
@@ -106,7 +108,7 @@ export function evaluatePetNextBestService(
   }
 
   if (hasUsed(input, "grooming")) {
-    for (const target of ["boarding", "sitting", "taxi"] as const) {
+    for (const target of ["training", "boarding", "sitting", "taxi"] as const) {
       if (intent.has(target) && !hasUsed(input, target) && isSafe(input, target)) {
         recommendations.push(recommendation(
           input,
@@ -129,7 +131,14 @@ export function evaluatePetNextBestService(
     ));
   }
 
+  if (hasUsed(input, "boarding") && !hasUsed(input, "taxi") && isSafe(input, "taxi")) {
+    recommendations.push(recommendation(input, "taxi", ["boarding_history", "no_taxi_history"],
+      "Completed Boarding history indicates a pet transport add-on candidate.", 0.78));
+  }
+
   return recommendations
+    .filter((item, index) => recommendations.findIndex(candidate => candidate.targetService === item.targetService) === index)
     .filter((item) => (input.activeEntitlements?.[item.targetService] ?? 0) <= 0)
+    .filter((item) => !historyFor(input, item.targetService)?.futureBookingAt)
     .sort((a, b) => b.confidence - a.confidence || b.expectedRevenue - a.expectedRevenue);
 }

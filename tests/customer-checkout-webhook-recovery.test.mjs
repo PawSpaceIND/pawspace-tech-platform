@@ -84,31 +84,20 @@ async function setup(t, { createOrder = true, runtimePatch = {} } = {}) {
 }
 
 for (const captureType of ["payment.captured", "order.paid"]) {
-  test(`${captureType} arriving before authorization remains retryable, then confirms once without another checkout`, async t => {
+  test(`${captureType} arriving before authorization is accepted from verified provider evidence and confirms once`, async t => {
     const w = await setup(t);
     const initial = await w.confirm();
     assert.equal(initial.status, 200); assert.equal(initial.body.data.status, "awaiting_confirmation");
-    const early = await w.deliver(captureType, "evt_recovery_capture");
-    assert.equal(early.body.deferred, true, JSON.stringify(early));
-    assert.equal(early.body.ok, false);
-    assert.equal(early.body.code, "payment_state_transition_deferred");
-    const stillEarly = await w.deliver(captureType, "evt_recovery_capture");
-    assert.equal(stillEarly.status, 503, "a repeat before authorization must remain retryable");
-    const inbox = w.sqlite.prepare("SELECT processing_status,processed_at FROM gateway_webhook_events WHERE event_id='evt_recovery_capture'").get();
-    assert.equal(inbox.processing_status, "DEFERRED"); assert.equal(inbox.processed_at, null);
-    assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM gateway_webhook_events").get().n, 1);
-    assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CREATED");
-    assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
-    assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
-    assert.equal((await w.confirm()).body.data.status, "awaiting_confirmation");
-    const authorized = await w.deliver("payment.authorized", "evt_recovery_authorized");
-    assert.equal(authorized.status, 200, JSON.stringify(authorized));
-    assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "AUTHORIZED");
-    // Authorization must not manufacture capture. The signed deferred delivery needs a real retry.
-    assert.equal((await w.confirm()).body.data.status, "awaiting_confirmation");
-    const recovered = await w.deliver(captureType, "evt_recovery_capture");
-    assert.equal(recovered.status, 200, JSON.stringify(recovered));
+    const capture = await w.deliver(captureType, "evt_recovery_capture");
+    assert.equal(capture.status, 200, JSON.stringify(capture));
+    assert.equal(capture.body.atomicCapture, true);
+    assert.equal(capture.body.ok, true);
+    assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CAPTURED");
+    assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "captured");
     assert.equal((await w.confirm()).body.data.status, "captured");
+    const lateAuthorized = await w.deliver("payment.authorized", "evt_recovery_authorized");
+    assert.equal(lateAuthorized.status, 200, JSON.stringify(lateAuthorized));
+    assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CAPTURED", "late authorization must never downgrade a verified capture");
     const repeated = await w.deliver(captureType, "evt_recovery_capture");
     assert.equal(repeated.status, 200); assert.equal(repeated.body.duplicate, true);
     const alias = await w.deliver(captureType === "payment.captured" ? "order.paid" : "payment.captured", "evt_recovery_alias");
@@ -119,10 +108,11 @@ for (const captureType of ["payment.captured", "order.paid"]) {
     assert.equal(w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records").get().captured_amount, 499.50);
     const journal = w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get();
     assert.equal(journal.n, 1, "the payment posts exactly one atomic journal");
+    const timeline = w.sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id='B1' AND event_type='payment_captured'").get();
+    assert.equal(timeline.n, 1, "capture-first delivery still emits one canonical payment timeline event");
     const entries = w.sqlite.prepare("SELECT direction,SUM(amount_paise) amount FROM journal_entries GROUP BY direction ORDER BY direction").all();
     assert.deepEqual(entries.map(row => [row.direction, row.amount]), [["CREDIT", 49950], ["DEBIT", 49950]]);
-    console.log(`[CHECKOUT-RECOVERY] ${JSON.stringify({ captureType, earlyHttp: early.status, recoveredHttp: recovered.status, confirmed: "captured", providerOrders: w.providerCalls(), journalCount: journal.n, delivery: "synthetic_signed_replay" })}`);
-    assert.equal(early.status, 503, "a deferred capture must not acknowledge delivery success and suppress gateway retries");
+    console.log(`[CHECKOUT-CAPTURE-FIRST] ${JSON.stringify({ captureType, captureHttp: capture.status, confirmed: "captured", providerOrders: w.providerCalls(), journalCount: journal.n, timelineCount: timeline.n, delivery: "synthetic_signed_replay" })}`);
   });
 }
 
@@ -138,23 +128,24 @@ test("authorization-first checkout confirms from a signed capture without a defe
   assert.equal(w.providerCalls(), 1);
 });
 
-test("deferred recovery still rejects wrong signatures and an event-ID body swap without capture", async t => {
+test("processed capture replay still rejects wrong signatures and an event-ID body swap without duplicating money", async t => {
   const w = await setup(t);
   const first = await w.deliver("payment.captured", "evt_attack_capture");
-  assert.equal(first.status, 503);
-  const before = w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all();
+  assert.equal(first.status, 200, JSON.stringify(first));
+  assert.equal((await w.confirm()).body.data.status, "captured");
+  const beforeInbox = w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all();
+  const beforeJournal = w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n;
+  const beforeCaptured = w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records").get().captured_amount;
   const wrong = await w.deliver("payment.captured", "evt_attack_capture", w.payload("payment.captured"), "wrong-synthetic-secret");
   assert.equal(wrong.status, 401);
   const tampered = JSON.parse(w.payload("payment.captured"));
   tampered.payload.payment.entity.amount = 1;
   const swapped = await w.deliver("payment.captured", "evt_attack_capture", JSON.stringify(tampered));
   assert.equal(swapped.status, 409);
-  assert.deepEqual(w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all(), before);
-  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
-  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
-  assert.equal((await w.confirm()).body.data.status, "awaiting_confirmation");
-  assert.equal((await w.deliver("payment.authorized", "evt_attack_authorized")).status, 200);
-  assert.equal((await w.deliver("payment.captured", "evt_attack_capture")).status, 200);
+  assert.deepEqual(w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all(), beforeInbox);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, beforeJournal);
+  assert.equal(w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records").get().captured_amount, beforeCaptured);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id='B1' AND event_type='payment_captured'").get().n, 1);
   assert.equal((await w.confirm()).body.data.status, "captured");
 });
 

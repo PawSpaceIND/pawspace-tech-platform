@@ -119,3 +119,74 @@ test("WhatsApp controls and AI handoff queue use the same row policy",async()=>{
  assert.deepEqual(body.data.queue.map(item=>item.threadId),[rows.owned.threadId],"cross-team handoff is absent from both rows and totals");
  assert.deepEqual(body.data.byStatus,{queued:1});
 });
+
+test("CRM chat detail applies the same canonical ownership as the inbox list",async()=>{
+ const{rows}=await world();
+ const crm=await import("../app/api/crm/chat/route.ts");
+ const denied=await crm.GET(request(OWNER,`/api/crm/chat?threadId=${rows.forged.threadId}`));
+ assert.equal(denied.status,403);
+ assert.ok(!(await denied.text()).includes("private-FORGED"));
+ const own=await crm.GET(request(OWNER,`/api/crm/chat?threadId=${rows.owned.threadId}`));
+ assert.equal(own.status,200,await own.text());
+});
+
+test("CRM send and routing actions cannot cross the canonical assignment boundary",async()=>{
+ const{sqlite,rows}=await world();
+ const crm=await import("../app/api/crm/chat/route.ts");
+ const before=sqlite.prepare("SELECT COUNT(*) n FROM communication_messages").get().n;
+ for(const action of ['send_message','set_mode','simulate_inbound']){
+  const denied=await crm.POST(request(OWNER,"/api/crm/chat","POST",{action,threadId:rows.forged.threadId,customerId:rows.forged.customer,text:'outside assignment',mode:'chatbot_only',reason:'Attempt outside owned scope',clientRequestId:'crm-denied-send'}));
+  assert.equal(denied.status,403,`${action}: ${await denied.text()}`);
+ }
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages").get().n,before);
+ const table=sqlite.prepare("SELECT name FROM sqlite_master WHERE name='whatsapp_conversation_routing_modes'").get();
+ assert.equal(table?sqlite.prepare("SELECT COUNT(*) n FROM whatsapp_conversation_routing_modes").get().n:0,0);
+});
+
+test("CRM retry after a committed send reuses one message and refuses changed content",async()=>{
+ const{sqlite,rows}=await world();
+ const{makeD1}=await import('./helpers/taxi-harness.mjs');
+ const db=makeD1(sqlite);globalThis.__CONVERSATION_SCOPE_DB__=db;
+ const{ensureWhatsAppUatTables}=await import('../lib/whatsapp-uat-adapter.ts');
+ const{ensureCustomer360Tables}=await import('../lib/customer-360.ts');
+ await ensureWhatsAppUatTables(db);await ensureCustomer360Tables(db);
+ sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,whatsapp_consent,updated_by,updated_at) VALUES (?,1,'test',?)").run(rows.owned.customer,Date.now());
+ sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at) VALUES (?,'meta_whatsapp',?)").run(rows.owned.customer,Date.now());
+ const crm=await import('../app/api/crm/chat/route.ts');
+ const body={action:'send_message',threadId:rows.owned.threadId,customerId:rows.owned.customer,text:'Confirmed, your request is received',clientRequestId:'crm-stable-request-1'};
+ db.onSql('INSERT INTO security_audit_events',()=>{throw new Error('audit temporarily unavailable after message commit');});
+ const interrupted=await crm.POST(request(OWNER,'/api/crm/chat','POST',body));
+ assert.equal(interrupted.status,500);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n,1);
+ const retry=await crm.POST(request(OWNER,'/api/crm/chat','POST',body));
+ assert.equal(retry.status,200,await retry.text());
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n,1);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_outbox').get().n,1);
+ const changed=await crm.POST(request(OWNER,'/api/crm/chat','POST',{...body,text:'Different message'}));
+ assert.equal(changed.status,409);
+ const languageChange=await crm.POST(request(OWNER,'/api/crm/chat','POST',{...body,language:'kn'}));
+ assert.equal(languageChange.status,409);
+ const missingKey=await crm.POST(request(OWNER,'/api/crm/chat','POST',{...body,clientRequestId:undefined}));
+ assert.equal(missingKey.status,400);
+ const{setWhatsAppConversationMode}=await import('../lib/whatsapp-conversation-control.ts');
+ await setWhatsAppConversationMode(db,{threadId:rows.owned.threadId,mode:'ai_assistant',actorEmail:OWNER,reason:'AI owns this thread for regression'});
+ const aiOwned=await crm.POST(request(OWNER,'/api/crm/chat','POST',{...body,clientRequestId:'crm-another-request'}));
+ assert.equal(aiOwned.status,409);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM communication_outbox').get().n,1);
+});
+
+test("CRM inbound simulator requires an explicit test environment and cannot create a Meta session",async()=>{
+ const{sqlite,rows}=await world();
+ const crm=await import('../app/api/crm/chat/route.ts');
+ const body={action:'simulate_inbound',threadId:rows.owned.threadId,customerId:rows.owned.customer,text:'Test inbound'};
+ for(const env of [{},{PAWSPACE_DEPLOYMENT_ENV:'production',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_COMMUNICATION_ENV:'uat'},{PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_PAYMENT_ENV:'live',PAWSPACE_COMMUNICATION_ENV:'uat'}]){
+  globalThis.__CONVERSATION_SCOPE_ENV__={...env,PAWSPACE_WORKSPACE_IDENTITY_TRUST:"openai-dispatch"};
+  const denied=await crm.POST(request(OWNER,'/api/crm/chat','POST',body));
+  assert.equal(denied.status,403,await denied.text());
+ }
+ globalThis.__CONVERSATION_SCOPE_ENV__={PAWSPACE_WORKSPACE_IDENTITY_TRUST:'openai-dispatch',PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_COMMUNICATION_ENV:'uat'};
+ const simulated=await crm.POST(request(OWNER,'/api/crm/chat','POST',body));
+ assert.equal(simulated.status,201,await simulated.text());
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM whatsapp_uat_sessions WHERE provider='meta_whatsapp'").get().n,0);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM whatsapp_uat_sessions WHERE provider='sandbox_simulator'").get().n,1);
+});

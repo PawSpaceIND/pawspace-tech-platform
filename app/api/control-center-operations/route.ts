@@ -1,0 +1,5 @@
+import{authError,database,requirePermission,resolveActor}from"../../../lib/server-auth";
+import{buildControlCenterOperations,type ControlOpsMode}from"../../../lib/control-center-operations";
+const modes=new Set<ControlOpsMode>(["approvals","master","inventory","quality","security","health","audit"]);
+const permission:Record<ControlOpsMode,string>={approvals:"audit.view",master:"settings.manage",inventory:"settings.manage",quality:"audit.view",security:"settings.manage",health:"audit.view",audit:"audit.view"};
+export async function GET(request:Request){try{const actor=await resolveActor(request),mode=String(new URL(request.url).searchParams.get("mode")||"health") as ControlOpsMode;if(!modes.has(mode))return Response.json({error:"Unsupported control-center view"},{status:400});requirePermission(actor,permission[mode] as never);return Response.json({data:await buildControlCenterOperations(await database(),mode)},{headers:{"cache-control":"no-store"}})}catch(error){return authError(error,"Unable to load Control Center operations")}}

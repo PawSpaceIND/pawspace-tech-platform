@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{partnerJobWorkspaceHref}from"../../../lib/partner-job-workspace";
 
 type Job={bookingId:string;serviceCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;petCount:number;status:string;customerFirstName:string;group:string;needsActionReason:string|null;stayId:string|null;carePlanStatus:string|null;nextSlotStart:string|null;addOns:string[];safetyRequirements:string[]};
 type Counts={needsAction:number;today:number;upcoming:number;completed:number;total:number};
@@ -50,6 +51,7 @@ export default function PartnerJobsPage(){
     </div>
     {job.serviceCode==="grooming"&&job.safetyRequirements.length?<div style={{fontSize:13,color:C.orange}}><b>Safety:</b> {job.safetyRequirements.map(safetyLabel).join(" · ")}</div>:null}
     {job.serviceCode==="grooming"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Add-ons:</b> {job.addOns.join(" · ")}</div>:null}
+    {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
     {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
       <button disabled={busy} style={{...btn,background:"transparent",color:C.dim,border:`1px solid ${C.line}`}} onClick={()=>void stayAction(job.stayId as string,"decline")}>Decline</button>

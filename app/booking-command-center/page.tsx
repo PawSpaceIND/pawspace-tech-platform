@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
 
@@ -53,12 +54,12 @@ export default function BookingCommandCenter() {
   const visible = useMemo(() => bookings.filter(booking => {
     const haystack = `${booking.id} ${booking.customer_name} ${booking.primary_phone} ${booking.package_name} ${booking.provider_name} ${booking.zone_id} ${booking.service_code}`.toLowerCase();
     const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
-    const risky = booking.operations.length > 0 || booking.tickets.some(ticket => ticket.status !== "resolved") || booking.rebooking.length > 0;
+    const risky = booking.operations.length > 0 || booking.tickets.some(ticket => isSupportCaseOpen(ticket.status)) || booking.rebooking.length > 0;
     const matchesFilter = filter === "All bookings" || (filter === "Needs attention" && risky) || (filter === "Unassigned" && !booking.provider_id) || (filter === "Payment pending" && !["paid", "captured", "completed"].includes(String(booking.payment_status))) || pretty(booking.status) === filter;
     return matchesQuery && matchesFilter;
   }), [bookings, filter, query]);
   const selected = bookings.find(booking => booking.id === selectedId) || visible[0];
-  const risks = bookings.filter(booking => booking.operations.length || booking.tickets.some(ticket => ticket.status !== "resolved") || booking.rebooking.length).length;
+  const risks = bookings.filter(booking => booking.operations.length || booking.tickets.some(ticket => isSupportCaseOpen(ticket.status)) || booking.rebooking.length).length;
   const paymentPending = bookings.filter(booking => !["paid", "captured", "completed"].includes(String(booking.payment_status))).length;
 
   async function adminAction(action: string) {
@@ -105,7 +106,7 @@ export default function BookingCommandCenter() {
           <div className={styles.listHead}><span>Booking</span><span>Customer & service</span><span>Provider</span><span>Payment</span><span>Risk</span></div>
           <div className={styles.rows}>{visible.map(booking => {
             const petNames = booking.pets.map(pet => pet.name).join(", ") || "Pet not recorded";
-            const openTicket = booking.tickets.find(ticket => ticket.status !== "resolved");
+            const openTicket = booking.tickets.find(ticket => isSupportCaseOpen(ticket.status));
             const latestOperation = booking.operations[0];
             const risk = openTicket ? `${pretty(openTicket.priority)} ticket` : latestOperation ? pretty(latestOperation.event_type) : booking.rebooking.length ? "Rebooking open" : "On track";
             return <button key={String(booking.id)} className={selected?.id === booking.id ? styles.selected : ""} onClick={() => { setSelectedId(String(booking.id)); setTab("Overview"); }}>
@@ -120,7 +121,7 @@ export default function BookingCommandCenter() {
         </div>
 
         {selected && <aside className={styles.detail}>
-          <header className={styles.detailHead}><div><span>{String(selected.id)} · {pretty(selected.service_code)}</span><h2>{pretty(selected.status)}</h2><p>{when(selected.scheduled_start)} · {pretty(selected.zone_id)}</p></div><em>{selected.tickets.some(ticket => ticket.status !== "resolved") ? "ACTION NEEDED" : "ON TRACK"}</em></header>
+          <header className={styles.detailHead}><div><span>{String(selected.id)} · {pretty(selected.service_code)}</span><h2>{pretty(selected.status)}</h2><p>{when(selected.scheduled_start)} · {pretty(selected.zone_id)}</p></div><em>{selected.tickets.some(ticket => isSupportCaseOpen(ticket.status)) ? "ACTION NEEDED" : "ON TRACK"}</em></header>
           <div className={styles.actionBar}><button onClick={() => void adminAction("call_customer")}>☎ Call</button><button onClick={() => void adminAction("whatsapp_customer")}>◉ WhatsApp</button><button onClick={() => void adminAction("open_tracking")}>⌖ Tracking</button><button onClick={() => void adminAction("review_reassignment")}>↻ Reassign</button></div>
           <label className={styles.reason}>Action reason<input value={actionReason} onChange={event => setActionReason(event.target.value)} /></label>
           <div className={styles.tabs}>{(["Overview", "Journey", "Payments", "Communication", "Tickets & refunds"] as Tab[]).map(item => <button key={item} className={tab === item ? styles.tabActive : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
@@ -133,7 +134,7 @@ export default function BookingCommandCenter() {
               <article><span>PROVIDER WORK ORDER</span><b>{String(selected.provider_name || "Unassigned")}</b><p>{String(selected.work_order_id)} · {pretty(selected.work_order_status)}</p><p>{pretty(selected.provider_model)}</p></article>
               <article><span>PAYMENT</span><b>{money(selected.payment_amount)}</b><p>{pretty(selected.payment_mode)} · {pretty(selected.payment_status)}</p><p>{String(selected.payment_id)} · {pretty(selected.gateway)}</p></article>
             </div>
-            <section className={styles.alerts}><header><div><span>OPERATIONAL WATCH</span><h3>Exceptions affecting this order</h3></div></header>{!selected.operations.length && !selected.tickets.length && !selected.rebooking.length ? <p className={styles.clear}>✓ No active delay, ticket or rebooking exception.</p> : <>{selected.operations.slice(0, 3).map(item => <article key={String(item.id)}><b>{pretty(item.event_type)}</b><span>{String(item.reason)} · {Number(item.impact_minutes || 0)} minute impact</span></article>)}{selected.tickets.filter(ticket => ticket.status !== "resolved").map(ticket => <article key={String(ticket.id)}><b>{pretty(ticket.priority)} · {String(ticket.subject)}</b><span>{pretty(ticket.status)} · SLA {when(ticket.sla_due_at)}</span></article>)}</>}</section>
+            <section className={styles.alerts}><header><div><span>OPERATIONAL WATCH</span><h3>Exceptions affecting this order</h3></div></header>{!selected.operations.length && !selected.tickets.length && !selected.rebooking.length ? <p className={styles.clear}>✓ No active delay, ticket or rebooking exception.</p> : <>{selected.operations.slice(0, 3).map(item => <article key={String(item.id)}><b>{pretty(item.event_type)}</b><span>{String(item.reason)} · {Number(item.impact_minutes || 0)} minute impact</span></article>)}{selected.tickets.filter(ticket => isSupportCaseOpen(ticket.status)).map(ticket => <article key={String(ticket.id)}><b>{pretty(ticket.priority)} · {String(ticket.subject)}</b><span>{pretty(ticket.status)} · SLA {when(ticket.sla_due_at)}</span></article>)}</>}</section>
           </div>}
 
           {tab === "Journey" && <div className={styles.tabBody}><section className={styles.timeline}><header><span>UNIFIED ORDER TIMELINE</span><h3>{mergedTimeline.length} recorded events</h3></header>{mergedTimeline.map((item, index) => <article key={`${String((item as Record<string,unknown>).id)}-${index}`}><i></i><div><b>{pretty(item.event)}</b><p>{String((item as Record<string,unknown>).reason || item.source)}</p><small>{when(item.at)} · {String(item.source)}</small></div></article>)}</section></div>}

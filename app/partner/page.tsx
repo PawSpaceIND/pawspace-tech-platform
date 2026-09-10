@@ -15,8 +15,8 @@ export default function PartnerUatHub() {
           <strong>PRODUCTION READY = FALSE.</strong> Marketplace live: No · Order eligible: No · Live money: No.
         </p>
         <div className={styles.actions}>
-          <Link href="/partner-mobile" className={styles.primary}>
-            Open Partner Mobile App →
+          <Link href="/partner/jobs" className={styles.primary}>
+            Open all assigned jobs →
           </Link>
           <Link href="/partner/onboarding" className={styles.secondary}>
             Open canonical provider onboarding →
@@ -25,7 +25,18 @@ export default function PartnerUatHub() {
       </header>
 
       <section className={styles.work}>
-        <small>IDENTITY-SCOPED PROVIDER WORK</small>
+        <small>CROSS-SERVICE PARTNER WORKSPACES</small>
+        <h2>Continue in the workflow for your assigned service</h2>
+        <p>
+          The assigned-job feed is the common entry point. It carries the canonical booking context into workspaces that require a booking ID and keeps provider-scoped work on its existing governed surfaces.
+        </p>
+        <div className={styles.actions}>
+          <Link href="/partner/jobs" className={styles.primary}>All assigned jobs</Link>
+        </div>
+      </section>
+
+      <section className={styles.work}>
+        <small>IDENTITY-SCOPED GROOMING WORK</small>
         <h2>Canonical Grooming assignments</h2>
         <p>
           Work orders resolve from the verified provider identity session. A provider cannot select another provider ID in the browser.
