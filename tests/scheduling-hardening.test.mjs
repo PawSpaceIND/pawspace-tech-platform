@@ -107,7 +107,7 @@ async function get(query) {
   const response = await routeModule.GET(new Request(`http://localhost/api/uat-scheduling?${query}`));
   return { status: response.status, body: await response.json() };
 }
-const reserve = (overrides) => ({ clientRequestId: overrides.clientRequestId, customerId: "cus_hardening", petIds: ["Bruno"], zoneId: "blr-east", ...overrides });
+const reserve = (overrides) => ({ clientRequestId: overrides.clientRequestId, customerId: "cus_hardening", petIds: ["Bruno"], zoneId: "blr-east", serviceAddress: "42, Indiranagar Double Road, Bengaluru", servicePincode: "560038", ...overrides });
 
 // ---- Engine real-execution (real schedule(), in-memory repository) ----------------------------
 
