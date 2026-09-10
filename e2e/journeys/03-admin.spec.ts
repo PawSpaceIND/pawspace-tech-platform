@@ -85,6 +85,7 @@ test("Control scheduling reads real rules and saves the selected location", asyn
   await page.getByLabel("Rule name",{exact:true}).fill("South zone rating");
   await page.getByLabel("Location",{exact:true}).selectOption("blr-south");
   await page.getByLabel("Required value",{exact:true}).fill("4.7");
+  await page.getByLabel("Mandatory change reason",{exact:true}).fill("E2E scheduling rule change");
   await page.getByRole("button",{name:"Save & activate rule",exact:true}).click();
   await expect(page.getByText("South zone rating",{exact:true})).toBeVisible();
   expect(submitted?.zoneId).toBe("blr-south");
