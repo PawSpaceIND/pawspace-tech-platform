@@ -23,6 +23,7 @@ export function razorpayXSandboxReadiness(env:Env){
  if(!keyId.startsWith("rzp_test_"))problems.push("RazorpayX TEST key is required");
  if(!keySecret)problems.push("RAZORPAYX_KEY_SECRET_SANDBOX is required");
  if(!accountNumber)problems.push("RAZORPAYX_ACCOUNT_NUMBER_SANDBOX is required");
+ if(!webhookSecret)problems.push("RAZORPAYX_WEBHOOK_SECRET_SANDBOX is required before any TEST payout dispatch");
  return{ready:problems.length===0,problems,keyIdConfigured:Boolean(keyId),accountNumberConfigured:Boolean(accountNumber),webhookSecretConfigured:Boolean(webhookSecret),environment:problems.length?"unconfigured":"sandbox" as const};
 }
 

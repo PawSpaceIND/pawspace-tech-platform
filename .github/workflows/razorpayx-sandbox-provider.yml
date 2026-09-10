@@ -21,6 +21,7 @@ jobs:
       RAZORPAYX_KEY_ID_SANDBOX: ${{ secrets.RAZORPAYX_KEY_ID_SANDBOX }}
       RAZORPAYX_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAYX_KEY_SECRET_SANDBOX }}
       RAZORPAYX_ACCOUNT_NUMBER_SANDBOX: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX }}
+      RAZORPAYX_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAYX_WEBHOOK_SECRET_SANDBOX }}
       RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX }}
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +38,7 @@ jobs:
           [ "$PAWSPACE_PAYMENT_ENV" = sandbox ]
           [ "$PAWSPACE_RAZORPAYX_ENV" = sandbox ]
           [ "$PAWSPACE_RAZORPAYX_LIVE_APPROVED" = false ]
+          [ -n "$RAZORPAYX_WEBHOOK_SECRET_SANDBOX" ] || { echo "::error::RazorpayX TEST webhook secret is required before payout proof"; exit 1; }
       - name: Create and fetch one INR 1 RazorpayX Test Mode payout
         run: node scripts/e2e/razorpayx-sandbox.mjs
       - name: Upload sanitized provider evidence
