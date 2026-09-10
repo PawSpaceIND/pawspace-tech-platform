@@ -97,3 +97,7 @@ test("active deployment provenance refuses split traffic and a stale candidate m
  assert.throws(()=>activeCheckoutVersion(deployed,settings,"b".repeat(40)));
  assert.throws(()=>activeCheckoutVersion({deployments:[{id:"deployment",versions:[{version_id:"version",percentage:50},{version_id:"old",percentage:50}]}]},settings,sha));
 });
+
+test("secret installation refuses to silently trim a stored credential",()=>{
+ assert.throws(()=>checkoutSandboxPlan({...base(),RAZORPAY_WEBHOOK_SECRET_SANDBOX:" stored-secret "}));
+});

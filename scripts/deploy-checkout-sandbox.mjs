@@ -1,6 +1,7 @@
 /** Manual protected-main provisioning. Creates NEW resources; never accepts a destination from input. */
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, activeCheckoutVersion, CHECKOUT_REPOSITORY } from "../lib/checkout-sandbox-hosting.ts";
 
@@ -12,8 +13,7 @@ const plan = checkoutSandboxPlan(process.env); // All safety/secret requirements
 const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
 const token = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
 if (!/^[a-f0-9]{32}$/i.test(account) || !token) throw new Error("Cloudflare account authentication is required");
-const privateDir = resolve(process.env.RUNNER_TEMP || evidence, `checkout-private-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`);
-mkdirSync(privateDir, { recursive: true, mode: 0o700 });
+const privateDir = mkdtempSync(resolve(tmpdir(), "pawspace-checkout-private-"));
 const secretsFile = resolve(privateDir, "secrets.json");
 const cfBase = `https://api.cloudflare.com/client/v4/accounts/${account}`;
 const cf = async (path, options = {}) => {
@@ -96,6 +96,6 @@ try {
   console.error(report.error);
   process.exitCode = 1;
 } finally {
-  rmSync(secretsFile, { force: true });
+  rmSync(privateDir, { recursive: true, force: true });
   writeFileSync(resolve(evidence, "hosting-report.json"), JSON.stringify(report, null, 2));
 }

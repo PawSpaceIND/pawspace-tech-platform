@@ -34,6 +34,7 @@ export function checkoutSandboxPlan(env: Env) {
   const secrets: Record<string, string> = {};
   for (const name of names) {
     const value = required(env, name);
+    if (env[name] !== value) throw new Error(`Credential has surrounding whitespace: ${name}`);
     if (name.startsWith("PAWSPACE_") && (value.length < 32 || /^pawspace[-_]/i.test(value))) throw new Error(`Unsafe UAT credential: ${name}`);
     secrets[name] = value;
   }
