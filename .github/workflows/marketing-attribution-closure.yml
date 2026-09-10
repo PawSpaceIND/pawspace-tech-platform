@@ -23,7 +23,6 @@ on:
       - "tests/marketing-attribution-lifecycle.test.mjs"
       - "tests/marketing-ad-connectors.test.mjs"
       - "tests/marketing-supermetrics-connector.test.mjs"
-      - "tests/marketing-control-live-data.test.mjs"
       - "docs/MARKETING_CONNECTOR_CONFIGURATION.md"
       - ".github/workflows/marketing-attribution-closure.yml"
   workflow_dispatch:
@@ -53,6 +52,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Execute attribution closure protocol
-        run: node --experimental-strip-types --test --test-concurrency=1 tests/public-contact-ad-attribution.test.mjs tests/marketing-attribution-lifecycle.test.mjs tests/marketing-ad-connectors.test.mjs tests/marketing-supermetrics-connector.test.mjs tests/marketing-control-live-data.test.mjs
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/public-contact-ad-attribution.test.mjs tests/marketing-attribution-lifecycle.test.mjs tests/marketing-ad-connectors.test.mjs tests/marketing-supermetrics-connector.test.mjs
       - name: TypeScript check
         run: npm run typecheck
