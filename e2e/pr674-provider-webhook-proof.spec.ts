@@ -117,53 +117,65 @@ function hasRazorpayFrame(page: Page) {
 }
 
 async function closeCheckout(page: Page) {
-  let frame = await visibleRazorpayFrame(page);
-  // Desktop Checkout v2 can open a contact-details sheet above the underlying Close Checkout control.
-  // Complete only that non-payment prerequisite so the real dismissal control becomes actionable.
-  const contact = frame.getByRole("textbox", { name: /Mobile number/i }).first();
-  if (await contact.isVisible().catch(() => false)) {
-    await contact.fill(PHONE);
-    const proceed = frame.getByRole("button", { name: /^Continue$/i }).first();
-    await expect(proceed).toBeVisible({ timeout: 10_000 });
-    await proceed.click();
-    await page.waitForTimeout(800);
-    frame = page.frames().find(item => item !== page.mainFrame() && /razorpay/i.test(item.url())) || frame;
-  }
-  const candidates = [
-    frame.locator('[data-testid="checkout-close"]').first(),
-    frame.getByRole("button", { name: /^Go back$/i }).first(),
-    frame.getByRole("button", { name: /^Close Checkout$/i }).first(),
-    frame.getByRole("button", { name: /^Close$/i }).first(),
-  ];
-  await expect.poll(async () => {
-    for (const candidate of candidates) if (await candidate.isVisible().catch(() => false)) return true;
-    return false;
-  }, { timeout: 15_000 }).toBeTruthy();
-
-  let dismissed = false;
-  for (const candidate of candidates) {
-    if (!await candidate.isVisible().catch(() => false)) continue;
+  await visibleRazorpayFrame(page);
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (!hasRazorpayFrame(page)) return;
+    const frame = page.frames().find(item => item !== page.mainFrame() && /razorpay/i.test(item.url()));
+    if (!frame) {
+      await page.waitForTimeout(200);
+      continue;
+    }
     try {
-      await candidate.click({ timeout: 5_000 });
-      dismissed = true;
-      break;
+      // Checkout v2 may surface its contact-details sheet a moment after the checkout frame appears.
+      // Dismiss that provider-owned overlay through its own close control before touching the checkout X.
+      const contactOverlay = frame.locator('[data-testid="contact-overlay-container"]').first();
+      if (await contactOverlay.isVisible().catch(() => false)) {
+        const dismissContact = contactOverlay.locator("button").first();
+        if (await dismissContact.isVisible().catch(() => false)) {
+          await dismissContact.click({ timeout: 5_000 });
+          await page.waitForTimeout(300);
+          continue;
+        }
+      }
+
+      // Once Razorpay asks for exit confirmation, accept the provider's real positive action.
+      const confirmDialog = frame.locator('[data-testid="dialog-confirm-close"]').first();
+      if (await confirmDialog.isVisible().catch(() => false)) {
+        const confirmExit = confirmDialog.locator('[data-testid="confirm-positive"]').first();
+        if (await confirmExit.isVisible().catch(() => false)) {
+          await confirmExit.click({ timeout: 5_000 });
+          await page.waitForTimeout(300);
+          continue;
+        }
+      }
+      const namedConfirm = frame.getByRole("button", { name: /^Yes, exit$/i }).first();
+      if (await namedConfirm.isVisible().catch(() => false)) {
+        await namedConfirm.click({ timeout: 5_000 });
+        await page.waitForTimeout(300);
+        continue;
+      }
+
+      const close = frame.locator('[data-testid="checkout-close"]').first();
+      if (await close.isVisible().catch(() => false)) {
+        try {
+          await close.click({ timeout: 5_000 });
+          await page.waitForTimeout(300);
+          continue;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!/intercepts pointer events|not stable|Timeout|Frame was detached/i.test(message)) throw error;
+          // A late provider overlay can win the race with the close click; loop and handle its UI.
+          continue;
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/intercepts pointer events|not stable|Timeout|Frame was detached/i.test(message)) throw error;
+      if (!/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) throw error;
     }
+    await page.waitForTimeout(250);
   }
-  if (!dismissed && hasRazorpayFrame(page)) {
-    // Checkout v2 can leave a QR/status overlay above the visible close control. Escape is the
-    // real browser dismissal path and avoids bypassing Razorpay's pointer/overlay protections.
-    await page.keyboard.press("Escape");
-  }
-  if (hasRazorpayFrame(page)) {
-    const current = page.frames().find(item => item !== page.mainFrame() && /razorpay/i.test(item.url())) || frame;
-    const confirmExit = current.getByRole("button", { name: /^Yes, exit$/i }).first();
-    await confirmExit.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
-    if (await confirmExit.isVisible().catch(() => false)) await confirmExit.click({ timeout: 5_000 });
-  }
-  await expect.poll(() => hasRazorpayFrame(page), { timeout: 15_000 }).toBeFalsy();
+  throw new Error("Razorpay checkout did not dismiss through its visible provider controls");
 }
 async function submitUpi(page: Page, upi: string) {
   await visibleRazorpayFrame(page);
