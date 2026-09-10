@@ -7,6 +7,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { withScopedRequestClones } from "./helpers/scoped-request-clones.mjs";
 import { setupJourney, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
 import { seedOwnedPet } from "./helpers/saved-pet-fixture.mjs";
 import { enterWorkersDbScope } from "./helpers/module-hooks.mjs";
@@ -52,19 +55,26 @@ async function setup(t) {
       ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}),
       ...(staff ? { "oai-authenticated-user-email": "closure-admin@pawspace.test" } : {}), ...headers },
       ...(body !== undefined ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}) });
-    const inspection = requestForAuthorization(req, runtime);
-    const session = await authorizePlatformSessionRequest(inspection, db);
-    const access = session ?? await authorizeApiRequest(inspection, { ...runtime, DB: db });
-    let response;
-    if (access instanceof Response) response = access;
-    else {
-      assert.equal(access.actor.preview, false, "no preview superuser may satisfy a cross-app step");
-      const route = await import(`../app${new URL(req.url).pathname}/route.ts`);
-      response = await route[method](req);
-    }
-    const result = { status: response.status, body: await response.json() };
-    calls.push({ path: path.split("?")[0], method, status: result.status, action: body && typeof body === "object" ? body.action : undefined });
-    return result;
+    return withScopedRequestClones(req, async () => {
+      const inspection = requestForAuthorization(req, runtime);
+      const session = await authorizePlatformSessionRequest(inspection, db);
+      if (process.env.PAWSPACE_CHECKOUT_GC_PROBE === "1") {
+        assert.equal(typeof globalThis.gc, "function", "the explicit GC regression must actually collect");
+        for (let i = 0; i < 4; i++) { globalThis.gc(); await new Promise(resolve => setImmediate(resolve)); }
+        assert.equal(req.bodyUsed, false, "authorization-clone collection must not consume the route body");
+      }
+      const access = session ?? await authorizeApiRequest(inspection, { ...runtime, DB: db });
+      let response;
+      if (access instanceof Response) response = access;
+      else {
+        assert.equal(access.actor.preview, false, "no preview superuser may satisfy a cross-app step");
+        const route = await import(`../app${new URL(req.url).pathname}/route.ts`);
+        response = await route[method](req);
+      }
+      const result = { status: response.status, body: await response.json() };
+      calls.push({ path: path.split("?")[0], method, status: result.status, action: body && typeof body === "object" ? body.action : undefined });
+      return result;
+    });
   }
   const customerId = "CUS-CHECKOUT-CROSS", petId = "PET-CHECKOUT-CROSS", groupId = "GROUP-CHECKOUT-CROSS";
   await seedOwnedPet(db, customerId, petId, "Milo");
@@ -339,4 +349,49 @@ test("same gateway event replay survives a clock tick without weakening body-swa
   assert.match(swapped.body.error, /payload mismatch/i);
   assert.deepEqual(captureCounts(w), before);
   assert.deepEqual(w.timeline(), originalHistory);
+});
+
+
+test("cold-loader authorization clones remain alive through real route dispatch under forced GC", () => {
+  const env = { ...process.env, PAWSPACE_CHECKOUT_GC_PROBE: "1", PAWSPACE_FORCE_LOADER_HOOK: "1" };
+  // A new test runner must not inherit the parent runner's private IPC context.
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ["--expose-gc", "--experimental-strip-types", "--test",
+    "--test-name-pattern=^payment\\.captured: customer checkout", fileURLToPath(import.meta.url)], {
+    cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8", timeout: 30_000,
+    env,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /# tests 1\b|ℹ tests 1\b/);
+  assert.match(result.stdout, /# pass 1\b|ℹ pass 1\b/);
+  assert.match(result.stdout, /paymentTimelineEvents.*1/);
+  assert.doesNotMatch(result.stdout + result.stderr, /Body is unusable|\[BODY-LIFETIME\]/);
+});
+
+
+test("request clone lifetime adapter restores request methods after success and refusal", async () => {
+  const prototypeClone = Request.prototype.clone;
+  for (const rejects of [false, true]) {
+    const request = new Request("https://isolated-test.pawspace.test/", {
+      method: "POST", headers: { "x-original": "retained" }, body: JSON.stringify({ amount: 1899 }),
+    });
+    const run = withScopedRequestClones(request, async original => {
+      assert.equal(original, request);
+      const cloned = original.clone();
+      assert.ok(cloned instanceof Request);
+      cloned.headers.set("x-original", "clone-only");
+      assert.equal(request.headers.get("x-original"), "retained");
+      assert.deepEqual(await cloned.json(), { amount: 1899 });
+      assert.equal(request.bodyUsed, false);
+      if (rejects) throw new Error("controlled-dispatch-refusal");
+      return "accepted";
+    });
+    if (rejects) await assert.rejects(run, /controlled-dispatch-refusal/);
+    else assert.equal(await run, "accepted");
+    assert.equal(Request.prototype.clone, prototypeClone);
+    assert.equal(Object.hasOwn(request, "clone"), false);
+    assert.deepEqual(await request.json(), { amount: 1899 });
+  }
 });
