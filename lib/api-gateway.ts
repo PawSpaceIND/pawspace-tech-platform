@@ -31,6 +31,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/uat-provider-switch")return null;
   if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";
+  if(url.pathname==="/api/razorpayx-test-dispatch")return "finance.manage";
   if(url.pathname==="/api/provider-commercial-terms")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
