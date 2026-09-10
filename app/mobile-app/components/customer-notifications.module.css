@@ -1,0 +1,15 @@
+.panel{position:fixed;inset:auto 0 0;margin:0 auto;width:min(100%,680px);max-width:100%;height:min(85dvh,780px);max-height:100%;box-sizing:border-box;border:1px solid var(--ps-border,#dce5df);border-radius:24px 24px 0 0;padding:28px;background:var(--ps-surface,#fff);color:var(--ps-text,#17372e);overflow:auto;box-shadow:0 -12px 64px #14352b20}
+.panel::backdrop{background:#0c261e70}
+.close{float:right;border:1px solid var(--ps-border,#dce5df);background:transparent;color:inherit;border-radius:999px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600}
+.title{clear:both;font-size:25px;line-height:1.2;font-weight:700;letter-spacing:-.6px;margin:24px 0 8px}
+.subtitle{font-size:14px;color:var(--ps-muted,#60766c);margin:0 0 24px}
+.notice{border:1px solid var(--ps-border,#dce5df);border-radius:16px;padding:18px;margin:12px 0;background:var(--ps-surface,#fff)}
+.notice h3{font-size:15px;font-weight:700;margin:0 0 8px}
+.notice p{font-size:14px;line-height:1.6;margin:0 0 12px}
+.notice .booking{font-size:12px;font-weight:600;margin:0 0 5px;overflow-wrap:anywhere}
+.notice time{font-size:12px;color:var(--ps-muted,#60766c)}
+.action{border:0;border-radius:999px;padding:11px 18px;background:#15533e;color:#fff;cursor:pointer;font-size:13px;font-weight:600;margin-top:12px}
+.action:disabled{opacity:.55;cursor:wait}
+.state{font-size:14px;line-height:1.6;padding:20px 0;color:var(--ps-muted,#60766c)}
+.error{border:1px solid #e8b6af;border-radius:14px;padding:16px;font-size:14px;line-height:1.5}
+@media(max-width:480px){.panel{padding:22px}.title{font-size:23px}}

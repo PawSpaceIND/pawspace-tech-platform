@@ -57,8 +57,35 @@ start_server() {
     return 1
   fi
 
-  setsid env E2E_SKIP_BUILD=1 bash scripts/e2e/serve-hardened.sh >> "$SERVE_LOG" 2>&1 &
-  local pid=$!
+  local pid
+  if command -v setsid >/dev/null 2>&1; then
+    setsid env E2E_SKIP_BUILD=1 bash scripts/e2e/serve-hardened.sh >> "$SERVE_LOG" 2>&1 &
+    pid=$!
+  else
+    # macOS does not ship setsid. Node's detached mode creates a new POSIX session/process group,
+    # preserving the negative-PID group cleanup semantics used by stop_server.
+    pid="$(SERVE_LOG="$SERVE_LOG" node <<'NODE'
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+
+const logFd = fs.openSync(process.env.SERVE_LOG, "a");
+const child = spawn("bash", ["scripts/e2e/serve-hardened.sh"], {
+  cwd: process.cwd(),
+  detached: true,
+  env: { ...process.env, E2E_SKIP_BUILD: "1" },
+  stdio: ["ignore", logFd, logFd],
+});
+fs.closeSync(logFd);
+
+if (!child.pid) {
+  process.exit(1);
+}
+
+child.unref();
+process.stdout.write(String(child.pid));
+NODE
+)"
+  fi
   echo "$pid" > "$PID_FILE"
 
   for _ in $(seq 1 60); do
@@ -135,3 +162,10 @@ for journey in "${journeys[@]}"; do
     stop_server
   done
 done
+
+# The CX communication-visibility proof owns its own isolated SQLite/D1 harness and browser server.
+# Keep Wrangler stopped so the proof can run independently and reproduce the exact terminal command
+# used during local development.
+echo "[e2e] running Razorpay capture -> Meta 503 -> CX visibility proof"
+stop_server
+npx playwright test --config playwright.cx-visibility.config.ts tests/e2e/09-webhook-flood-cx-visibility.spec.ts

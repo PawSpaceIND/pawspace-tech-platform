@@ -86,7 +86,16 @@ jobs:
       - name: Run signed-in customer acceptance against isolated preview
         env:
           PREVIEW_URL: ${{ github.event.inputs.preview_url }}
-        run: node scripts/customer-ui-acceptance-v2.mjs --base="$PREVIEW_URL" --json=customer-ui-acceptance-report.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOL_DIR="$RUNNER_TEMP/pawspace-ui-tooling"
+          rm -rf "$TOOL_DIR"
+          mkdir -p "$TOOL_DIR"
+          git cat-file blob "${GITHUB_SHA}:scripts/customer-ui-acceptance-v2.mjs" > "$TOOL_DIR/customer-ui-acceptance-v2.mjs"
+          test "$(git hash-object "$TOOL_DIR/customer-ui-acceptance-v2.mjs")" = "$(git rev-parse "${GITHUB_SHA}:scripts/customer-ui-acceptance-v2.mjs")"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$TOOL_DIR/node_modules"
+          node "$TOOL_DIR/customer-ui-acceptance-v2.mjs" --base="$PREVIEW_URL" --json="$GITHUB_WORKSPACE/customer-ui-acceptance-report.json"
 
       - name: Print actionable UI closure failures
         if: ${{ always() }}

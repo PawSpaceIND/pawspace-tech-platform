@@ -151,3 +151,16 @@ test("a chunked LIMIT returns the newest n overall, not n per chunk", async () =
   const expectedOldestKept = [...stamps].sort((left, right) => right - left)[APPROVAL_LIMIT - 1];
   assert.equal(Number(events[APPROVAL_LIMIT - 1].created_at), expectedOldestKept, "the 200 kept are the 200 newest, not the first 200 found");
 });
+
+test('booking complaints are newest first across multiple booking chunks, with deterministic ties',async()=>{
+ const {db,sqlite}=freshCountingD1();
+ sqlite.exec(`CREATE TABLE unified_cases(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,case_type TEXT,severity TEXT,status TEXT,title TEXT,description TEXT,owner_email TEXT,owner_team TEXT,first_response_due_at INTEGER,created_at INTEGER,updated_at INTEGER,resolved_at INTEGER,reopen_count INTEGER,resolution_note TEXT)`);
+ const ids=Array.from({length:D1_IN_CHUNK*2+5},(_,index)=>`BOOK-${index}`);
+ const insert=sqlite.prepare("INSERT INTO unified_cases(id,booking_id,customer_id,case_type,created_at) VALUES (?,?,'CUS','customer_complaint',?)");
+ for(let index=0;index<ids.length;index++)insert.run(`CASE-${String(index).padStart(4,'0')}`,ids[index],Math.floor(index/2));
+ const {bookingSupportCases}=await import('../lib/booking-support-cases.ts');
+ const rows=await bookingSupportCases(db,ids);
+ assert.equal(rows.length,ids.length);
+ const expected=sqlite.prepare("SELECT id FROM unified_cases ORDER BY created_at DESC,id").all().map(row=>row.id);
+ assert.deepEqual(rows.map(row=>row.id),expected);
+});
