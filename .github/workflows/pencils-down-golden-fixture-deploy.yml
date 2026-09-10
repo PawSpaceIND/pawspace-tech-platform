@@ -1,0 +1,119 @@
+name: Deploy Golden with existing sandbox service-discovery fixture
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-golden-fixture-deploy.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-golden-fixture-3218c3
+  cancel-in-progress: false
+jobs:
+  certify-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - name: Checkout deployment guardrails
+        uses: actions/checkout@v4
+        with:
+          ref: ops/pencils-down-staging-ab40dc00
+          path: infra
+          persist-credentials: false
+      - name: Checkout exact certified product
+        uses: actions/checkout@v4
+        with:
+          ref: 3218c383ef3afd947847b87b7319600e359e4f9e
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Retarget guard and enable repository-owned sandbox fixture
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          script=Path('infra/ops/pencils-down/deploy_golden.py')
+          text=script.read_text()
+          replacements={
+            '8745bbca5e76185b65ca7c0a7fd4bda60acf35e6':'3218c383ef3afd947847b87b7319600e359e4f9e',
+            '321312aec6e2a96060496bdf4401d41cf024e40d':'9836754d40e305925deb4d87cbaba663dc80d039',
+            'pawspace-beta-golden-8745bbca':'pawspace-beta-golden-fixture-3218c3',
+            'pawspace-golden-8745bbca':'pawspace-golden-fixture-3218c3',
+          }
+          for old,new in replacements.items():
+            if old not in text: raise SystemExit('expected guard token missing: '+old)
+            text=text.replace(old,new)
+          needle="'PAWSPACE_LOCAL_PREVIEW':'off', 'PAWSPACE_SCHEDULING_ENV':'uat', 'PAWSPACE_MAPS_ENV':'sandbox',"
+          replacement="'PAWSPACE_LOCAL_PREVIEW':'off', 'PAWSPACE_SCHEDULING_ENV':'uat', 'PAWSPACE_MAPS_ENV':'sandbox',\n    'PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE':'on',"
+          if needle not in text: raise SystemExit('sandbox fixture insertion point missing')
+          text=text.replace(needle,replacement,1)
+          script.write_text(text)
+          manifest=Path('infra/ops/pencils-down/payment-ui-source-manifest.json')
+          data=json.loads(manifest.read_text())
+          data['candidate']='3218c383ef3afd947847b87b7319600e359e4f9e'
+          data['tree']='9836754d40e305925deb4d87cbaba663dc80d039'
+          data['payment_ui_wiring']='customer Wallet -> exact reduced due-now -> Razorpay Test checkout; repository-owned sandbox service-discovery fixture enabled only in isolated UAT'
+          manifest.write_text(json.dumps(data,indent=2)+'\n')
+          print('Existing product fixture enabled in ephemeral deployment guard only.')
+          PY
+      - name: Generate isolated session signing keys
+        id: keys
+        run: |
+          python - <<'PY'
+          import os,secrets
+          for name in ('signing','identity'):
+            value=secrets.token_hex(32); print('::add-mask::'+value)
+            with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(name+'='+value+'\n')
+          PY
+      - name: Preflight unused test namespace
+        env: &golden_env
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ steps.keys.outputs.signing }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ steps.keys.outputs.identity }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: python infra/ops/pencils-down/deploy_golden.py preflight
+      - name: Install locked dependencies
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Focused fixture, identity and payment checks
+        working-directory: candidate
+        env:
+          PAWSPACE_SCHEDULING_ENV: uat
+          PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/service-discovery-capacity.test.mjs tests/ptja-identity-spine.test.mjs tests/beta-credit-parity.test.mjs tests/customer-payment-ui-wiring.test.mjs tests/payment-order-cross-customer-runtime.test.mjs
+      - name: Full typecheck
+        working-directory: candidate
+        run: npm run typecheck
+      - name: Full build
+        working-directory: candidate
+        run: npm run build
+      - name: Deploy fresh isolated Worker and D1
+        id: deploy
+        env: *golden_env
+        run: python infra/ops/pencils-down/deploy_golden.py deploy
+      - name: Upload deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-fixture-deployment-evidence
+          path: pencils-down-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Candidate URL
+        if: success()
+        run: echo "GOLDEN_ORIGIN=${{ steps.deploy.outputs.origin }}"
