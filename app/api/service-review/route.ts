@@ -47,10 +47,10 @@ export async function POST(request:Request){
       await securityAudit(db,actor,"review.reward.redeem","customer",customerId,"completed",{code:body.code,bookingId:body.bookingId});
       return json({data},201);
     }
-    // default: submit a review.
-    if(!body.requestId||body.stars===undefined)return json({error:"A review request and star rating are required"},400);
-    const data=await submitServiceReview(db,{requestId:body.requestId,customerId,stars:Number(body.stars),answers:body.answers});
-    await securityAudit(db,actor,"review.submit","customer",customerId,"completed",{requestId:body.requestId,stars:body.stars});
+    // default: submit five-question feedback; legacy stars-only clients remain supported.
+    if(!body.requestId||(!body.answers&&body.stars===undefined))return json({error:"A review request and feedback answers are required"},400);
+    const data=await submitServiceReview(db,{requestId:body.requestId,customerId,stars:body.stars===undefined?undefined:Number(body.stars),answers:body.answers});
+    await securityAudit(db,actor,"review.submit","customer",customerId,"completed",{requestId:body.requestId,stars:body.stars??null,answerCount:body.answers?Object.keys(body.answers).length:0});
     return json({data},201);
   }catch(error){if(error instanceof ServiceReviewError)return json({error:error.message},error.status);return authError(error,"Unable to complete review request");}
 }
