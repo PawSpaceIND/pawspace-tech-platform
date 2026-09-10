@@ -61,6 +61,13 @@ function credentials(env:Env){
  return{ok:true as const,keyId:value(env,"RAZORPAYX_KEY_ID_SANDBOX"),keySecret:value(env,"RAZORPAYX_KEY_SECRET_SANDBOX"),accountNumber:value(env,"RAZORPAYX_ACCOUNT_NUMBER_SANDBOX")};
 }
 const auth=(keyId:string,keySecret:string)=>`Basic ${btoa(`${keyId}:${keySecret}`)}`;
+export async function razorpayXProviderIdempotencyKey(localKey:string){
+ const key=localKey.trim();if(!key)throw new Error("RazorpayX payout idempotency key is required");
+ if(key.length<=36)return key;
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(key));
+ const hex=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
+ return `psx_${hex.slice(0,32)}`;
+}
 const safeReference=(value:string)=>value.replace(/[^A-Za-z0-9_.:-]/g,"_").slice(0,40);
 
 export async function createRazorpayXSandboxPayout(env:Env,input:{localPayoutId:string;bookingId?:string|null;statementId?:string|null;providerId:string;fundAccountId:string;amountPaise:number;currency:string;idempotencyKey:string;mode?:RazorpayXPayoutMode}):Promise<RazorpayXResult>{
@@ -68,7 +75,7 @@ export async function createRazorpayXSandboxPayout(env:Env,input:{localPayoutId:
  if(!/^fa_[A-Za-z0-9]+$/.test(input.fundAccountId))return{connected:false,environment:"sandbox",reason:"A RazorpayX TEST fund account id is required"};
  if(!Number.isSafeInteger(input.amountPaise)||input.amountPaise<100)return{connected:false,environment:"sandbox",reason:"RazorpayX payout amount must be integer paise and at least 100"};
  if(input.currency!=="INR")return{connected:false,environment:"sandbox",reason:"RazorpayX sandbox payout currency must be INR"};
- const idempotency=input.idempotencyKey.trim();if(!idempotency)return{connected:false,environment:"sandbox",reason:"RazorpayX payout idempotency key is required"};
+ let idempotency:string;try{idempotency=await razorpayXProviderIdempotencyKey(input.idempotencyKey);}catch(error){return{connected:false,environment:"sandbox",reason:error instanceof Error?error.message:"RazorpayX payout idempotency key is required"};}
  const mode=input.mode||"IMPS";if(!["IMPS","NEFT","RTGS"].includes(mode))return{connected:false,environment:"sandbox",reason:"Unsupported RazorpayX payout mode"};
  try{
   const{response,body}=await request(env,"/v1/payouts",{method:"POST",headers:{authorization:auth(c.keyId,c.keySecret),"content-type":"application/json","X-Payout-Idempotency":idempotency},body:JSON.stringify({account_number:c.accountNumber,fund_account_id:input.fundAccountId,amount:input.amountPaise,currency:"INR",mode,purpose:"payout",queue_if_low_balance:true,reference_id:safeReference(input.localPayoutId),narration:"PawSpace Partner",notes:{pawspace_payout_id:input.localPayoutId,booking_id:input.bookingId||"",statement_id:input.statementId||"",provider_id:input.providerId,pawspace_environment:"sandbox"}})});
