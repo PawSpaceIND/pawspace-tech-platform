@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPaymentOrderPaise } from "../lib/razorpay-client.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__RAZORPAY_REDIRECT_CONTRACT_DB__");
+const { createPaymentOrderPaise } = await import("../lib/razorpay-client.ts");
 
 const env = {
   PAWSPACE_PAYMENT_ENV: "sandbox",
