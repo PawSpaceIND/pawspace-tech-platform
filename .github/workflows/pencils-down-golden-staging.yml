@@ -1,0 +1,91 @@
+name: Pencils-down Golden customer journey environment
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths:
+      - .github/workflows/pencils-down-golden-staging.yml
+      - ops/pencils-down/deploy_golden.py
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-golden-8745bbca
+  cancel-in-progress: false
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 8745bbca5e76185b65ca7c0a7fd4bda60acf35e6
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate isolated session signing keys
+        id: keys
+        run: |
+          python - <<'PY2'
+          import os,secrets
+          for name in ('signing','identity'):
+            value=secrets.token_hex(32); print('::add-mask::'+value)
+            with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(name+'='+value+'\n')
+          PY2
+      - name: Preflight exact test-only dependencies
+        env: &golden_env
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ steps.keys.outputs.signing }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ steps.keys.outputs.identity }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: python infra/ops/pencils-down/deploy_golden.py preflight
+      - name: Install locked dependencies
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Build exact Golden candidate
+        working-directory: candidate
+        run: npm run build
+      - name: Deploy new isolated Golden Worker and database
+        id: deploy
+        env: *golden_env
+        run: python infra/ops/pencils-down/deploy_golden.py deploy
+      - name: Check Maps UAT through the deployed server only
+        env:
+          ORIGIN: ${{ steps.deploy.outputs.origin }}
+        run: |
+          python - <<'PY3'
+          import json,os,urllib.parse,urllib.request
+          url=os.environ['ORIGIN']+'/api/address-autocomplete?'+urllib.parse.urlencode({'mode':'search','query':'Indiranagar Bengaluru','sessionToken':'golden-preflight'})
+          with urllib.request.urlopen(url,timeout=30) as r: data=json.load(r)
+          assert data.get('data',{}).get('status')=='configured', data
+          assert len(data['data'].get('suggestions',[]))>0, data
+          print('Maps UAT server lookup passed; no booking or production resource changed.')
+          PY3
+      - name: Upload Golden environment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-environment-evidence
+          path: pencils-down-evidence/
+          retention-days: 7
+      - name: Golden URL
+        if: success()
+        run: echo "GOLDEN_ORIGIN=${{ steps.deploy.outputs.origin }}"
