@@ -49,7 +49,7 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  await page.waitForTimeout(12000);
  const frames=[];for(const [index,frame] of page.frames().entries()){const text=await frame.locator("body").innerText().catch(()=>"");const controls=await frame.locator("input,button,[role=button]").evaluateAll(nodes=>nodes.slice(0,80).map(node=>({tag:node.tagName,text:(node.textContent||"").trim().replace(/\s+/g," ").slice(0,140),placeholder:node.getAttribute("placeholder"),aria:node.getAttribute("aria-label"),type:node.getAttribute("type")}))).catch(()=>[]);frames.push({index,url:frame.url(),text:text.slice(0,5000),controls});}
  console.log(`[PR674-MODAL] ${JSON.stringify(frames)}`);await testInfo.attach("pr674-razorpay-modal-structure",{body:JSON.stringify(frames,null,2),contentType:"application/json"});await page.screenshot({path:testInfo.outputPath("pr674-razorpay-modal-loaded.png"),fullPage:true});
- const razor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url));
+ const razor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url()));
  expect(razor,"Razorpay Test checkout frame must be present").toBeTruthy();
  await razor!.getByRole("button",{name:"Close",exact:true}).click();
  await expect(card.getByRole("alert")).toContainText("Checkout closed. No payment confirmation has been recorded here.",{timeout:10000});
@@ -65,8 +65,8 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  await pay.click();
  const retryResponse=await retry,retryBody=await retryResponse.json();
  expect(retryResponse.status()).toBe(201);expect(retryBody.data.orderId).toBe(firstOrder);
- await expect.poll(()=>page.frames().some(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url)),{timeout:15000}).toBe(true);
- const retryRazor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url));
+ await expect.poll(()=>page.frames().some(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url())),{timeout:15000}).toBe(true);
+ const retryRazor=page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url()));
  expect(retryRazor).toBeTruthy();
  const mobile=retryRazor!.locator('input[placeholder="Mobile number"]');
  await expect(mobile).toBeVisible({timeout:15000});
@@ -76,7 +76,7 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  const methodFrames=[];for(const [index,frame] of page.frames().entries()){const text=await frame.locator("body").innerText().catch(()=>"");const controls=await frame.locator("input,button,[role=button]").evaluateAll(nodes=>nodes.slice(0,100).map(node=>({tag:node.tagName,text:(node.textContent||"").trim().replace(/\s+/g," ").slice(0,160),placeholder:node.getAttribute("placeholder"),aria:node.getAttribute("aria-label"),type:node.getAttribute("type")}))).catch(()=>[]);methodFrames.push({index,url:frame.url(),text:text.slice(0,6000),controls});}
  console.log(`[PR674-METHODS] ${JSON.stringify(methodFrames)}`);await testInfo.attach("pr674-payment-method-structure",{body:JSON.stringify(methodFrames,null,2),contentType:"application/json"});await page.screenshot({path:testInfo.outputPath("pr674-payment-methods.png"),fullPage:true});
  expect(methodFrames.some(frame=>/UPI|Netbanking|Cards/i.test(frame.text))).toBe(true);
- await page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url))?.getByRole("button",{name:"Close",exact:true}).click().catch(()=>{});
+ await page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url()))?.getByRole("button",{name:"Close",exact:true}).click().catch(()=>{});
 });
 
 // Harness refresh marker: exact PR674 external modal diagnostic only.
