@@ -133,6 +133,11 @@ async function closeCheckout(page: Page) {
   for (const candidate of candidates) {
     if (!await candidate.isVisible().catch(() => false)) continue;
     await candidate.click();
+    if (hasRazorpayFrame(page)) {
+      const confirmExit = frame.getByRole("button", { name: /^Yes, exit$/i }).first();
+      await confirmExit.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
+      if (await confirmExit.isVisible().catch(() => false)) await confirmExit.click();
+    }
     await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
     return;
   }
