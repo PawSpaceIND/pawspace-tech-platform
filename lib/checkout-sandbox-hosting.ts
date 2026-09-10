@@ -30,7 +30,7 @@ export function checkoutSandboxPlan(env: Env) {
   const keyId = required(env, "RAZORPAY_KEY_ID_SANDBOX");
   if (!/^rzp_test_[a-zA-Z0-9]+$/.test(keyId) || /placeholder/i.test(keyId)) throw new Error("Only a genuine TEST-key shape is accepted");
   const names = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
-    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX"];
+    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX", "GOOGLE_MAPS_SERVER_API_KEY_UAT"];
   const secrets: Record<string, string> = {};
   for (const name of names) {
     const value = required(env, name);
