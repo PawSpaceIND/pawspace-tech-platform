@@ -241,7 +241,7 @@ jobs:
             echo '- seven-parameter UAT preflight: passed'
             echo '- single allow-listed E.164 test recipient validated: yes'
             echo '- AgentStream wss endpoint configured: yes'
-            echo '- one-shot dispatch target: 2026-09-06 08:00 IST'
+            echo '- one-shot dispatch target: 2026-09-11 10:00 IST'
             echo '- real call placed by this workflow: no'
             echo '- consent written by this workflow: no (staging scheduler writes only the explicitly source-attributed record before the due time)'
             echo "- staging origin: $STAGING_URL"
