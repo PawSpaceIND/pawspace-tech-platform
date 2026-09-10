@@ -44,11 +44,18 @@ test("canonical production provider credentials are injected only through Wrangl
 });
 
 test("canonical production provider identifiers are required and written as non-secret Worker vars", () => {
-  const configNames = ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"];
+  const variableConfigNames = ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID"];
+  const protectedIdentifierNames = ["META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"];
+  const configNames = [...variableConfigNames, ...protectedIdentifierNames];
   for (const name of configNames) {
     assert.match(prodConfig, new RegExp(`REQUIRED_PRODUCTION_CONFIG[\\s\\S]*["']${name}["']`));
-    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
     assert.match(workflow, new RegExp(`cfg\\.vars[\\s\\S]*${name}`));
+  }
+  for (const name of variableConfigNames)
+    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
+  for (const name of protectedIdentifierNames) {
+    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
+    assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
   }
 });
 
