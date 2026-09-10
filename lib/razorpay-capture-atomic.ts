@@ -5,6 +5,7 @@ import { convertLeadOnPaymentCaptured } from "./lead-conversion-attribution";
 import { cancelRecoveryEntitlements } from "./payment-recovery-governance";
 import { activateSubscriptionOnCapture } from "./subscription-payment-activation";
 import { tryQualifyLinkedReferral } from "./referral-booking-governance";
+import { resolveTaxiCompletionFinance } from "./taxi-completion-finance";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -48,12 +49,15 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   if (!input.inboxId || !input.eventId || !input.bookingId || !input.paymentId) throw new Error("Atomic capture identity is incomplete");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Captured Razorpay amount must be positive integer paise");
 
-  const [intent, payment, current, schedule] = await Promise.all([
+  const [intent, payment, current, staySchedule, taxiSchedule] = await Promise.all([
     input.intentId ? db.prepare("SELECT id,booking_id,payment_id,state,version,amount_paise,currency,gateway_order_id,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
     db.prepare("SELECT id,booking_id,status,customer_id,amount,currency,method FROM booking_payments WHERE id=? AND booking_id=?").bind(input.paymentId, input.bookingId).first<Row>(),
     db.prepare("SELECT expected_amount,captured_amount,refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(input.paymentId).first<Row>(),
     db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(() => null),
+    db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status FROM taxi_payment_schedules WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(() => null),
   ]);
+  const schedule=staySchedule??taxiSchedule;
+  const scheduleKind=staySchedule?"stay":taxiSchedule?"taxi":null;
   if (!payment) throw new Error("Atomic capture could not resolve canonical payment state");
   if (intent) {
     if (text(intent.booking_id) !== input.bookingId || text(intent.payment_id) !== input.paymentId) throw new Error("Payment intent does not own the capture booking/payment");
@@ -113,6 +117,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     currency: input.currency,
     captureKey: captureKey(input),
     collectedInFull,
+    scheduleKind,
   });
 
   const statements: D1PreparedStatement[] = [
@@ -145,9 +150,14 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       ON CONFLICT(dedupe_key) DO NOTHING`).bind(effectsOutboxId, input.intentId ? "payment_intent" : "booking_payment", input.intentId || input.paymentId, effectsDedupe, effectsPayload, now, now, now),
     db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId),
   ];
-  if (schedule && collectedInFull && text(schedule.status) !== "paid") {
+  const captureReference=input.gatewayPaymentId || `GW-${input.eventId}`;
+  if (scheduleKind === "stay" && schedule && collectedInFull && text(schedule.status) !== "paid") {
     statements.splice(4, 0, db.prepare("UPDATE stay_payment_schedules SET status='paid',paid_at=?,payment_ref=?,updated_at=? WHERE booking_id=? AND status IN ('pending_balance','overdue')")
-      .bind(now, input.gatewayPaymentId || `GW-${input.eventId}`, now, input.bookingId));
+      .bind(now, captureReference, now, input.bookingId));
+  }
+  if (scheduleKind === "taxi" && schedule) {
+    if (collectedInFull) statements.splice(4,0,db.prepare("UPDATE taxi_payment_schedules SET status='paid',final_paid_at=?,final_payment_reference=?,updated_at=? WHERE booking_id=? AND status IN ('pending_balance','booking_fee_paid')").bind(now,captureReference,now,input.bookingId));
+    else if (capturedTotal + 0.009 >= Number(schedule.paid_now_amount||0)) statements.splice(4,0,db.prepare("UPDATE taxi_payment_schedules SET status='pending_balance',booking_fee_paid_at=COALESCE(booking_fee_paid_at,?),booking_fee_reference=COALESCE(booking_fee_reference,?),updated_at=? WHERE booking_id=? AND status='booking_fee_pending'").bind(now,captureReference,now,input.bookingId));
   }
 
   await db.batch(statements);
@@ -184,7 +194,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     const bookingId = text(payload.bookingId), paymentId = text(payload.paymentId), eventId = text(payload.eventId), captureReference = text(payload.gatewayPaymentId) || text(payload.gatewayOrderId) || text(payload.captureKey) || eventId;
     const payment = await db.prepare("SELECT customer_id,method FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
     if (!payment) throw new Error("Capture post-commit payment is missing");
-    const booking = await db.prepare("SELECT city_id,service_code FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
+    const booking = await db.prepare("SELECT city_id,service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
     await postCollectionEvent(db, {
       event: "online_payment_captured",
       bookingId,
@@ -204,6 +214,23 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     await db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)").run();
     await db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'payment_captured','payment',?,'razorpay_webhook',?,?)")
       .bind(`capture-event:${input.outboxId}`, bookingId, paymentId, JSON.stringify({ gateway: "razorpay", gatewayPaymentId: text(payload.gatewayPaymentId), gatewayOrderId: text(payload.gatewayOrderId), eventId, amount: Number(payload.amountPaise || 0) / 100, collectedInFull: payload.collectedInFull === true }), now).run();
+    if(text(booking?.service_code)==="pet_taxi") {
+      const taxiSchedule=await db.prepare("SELECT booking_fee_amount,balance_amount,status,booking_fee_paid_at FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+      const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
+      const captured=Number(recon?.captured_amount||0),bookingFee=Number(taxiSchedule?.booking_fee_amount||0);
+      if(taxiSchedule&&bookingFee>0&&captured+0.009>=bookingFee&&text(booking?.status)==="payment_pending") {
+        const changed=await db.prepare("UPDATE canonical_bookings SET status='confirmed',updated_at=? WHERE id=? AND service_code='pet_taxi' AND status='payment_pending'").bind(now,bookingId).run();
+        if(Number(changed.meta?.changes||0)===1){
+          await db.prepare("UPDATE provider_work_orders SET status='assigned',updated_at=? WHERE booking_id=? AND status='payment_pending'").bind(now,bookingId).run();
+          await db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'taxi_booking_confirmed_after_booking_fee','booking',?,'razorpay_webhook',?,?)").bind(`taxi-confirm:${bookingId}`,bookingId,bookingId,JSON.stringify({bookingFeeAmount:bookingFee,capturedAmount:captured,verifiedGatewayCapture:true}),now).run();
+        }
+      }
+      if(payload.collectedInFull===true){
+        await db.prepare("UPDATE taxi_trip_payment_events SET status='gateway_paid',reference=COALESCE(reference,?),updated_at=? WHERE booking_id=? AND status='due'").bind(captureReference,now,bookingId).run().catch(()=>null);
+        const completedTrip=await db.prepare("SELECT updated_at FROM taxi_trips WHERE booking_id=? AND status='completed'").bind(bookingId).first<Row>().catch(()=>null);
+        if(completedTrip){await resolveTaxiCompletionFinance(db,{bookingId,actorId:"razorpay_capture_saga",completedAt:Number(completedTrip.updated_at||now)});}
+      }
+    }
     if (payload.collectedInFull === true) {
       await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?")
         .bind(now, bookingId).run().catch(() => null);
