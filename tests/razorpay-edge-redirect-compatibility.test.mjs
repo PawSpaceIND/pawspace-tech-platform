@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPaymentOrderPaise, createPaymentRefund, createSandboxPaymentLink } from "../lib/razorpay-client.ts";
-import { fetchRazorpaySettlementReconDate } from "../lib/razorpay-settlement-reconciliation.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__RAZORPAY_EDGE_REDIRECT_DB__", "__RAZORPAY_EDGE_REDIRECT_ENV__");
+const { createPaymentOrderPaise, createPaymentRefund, createSandboxPaymentLink } = await import("../lib/razorpay-client.ts");
+const { fetchRazorpaySettlementReconDate } = await import("../lib/razorpay-settlement-reconciliation.ts");
 
 const env={
   PAWSPACE_PAYMENT_ENV:"sandbox",
