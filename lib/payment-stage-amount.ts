@@ -1,3 +1,5 @@
+import{creditBreakdownAppliedToBooking}from"./booking-credit-application";
+
 /**
  * How much is payable RIGHT NOW for a booking — the amount a gateway order must be opened for.
  *
@@ -27,12 +29,13 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export type PaymentStage="full"|"first_instalment"|"outstanding_balance"|"settled";
-export type PaymentStageAmount={stage:PaymentStage;dueNow:number;bookingTotal:number;outstandingBalance:number;currency:string;paymentId:string;paymentStatus:string};
+export type PaymentStageAmount={stage:PaymentStage;dueNow:number;bookingTotal:number;outstandingBalance:number;currency:string;paymentId:string;paymentStatus:string;creditsApplied:number;walletCreditApplied:number;pawPointsCreditApplied:number};
 
 /** booking_payments.status values meaning that instalment's money is in. */
 const CAPTURED=["captured","refunded","partially_refunded"];
 
 const round2=(value:number)=>Math.round(value*100)/100;
+const money=(value:number)=>round2(Math.max(0,value));
 
 /**
  * Resolves the current payment stage and its amount. Returns null when the booking has no canonical
@@ -43,26 +46,38 @@ export async function paymentStageAmount(db:Db,bookingId:string):Promise<Payment
  if(!payment)return null;
 
  const bookingTotal=round2(Number(payment.amount||0));
- // Bounded by the total: the Boarding date-change path rewrites amount_due_now, and an instalment can
- // never legitimately exceed the booking it belongs to.
+ // booking_payments already stores the governed post-coupon/referral total. Only post-booking credits
+ // are subtracted here, otherwise checkout would double-apply a coupon.
  const dueNowStored=Math.min(round2(Number(payment.amount_due_now||0)),bookingTotal);
  const paymentStatus=String(payment.status||"");
  const firstCaptured=CAPTURED.includes(paymentStatus);
- const base={bookingBase:true,currency:String(payment.currency||"INR"),paymentId:String(payment.id),paymentStatus,bookingTotal};
+ const credits=await creditBreakdownAppliedToBooking(db,bookingId);
+ const base={bookingBase:true,currency:String(payment.currency||"INR"),paymentId:String(payment.id),paymentStatus,bookingTotal,creditsApplied:credits.totalApplied,walletCreditApplied:credits.walletApplied,pawPointsCreditApplied:credits.pawPointsApplied};
 
  const schedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
  if(!schedule){
-  // Full / prepaid. Once captured there is nothing left to collect.
   const stage:PaymentStage=firstCaptured?"settled":"full";
-  return{...base,stage,dueNow:firstCaptured?0:dueNowStored,outstandingBalance:firstCaptured?0:dueNowStored};
+  const cashDue=firstCaptured?0:money(dueNowStored-credits.totalApplied);
+  return{...base,stage,dueNow:cashDue,outstandingBalance:cashDue};
  }
 
- const balance=Math.max(0,round2(Number(schedule.balance_amount||0)));
- const paidNow=Math.max(0,round2(Number(schedule.paid_now_amount||0)));
+ const balance=money(Number(schedule.balance_amount||0));
+ const paidNow=money(Number(schedule.paid_now_amount||0));
  if(String(schedule.status)==="paid")return{...base,stage:"settled",dueNow:0,outstandingBalance:0};
- // The first instalment is still unpaid: charge the due-now half, never the total.
- if(!firstCaptured)return{...base,stage:"first_instalment",dueNow:Math.min(paidNow||dueNowStored,bookingTotal),outstandingBalance:balance};
- // First instalment captured, balance still owed: charge the BALANCE. Reusing dueNow here is the second
- // defect this function exists to avoid.
- return{...base,stage:"outstanding_balance",dueNow:balance,outstandingBalance:balance};
+ if(!firstCaptured){
+  const stageBase=Math.min(paidNow||dueNowStored,bookingTotal);
+  const cashDue=money(stageBase-Math.min(credits.totalApplied,stageBase));
+  return{...base,stage:"first_instalment",dueNow:cashDue,outstandingBalance:balance};
+ }
+ // A credit used on the first instalment must not be used again on the balance. The gateway
+ // reconciliation row is the durable proof of how much cash actually funded the first stage.
+ const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(payment.id).first<Row>().catch(()=>null);
+ if(credits.totalApplied>0&&!recon)throw new Error("Credit-funded split payment requires a gateway reconciliation record before another order can be opened");
+ const capturedCash=money(Number(recon?.captured_amount??paidNow));
+ const firstCash=Math.min(paidNow,capturedCash);
+ const creditsUsedFirst=Math.min(credits.totalApplied,money(paidNow-firstCash));
+ const remainingCredits=money(credits.totalApplied-creditsUsedFirst);
+ const cashTowardBalance=money(capturedCash-firstCash);
+ const cashDue=money(balance-remainingCredits-cashTowardBalance);
+ return{...base,stage:"outstanding_balance",dueNow:cashDue,outstandingBalance:cashDue};
 }

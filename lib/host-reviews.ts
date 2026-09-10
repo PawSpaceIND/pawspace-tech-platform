@@ -1,3 +1,4 @@
+import { createUnifiedCase } from "./unified-case-center";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 const rows=<T=Row>(result:{results?:unknown[]})=>(result.results||[]) as T[];
@@ -54,7 +55,14 @@ export async function submitHostReview(db:Db,input:HostReviewInput):Promise<Host
 
   const now=Date.now();
   const id=crypto.randomUUID();
-  await db.prepare("INSERT INTO host_reviews (id,host_provider_id,customer_id,booking_id,service_code,rating,title,body,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id,hostProviderId,customerId,bookingId,String(booking.service_code),rating,title,body,now).run();
+  const insert = db.prepare("INSERT INTO host_reviews (id,host_provider_id,customer_id,booking_id,service_code,rating,title,body,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id,hostProviderId,customerId,bookingId,String(booking.service_code),rating,title,body,now);
+  if (rating <= 2) {
+    await createUnifiedCase(db, {
+      idempotencyKey: `low-host-review:${bookingId}`, caseType: "customer_complaint", severity: "high",
+      title: `${rating}-star host review`, description: body, customerId, bookingId, providerId: hostProviderId,
+      sourceType: "host_review", sourceId: id, ownerTeam: "customer_support", actorId: customerId,
+    }, [insert]);
+  } else await insert.run();
 
   return{
     id,

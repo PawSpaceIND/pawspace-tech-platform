@@ -45,7 +45,7 @@ different responses:
 | `credentials_rejected` | a real 401/403 from the provider | rotate the key; check test vs live |
 | `endpoint_unreachable` | DNS, TLS, firewall or timeout — the cause chain is unwrapped into the log | network route, proxy |
 
-`PAWSPACE_SANDBOX_TESTS_STRICT=true` inverts it: skips become failures. Use it in a pipeline whose job
+`PAWSPACE_SANDBOX_TESTS_STRICT=true` inverts it: an explicit preflight failure makes the run fail, while dependent test bodies stay skipped. Missing credentials never trigger provider requests. Optional credentials fail only their gate, and independently configured checks can still run. Use it in a pipeline whose job
 *is* to assert the sandboxes are wired, where a skip is the thing you want to hear about.
 
 These suites are deliberately **not** part of `npm test`. That glob is `tests/*.test.mjs`, which cannot

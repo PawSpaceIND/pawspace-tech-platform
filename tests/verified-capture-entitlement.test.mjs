@@ -195,7 +195,7 @@ test("a duplicate webhook creates no duplicate subscription and no duplicate ses
 
   // A DIFFERENT event id reporting the same capture (Razorpay sends payment.captured and order.paid):
   // processed, but the guarded activation must not reserve a second session.
-  const second = await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-cap-2", "order.paid"));
+  const second = await processGatewayEvent(db, {...captureEvent(bookingId, 3597, "evt-cap-2", "order.paid"), gatewayPaymentId: "pay_evt-cap-1"});
   assert.equal(second.status, "processed");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM customer_grooming_subscriptions").get().c, 1);
   assert.equal(Number(sub(sqlite).sessions_reserved), 1, "a second capture event must not re-reserve sessions");

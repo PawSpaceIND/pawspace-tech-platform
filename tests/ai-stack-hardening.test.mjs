@@ -47,8 +47,8 @@ function makeD1(sqlite) {
         return row === undefined ? null : row;
       },
       run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true, meta: {} };
+        const result = sqlite.prepare(sql).run(...args);
+        return { success: true, meta: { changes: Number(result.changes) } };
       },
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };

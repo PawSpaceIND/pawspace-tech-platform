@@ -91,13 +91,6 @@ export async function walletBalance(db: Db, customerId: string): Promise<number>
   return round(Number(row?.balance || 0));
 }
 
-async function applyDelta(db: Db, customerId: string, delta: number) {
-  const now = Date.now();
-  await db.prepare("INSERT INTO pawspace_wallet_accounts (customer_id,balance,updated_at) VALUES (?,?,?) ON CONFLICT(customer_id) DO UPDATE SET balance=balance+?,updated_at=?")
-    .bind(customerId, round(delta), now, round(delta), now).run();
-  return walletBalance(db, customerId);
-}
-
 async function postCreditJournal(db: Db, input: { ledgerId: string; idempotencyKey: string; customerId: string; amount: number; source: string }) {
   return postJournal(db, {
     groupKey: `wallet-credit-${input.idempotencyKey}`,
@@ -124,13 +117,15 @@ export async function creditWallet(db: Db, raw: CreditInput) {
     return { alreadyCredited: true, ledgerId: String(prior.id), amount: Number(prior.amount), balance: await walletBalance(db, input.customerId) };
   }
 
-  const balance = await applyDelta(db, input.customerId, input.amount);
-  const id = uid("WAL");
+  const id = uid("WAL"), now = Date.now();
   try {
-    await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'credit',?,0,0,?,?,?,?,?,?,?)")
-      .bind(id, input.customerId, input.amount, input.source, input.sourceId, input.idempotencyKey, input.note, balance, raw.actorId, Date.now()).run();
+    await db.batch([
+      db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'credit',?,0,0,?,?,?,?,COALESCE((SELECT balance FROM pawspace_wallet_accounts WHERE customer_id=?),0)+?,?,?)")
+        .bind(id, input.customerId, input.amount, input.source, input.sourceId, input.idempotencyKey, input.note, input.customerId, input.amount, raw.actorId, now),
+      db.prepare("INSERT INTO pawspace_wallet_accounts (customer_id,balance,updated_at) VALUES (?,?,?) ON CONFLICT(customer_id) DO UPDATE SET balance=ROUND(balance+excluded.balance,2),updated_at=excluded.updated_at")
+        .bind(input.customerId, input.amount, now),
+    ]);
   } catch (error) {
-    await applyDelta(db, input.customerId, -input.amount);
     if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
     const raced = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
     if (!raced || !creditMatches(raced, input)) workflowError("Wallet credit idempotency key is already bound to another payload", 409);
@@ -139,7 +134,7 @@ export async function creditWallet(db: Db, raw: CreditInput) {
   }
 
   await postCreditJournal(db, { ledgerId: id, ...input });
-  return { alreadyCredited: false, ledgerId: id, amount: input.amount, balance };
+  return { alreadyCredited: false, ledgerId: id, amount: input.amount, balance: await walletBalance(db, input.customerId) };
 }
 
 /** Maker step: records a pending manual credit without changing wallet balance or finance journals. */
@@ -204,6 +199,16 @@ export function quoteWalletRedemption(balance: number, bookingTotal: number) {
   return { appliedValue, walletUsed, bonus };
 }
 
+async function postRedemptionJournal(db: Db, input: { bookingId: string; ledgerId: string; walletUsed: number; bonus: number; appliedValue: number; vertical: string | null }) {
+  const { bookingId, ledgerId: id, vertical } = input;
+  const q = input;
+  await postJournal(db, { groupKey: `wallet-redeem-${bookingId}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_redeem", sourceId: id, narration: `Wallet redeemed on booking ${bookingId}`, lines: [
+    { accountCode: ACCT.WALLET_LIABILITY, debit: q.walletUsed, vertical },
+    { accountCode: ACCT.WALLET_BONUS_EXPENSE, debit: q.bonus, vertical },
+    { accountCode: ACCT.CREDITS_APPLIED, credit: q.appliedValue, vertical },
+  ] });
+}
+
 export async function redeemWalletForBooking(db: Db, input: { customerId: string; bookingId: string; walletAmount?: number; actorId: string }) {
   await ensurePawspaceWalletTables(db);
   const customerId = String(input.customerId || "").trim();
@@ -214,7 +219,12 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   if (String(booking.customer_id) !== customerId) throw new Error("You can only spend wallet credit on your own booking");
   const idempotencyKey = `wallet-redeem:${bookingId}`;
   const prior = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-  if (prior) throw new Error("Wallet credit has already been applied to this booking");
+  if (prior) {
+    // A previous request may have committed the wallet before finance journal posting failed.
+    // Repair the deterministic posting before returning the existing once-per-booking refusal.
+    await postRedemptionJournal(db, { bookingId, ledgerId: String(prior.id), walletUsed: -Number(prior.amount), bonus: Number(prior.bonus_amount), appliedValue: Number(prior.applied_value), vertical: booking.service_code ? String(booking.service_code) : null });
+    throw new Error("Wallet credit has already been applied to this booking");
+  }
   const balance = await walletBalance(db, customerId);
   if (!(balance > 0)) throw new Error("No wallet balance to redeem");
   const bookingTotal = round(Number(booking.total_amount || 0));
@@ -230,24 +240,25 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   const q = quoteWalletRedemption(requestedWallet, payable);
   if (!(q.walletUsed > 0)) throw new Error("Wallet redemption amount must be positive");
   const now = Date.now();
-  const debited = await db.prepare("UPDATE pawspace_wallet_accounts SET balance=balance-?,updated_at=? WHERE customer_id=? AND balance>=?").bind(q.walletUsed, now, customerId, q.walletUsed).run();
-  if (!Number(debited.meta?.changes || 0)) throw new Error("Wallet balance is no longer sufficient for this redemption");
-  const newBalance = await walletBalance(db, customerId);
   const id = uid("WAL");
   try {
-    await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'redeem',?,?,?,'booking',?,?,?,?,?,?)")
-      .bind(id, customerId, -q.walletUsed, q.bonus, q.appliedValue, bookingId, idempotencyKey, `Applied Rs.${q.appliedValue} (incl. Rs.${q.bonus} bonus) to booking`, newBalance, input.actorId, Date.now()).run();
+    // Claim the immutable redemption and debit in one D1 transaction. A duplicate key,
+    // insufficient balance, or failure of either statement cannot strand a balance change.
+    await db.batch([
+      db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) SELECT ?,?,'redeem',?,?,?,'booking',?,?,?,ROUND(balance-?,2),?,? FROM pawspace_wallet_accounts WHERE customer_id=? AND balance>=?")
+        .bind(id, customerId, -q.walletUsed, q.bonus, q.appliedValue, bookingId, idempotencyKey, `Applied Rs.${q.appliedValue} (incl. Rs.${q.bonus} bonus) to booking`, q.walletUsed, input.actorId, now, customerId, q.walletUsed),
+      db.prepare("UPDATE pawspace_wallet_accounts SET balance=ROUND(balance-?,2),updated_at=? WHERE customer_id=? AND EXISTS (SELECT 1 FROM pawspace_wallet_ledger WHERE id=?)")
+        .bind(q.walletUsed, now, customerId, id),
+    ]);
   } catch (error) {
     if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
-    await applyDelta(db, customerId, q.walletUsed);
     throw new Error("Wallet credit has already been applied to this booking");
   }
+  const committed = await db.prepare("SELECT id FROM pawspace_wallet_ledger WHERE id=?").bind(id).first<Row>();
+  if (!committed) throw new Error("Wallet balance is no longer sufficient for this redemption");
+  const newBalance = await walletBalance(db, customerId);
   const vertical = booking.service_code ? String(booking.service_code) : null;
-  await postJournal(db, { groupKey: `wallet-redeem-${bookingId}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_redeem", sourceId: id, narration: `Wallet redeemed on booking ${bookingId}`, lines: [
-    { accountCode: ACCT.WALLET_LIABILITY, debit: q.walletUsed, vertical },
-    { accountCode: ACCT.WALLET_BONUS_EXPENSE, debit: q.bonus, vertical },
-    { accountCode: ACCT.CREDITS_APPLIED, credit: q.appliedValue, vertical },
-  ] });
+  await postRedemptionJournal(db, { bookingId, ledgerId: id, ...q, vertical });
   return { bookingId, walletUsed: q.walletUsed, bonus: q.bonus, appliedValue: q.appliedValue, balance: newBalance };
 }
 
