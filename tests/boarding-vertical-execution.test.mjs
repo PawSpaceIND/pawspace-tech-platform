@@ -691,19 +691,23 @@ test("BRD-14 settlement: prepared only after checkout, and it asserts no payout 
   assert.ok(row, "a settlement row must exist for the completed stay");
   assert.equal(row.provider_id, HOST, "the settlement must name the host who actually did the stay");
 
-  /* The point of this stage: preparing a settlement is NOT deciding one. Until a payout rule and a
-   * tax treatment are configured, the ledger must hold no amount and instruct no payment. */
-  assert.equal(row.payout_amount, null, "no payout amount may be asserted before a payout rule exists");
-  assert.equal(row.payout_rule_status, "rule_pending");
-  assert.equal(row.tax_status, "configuration_required");
-  assert.equal(row.approval_status, "not_ready");
-  assert.equal(row.payout_status, "not_instructed", "nothing may be instructed for payment from a prepare step");
+  // Checkout already posted canonical service-completion finance. Settlement preparation must project
+  // that exact provider payable, resolve tax truth, and apply PawSpace's governed five-day payout SLA.
+  const providerPayable = sqlite.prepare("SELECT ROUND(COALESCE(SUM(credit-debit),0),2) amount,MAX(created_at) resolved_at FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? AND account_code='2110-Provider Payable' AND posted=1").get(BOOKING);
+  assert.equal(Number(row.payout_amount), Number(providerPayable.amount), "Boarding settlement must equal the canonical provider-payable journal");
+  assert.ok(Number(row.payout_amount) > 0, "a commission host must have a real canonical payout amount");
+  assert.equal(row.payout_rule_status, "rule_applied");
+  assert.equal(row.tax_status, "resolved");
+  assert.equal(row.approval_status, "awaiting_finance_approval");
+  assert.equal(row.payout_status, "not_instructed", "preparation must never bypass finance approval or instruct money movement");
+  const full = sqlite.prepare("SELECT eligible_at FROM boarding_host_settlement_ledger WHERE booking_id=?").get(BOOKING);
+  assert.equal(Number(full.eligible_at), Number(providerPayable.resolved_at) + 5 * 24 * 60 * 60 * 1000, "Boarding host payout eligibility is exactly five days after canonical completion finance");
 
   const again = await settle("brd-st-3");
   assert.equal(again.ok, true, "preparing twice is idempotent on the booking, not a second obligation");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_host_settlement_ledger WHERE booking_id=?").get(BOOKING).n, 1,
     "one booking must never carry two settlement obligations");
-  stage("Host settlement", "PASS", "refused before checkout; after it, one row per booking asserting no amount and instructing no payment");
+  stage("Host settlement", "PASS", "refused before checkout; after it, canonical provider payable + resolved tax + exact 5-day eligibility are projected once; payment still requires Finance approval");
 });
 
 // --- 8. REVIEW + TRUST -------------------------------------------------------
