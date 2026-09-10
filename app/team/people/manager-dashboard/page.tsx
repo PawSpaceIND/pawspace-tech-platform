@@ -8,6 +8,7 @@ type Dashboard = {
   asOf: number; today: string; scope: string; employeeCount: number;
   verticals: { sales: EmployeeRow[]; groomers: EmployeeRow[]; trainers: EmployeeRow[]; other: EmployeeRow[] };
   classificationBasis: Record<string, string>;
+  operations: {openCases:number;criticalCases:number;unownedCases:number;firstResponseOverdue:number;resolutionOverdue:number;managerEscalationsDue:number;refundsPending:number;refundsFailed:number;workQueueOpen:number;sopPending:number;legacyTicketsOpen:number};
   note: string;
 };
 
@@ -49,6 +50,14 @@ export default function ManagerDashboardPage() {
               <div><small style={{ color: "#6e6576" }}>As of</small><h3 style={{ margin: "4px 0" }}>{data.today}</h3></div>
             </div>
             <p style={{ fontSize: 12, color: "#6e6576", marginTop: 12, marginBottom: 0 }}>{data.note}</p>
+          </section>
+
+          <section style={{...card,overflowX:"auto"}}>
+            <h2 style={{marginTop:0,fontSize:16}}>Operations control</h2>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}}>
+              {[["Open cases",data.operations.openCases],["Critical",data.operations.criticalCases],["Response overdue",data.operations.firstResponseOverdue],["Resolution overdue",data.operations.resolutionOverdue],["Manager escalations",data.operations.managerEscalationsDue],["Refunds pending",data.operations.refundsPending],["Refunds failed",data.operations.refundsFailed],["Work queue",data.operations.workQueueOpen],["SOP pending",data.operations.sopPending],["Legacy tickets",data.operations.legacyTicketsOpen]].map(([label,value])=><div key={String(label)} style={{border:"1px solid #eee",borderRadius:12,padding:12}}><small style={{color:"#6e6576"}}>{label}</small><h3 style={{margin:"4px 0"}}>{value}</h3></div>)}
+            </div>
+            <p style={{fontSize:12,color:"#6e6576",marginBottom:0}}>Founder-wide counts are shown only to all-scope roles. Line managers receive case counts restricted to their direct-report owners; finance/global queues remain hidden from scoped managers.</p>
           </section>
 
           {data.verticals.sales.length > 0 && (

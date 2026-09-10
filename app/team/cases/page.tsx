@@ -4,7 +4,9 @@ import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
-type CaseRow={id:string;case_type:string;severity:string;status:string;title:string;description:string;owner_team:string;owner_email?:string|null;first_response_due_at?:number|null;resolution_due_at?:number|null;manager_escalation_due_at?:number|null;first_responded_at?:number|null;created_at:number;links?:{customerId?:string|null;bookingId?:string|null;paymentId?:string|null;leadId?:string|null;providerId?:string|null}};
+type SopRequirement={id:string;title:string;module_version:number;status:string;evidence_note?:string|null};
+type TimelineItem={kind:string;type:string;actor:string;detail:unknown;at:number};
+type CaseRow={id:string;case_type:string;severity:string;status:string;title:string;description:string;owner_team:string;owner_email?:string|null;first_response_due_at?:number|null;resolution_due_at?:number|null;manager_escalation_due_at?:number|null;first_responded_at?:number|null;created_at:number;sopRequirements?:SopRequirement[];timeline?:TimelineItem[];sourceState?:Record<string,unknown>|null;links?:{customerId?:string|null;bookingId?:string|null;paymentId?:string|null;leadId?:string|null;providerId?:string|null}};
 type Directory={summary:{open:number;critical:number;unowned:number;firstResponseOverdue:number;resolutionOverdue:number};cases:CaseRow[];truth:{productionReady:boolean;automaticExternalNotification:boolean}};
 
 const when=(v:unknown)=>v?new Date(Number(v)).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}):"—";
@@ -95,6 +97,9 @@ export default function CasesPage(){
     <span><b>Resolution due:</b> {when(row.resolution_due_at)}</span>
     <span><b>Links:</b> {[row.links?.bookingId&&`Booking ${row.links.bookingId}`,row.links?.leadId&&`Lead ${row.links.leadId}`,row.links?.paymentId&&`Payment ${row.links.paymentId}`,row.links?.providerId&&`Provider ${row.links.providerId}`].filter(Boolean).join(" · ")||"source-only"}</span>
    </div>
+   {row.sopRequirements?.length?<div className={styles.caseMeta}><span><b>SOP checklist:</b> {row.sopRequirements.filter(item=>item.status==="pending").length} pending / {row.sopRequirements.length} total</span>{row.sopRequirements.map(item=><span key={item.id}><b>{item.title}</b> v{item.module_version} · {words(item.status)} {item.status==="pending"?<><Button size="sm" variant="ghost" onClick={()=>{const note=window.prompt("Evidence note for SOP completion");if(note)void act({action:"complete_sop",caseId:row.id,requirementId:item.id,note});}}>Complete</Button><Button size="sm" variant="ghost" onClick={()=>{const note=window.prompt("Manager waiver reason");if(note)void act({action:"waive_sop",caseId:row.id,requirementId:item.id,note});}}>Waive</Button></>:null}</span>)}</div>:null}
+   {row.sourceState?<div className={styles.caseMeta}><span><b>Source state:</b> {String(row.sourceState.kind||"source")} · {String(row.sourceState.status||"")} {row.sourceState.amount!=null?`· INR ${Number(row.sourceState.amount).toFixed(2)}`:""}</span></div>:null}
+   {row.timeline?.length?<details><summary>Case timeline · {row.timeline.length} event(s)</summary><div className={styles.caseMeta}>{row.timeline.map((item,index)=><span key={`${item.at}-${index}`}><b>{words(item.type)}</b> · {item.actor||"system"} · {when(item.at)}</span>)}</div></details>:null}
    <div className={styles.actions}>
     {!row.first_responded_at?<Button size="sm" variant="secondary" onClick={()=>{void act({action:"respond",caseId:row.id});}}>Mark responded</Button>:null}
     <Button size="sm" variant="ghost" onClick={()=>{void act({action:"progress",caseId:row.id});}}>In progress</Button>
