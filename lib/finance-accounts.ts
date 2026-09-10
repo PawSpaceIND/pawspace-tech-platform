@@ -134,9 +134,10 @@ export async function prepareJournalPosting(db: Db, input: { groupKey: string; e
     db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null),
     db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>(),
   ]);
-  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
-  // every group always writes its first line as `${journalGroup}-1`, so an exact hit means already posted
+  // An already posted group is a read-only replay, including after month close. New groups
+  // still require an open period; the date and balance checks above are never bypassed.
   if (existing) return { journalGroup, statements: [] as D1PreparedStatement[], lines: lines.length };
+  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   const now = Date.now();
   const meta = input.metadata ?? {};
   // The read above is a fast replay path, not the concurrency boundary. Two checkers can both observe

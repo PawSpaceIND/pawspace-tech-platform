@@ -121,22 +121,27 @@ export type LifecycleBridgeReport={
 const EMPTY_REPORT=():LifecycleBridgeReport=>({enqueued:0,duplicates:0,suppressed:0,skipped:0,failed:0,messageIds:[]});
 
 /**
- * Hands every not-yet-bridged notification row for one booking to the canonical outbox.
+ * Hands pending notification rows for one booking to the canonical outbox. A notificationId
+ * restricts a post-commit handoff to that exact row; omit it only for booking-wide recovery.
  *
  * Call it after the lifecycle transaction has committed. It never throws and never rolls anything
  * back: the worst outcome is a report saying nothing was enqueued and a row in
  * lifecycle_communication_failures explaining why.
  */
-export async function bridgeLifecycleCommunications(db:Db,input:{bookingId:string;source:LifecycleNotificationSource;actorId?:string}):Promise<LifecycleBridgeReport>{
+export async function bridgeLifecycleCommunications(db:Db,input:{bookingId:string;source:LifecycleNotificationSource;actorId?:string;notificationId?:string}):Promise<LifecycleBridgeReport>{
  const report=EMPTY_REPORT();
  const bookingId=text(input.bookingId);
  if(!bookingId)return report;
+ const scoped=Object.prototype.hasOwnProperty.call(input,"notificationId");
+ const notificationId=text(input.notificationId);
+ // An explicitly empty scope must never turn a single-event handoff into a full sweep.
+ if(scoped&&!notificationId)return report;
  const shape=LIFECYCLE_NOTIFICATION_SOURCES[input.source];
  if(!shape)return report;
  try{
   await ensureLifecycleCommunicationTables(db);
-  const rows=await db.prepare(`SELECT n.id,n.booking_id,n.customer_id,n.channel,n.template_code,n.${shape.body} body${shape.event?`,n.${shape.event} event_id`:",NULL event_id"} FROM ${input.source} n LEFT JOIN lifecycle_communication_links l ON l.notification_id=n.id WHERE n.booking_id=? AND l.notification_id IS NULL ORDER BY n.created_at`)
-   .bind(bookingId).all<Row>();
+  const rows=await db.prepare(`SELECT n.id,n.booking_id,n.customer_id,n.channel,n.template_code,n.${shape.body} body${shape.event?`,n.${shape.event} event_id`:",NULL event_id"} FROM ${input.source} n LEFT JOIN lifecycle_communication_links l ON l.notification_id=n.id WHERE n.booking_id=? AND l.notification_id IS NULL${scoped?" AND n.id=?":""} ORDER BY n.created_at`)
+   .bind(bookingId,...(scoped?[notificationId]:[])).all<Row>();
   if(!rows.results.length)return report;
   const booking=await db.prepare("SELECT customer_id,city_id,service_code FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
   for(const row of rows.results){

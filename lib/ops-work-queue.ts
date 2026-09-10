@@ -45,9 +45,32 @@ type Candidate={rule:string;queue:WorkQueueName;priority:"critical"|"high"|"medi
 
 async function openTask(db:Db,candidate:Candidate,now:number){
  const sourceKey=`${candidate.rule}:${candidate.entityId}`;
- const inserted=await db.prepare("INSERT OR IGNORE INTO ops_work_queue_tasks (id,rule,queue,priority,title,detail_json,booking_id,customer_id,provider_id,entity_type,entity_id,source_key,status,owner,sla_minutes,due_at,escalated,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',NULL,?,?,0,?,?)")
-  .bind(uid("WQT"),candidate.rule,candidate.queue,candidate.priority,candidate.title,JSON.stringify(candidate.detail??{}),candidate.bookingId??null,candidate.customerId??null,candidate.providerId??null,candidate.entityType,candidate.entityId,sourceKey,candidate.slaMinutes,now+candidate.slaMinutes*60_000,now,now).run();
- return Number(inserted.meta?.changes||0)>0;
+ const insert=db.prepare("INSERT OR IGNORE INTO ops_work_queue_tasks (id,rule,queue,priority,title,detail_json,booking_id,customer_id,provider_id,entity_type,entity_id,source_key,status,owner,sla_minutes,due_at,escalated,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',NULL,?,?,0,?,?)")
+  .bind(uid("WQT"),candidate.rule,candidate.queue,candidate.priority,candidate.title,JSON.stringify(candidate.detail??{}),candidate.bookingId??null,candidate.customerId??null,candidate.providerId??null,candidate.entityType,candidate.entityId,sourceKey,candidate.slaMinutes,now+candidate.slaMinutes*60_000,now,now);
+ if(candidate.rule!=="refund_failed")return Number((await insert.run()).meta?.changes||0)>0;
+
+ // Old deployments used payment_exception:<id> for the same failed refund. Migrate that
+ // task in place (including closed tasks), retaining its owner, history and original SLA
+ // clock. When both keys already exist, retire only the active legacy duplicate and link
+ // its history to the canonical task. All changes and audit events share one transaction.
+ const legacyKey=`payment_exception:${candidate.entityId}`,actor="system:refund-failure-migration";
+ const legacy="source_key=? AND rule='payment_exception' AND entity_type='payment_exception'";
+ const canonical="source_key=? AND rule='refund_failed' AND entity_type='payment_exception'";
+ const activeLegacy=`${legacy} AND status IN ('open','acknowledged','in_progress')`;
+ const results=await db.batch([
+  db.prepare(`INSERT INTO ops_work_queue_events (id,task_id,event_type,actor_id,note,created_at) SELECT ?,id,'reclassified',?,?,? FROM ops_work_queue_tasks WHERE ${legacy} AND NOT EXISTS (SELECT 1 FROM ops_work_queue_tasks WHERE source_key=?)`)
+   .bind(crypto.randomUUID(),actor,"Reclassified payment_exception as refund_failed; ownership and history retained",now,legacyKey,sourceKey),
+  db.prepare(`UPDATE ops_work_queue_tasks SET rule='refund_failed',source_key=?,queue='finance',priority='critical',title=?,detail_json=json_patch(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,?),sla_minutes=?,due_at=MIN(due_at,created_at+?),updated_at=? WHERE ${legacy} AND NOT EXISTS (SELECT 1 FROM ops_work_queue_tasks WHERE source_key=?)`)
+   .bind(sourceKey,candidate.title,JSON.stringify(candidate.detail??{}),candidate.slaMinutes,candidate.slaMinutes*60_000,now,legacyKey,sourceKey),
+  db.prepare(`UPDATE ops_work_queue_tasks SET owner=COALESCE(NULLIF(owner,''),(SELECT owner FROM ops_work_queue_tasks WHERE ${activeLegacy})),priority='critical',sla_minutes=MIN(sla_minutes,?),due_at=MIN(due_at,(SELECT MIN(due_at,created_at+?) FROM ops_work_queue_tasks WHERE ${activeLegacy})),detail_json=json_set(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.supersedesTaskId',(SELECT id FROM ops_work_queue_tasks WHERE ${activeLegacy})),updated_at=? WHERE ${canonical} AND status IN ('open','acknowledged','in_progress') AND EXISTS (SELECT 1 FROM ops_work_queue_tasks WHERE ${activeLegacy})`)
+   .bind(legacyKey,candidate.slaMinutes,candidate.slaMinutes*60_000,legacyKey,legacyKey,now,sourceKey,legacyKey),
+  db.prepare(`INSERT INTO ops_work_queue_events (id,task_id,event_type,actor_id,note,created_at) SELECT ?,id,'superseded',?,'Superseded by refund_failed task '||(SELECT id FROM ops_work_queue_tasks WHERE ${canonical}),? FROM ops_work_queue_tasks WHERE ${activeLegacy} AND EXISTS (SELECT 1 FROM ops_work_queue_tasks WHERE ${canonical})`)
+   .bind(crypto.randomUUID(),actor,sourceKey,now,legacyKey,sourceKey),
+  db.prepare(`UPDATE ops_work_queue_tasks SET status='dismissed',resolution_note='Superseded by refund_failed task '||(SELECT id FROM ops_work_queue_tasks WHERE ${canonical}),resolved_by=?,resolved_at=?,updated_at=? WHERE ${activeLegacy} AND EXISTS (SELECT 1 FROM ops_work_queue_tasks WHERE ${canonical})`)
+   .bind(sourceKey,actor,now,now,legacyKey,sourceKey),
+  insert,
+ ]);
+ return Number(results[results.length-1]?.meta?.changes||0)>0;
 }
 
 export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={actorId:"system:work-queue"}){

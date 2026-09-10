@@ -134,7 +134,7 @@ export async function POST(request:Request){
       const subscriptionId=usage?String(usage.plan_code):"";
       const subscription=subscriptionId?await db.prepare("SELECT * FROM customer_grooming_subscriptions WHERE id=?").bind(subscriptionId).first<Row>():null;
       if(usage&&(!subscription||String(usage.customer_id)!==input.customerId||String(subscription.customer_id)!==input.customerId||!Number.isInteger(reservedSessions)||reservedSessions<0||Number(subscription.sessions_reserved)<reservedSessions))return json({error:"Subscription credits require review before cancellation."},409);
-      const assertionId=crypto.randomUUID(),cancellationEventId=crypto.randomUUID();
+      const assertionId=crypto.randomUUID(),cancellationEventId=crypto.randomUUID(),cancellationNotificationId=crypto.randomUUID();
       const usageGuard=usage?db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
         EXISTS (SELECT 1 FROM booking_subscription_usage WHERE id=? AND booking_id=? AND customer_id=? AND plan_code=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND updated_at=?)
         AND EXISTS (SELECT 1 FROM customer_grooming_subscriptions WHERE id=? AND customer_id=? AND sessions_reserved=? AND sessions_consumed=? AND status=? AND source_booking_id=? AND updated_at=?)
@@ -164,10 +164,10 @@ export async function POST(request:Request){
          * simply stopped existing. The notification is written INSIDE the same batch as the cancellation
          * so it cannot be lost: either the booking is cancelled and the customer is told, or neither. */
         db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)")
-          .bind(crypto.randomUUID(),input.bookingId,input.customerId,"whatsapp","booking_cancelled",
+          .bind(cancellationNotificationId,input.bookingId,input.customerId,"whatsapp","booking_cancelled",
             refundAmount>0
               ?`Your PawSpace grooming booking is cancelled. A refund of ₹${refundAmount} has been raised and will go back to your original payment method.`
-              :"Your PawSpace grooming booking is cancelled. No payment was taken for it.",
+              :"Your PawSpace grooming booking is cancelled. Open the order to review payment and refund details.",
             cancellationEventId,now),
         db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-credits`),
       );
@@ -179,7 +179,7 @@ export async function POST(request:Request){
        * booking-operations uses, so it becomes a real outbound message instead of a row nobody reads.
        * Deliberately AFTER the batch and unawaited-for-failure: the bridge never throws, and a messaging
        * problem must not undo a cancellation that has already released capacity and raised a refund. */
-      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:auditActor});
+      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:auditActor,notificationId:cancellationNotificationId});
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
       return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,capacityReleased:true,subscriptionSessionsReleased:reservedSessions,referral}});
     }
