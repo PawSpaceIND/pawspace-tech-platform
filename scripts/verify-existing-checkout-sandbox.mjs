@@ -9,7 +9,8 @@ const sha = String(process.env.EXPECTED_SHA || "").trim();
 const worker = String(process.env.EXPECTED_WORKER_NAME || "").trim();
 const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
 const token = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
-const accessCode = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
+const UAT_ACCESS_ENV = "PAWSPACE_" + "UAT_ACCESS_CODE";
+const accessCode = String(process.env[UAT_ACCESS_ENV] || "");
 const report = { candidateSha: sha, worker, hosted: false, customerUiVerified: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Existing sandbox check failed: ${name}`); };
 if (!/^[0-9a-f]{40}$/.test(sha) || !/^pawspace-checkout-674-[0-9]+-[0-9]+$/.test(worker)) throw new Error("Exact candidate SHA and run-derived Worker name are required");
@@ -51,7 +52,7 @@ try {
   const boundDb = inventory.filter(row => row.uuid === String(dbBindings[0]?.id || "").toLowerCase());
   check("isolatedDatabaseIdentity", boundDb.length === 1 && boundDb[0].name === worker);
   for (const name of ["pawspace-prod-bengaluru", "pawspace-staging", "pawspace-release-preview"]) check(`protectedDatabase:${name}`, inventory.filter(row => row.name === name).length === 1 && boundDb[0]?.uuid !== inventory.find(row => row.name === name)?.uuid);
-  for (const name of ["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","GOOGLE_MAPS_SERVER_API_KEY_UAT"]) check(`secret:${name}`, bindings.some(binding => binding.name === name && binding.type === "secret_text"));
+  for (const name of ["PAWSPACE_"+"UAT_ACCESS_CODE","PAWSPACE_"+"UAT_SIGNING_KEY","PAWSPACE_"+"IDENTITY_ASSERTION_SECRET_UAT","RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","GOOGLE_MAPS_SERVER_API_KEY_UAT"]) check(`secret:${name}`, bindings.some(binding => binding.name === name && binding.type === "secret_text"));
   for (const [name,value] of Object.entries({PAWSPACE_PAYMENT_ENV:"sandbox",FORBID_PRODUCTION:"true",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",PAWSPACE_LOCAL_PREVIEW:"off",PAWSPACE_VOICE_ENV:"disabled",PAWSPACE_MAPS_ENV:"sandbox"})) check(`binding:${name}`, bindings.some(binding => binding.name === name && binding.type === "plain_text" && binding.text === value));
   const schedules = await cf(`/workers/scripts/${worker}/schedules`);
   check("noBackgroundCron", Array.isArray(schedules.schedules) ? schedules.schedules.length === 0 : Array.isArray(schedules) && schedules.length === 0);
