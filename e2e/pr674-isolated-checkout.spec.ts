@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const ORIGIN="https://pawspace-checkout-674-34456730410-1.karthik-fce.workers.dev";
-const WORKER="pawspace-checkout-674-34456730410-1";
+const ORIGIN="https://pawspace-checkout-674-34495251052-1.karthik-fce.workers.dev";
+const WORKER="pawspace-checkout-674-34495251052-1";
 const ACCOUNT=process.env.CLOUDFLARE_ACCOUNT_ID||"";
 const TOKEN=process.env.CLOUDFLARE_API_TOKEN||"";
 type Json=Record<string,unknown>;
@@ -79,4 +79,4 @@ test("current isolated PR674 checkout reuses order and exposes loaded Razorpay T
  await page.frames().find(frame=>/api\.razorpay\.com\/v1\/checkout\/public/.test(frame.url()))?.getByRole("button",{name:"Close",exact:true}).click().catch(()=>{});
 });
 
-// Harness refresh marker: exact PR674 external modal diagnostic only.
+// Harness target: PR674 a4d1a8706e2d484beaf1944c44f6345c21ac5494; external isolated modal diagnostic only.
