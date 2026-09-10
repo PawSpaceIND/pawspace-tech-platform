@@ -20,14 +20,22 @@ async function capture(env){
  finally{globalThis.fetch=prior;}
 }
 
-test('direct AgentStream uses Exotel multipart contract without overriding the boundary',async()=>{
+test('direct AgentStream uses Exotel official urlencoded Connect Voice AI contract',async()=>{
  const {result,request}=await capture({...baseEnv,PAWSPACE_VOICE_STREAM_URL:'wss://uat.example.test/voice/exotel/agentstream'});
  assert.equal(result.providerCallId,'provider-call-1');
- assert.equal(request.url,'https://api.exotel.com/v1/accounts/acme/calls/connect');
- assert.ok(request.init.body instanceof FormData);
- assert.equal(new Headers(request.init.headers).has('content-type'),false);
- const fields=Object.fromEntries(request.init.body.entries());
- assert.deepEqual(fields,{from:intent.toNumber,callerid:baseEnv.EXOTEL_CALLER_ID,streamurl:'wss://uat.example.test/voice/exotel/agentstream',streamtype:'bidirectional',statuscallback:intent.statusCallbackUrl,customfield:intent.callRef,record:'false',timelimit:'45'});
+ assert.equal(request.url,'https://api.exotel.com/v1/Accounts/acme/Calls/connect.json');
+ assert.equal(new Headers(request.init.headers).get('content-type'),'application/x-www-form-urlencoded');
+ const params=new URLSearchParams(String(request.init.body));
+ const fields=Object.fromEntries(params);
+ assert.equal(fields.From,intent.toNumber);
+ assert.equal(fields.CallerId,baseEnv.EXOTEL_CALLER_ID);
+ assert.equal(fields.StreamUrl,'wss://uat.example.test/voice/exotel/agentstream');
+ assert.equal(fields.StreamType,'bidirectional');
+ assert.equal(fields.StatusCallback,intent.statusCallbackUrl);
+ assert.equal(fields.CustomField,intent.callRef);
+ assert.equal(fields.Record,'false');
+ assert.equal(fields.TimeLimit,'45');
+ assert.deepEqual(params.getAll('StatusCallbackEvents[]'),['terminal']);
 });
 
 test('classic Voicebot call keeps the existing urlencoded Connect API contract',async()=>{
@@ -45,4 +53,16 @@ test('classic Voicebot call keeps the existing urlencoded Connect API contract',
  assert.equal(fields.CustomField,intent.callRef);
  assert.equal(fields.Record,'false');
  assert.equal(fields.TimeOut,'45');
+});
+test('provider 400 retains only a bounded error code, never provider message/body',async()=>{
+ const prior=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>Response.json({error_data:{code:'10815',message:'SECRET customer phone +919999999999',description:'SECRET provider detail'}},{status:400});
+  const provider=exotelTelephony({...baseEnv,PAWSPACE_VOICE_STREAM_URL:'wss://voice.example.test/agentstream'});
+  await assert.rejects(()=>provider.createCall(intent),error=>{assert.match(error.message,/400; code 10815/);assert.doesNotMatch(error.message,/SECRET|9999999999|provider detail/);return true;});
+ }finally{globalThis.fetch=prior;}
+});
+test('provider 400 without a safe code stays generic',async()=>{
+ const prior=globalThis.fetch;
+ try{globalThis.fetch=async()=>new Response('<html>sensitive rejection</html>',{status:400});const provider=exotelTelephony({...baseEnv,PAWSPACE_VOICE_STREAM_URL:'wss://voice.example.test/agentstream'});await assert.rejects(()=>provider.createCall(intent),/rejected the call request \(400\)$/);}finally{globalThis.fetch=prior;}
 });

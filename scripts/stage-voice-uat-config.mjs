@@ -43,7 +43,7 @@ cfg.vars = {
   PAWSPACE_VOICE_UAT_CUSTOMER_ID: customerId,
   PAWSPACE_VOICE_UAT_BOOKING_ID: bookingId,
   PAWSPACE_VOICE_UAT_CITY_ID: cityId,
-  PAWSPACE_VOICE_UAT_RUN_AT: "2026-09-06T02:30:00.000Z",
+  PAWSPACE_VOICE_UAT_RUN_AT: "2026-09-11T04:30:00.000Z",
   PAWSPACE_VOICE_STATUS_CALLBACK_URL: callback,
   PAWSPACE_VOICE_STREAM_URL: streamUrl,
   VOICE_STT_MODEL: "@cf/openai/whisper-large-v3-turbo",
@@ -60,4 +60,4 @@ for (const secretName of [
 ]) delete cfg.vars[secretName];
 
 writeFileSync(path, JSON.stringify(cfg));
-console.log("Voice UAT overlay applied: bidirectional AgentStream enabled, carrier linear16 TTS pinned, one-shot 08:00 IST queue armed; secret values withheld.");
+console.log("Voice UAT overlay applied: bidirectional AgentStream enabled, carrier linear16 TTS pinned, one-shot 10:00 IST queue armed; secret values withheld.");

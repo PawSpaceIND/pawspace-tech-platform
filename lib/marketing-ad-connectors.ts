@@ -192,7 +192,54 @@ function metaMetricRow(raw: Row, accountId: string) {
   return { ...row, dimensionKey: dimensionKey(row) };
 }
 
+export type NormalizedMarketingMetricInput = {
+  platform: MarketingAdPlatform;
+  accountId: string;
+  reportDate: string;
+  dimensionType?: string;
+  campaignId?: string;
+  campaignName?: string;
+  adSetId?: string;
+  adSetName?: string;
+  adId?: string;
+  adName?: string;
+  keyword?: string;
+  searchTerm?: string;
+  matchType?: string;
+  device?: string;
+  ageRange?: string;
+  gender?: string;
+  impressions?: number;
+  clicks?: number;
+  spendMinor?: number;
+  conversions?: number;
+  conversionValueMinor?: number;
+  currency?: string;
+  currentBidMinor?: number | null;
+};
+
 type NormalizedMetric = ReturnType<typeof googleMetricRow>;
+
+export async function upsertNormalizedMarketingMetrics(db: Db, rows: NormalizedMarketingMetricInput[], pulledAt = Date.now()) {
+  await ensureMarketingAdConnectorTables(db);
+  let rowsWritten = 0;
+  let rowsSkipped = 0;
+  for (const input of rows) {
+    const reportDate = text(input.reportDate);
+    const accountId = cleanAccountId(input.accountId) || text(input.accountId);
+    if (!dateOnly.test(reportDate) || !accountId || !["google_ads", "meta_ads"].includes(input.platform)) { rowsSkipped += 1; continue; }
+    const impressions = integer(input.impressions), clicks = integer(input.clicks), spendMinor = integer(input.spendMinor), conversions = Math.max(0, number(input.conversions));
+    const derived = metricDerived(impressions, clicks, spendMinor, conversions);
+    const row = {
+      platform: input.platform, accountId, reportDate, dimensionType: text(input.dimensionType) || "campaign",
+      campaignId: text(input.campaignId), campaignName: text(input.campaignName), adSetId: text(input.adSetId), adSetName: text(input.adSetName), adId: text(input.adId), adName: text(input.adName),
+      keyword: text(input.keyword), searchTerm: text(input.searchTerm), matchType: text(input.matchType), device: text(input.device), ageRange: text(input.ageRange), gender: text(input.gender),
+      impressions, clicks, spendMinor, conversions, conversionValueMinor: integer(input.conversionValueMinor), currency: text(input.currency) || "INR", ...derived, currentBidMinor: input.currentBidMinor == null ? null : integer(input.currentBidMinor),
+    };
+    rowsWritten += await upsertMetric(db, { ...row, dimensionKey: dimensionKey(row) } as NormalizedMetric, pulledAt);
+  }
+  return { rowsWritten, rowsSkipped, pulledAt };
+}
 async function upsertMetric(db: Db, row: NormalizedMetric, pulledAt: number) {
   const result = await db.prepare("INSERT INTO marketing_ad_metric_facts (dimension_key,platform,account_id,report_date,dimension_type,campaign_id,campaign_name,ad_set_id,ad_set_name,ad_id,ad_name,keyword,search_term,match_type,device,age_range,gender,impressions,clicks,spend_minor,conversions,conversion_value_minor,currency,ctr_percent,cpc_minor,cpa_minor,current_bid_minor,pulled_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dimension_key) DO UPDATE SET campaign_name=excluded.campaign_name,ad_set_name=excluded.ad_set_name,ad_name=excluded.ad_name,impressions=excluded.impressions,clicks=excluded.clicks,spend_minor=excluded.spend_minor,conversions=excluded.conversions,conversion_value_minor=excluded.conversion_value_minor,currency=excluded.currency,ctr_percent=excluded.ctr_percent,cpc_minor=excluded.cpc_minor,cpa_minor=excluded.cpa_minor,current_bid_minor=excluded.current_bid_minor,pulled_at=excluded.pulled_at,updated_at=excluded.updated_at")
     .bind(row.dimensionKey,row.platform,row.accountId,row.reportDate,row.dimensionType,row.campaignId||null,row.campaignName||null,row.adSetId||null,row.adSetName||null,row.adId||null,row.adName||null,row.keyword||null,row.searchTerm||null,row.matchType||null,row.device||null,row.ageRange||null,row.gender||null,row.impressions,row.clicks,row.spendMinor,row.conversions,row.conversionValueMinor,row.currency,row.ctrPercent,row.cpcMinor,row.cpaMinor,row.currentBidMinor,pulledAt,pulledAt).run();
@@ -318,6 +365,24 @@ export async function generateMarketingAdReports(db: Db, input: { asOf?: number 
 export async function recentMarketingAdReports(db: Db, limit = 30) {
   await ensureMarketingAdConnectorTables(db);
   return (await db.prepare("SELECT * FROM marketing_ad_report_runs ORDER BY generated_at DESC LIMIT ?").bind(Math.min(100,Math.max(1,Math.trunc(limit)))).all<Row>()).results;
+}
+
+export async function marketingDashboardSnapshot(db: Db, input: { from: string; to: string }) {
+  assertDate(input.from, "from"); assertDate(input.to, "to");
+  await ensureMarketingAdConnectorTables(db);
+  const primaryFilter = "((platform='google_ads' AND dimension_type='keyword') OR (platform='meta_ads' AND dimension_type='demographic_ad') OR dimension_type='campaign')";
+  const total = await db.prepare(`SELECT COUNT(*) row_count,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(spend_minor),0) spend_minor,COALESCE(SUM(conversions),0) conversions,COALESCE(SUM(conversion_value_minor),0) conversion_value_minor,MAX(pulled_at) last_pulled_at FROM marketing_ad_metric_facts WHERE report_date>=? AND report_date<=? AND ${primaryFilter}`).bind(input.from,input.to).first<Row>();
+  const platforms = await db.prepare(`SELECT platform,COUNT(*) row_count,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(spend_minor),0) spend_minor,COALESCE(SUM(conversions),0) conversions,COALESCE(SUM(conversion_value_minor),0) conversion_value_minor,MAX(pulled_at) last_pulled_at FROM marketing_ad_metric_facts WHERE report_date>=? AND report_date<=? AND ${primaryFilter} GROUP BY platform ORDER BY platform`).bind(input.from,input.to).all<Row>();
+  let attribution: Row | null = null;
+  try { attribution = await db.prepare("SELECT COUNT(DISTINCT lead_id) leads,COUNT(DISTINCT booking_id) bookings,COUNT(DISTINCT customer_id) customers,COALESCE(SUM(booked_revenue),0) booked_revenue,COALESCE(SUM(collected_revenue),0) collected_revenue,COALESCE(SUM(contribution_margin),0) contribution_margin FROM marketing_attribution_facts WHERE created_at>=? AND created_at<=?").bind(Date.parse(`${input.from}T00:00:00+05:30`),Date.parse(`${input.to}T23:59:59.999+05:30`)).first<Row>(); } catch { attribution = null; }
+  const spendMinor = integer(total?.spend_minor), conversionValueMinor = integer(total?.conversion_value_minor), conversions = Math.max(0, number(total?.conversions));
+  return {
+    from: input.from, to: input.to, hasLiveMetrics: integer(total?.row_count) > 0, lastPulledAt: number(total?.last_pulled_at) || null,
+    totals: { impressions: integer(total?.impressions), clicks: integer(total?.clicks), spendMinor, conversions, conversionValueMinor, roas: spendMinor > 0 ? conversionValueMinor / spendMinor : 0, cpaMinor: conversions > 0 ? Math.round(spendMinor / conversions) : 0 },
+    attribution: { leads: integer(attribution?.leads), bookings: integer(attribution?.bookings), customers: integer(attribution?.customers), bookedRevenue: number(attribution?.booked_revenue), collectedRevenue: number(attribution?.collected_revenue), contributionMargin: number(attribution?.contribution_margin) },
+    platforms: platforms.results.map(row => ({ platform: text(row.platform), rowCount: integer(row.row_count), impressions: integer(row.impressions), clicks: integer(row.clicks), spendMinor: integer(row.spend_minor), conversions: Math.max(0, number(row.conversions)), conversionValueMinor: integer(row.conversion_value_minor), lastPulledAt: number(row.last_pulled_at) || null })),
+    source: "canonical_marketing_facts", sampleData: false,
+  };
 }
 
 export async function mutateMarketingAdResource(db: Db, runtime: Runtime, input: { platform: MarketingAdPlatform; mutationType: MarketingMutationType; resourceId: string; amountMinor: number; actor: string; reason: string; fetchImpl?: Fetcher }) {
