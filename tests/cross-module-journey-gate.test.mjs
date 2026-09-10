@@ -583,7 +583,7 @@ test('order notification journey: gateway ownership, customer read, repeat ackno
   const counts=()=>['order_notifications','communication_messages','communication_outbox','staff_alerts'].map(table=>sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n);
   const before=counts();
   const request=(path='',data)=>new Request('https://app.pawspace.in/api/order-notifications'+path,{method:data?'POST':'GET',headers:{cookie:`${sessions.PLATFORM_SESSION_COOKIE}=${issued.token}`,origin:'https://app.pawspace.in','content-type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
-  const call=async req=>{const access=await gateway.authorizeApiRequest(req,{DB:db});assert.ok(!(access instanceof Response));return req.method==='POST'?route.POST(req):route.GET(req);};
+  const call=async req=>{const access=await gateway.authorizeApiRequest(req,{DB:db});if(access instanceof Response)return access;return req.method==='POST'?route.POST(req):route.GET(req);};
   const read=await call(request('?customerId=C-ORDER-NOTICE'));
   assert.equal(read.status,200,await read.clone().text());
   const visible=(await read.json()).data.items[0];assert.equal(visible.id,created.notificationId);assert.equal(visible.payload_json,undefined);assert.equal(visible.delivery_error,undefined);
