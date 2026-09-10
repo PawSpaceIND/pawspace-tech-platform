@@ -1,0 +1,77 @@
+name: Complete same-record Golden Grooming service
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths:
+      - .github/workflows/pencils-down-golden-service-completion.yml
+      - ops/pencils-down/rebind_same_golden_uat.py
+      - ops/pencils-down/complete_same_grooming.mjs
+      - ops/pencils-down/read_same_record_final.py
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  complete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pawspace-release-preview
+    env:
+      ORIGIN: https://pawspace-beta-golden-wallet-43ba4002.karthik-fce.workers.dev
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - name: Checkout exact continuation tools
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout exact certified product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 43ba4002bacbd129b359bc6c8ec3fd4f260272bf
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build immutable candidate
+        working-directory: candidate
+        run: |
+          npm run install:ci
+          npm run typecheck
+          npm run build
+      - name: Rebind same isolated Worker with UAT media mode only
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: python ops/pencils-down/rebind_same_golden_uat.py
+      - name: Confirm same Worker propagated
+        run: |
+          for path in /healthz /mobile-app /staging-login; do
+            for n in {1..15}; do code=$(curl -sS -o /dev/null -w '%{http_code}' "$ORIGIN$path"); [ "$code" = 200 ] && break; sleep 2; done
+            [ "$code" = 200 ] || { echo "$path returned $code"; exit 1; }
+          done
+      - name: Complete same canonical Grooming booking
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node ops/pencils-down/complete_same_grooming.mjs
+      - name: Verify same-record CRM, GST, finance and accounts read-only
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python ops/pencils-down/read_same_record_final.py
+      - name: Upload same-record service completion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-same-record-service-completion-43ba4002
+          path: golden-service-evidence/
+          if-no-files-found: error
+          retention-days: 7
