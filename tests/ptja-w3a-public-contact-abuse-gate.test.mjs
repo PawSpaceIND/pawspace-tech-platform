@@ -57,7 +57,10 @@ async function submit({ ip = "203.0.113.9", omitIp = false, body = LEAD } = {}) 
 }
 
 const leadCount = () => {
-  try { return Number(sqlite.prepare("SELECT COUNT(*) c FROM crm_contacts").get().c); } catch { return 0; }
+  // A repeated phone may intentionally reuse one canonical/CRM contact. The abuse boundary governs
+  // accepted enquiry attempts, whose durable per-attempt record is lead_work_items. Counting CRM
+  // contacts would turn safe identity deduplication into an apparent rate-limit failure.
+  try { return Number(sqlite.prepare("SELECT COUNT(*) c FROM lead_work_items").get().c); } catch { return 0; }
 };
 
 test("R03-01: the gate admits EXACTLY five in a window and refuses the sixth", async () => {
