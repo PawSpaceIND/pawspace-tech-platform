@@ -124,14 +124,19 @@ async function closeCheckout(page: Page) {
     frame.getByRole("button", { name: /close/i }).first(),
     frame.locator("button").filter({ hasText: /×|close/i }).first(),
   ];
+  await expect.poll(async () => {
+    for (const candidate of candidates) {
+      if (await candidate.isVisible().catch(() => false)) return true;
+    }
+    return false;
+  }, { timeout: 15_000 }).toBeTruthy();
   for (const candidate of candidates) {
     if (!await candidate.isVisible().catch(() => false)) continue;
     await candidate.click();
-    await page.waitForTimeout(500);
-    if (!hasRazorpayFrame(page)) return;
+    await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
+    return;
   }
-  await page.keyboard.press("Escape");
-  await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
+  throw new Error("Razorpay checkout rendered without a visible dismiss control");
 }
 
 async function submitUpi(page: Page, upi: string) {
