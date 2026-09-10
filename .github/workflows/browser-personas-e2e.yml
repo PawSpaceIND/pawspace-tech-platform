@@ -75,7 +75,17 @@ jobs:
               handle.write("".join(name + "=" + json.dumps(value) + "\n" for name, value in bindings.items()))
           PYMAPS
       - name: Run sandbox-locked desktop and Pixel 7 persona certification
+        if: ${{ github.event_name != 'workflow_dispatch' || github.ref_name != 'uat/pr674-provider-webhook-proof-92c-20260911' }}
         run: npm run test:e2e-personas
+      - name: Run PR674 exact-head Razorpay Test capture + provider-webhook proof (temporary DO NOT MERGE)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'uat/pr674-provider-webhook-proof-92c-20260911' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+        run: PW_BASE_URL='https://pawspace-checkout-674-34517081246-1.karthik-fce.workers.dev' npx playwright test e2e/pr674-provider-webhook-proof.spec.ts --project=chromium --retries=0
       - name: Remove local secret bindings
         if: always()
         run: rm -f .dev.vars
