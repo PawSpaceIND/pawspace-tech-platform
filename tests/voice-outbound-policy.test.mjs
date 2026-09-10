@@ -712,6 +712,31 @@ test("different status callbacks on one call are all applied; only identical one
 });
 
 
+test("controlled carrier UAT may run during quiet hours while public calls remain blocked", async () => {
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_UAT_AUTORUN: "true", PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true" });
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "controlled_uat_consent", actorId: "uat-test", asOf: QUIET_TIME });
+
+  const publicAttempt = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "voice-carrier-uat:spoofed-quiet-hours", asOf: QUIET_TIME }));
+  assert.equal(publicAttempt.dialled, false, "public request data cannot forge the module-private quiet-hours exemption");
+  assert.equal(publicAttempt.state, "blocked_quiet_hours");
+
+  const controlled = await gov.requestControlledCarrierUatCall(db, env, {
+    idempotencyKey: "voice-carrier-uat:quiet-hours-controlled",
+    useCase: "booking_confirmation",
+    phone: ALLOWLISTED_PHONE,
+    cityId: "blr",
+    customerId: "CON-V1",
+    bookingId: "BKG-V1",
+    asOf: QUIET_TIME,
+  });
+  assert.equal(controlled.dialled, true, "the governed one-shot UAT path may dial during quiet hours");
+  const row = order(sqlite, controlled.callId);
+  assert.equal(row.quiet_hours_decision, "inside_uat_override");
+  const decision = sqlite.prepare("SELECT passed,detail FROM voice_call_policy_decisions WHERE call_id=? AND check_code='quiet_hours'").get(controlled.callId);
+  assert.equal(decision.passed, 1);
+  assert.match(decision.detail, /production\/public rules remain unchanged/);
+});
+
 test("controlled carrier UAT bypasses only historical recipient frequency while public calls stay capped", async () => {
   const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_UAT_AUTORUN: "true", PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true" });
   await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "controlled_uat_consent", actorId: "uat-test", asOf: DAYTIME });
