@@ -5,8 +5,8 @@ type Row = Record<string, unknown>;
 const text = (value: unknown) => String(value ?? "").trim();
 const phoneKey = (value: unknown) => text(value).replace(/\D/g, "").slice(-10);
 
-export const VOICE_CARRIER_UAT_RUN_AT = "2026-09-06T02:30:00.000Z"; // 08:00 IST
-const RUN_ID = "VOICE-UAT-20260910-CONTROLLED-RETRY-4";
+export const VOICE_CARRIER_UAT_RUN_AT = "2026-09-11T02:35:00.000Z"; // 08:05 IST
+const RUN_ID = "VOICE-UAT-20260911-CONTROLLED-RETRY-5";
 
 function requireUatConfig(env: Env) {
   if (text(env.PAWSPACE_VOICE_ENV) !== "uat" || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true") throw new Error("carrier UAT scheduler is enabled only in approved UAT mode");
@@ -53,7 +53,7 @@ export async function runDueVoiceCarrierUat(db: D1Database, env: Env, asOf = Dat
   if (!Number(claimed.meta?.changes || 0)) return { status: "already_claimed" as const };
   try {
     const result = await requestControlledCarrierUatCall(db, env, {
-      idempotencyKey: "voice-carrier-uat:2026-09-10:controlled-retry-4",
+      idempotencyKey: "voice-carrier-uat:2026-09-11:controlled-retry-5",
       useCase: "booking_confirmation",
       phone: cfg.rawNumber,
       cityId: cfg.cityId,
