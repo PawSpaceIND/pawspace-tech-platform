@@ -119,31 +119,41 @@ function hasRazorpayFrame(page: Page) {
 async function closeCheckout(page: Page) {
   const frame = await visibleRazorpayFrame(page);
   const candidates = [
+    frame.locator('[data-testid="checkout-close"]').first(),
     frame.getByRole("button", { name: /^Go back$/i }).first(),
+    frame.getByRole("button", { name: /^Close Checkout$/i }).first(),
     frame.getByRole("button", { name: /^Close$/i }).first(),
-    frame.getByRole("button", { name: /close/i }).first(),
-    frame.locator("button").filter({ hasText: /×|close/i }).first(),
   ];
   await expect.poll(async () => {
-    for (const candidate of candidates) {
-      if (await candidate.isVisible().catch(() => false)) return true;
-    }
+    for (const candidate of candidates) if (await candidate.isVisible().catch(() => false)) return true;
     return false;
   }, { timeout: 15_000 }).toBeTruthy();
+
+  let dismissed = false;
   for (const candidate of candidates) {
     if (!await candidate.isVisible().catch(() => false)) continue;
-    await candidate.click();
-    if (hasRazorpayFrame(page)) {
-      const confirmExit = frame.getByRole("button", { name: /^Yes, exit$/i }).first();
-      await confirmExit.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
-      if (await confirmExit.isVisible().catch(() => false)) await confirmExit.click();
+    try {
+      await candidate.click({ timeout: 5_000 });
+      dismissed = true;
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/intercepts pointer events|not stable|Timeout|Frame was detached/i.test(message)) throw error;
     }
-    await expect.poll(() => hasRazorpayFrame(page), { timeout: 10_000 }).toBeFalsy();
-    return;
   }
-  throw new Error("Razorpay checkout rendered without a visible dismiss control");
+  if (!dismissed && hasRazorpayFrame(page)) {
+    // Checkout v2 can leave a QR/status overlay above the visible close control. Escape is the
+    // real browser dismissal path and avoids bypassing Razorpay's pointer/overlay protections.
+    await page.keyboard.press("Escape");
+  }
+  if (hasRazorpayFrame(page)) {
+    const current = page.frames().find(item => item !== page.mainFrame() && /razorpay/i.test(item.url())) || frame;
+    const confirmExit = current.getByRole("button", { name: /^Yes, exit$/i }).first();
+    await confirmExit.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
+    if (await confirmExit.isVisible().catch(() => false)) await confirmExit.click({ timeout: 5_000 });
+  }
+  await expect.poll(() => hasRazorpayFrame(page), { timeout: 15_000 }).toBeFalsy();
 }
-
 async function submitUpi(page: Page, upi: string) {
   await visibleRazorpayFrame(page);
   const deadline = Date.now() + 45_000;
