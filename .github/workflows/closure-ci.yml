@@ -158,7 +158,12 @@ jobs:
         shell: bash
         run: |
           rm -rf .runtime-d1
-          npx wrangler dev --config wrangler.runtime-d1.jsonc --persist-to .runtime-d1 --port 8788 > /tmp/runtime-d1-worker.log 2>&1 &
+          # The scenario books a Sitting visit two days ahead, then exercises execution immediately.
+          # Advance only the server-owned service clock into that care window; production time gates stay active.
+          runtime_clock_ms=$(node -e 'const d=new Date(Date.now()+2*86400000);d.setUTCHours(10,30,0,0);process.stdout.write(String(d.getTime()))')
+          npx wrangler dev --config wrangler.runtime-d1.jsonc --persist-to .runtime-d1 --port 8788 \
+            --var FORBID_PRODUCTION:true --var PAWSPACE_UAT_SERVICE_CLOCK:on --var PAWSPACE_UAT_EXECUTION_NOW_MS:"$runtime_clock_ms" \
+            > /tmp/runtime-d1-worker.log 2>&1 &
           worker_pid=$!
           trap 'cat /tmp/runtime-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
           ready=0
