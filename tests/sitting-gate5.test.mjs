@@ -75,8 +75,8 @@ test("Pet Sitting Gate 5 reports a sandbox contract, not a production launch", a
   const external = snapshot.readiness.externalDependencies;
   assert.equal(external.payments, "sandbox_only");
   assert.equal(external.objectStorage, "disconnected");
-  assert.equal(external.tax, "configuration_required");
-  assert.equal(external.sitterPayout, "rule_pending");
+  assert.equal(external.tax, "completion_resolved_invoice_policy_governed");
+  assert.equal(external.sitterPayout, "canonical_projection_5_day_finance_approval");
   for (const [name, value] of Object.entries(external)) {
     assert.equal(/^(live|production|connected)$/.test(String(value)), false, `${name} must not claim a live dependency, got ${value}`);
   }
