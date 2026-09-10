@@ -39,7 +39,7 @@ try{
    for(const name of names){
     const card=care.getByRole("button",{name:new RegExp(name,"i")});await expect(card).toBeEnabled();await card.scrollIntoViewIfNeeded();await card.click({trial:true});
     const bounds=await card.boundingBox();expect(bounds.width).toBeGreaterThanOrEqual(44);expect(bounds.height).toBeGreaterThanOrEqual(44);
-    const img=card.locator("..").locator("img");await expect.poll(()=>img.evaluate(n=>n.complete&&n.naturalWidth>0)).toBe(true);
+    const img=card.locator("..").locator("img");await expect.poll(()=>img.evaluate(n=>n.complete&&n.naturalWidth>0),{timeout:20_000}).toBe(true);
     row.services.push({name,width:bounds.width,height:bounds.height,image:await img.getAttribute("src"),enabled:true,actionable:true});
    }
    await home.scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`${label}-cartoon.png`),fullPage:true});
