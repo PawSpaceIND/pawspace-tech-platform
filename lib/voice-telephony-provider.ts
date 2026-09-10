@@ -116,9 +116,10 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
 
 function safeProviderErrorCode(raw: string) {
   const safe = (value: unknown) => { const text = String(value ?? "").trim(); return /^[A-Za-z0-9_.:-]{1,64}$/.test(text) ? text : null; };
+  const field = (value: unknown, key: string): unknown => value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
   try {
-    const parsed = JSON.parse(raw) as Record<string, any>;
-    for (const value of [parsed.code, parsed.Code, parsed.error?.code, parsed.error_data?.code, parsed.ResponseData?.Code, parsed.response?.code, parsed.response?.error_data?.code]) {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const value of [parsed.code, parsed.Code, field(parsed.error, "code"), field(parsed.error_data, "code"), field(parsed.ResponseData, "Code"), field(parsed.response, "code"), field(field(parsed.response, "error_data"), "code")]) {
       const code = safe(value); if (code) return code;
     }
   } catch {}

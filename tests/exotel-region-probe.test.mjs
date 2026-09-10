@@ -23,7 +23,7 @@ test("probe requires complete credentials before any network call",async()=>{
 });
 test("caller-ID history check reads only Metadata.Total and never emits call details",async()=>{
   const calls=[];
-  const result=await probeExotelRegion({key:"key",token:"token",sid:"sid",callerId:"08012345678",fetcher:async(url,init)=>{
+  const result=await probeExotelRegion({key:"key",token:"token",sid:"sid",callerId:"08012345678",fetcher:async(url)=>{
     calls.push(String(url));
     if(String(url).includes("api.in.exotel.com"))return response(401);
     if(String(url).includes("PhoneNumber="))return Response.json({Metadata:{Total:7},Calls:[{To:"secret-customer",From:"secret-agent"}]});
