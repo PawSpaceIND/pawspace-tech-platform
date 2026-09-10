@@ -29,7 +29,7 @@ if (!fundAccounts.length) throw new Error("RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX co
 const fundAccount = fundAccounts[0];
 const amount = 100;
 const reference = `PawSpaceUAT${Date.now()}`.slice(0, 40);
-const idempotency = `pawspace-rpx-${Date.now()}-${Math.random().toString(16).slice(2)}`.slice(0, 64);
+const idempotency = `rpx-${crypto.randomUUID()}`.slice(0, 36);
 const auth = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
 
 async function api(path, init = {}) {
