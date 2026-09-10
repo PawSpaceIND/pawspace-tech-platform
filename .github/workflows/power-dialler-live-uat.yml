@@ -1,0 +1,119 @@
+name: Power Dialler live UAT
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type power-dialler-uat to place one approved two-leg Exotel test call'
+        required: true
+        default: ''
+
+jobs:
+  certify:
+    if: ${{ github.event.inputs.confirm == 'power-dialler-uat' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    concurrency: pawspace-staging-deploy
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install, test and build
+        run: |
+          npm run install:ci
+          node --test tests/employee-power-dialler-sandbox.test.mjs tests/employee-power-dialler-source-contract.test.mjs tests/outbound-orchestrator-autodialler.test.mjs
+          npm run build
+      - name: Configure isolated staging for one-shot dialler UAT
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: |
+          node scripts/stage-config.mjs
+          node <<'NODE'
+          const fs=require('fs');
+          const p='dist/server/wrangler.json'; const cfg=JSON.parse(fs.readFileSync(p,'utf8'));
+          cfg.vars={...cfg.vars,PAWSPACE_VOICE_ENV:'uat',PAWSPACE_VOICE_UAT_APPROVED:'true',PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED:'true',PAWSPACE_VOICE_STATUS_CALLBACK_URL:`${process.env.STAGING_URL}/api/dialler/callback`,PAWSPACE_POWER_DIALLER_STATUS_CALLBACK_URL:`${process.env.STAGING_URL}/api/dialler/callback`};
+          fs.writeFileSync(p,JSON.stringify(cfg));
+          NODE
+      - name: Deploy approved two-number overlay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          PRIMARY_NUMBER: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          SECOND_NUMBER: ${{ secrets.PAWSPACE_POWER_DIALLER_UAT_SECOND_NUMBER }}
+        run: |
+          set -euo pipefail
+          FILE="$RUNNER_TEMP/pd-secrets.json"; export FILE
+          node <<'NODE'
+          const fs=require('fs'); const clean=v=>String(v||'').replace(/\D/g,'').slice(-10);
+          const a=clean(process.env.PRIMARY_NUMBER),b=clean(process.env.SECOND_NUMBER);
+          if(a.length!==10||b.length!==10||a===b) throw new Error('Need two distinct approved test numbers');
+          const names=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','EXOTEL_API_KEY','EXOTEL_API_TOKEN','EXOTEL_SID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','EXOTEL_WEBHOOK_SECRET'];
+          const out=Object.fromEntries(names.map(n=>[n,process.env[n]||'']));
+          out.PAWSPACE_VOICE_UAT_ALLOWLIST=`+91${a},+91${b}`;
+          if(Object.values(out).some(v=>!v)) throw new Error('Required secret missing');
+          fs.writeFileSync(process.env.FILE,JSON.stringify(out),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "power-dialler-live-uat $GITHUB_SHA" --secrets-file "$FILE"
+          rm -f "$FILE"
+      - name: Seed synthetic test agent and customer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRIMARY_NUMBER: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          SECOND_NUMBER: ${{ secrets.PAWSPACE_POWER_DIALLER_UAT_SECOND_NUMBER }}
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const clean=v=>String(v||'').replace(/\D/g,'').slice(-10);
+          const now=Date.now(), agent=clean(process.env.PRIMARY_NUMBER), customer=clean(process.env.SECOND_NUMBER);
+          if(agent.length!==10||customer.length!==10||agent===customer) throw new Error('Approved numbers invalid');
+          const q=s=>String(s).replaceAll("'","''");
+          const sql=[
+            "DELETE FROM outbound_routing_queue WHERE id='UAT-PD-Q1'",
+            "DELETE FROM lead_scores WHERE lead_id='UAT-PD-L1'",
+            "DELETE FROM lead_work_items WHERE id='UAT-PD-L1'",
+            "DELETE FROM customer_contact_preferences WHERE customer_id='UAT-PD-C1'",
+            "DELETE FROM canonical_customers WHERE id='UAT-PD-C1'",
+            `UPDATE employees SET phone='${q(agent)}',employment_status='active',updated_at=${now} WHERE lower(work_email)='founder@pawspace.in'`,
+            `INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('UAT-PD-C1','BLR','Power Dialler UAT Customer','${q(customer)}',NULL,'power-dialler-uat@example.invalid','uat','{}',${now},${now})`,
+            "CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER,service_consent INTEGER,opt_out INTEGER DEFAULT 0)",
+            "INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,opt_out) VALUES ('UAT-PD-C1',1,1,0)",
+            `INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,first_action_at,call_attempts,whatsapp_attempts,opt_out,created_at,updated_at) VALUES ('UAT-PD-L1','UAT-PD-C1','uat','grooming','founder@pawspace.in','founder@pawspace.in','active','day_1',1,${now},${now},${now},${now},0,0,0,${now},${now})`,
+            `INSERT INTO lead_scores (lead_id,engagement_score,profile_score,recency_score,value_score,total_score,grade,factors_json,computed_at) VALUES ('UAT-PD-L1',95,95,95,95,95,'A','{}',${now})`,
+            `INSERT INTO outbound_routing_queue (id,source_key,customer_id,lead_id,source_type,lane,priority_score,high_intent,lifecycle_code,status,context_json,created_at,updated_at) VALUES ('UAT-PD-Q1','uat:power-dialler-live','UAT-PD-C1','UAT-PD-L1','grooming_renewal','human',95,1,'grooming_renewal','queued','{}',${now},${now})`
+          ].join(';\n')+';\n';
+          fs.writeFileSync('/tmp/pd-uat.sql',sql,{mode:0o600});
+          NODE
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=/tmp/pd-uat.sql >/dev/null
+          rm -f /tmp/pd-uat.sql
+      - name: Verify prepared UAT queue without exposing numbers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          raw=$(npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT q.id,q.status,q.lane,l.total_score FROM outbound_routing_queue q JOIN lead_scores l ON l.lead_id=q.lead_id WHERE q.id='UAT-PD-Q1'" 2>/dev/null)
+          printf '%s' "$raw" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s),a=Array.isArray(p)?p:[p],r=a.flatMap(x=>x.results||[])[0]; if(!r||r.status!=='queued'||r.lane!=='human'||Number(r.total_score)!==95) process.exit(1); console.log('power_dialler_uat_queue=ready')})"
+      - name: Where to test
+        run: |
+          echo '## Power Dialler UAT prepared' >> "$GITHUB_STEP_SUMMARY"
+          echo '- two distinct approved test numbers: yes' >> "$GITHUB_STEP_SUMMARY"
+          echo '- isolated staging overlay: enabled' >> "$GITHUB_STEP_SUMMARY"
+          echo '- synthetic human queue item: ready' >> "$GITHUB_STEP_SUMMARY"
+          echo '- open: https://pawspace-staging.karthik-fce.workers.dev/team/sales/power-dialler' >> "$GITHUB_STEP_SUMMARY"
+          echo '- sign in as founder@pawspace.in and press Start once' >> "$GITHUB_STEP_SUMMARY"
