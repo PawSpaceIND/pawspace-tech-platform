@@ -1,120 +1,14 @@
-/**
- * Provider-facing field projection for Dog Walking.
- *
- * Same class of gap as Grooming P0-6 / Training #676:
- * listWalkingBookings returned SELECT * booking rows, raw walking_session_events
- * (actor_id + detail_json), and recovery/payment blobs to service_provider sessions.
- *
- * Rule: providers get operational walk state only.
- */
-
-type Row = Record<string, unknown>;
-
-const SAFE_EVENT_DETAIL_KEYS = new Set([
-  "action", "providerId", "status", "from", "to", "sessionId", "distanceMeters",
-  "thresholdMeters", "geofence", "gpsConnected", "telemetryMode", "reason", "code",
-  "method", "uatAttestation", "otpConnected", "walkCount", "bookingPreserved",
-  "recoveryId", "failedSessionId", "handoverStatus",
-]);
-
-const PII_VALUE = /(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
-const SENSITIVE_KEY = /(?:email|phone|mobile|address|street|contact|staff|actor|internal|note)/i;
-
-function safeString(value: unknown, max = 240): string | null {
-  if (typeof value !== "string") return null;
-  const s = value.trim();
-  if (!s || s.length > max || PII_VALUE.test(s)) return null;
-  return s;
-}
-
-function sanitizeDetail(detail: unknown): Record<string, unknown> {
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return {};
-  const out: Row = {};
-  for (const [key, value] of Object.entries(detail as Row)) {
-    if (!SAFE_EVENT_DETAIL_KEYS.has(key) || SENSITIVE_KEY.test(key)) continue;
-    if (Array.isArray(value)) {
-      out[key] = value.map((item) => safeString(item)).filter((item): item is string => item !== null);
-      continue;
-    }
-    if (typeof value === "object" && value !== null) continue;
-    if (typeof value === "string") {
-      const s = safeString(value);
-      if (s !== null) out[key] = s;
-      continue;
-    }
-    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
-    else if (typeof value === "boolean" || value === null) out[key] = value;
-  }
-  return out;
-}
-
-function projectEvent(row: Row) {
-  return {
-    id: String(row.id || ""),
-    sessionId: row.session_id != null ? String(row.session_id) : null,
-    eventType: String(row.event_type || ""),
-    actorId: "provider_or_system",
-    detail: sanitizeDetail(row.detail ?? row.detail_json),
-    createdAt: Number(row.created_at || 0),
-  };
-}
-
-function projectSession(row: Row) {
-  return {
-    id: String(row.id || ""),
-    occurrenceNumber: Number(row.occurrence_number || 0),
-    providerId: String(row.provider_id || ""),
-    scheduledStart: String(row.scheduled_start || ""),
-    scheduledEnd: String(row.scheduled_end || ""),
-    status: String(row.status || ""),
-    handoverStatus: row.handover_status != null ? String(row.handover_status) : null,
-    updatedAt: Number(row.updated_at || 0),
-  };
-}
-
-function projectRecovery(row: Row | null | undefined) {
-  if (!row) return null;
-  return {
-    id: String(row.id || ""),
-    status: String(row.status || ""),
-    reasonCode: String(row.reason_code || ""),
-    failedProviderId: String(row.failed_provider_id || ""),
-    failedSessionId: row.failed_session_id ? String(row.failed_session_id) : null,
-    replacementProviderId: row.replacement_provider_id ? String(row.replacement_provider_id) : null,
-    openedAt: Number(row.opened_at || 0),
-    updatedAt: Number(row.updated_at || 0),
-  };
-}
-
-function projectPet(row: Row) {
-  return {
-    id: String(row.id || ""),
-    name: String(row.name || ""),
-    species: String(row.species || ""),
-    breed: row.breed != null ? String(row.breed) : null,
-  };
-}
-
-export function projectWalkingProviderBooking(row: Row) {
-  return {
-    id: String(row.id || ""),
-    status: String(row.status || ""),
-    serviceCode: String(row.service_code || "dog_walking"),
-    packageCode: String(row.package_code || ""),
-    packageName: String(row.package_name || ""),
-    cityId: String(row.city_id || ""),
-    zoneId: String(row.zone_id || ""),
-    scheduledStart: String(row.scheduled_start || ""),
-    scheduledEnd: String(row.scheduled_end || ""),
-    providerId: String(row.provider_id || ""),
-    customerId: String(row.customer_id || ""),
-    workOrderStatus: row.work_order_status != null ? String(row.work_order_status) : null,
-    paymentStatus: row.payment_status != null ? String(row.payment_status) : null,
-    totalAmount: Number(row.total_amount || 0),
-    currency: String(row.currency || "INR"),
-    pets: Array.isArray(row.pets) ? (row.pets as Row[]).map(projectPet) : [],
-    sessions: Array.isArray(row.sessions) ? (row.sessions as Row[]).map(projectSession) : [],
-    events: Array.isArray(row.events) ? (row.events as Row[]).map(projectEvent) : [],
-    recovery: projectRecovery(row.recovery as Row | null | undefined),
-  };
-}
+import{normalizeWalkingOwnerCare}from"./walking-owner-care";
+type Row=Record<string,unknown>;
+const SAFE_DETAIL=new Set(["action","providerId","status","from","to","sessionId","distanceMeters","thresholdMeters","gpsConnected","telemetryMode","reason","code","method","uatAttestation","otpConnected","walkCount","bookingPreserved","recoveryId","failedSessionId","handoverStatus"]);
+const CONTACT=/(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:email|phone|mobile|contact|otp|password|passcode|key\s*code)\b/i;
+const SENSITIVE_KEY=/(?:email|phone|mobile|address|street|contact|staff|actor|internal|note)/i;
+function safeText(value:unknown,max=240){if(typeof value!=="string")return null;const text=value.trim();return text&&text.length<=max&&!CONTACT.test(text)?text:null;}
+function detail(value:unknown){if(!value||typeof value!=="object"||Array.isArray(value))return{};const out:Row={};for(const[key,item]of Object.entries(value as Row)){if(!SAFE_DETAIL.has(key)||SENSITIVE_KEY.test(key))continue;if(typeof item==="string"){const text=safeText(item);if(text!==null)out[key]=text;}else if(typeof item==="number"&&Number.isFinite(item)||typeof item==="boolean"||item===null)out[key]=item;}return out;}
+function event(row:Row){return{id:String(row.id||""),session_id:row.session_id!=null?String(row.session_id):null,event_type:String(row.event_type||""),actor_id:"provider_or_system",detail:detail(row.detail??row.detail_json),created_at:Number(row.created_at||0)};}
+function session(row:Row){return{id:String(row.id||""),occurrence_number:Number(row.occurrence_number||0),provider_id:String(row.provider_id||""),scheduled_start:String(row.scheduled_start||""),scheduled_end:String(row.scheduled_end||""),status:String(row.status||""),handover_status:row.handover_status!=null?String(row.handover_status):null,completion_status:row.completion_status!=null?String(row.completion_status):null,updated_at:Number(row.updated_at||0)};}
+function recovery(row:Row|null|undefined){if(!row)return null;return{id:String(row.id||""),status:String(row.status||""),reason_code:String(row.reason_code||""),failed_provider_id:String(row.failed_provider_id||""),failed_session_id:row.failed_session_id?String(row.failed_session_id):null,replacement_provider_id:row.replacement_provider_id?String(row.replacement_provider_id):null,opened_at:Number(row.opened_at||0),updated_at:Number(row.updated_at||0)};}
+function pet(row:Row){return{id:String(row.id||""),name:String(row.name||""),species:String(row.species||""),breed:row.breed!=null?String(row.breed):null};}
+function ownerCare(value:unknown){try{const care=normalizeWalkingOwnerCare(value);if(!care)return null;const instructions=safeText(care.instructions,2000);return{instructions:instructions??"",handoverPreference:care.handoverPreference};}catch{return null;}}
+function payment(row:Row){return{id:String(row.id||""),session_id:String(row.session_id||""),amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:String(row.status||"")};}
+export function projectWalkingProviderBooking(row:Row){return{id:String(row.id||""),status:String(row.status||""),service_code:String(row.service_code||"dog_walking"),package_code:String(row.package_code||""),package_name:String(row.package_name||""),schedule_group_id:String(row.schedule_group_id||""),city_id:String(row.city_id||""),zone_id:String(row.zone_id||""),scheduled_start:String(row.scheduled_start||""),scheduled_end:String(row.scheduled_end||""),provider_id:String(row.provider_id||""),customer_id:String(row.customer_id||""),work_order_status:row.work_order_status!=null?String(row.work_order_status):null,payment_status:row.payment_status!=null?String(row.payment_status):null,total_amount:Number(row.total_amount||0),currency:String(row.currency||"INR"),pets:Array.isArray(row.pets)?(row.pets as Row[]).map(pet):[],ownerCare:ownerCare(row.ownerCare),sessions:Array.isArray(row.sessions)?(row.sessions as Row[]).map(session):[],events:Array.isArray(row.events)?(row.events as Row[]).map(event):[],recovery:recovery(row.recovery as Row|null|undefined),sessionPayments:Array.isArray(row.sessionPayments)?(row.sessionPayments as Row[]).map(payment):[]};}
