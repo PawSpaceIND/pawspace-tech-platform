@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type voice-uat to activate isolated staging, or voice-region-probe for read-only Exotel region detection'
+        description: 'Type voice-uat to activate isolated staging, voice-region-probe for region detection, or voice-observe for read-only UAT evidence'
         required: true
         default: ''
       expected_sha:
@@ -104,11 +104,15 @@ jobs:
           echo 'VOICE_UAT_QUEUE'
           npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,status,call_id,last_state,failure_class,scheduled_for,started_at,finished_at,updated_at FROM voice_carrier_uat_queue ORDER BY updated_at DESC LIMIT 5"
           echo 'VOICE_UAT_CALL'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,idempotency_key,provider,provider_call_id,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,requested_at,dialed_at,connected_at,ended_at,updated_at FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' ORDER BY requested_at DESC LIMIT 1"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,idempotency_key,provider,provider_call_id,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,requested_at,dialed_at,connected_at,ended_at,updated_at FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' ORDER BY requested_at DESC LIMIT 1"
           echo 'VOICE_UAT_POLICY_COUNTS'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1)"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' LIMIT 1)"
           echo 'VOICE_UAT_PROVIDER_EVENTS'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT event_kind,provider_status,applied,created_at FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1) ORDER BY created_at DESC LIMIT 10"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT event_kind,provider_status,applied,created_at FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' LIMIT 1) ORDER BY created_at DESC LIMIT 10"
+          echo 'VOICE_UAT_AI_COUNTS'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT (SELECT COUNT(*) FROM ai_voice_calls WHERE id=(SELECT call_id FROM ai_voice_events WHERE event_type IN ('agentstream_crm_disposition','agentstream_crm_disposition_failed') ORDER BY created_at DESC LIMIT 1)) AS ai_call_count,(SELECT COUNT(*) FROM ai_voice_events WHERE event_type='agentstream_crm_disposition') AS crm_disposition_events,(SELECT COUNT(*) FROM ai_voice_events WHERE event_type='agentstream_crm_disposition_failed') AS crm_disposition_failed_events"
+          echo 'VOICE_UAT_CRM_COUNTS'
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS disposition_count FROM bot_call_dispositions WHERE idempotency_key LIKE 'agentstream:%:completion'"
 
   activate:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-uat' }}
