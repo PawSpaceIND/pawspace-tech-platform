@@ -193,7 +193,7 @@ async function submitUpi(page: Page, upi: string) {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (/Frame was detached|Execution context was destroyed/i.test(message)) continue;
+        if (/Frame was detached|Execution context was destroyed|Target page, context or browser has been closed/i.test(message)) continue;
         throw error;
       }
     }
