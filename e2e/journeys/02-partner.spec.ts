@@ -45,22 +45,13 @@ test("the boarding host surface renders", async ({ page }) => {
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
 });
 
-test("partner hub reaches every governed service workspace from one provider entry point", async ({ page, request }) => {
+test("partner hub opens the hydrated assigned-job feed for the authenticated provider", async ({ page }) => {
   const hub = await page.goto("/partner", { waitUntil: "domcontentloaded" });
   expect(hub?.status()).toBe(200);
-  const destinations = [
-    ["All assigned jobs", "/partner/jobs"],
-    ["Grooming", "/partner-app"],
-    ["Training", "/trainer"],
-    ["Dog Walking", "/walker"],
-    ["Pet Taxi", "/driver"],
-    ["Boarding", "/host"],
-    ["Pet Sitting", "/sitter"],
-  ] as const;
-  for (const [label, href] of destinations) {
-    await expect(page.getByRole("link", { name: label, exact: true }).first()).toHaveAttribute("href", href);
-    const response = await request.get(href);
-    expect(response.status(), `${href} must resolve for the authenticated provider test identity`).toBe(200);
-    expect(await response.text(), `${href} must not render a server application error`).not.toMatch(/Application error|Unhandled Runtime Error/i);
-  }
+  await page.getByRole("link", { name: "All assigned jobs", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/partner\/jobs$/);
+  await expect(page.getByRole("heading", { name: "Your jobs", exact: true })).toBeVisible();
+  await expect(page.getByText("Standard Groom", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("E2E UI Customer", { exact: false })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(/Application error|Unhandled Runtime Error/i);
 });

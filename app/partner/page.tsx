@@ -28,16 +28,10 @@ export default function PartnerUatHub() {
         <small>CROSS-SERVICE PARTNER WORKSPACES</small>
         <h2>Continue in the workflow for your assigned service</h2>
         <p>
-          The job feed is the common entry point. Service actions continue in the existing governed workspaces below; no parallel lifecycle or prototype action is introduced here.
+          The assigned-job feed is the common entry point. It carries the canonical booking context into workspaces that require a booking ID and keeps provider-scoped work on its existing governed surfaces.
         </p>
         <div className={styles.actions}>
           <Link href="/partner/jobs" className={styles.primary}>All assigned jobs</Link>
-          <Link href="/partner-app" className={styles.secondary}>Grooming</Link>
-          <Link href="/trainer" className={styles.secondary}>Training</Link>
-          <Link href="/walker" className={styles.secondary}>Dog Walking</Link>
-          <Link href="/driver" className={styles.secondary}>Pet Taxi</Link>
-          <Link href="/host" className={styles.secondary}>Boarding</Link>
-          <Link href="/sitter" className={styles.secondary}>Pet Sitting</Link>
         </div>
       </section>
 
