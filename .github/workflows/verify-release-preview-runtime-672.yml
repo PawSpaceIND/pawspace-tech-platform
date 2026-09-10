@@ -33,7 +33,12 @@ jobs:
           import { mkdirSync, writeFileSync } from 'node:fs';
           const PRODUCT = '9535ce85c0e2fe60da3d2fce091c305dde5d99fc';
           const ADAPTER = '8b1ac9a296d5e52f60df011981cf7d85d7935611';
-          const BASELINE = '7b67d7ab-4ae8-43f9-ae48-e24f31a078df';
+          // Reviewed tuple from successful hosted run 34381979950, not the current runtime.
+          // The original 34380905564 baseline belongs to a separate, earlier build.
+          const EVIDENCE = Object.freeze({run_id:34381979950,artifact_id:10117208448,
+            artifact_sha256:'7d2e8bf2fc570d85d959a2948b1249d2c5e1b2b6a54ee7ea5d29d141db65c91b',
+            baseline_version_id:'dc882e91-c758-4403-a5f2-f94210173a22'});
+          const BASELINE = EVIDENCE.baseline_version_id;
           const WORKER = 'pawspace-release-preview';
           const PREVIEW_DB_HASH = '5f09c4912525883b766fe286f17ea1be6f839640c2a1ca7e944e04228b55fb7e';
           const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,11 +82,22 @@ jobs:
             need(row?.type==='plain_text' && typeof row.text==='string', `BINDING_NOT_READABLE_${name}`);
             return row.text.trim();
           }
+          // ETags are optional in the API. Missing data must HOLD, never imply equality.
+          // Only availability and a digest leave this verifier; never raw bindings/ETags.
+          function fingerprint(etag) {
+            const present=typeof etag==='string' && etag.trim().length>0;
+            return {present,sha256:present?sha256(etag):null};
+          }
+          function assertFingerprintMatch(activeEtag, baselineEtag) {
+            need(fingerprint(baselineEtag).present,'BASELINE_SCRIPT_FINGERPRINT_UNAVAILABLE');
+            need(fingerprint(activeEtag).present,'ACTIVE_SCRIPT_FINGERPRINT_UNAVAILABLE');
+            need(activeEtag===baselineEtag,'ACTIVE_SCRIPT_DIFFERS_FROM_PASSED_DEPLOYMENT');
+          }
           function evaluate(version, id, baselineEtag, previewDbHash, productionDb, sharedDb) {
             const map = bindings(version,id);
             need(plain(map,'PAWSPACE_RELEASE_SHA')===PRODUCT, 'ACTIVE_PRODUCT_SHA_MISMATCH');
             const etag = version?.resources?.script?.etag;
-            need(typeof baselineEtag==='string' && baselineEtag.length>0 && typeof etag==='string' && etag===baselineEtag, 'ACTIVE_SCRIPT_DIFFERS_FROM_PASSED_DEPLOYMENT');
+            assertFingerprintMatch(etag,baselineEtag);
             need(plain(map,'PAWSPACE_ENVIRONMENT')==='release-preview', 'WRONG_ENVIRONMENT');
             need(plain(map,'PAWSPACE_PAYMENT_ENV')==='sandbox', 'PAYMENT_NOT_SANDBOX');
             for (const name of OFF) need(plain(map,name)==='false', `LIVE_EFFECT_NOT_OFF_${name}`);
@@ -121,17 +137,27 @@ jobs:
               return parsed.result;
             };
           }
-          async function verify(read, options) {
+          async function verify(read, options, diagnostics={}) {
             const before=deployment(await read('/deployments'));
+            diagnostics.active_deployment=before;
             const baseline=await read(`/versions/${BASELINE}`);
+            diagnostics.baseline_version_id=BASELINE;
+            diagnostics.baseline_fingerprint=fingerprint(baseline?.resources?.script?.etag);
             need(plain(bindings(baseline,BASELINE),'PAWSPACE_RELEASE_SHA')===PRODUCT, 'BASELINE_PRODUCT_SHA_MISMATCH');
             const rows=[];
+            diagnostics.version_comparisons=[];
             for (const v of before.versions) {
               const data=v.version_id===BASELINE?baseline:await read(`/versions/${v.version_id}`);
+              const activeFingerprint=fingerprint(data?.resources?.script?.etag);
+              diagnostics.version_comparisons.push({version_id:v.version_id,traffic_percentage:v.percentage,
+                active_fingerprint:activeFingerprint,
+                fingerprint_matches:activeFingerprint.present && diagnostics.baseline_fingerprint.present
+                  ? data.resources.script.etag===baseline.resources.script.etag : null});
               rows.push({...evaluate(data,v.version_id,baseline?.resources?.script?.etag,options.dbHash,options.productionDb,options.sharedDb),traffic_percentage:v.percentage});
             }
             const after=deployment(await read('/deployments'));
-            need(JSON.stringify(before)===JSON.stringify(after), 'DEPLOYMENT_CHANGED_DURING_VERIFICATION');
+            diagnostics.active_deployment_stable_during_verification=JSON.stringify(before)===JSON.stringify(after);
+            need(diagnostics.active_deployment_stable_during_verification, 'DEPLOYMENT_CHANGED_DURING_VERIFICATION');
             return {active_deployment:after, active_versions:rows, active_deployment_stable_during_verification:true};
           }
           async function selfTest() {
@@ -183,6 +209,37 @@ jobs:
             const paths=[];const api=client('a'.repeat(32),'test-token',async (url,init)=>{paths.push([url,init.method,init.redirect]);return{ok:true,json:async()=>({success:true,result:{deployments:[d]}})};});
             await api('/deployments');assert.equal(paths[0][1],'GET');assert.equal(paths[0][2],'error');count++;
             await assert.rejects(()=>api('/settings'),/NOT_ALLOWED/);assert.equal(paths.length,1);count++;
+            // Missing and invalid fingerprint fields remain fail-closed with distinct errors.
+            for (const invalid of [undefined,null,'','   ',42,{}]) {
+              check(()=>assert.throws(()=>assertFingerprintMatch('bundle',invalid),/BASELINE_SCRIPT_FINGERPRINT_UNAVAILABLE/));
+              check(()=>assert.throws(()=>assertFingerprintMatch(invalid,'bundle'),/ACTIVE_SCRIPT_FINGERPRINT_UNAVAILABLE/));
+            }
+            check(()=>assert.throws(()=>assertFingerprintMatch('later-build','earlier-build'),/ACTIVE_SCRIPT_DIFFERS/));
+            check(()=>assert.doesNotThrow(()=>assertFingerprintMatch('later-build','later-build')));
+            check(()=>assert.deepEqual(fingerprint(undefined),{present:false,sha256:null}));
+            check(()=>assert.equal(fingerprint('sensitive-etag').sha256,sha256('sensitive-etag')));
+            const diag={}; await verify(read,options,diag);
+            check(()=>assert.equal(diag.version_comparisons[0].fingerprint_matches,true));
+            check(()=>assert.equal(diag.active_deployment_stable_during_verification,true));
+            check(()=>assert.equal(JSON.stringify(diag).includes('test-bundle'),false));
+            const broken=(etag)=>async suffix=>{
+              const row=await read(suffix);
+              if(suffix===`/versions/${ids[0]}`)row.resources.script.etag=etag;
+              return row;
+            };
+            for (const [etag,code] of [[undefined,'ACTIVE_SCRIPT_FINGERPRINT_UNAVAILABLE'],['changed-build','ACTIVE_SCRIPT_DIFFERS_FROM_PASSED_DEPLOYMENT']]) {
+              const failureDiag={};await assert.rejects(()=>verify(broken(etag),options,failureDiag),new RegExp(code));count++;
+              check(()=>assert.equal(failureDiag.active_deployment.id,d.id));
+              check(()=>assert.equal(failureDiag.version_comparisons[0].fingerprint_matches,etag?false:null));
+              check(()=>assert.equal(JSON.stringify(failureDiag).includes('changed-build'),false));
+            }
+            const splitDiag={};await assert.rejects(()=>verify(async suffix=>suffix==='/deployments'?{deployments:[split]}:
+              suffix===`/versions/${ids[2]}`?{...structuredClone(data),id:ids[2],resources:{...structuredClone(data.resources),script:{etag:'unverified'}}}:read(suffix),options,splitDiag),/ACTIVE_SCRIPT_DIFFERS/);count++;
+            check(()=>assert.equal(splitDiag.version_comparisons.length,2));
+            check(()=>assert.equal(splitDiag.version_comparisons[1].fingerprint_matches,false));
+            // No mutable runtime/config value chooses the attested reference tuple.
+            check(()=>assert.equal(Object.isFrozen(EVIDENCE),true));
+            check(()=>assert.deepEqual([EVIDENCE.run_id,EVIDENCE.artifact_id,BASELINE],[34381979950,10117208448,'dc882e91-c758-4403-a5f2-f94210173a22']));
             console.log(`Verifier self-tests: ${count} PASS; no network, no production code executed.`);
             return count;
           }
@@ -190,15 +247,16 @@ jobs:
           else {
             const report={schema_version:1,issue:672,observed_at_utc:new Date().toISOString(),
               verifier_sha:process.env.GITHUB_SHA||null,verifier_run_id:process.env.GITHUB_RUN_ID||null,
-              product_sha:PRODUCT,booking_adapter_sha:ADAPTER,booking_evidence_run_id:34380905564,
-              booking_evidence_artifact_id:10116480279,baseline_version_id:BASELINE,
+              product_sha:PRODUCT,booking_adapter_sha:ADAPTER,booking_evidence_run_id:EVIDENCE.run_id,
+              booking_evidence_artifact_id:EVIDENCE.artifact_id,booking_evidence_artifact_sha256:EVIDENCE.artifact_sha256,
+              baseline_version_id:BASELINE,diagnostics:{},
               worker:WORKER,scope:'control-plane configuration and script provenance; NOT human UI or all-service certification',
               status:'HOLD',human_uat:'HOLD_PENDING_HUMAN_ROLE_AND_JOURNEY_EVIDENCE'};
             try {
               const env=process.env;
               assertExecutionContext(env);
               const read=client(String(env.CLOUDFLARE_ACCOUNT_ID||'').trim(),String(env.CLOUDFLARE_API_TOKEN||'').trim());
-              Object.assign(report,await verify(read,{dbHash:PREVIEW_DB_HASH,productionDb:String(env.PRODUCTION_D1_ID||'').trim(),sharedDb:String(env.SHARED_STAGING_D1_ID||'').trim()}));
+              Object.assign(report,await verify(read,{dbHash:PREVIEW_DB_HASH,productionDb:String(env.PRODUCTION_D1_ID||'').trim(),sharedDb:String(env.SHARED_STAGING_D1_ID||'').trim()},report.diagnostics));
               report.status='PASS';
             } catch(error) { report.error_code=error instanceof SafeError?error.message:'UNEXPECTED_VERIFICATION_ERROR';process.exitCode=1; }
             mkdirSync('runtime-evidence',{recursive:true});
