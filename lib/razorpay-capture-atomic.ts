@@ -112,7 +112,6 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
         VALUES (?,'razorpay',?,?,?, ?,?,?,?,NULL,?,?,1,?,'processed','Repeat notification for a capture already collected',?,?,?)
         ON CONFLICT(provider,event_id) DO NOTHING`)
         .bind(`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`, input.environment, input.eventId, "payment.captured", input.bookingId, input.paymentId, input.gatewayOrderId || null, input.gatewayPaymentId || null, input.amountPaise, input.currency, input.payloadHash, JSON.stringify({ ...(input.detail || {}), atomicCapture: true, duplicateCapture: true }), now, now),
-      captureTimelineStatement(db, input),
     db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId),
     ]);
     const existingEffects = await db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>();
@@ -174,7 +173,6 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       (id,aggregate_type,aggregate_id,event_type,dedupe_key,payload_json,status,attempts,next_attempt_at,created_at,updated_at)
       VALUES (?,?,?,'RAZORPAY_CAPTURE_POST_COMMIT',?,?,'PENDING',0,?,?,?)
       ON CONFLICT(dedupe_key) DO NOTHING`).bind(effectsOutboxId, input.intentId ? "payment_intent" : "booking_payment", input.intentId || input.paymentId, effectsDedupe, effectsPayload, now, now, now),
-    captureTimelineStatement(db, input),
     db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId),
   ];
   if (schedule && collectedInFull && text(schedule.status) !== "paid") {

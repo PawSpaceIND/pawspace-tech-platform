@@ -102,6 +102,12 @@ test("Pet Sitting Gate 2 care plan needs emergency contact, vet AND home access"
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Pet Sitting Gate 2 refuses sitter check-in before the scheduled care window begins", async () => {
+  const start=Date.now()+3_600_000,world=await readyForCheckIn(await sittingWorld({runtime:{},bookingId:"BKG-SIT-FUTURE",window:{scheduledStart:new Date(start).toISOString(),scheduledEnd:new Date(start+2*3_600_000).toISOString()}}));
+  const early=await refusal(world.act("check_in",{...metresNorth(world.doorstep,20)}));assert.equal(early?.status,409);assert.match(early.message,/before the Sitting care window starts/);assert.equal((await world.bookingRow()).status,"assigned");
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 2 enforces the check-in geofence against the customer's doorstep", async () => {
   // Production-shaped runtime: the preview flag is absent, so the geofence is live.
   const world = await readyForCheckIn(await sittingWorld({ runtime: {} }));
