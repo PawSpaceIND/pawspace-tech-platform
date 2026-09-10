@@ -30,7 +30,7 @@ export function checkoutSandboxPlan(env: Env) {
   const keyId = required(env, "RAZORPAY_KEY_ID_SANDBOX");
   if (!/^rzp_test_[a-zA-Z0-9]+$/.test(keyId) || /placeholder/i.test(keyId)) throw new Error("Only a genuine TEST-key shape is accepted");
   const names = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
-    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX"];
+    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX", "GOOGLE_MAPS_SERVER_API_KEY_UAT"];
   const secrets: Record<string, string> = {};
   for (const name of names) {
     const value = required(env, name);
@@ -63,6 +63,7 @@ export function checkoutSandboxConfig(artifact: Record<string, unknown>, plan: R
       PAWSPACE_PAYMENT_ENV: "sandbox", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
       PAWSPACE_COMMUNICATION_ENV: "sandbox", PAWSPACE_MAPS_ENV: "sandbox", PAWSPACE_VOICE_ENV: "disabled",
       PAWSPACE_VOICE_UAT_APPROVED: "false", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat",
+      PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
       ...Object.fromEntries(["PAYMENTS", "PAYOUTS", "REFUNDS", "BANK_INSTRUCTIONS", "WHATSAPP", "SMS", "EMAIL", "PUSH",
         "TELEPHONY", "KYC", "ESIGN", "MAPS_BILLING", "EXTERNAL_AI", "ACCOUNTING", "TAX_POSTING"].map(name => [`PAWSPACE_LIVE_${name}`, "false"])),
       PAWSPACE_PROVIDER_MARKETPLACE_LIVE: "false", PAWSPACE_PROVIDER_ORDER_ELIGIBLE: "false", PAWSPACE_PROVIDER_ACTIVATION: "uat_ready",
