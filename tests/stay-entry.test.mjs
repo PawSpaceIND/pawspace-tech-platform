@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__STAY_ENTRY_DB__');
+for(const route of ['boarding','sitting'])test(`${route} entry waits for the owned account before exposing booking or sample care`,async()=>{const React=await import('react'),{renderToStaticMarkup}=await import('react-dom/server'),{default:Page}=await import(`../app/${route}/page.tsx`);const html=renderToStaticMarkup(React.createElement(Page));assert.match(html,/Loading your PawSpace account/);assert.match(html,route==='boarding'?/>Boarding<\//:/>Pet Sitting<\//);assert.doesNotMatch(html,/98802|TST-101|PawSpace UAT vet|Confirm booking|<textarea/);});
+
+test('Boarding management without an identifier gives navigation guidance and no care controls',async()=>{const {renderToStaticMarkup}=await import('react-dom/server'),{default:Page}=await import('../app/boarding/manage/page.tsx');const html=renderToStaticMarkup(await Page({searchParams:Promise.resolve({})}));assert.match(html,/Open a Boarding booking from your Activity/);assert.doesNotMatch(html,/<input|<textarea|Save care/);});
+test('Boarding management waits for ownership-scoped loading before showing care actions',async()=>{const {renderToStaticMarkup}=await import('react-dom/server'),{default:Page}=await import('../app/boarding/manage/page.tsx');const html=renderToStaticMarkup(await Page({searchParams:Promise.resolve({bookingId:'UNKNOWN-BOARDING'})}));assert.match(html,/Loading stay status/);assert.doesNotMatch(html,/<input|<textarea|The booking exists/);});

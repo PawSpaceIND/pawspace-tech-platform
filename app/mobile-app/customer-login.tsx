@@ -135,6 +135,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 />
                 <input
                   type="text"
+                  aria-label="Your name"
                   placeholder="Your name (first time only)"
                   value={name}
                   onChange={(e) => setName(e.target.value)}

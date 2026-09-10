@@ -86,7 +86,7 @@ function validateManualOverride(input:ScheduleRequest){
   if(reason.length<8)throw Object.assign(new Error("Manual provider override requires a clear reason of at least 8 characters"),{statusCode:422});
 }
 
-function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
+export function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
   const requested=recurring?(input.occurrences??1):1;
   if(requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});

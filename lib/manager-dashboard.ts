@@ -63,13 +63,14 @@ function daysAgo(date:string,n:number){const d=new Date(`${date}T00:00:00Z`);d.s
 async function salesRow(db:Db,email:string,name:string,today:string,actorId:string){
   const daily=await computeDailySalesIncentive(db,{employeeId:email,date:today,actorId}).catch(()=>null);
   const monthly=await computeMonthlySalesIncentive(db,{employeeId:email,monthStart:monthStartOf(today),actorId}).catch(()=>null);
-  let weeklyValue=0;for(let i=0;i<7;i++){const d=await computeDailySalesIncentive(db,{employeeId:email,date:daysAgo(today,i),actorId}).catch(()=>null);if(d)weeklyValue+=d.achievedValue;}
+  let weeklyValue=0,weeklyComplete=true;for(let i=0;i<7;i++){const d=await computeDailySalesIncentive(db,{employeeId:email,date:daysAgo(today,i),actorId}).catch(()=>null);if(d)weeklyValue+=d.achievedValue;else weeklyComplete=false;}
   const closure=await dailyClosureReadiness(db,{repEmail:email,closureDate:today}).catch(()=>null);
   const talkTime=await dailyTalkTimeSummary(db,{repEmail:email,callDate:today}).catch(()=>null);
   return{
     employeeEmail:email,name,vertical:"sales",
     daily:daily?{achievedValue:daily.achievedValue,tierTarget:daily.tierTarget,incentive:daily.incentive}:null,
-    weekly:{achievedValue:money(weeklyValue)},
+    weekly:weeklyComplete?{achievedValue:money(weeklyValue)}:null,
+    unavailableMetrics:[...(!daily?["daily"]:[]),...(!weeklyComplete?["weekly"]:[]),...(!monthly?["monthly"]:[]),...(!closure?["day closure"]:[]),...(!talkTime?["talk time"]:[])],
     monthly:monthly?{achievedValue:monthly.achievedValue,tierTarget:monthly.tierTarget,incentive:monthly.incentive}:null,
     dayClosureReady:closure?closure.readyToClose:null,talkTimeMinutesToday:talkTime?talkTime.totalMinutes:null,
   };

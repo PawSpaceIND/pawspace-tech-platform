@@ -1,3 +1,4 @@
+import {seedOwnedPet} from "./helpers/saved-pet-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setupJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
@@ -35,6 +36,7 @@ test("customer cannot open a payment order for another customer's booking", asyn
   const petSourceId = "PET-PAYMENT-BINDING";
   const start = new Date(Date.UTC(2026, 10, 26, 4, 30));
   const end = new Date(start.getTime() + 2 * 60 * 60_000);
+  await seedOwnedPet(ctx.db, ownerId, petSourceId);
   const ownerCookie = await sessionCookie(ctx.db, "customer", ownerId, `customer:${ownerId}`);
   const attackerCookie = await sessionCookie(ctx.db, "customer", attackerId, `customer:${attackerId}`);
 

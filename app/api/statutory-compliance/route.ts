@@ -1,7 +1,7 @@
 import{authError,authorize,securityAudit}from"../../../lib/server-auth";
 import{statutoryCalendar,recordStatutoryFiling,recordBoardApproval,runStatutoryReminderSweep,type ObligationCode}from"../../../lib/statutory-compliance";
 import{computeMonthlyTds,recordTdsDeposit,prepareTdsQuarterlyReturn,markTdsReturnFiled,tdsDashboard}from"../../../lib/tds-governance";
-import{computeMonthlyTcs,recordTcsDeposit,prepareGstr8,tcsDashboard}from"../../../lib/tcs-governance";
+import{computeMonthlyTcsStatutory,recordTcsDeposit,prepareGstr8Statutory,tcsDashboard,saveProviderTaxProfile}from"../../../lib/statutory-tcs";
 import{reconcilePartnerPayoutTax}from"../../../lib/tds-tcs-reconciliation";
 import{monthlyCloseView,closeMonth}from"../../../lib/finance-monthly-close";
 
@@ -23,12 +23,17 @@ export async function GET(request:Request){try{
  return json({data:{period,calendar,close,tds,tcs,reconciliation,filingMode:"manual_with_reminders",statutoryBasis:"India - GST monthly filer, TDS FY2025-26 rates/thresholds, s52 GST TCS, Karnataka PT",productionReady:false}});
 }catch(error){return authError(error,"Unable to load the statutory compliance dashboard");}}
 
-type Body={action?:string;period?:string;obligationCode?:string;acknowledgementRef?:string;amount?:number;notes?:string;minutesReference?:string;resolutionText?:string;challanReference?:string;fyLabel?:string;quarter?:number;form?:string};
+type Body={action?:string;period?:string;obligationCode?:string;acknowledgementRef?:string;amount?:number;notes?:string;minutesReference?:string;resolutionText?:string;challanReference?:string;fyLabel?:string;quarter?:number;form?:string;providerId?:string;gstin?:string};
 
 export async function POST(request:Request){try{
  const actor=await authorize(request,"finance.manage");
  const body=await request.json() as Body,db=await database();
  const action=String(body.action||""),period=String(body.period||currentPeriod());
+ if(action==="save_provider_tax_profile"){
+  const result=await saveProviderTaxProfile(db,{providerId:String(body.providerId||""),gstin:String(body.gstin||"")},actor.email);
+  await securityAudit(db,actor,"statutory.save_provider_tax_profile","provider_tax_profile",result.providerId,"completed",{stateCode:result.stateCode});
+  return json({data:result},201);
+ }
  if(action==="compute_tds"){
   const result=await computeMonthlyTds(db,{period,actorId:actor.email});
   await securityAudit(db,actor,"statutory.compute_tds","tds_period",period,"completed",{totalTds:result.totalTds});
@@ -54,13 +59,13 @@ export async function POST(request:Request){try{
   return json({data:result},201);
  }
  if(action==="compute_tcs"){
-  const result=await computeMonthlyTcs(db,{period,actorId:actor.email});
-  await securityAudit(db,actor,"statutory.compute_tcs","tcs_period",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount});
+  const result=await computeMonthlyTcsStatutory(db,{period,actorId:actor.email});
+  await securityAudit(db,actor,"statutory.compute_tcs","tcs_period",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount,returnedSupplyValue:result.returnedSupplyValue});
   return json({data:result});
  }
  if(action==="prepare_gstr8"){
-  const result=await prepareGstr8(db,{period,actorId:actor.email});
-  await securityAudit(db,actor,"statutory.prepare_gstr8","tcs_statement",period,"completed",{totalTcs:result.totalTcs});
+  const result=await prepareGstr8Statutory(db,{period,actorId:actor.email});
+  await securityAudit(db,actor,"statutory.prepare_gstr8","tcs_statement",period,"completed",{totalTcs:result.totalTcs,supplierCount:result.supplierCount});
   return json({data:result});
  }
  if(action==="record_tcs_deposit"){

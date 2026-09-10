@@ -254,8 +254,6 @@ export function evaluateCancellationRefund(policy:{config:RefundPolicyConfig;pol
   }
 
   const tier=config.tiers.find(entry=>hoursUntilStart>=Number(entry.minHoursBeforeStart))??config.tiers[config.tiers.length-1];
-  reasons.push(tier.label||`${tier.minHoursBeforeStart}h notice band`);
-  const automatic=Number(tier.customerRefundPercent)>0;
-  if(!automatic)reasons.push("No refund is due at this notice; the customer may still raise a dispute");
-  return settle(Number(tier.customerRefundPercent),tier.providerCompensation,automatic,!automatic);
+  reasons.push("No cancellation fee: return the amount actually paid before service starts");
+  return settle(100,tier.providerCompensation,true,false);
 }

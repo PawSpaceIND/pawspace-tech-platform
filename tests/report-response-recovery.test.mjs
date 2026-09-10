@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readReportJson} from '../lib/read-report-json.ts';
+async function withResponse(t,response){const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});globalThis.fetch=async()=>response;}
+test('HTTP error cannot masquerade as a valid report even with a data object',async t=>{await withResponse(t,Response.json({data:{headcount:{active:0}}},{status:503}));await assert.rejects(readReportJson('/report'),/Report unavailable/);});
+test('a malformed gateway body gives a recoverable message',async t=>{await withResponse(t,new Response('<html>gateway unavailable</html>',{status:502}));await assert.rejects(readReportJson('/report'),/could not be read/);});
+test('missing JSON payload is unavailable; a verified zero is preserved',async t=>{await withResponse(t,Response.json(null));await assert.rejects(readReportJson('/report'),/incomplete/);globalThis.fetch=async()=>Response.json({data:{headcount:{active:0}}});assert.deepEqual(await readReportJson('/report'),{data:{headcount:{active:0}}});});
+test('an aborted report request produces an explicit timeout and supplies no report',async t=>{const originalFetch=globalThis.fetch,originalTimeout=globalThis.setTimeout;t.after(()=>{globalThis.fetch=originalFetch;globalThis.setTimeout=originalTimeout;});globalThis.setTimeout=(callback)=>originalTimeout(callback,1);globalThis.fetch=async(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))));await assert.rejects(readReportJson('/report'),/timed out/);});

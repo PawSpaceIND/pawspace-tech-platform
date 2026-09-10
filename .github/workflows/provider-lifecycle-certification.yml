@@ -1,0 +1,61 @@
+name: Provider Lifecycle Certification
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-lifecycle-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-compliance-audit:
+    name: Provider compliance audit
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Verify sandbox isolation
+        run: |
+          test "$PAWSPACE_PAYMENT_ENV" = "sandbox"
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = "false"
+          test "$FORBID_PRODUCTION" = "true"
+      - run: npm run test:provider-compliance-audit
+
+  service-discovery-capacity-closure:
+    name: Service discovery capacity closure
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Verify sandbox isolation
+        run: |
+          test "$PAWSPACE_PAYMENT_ENV" = "sandbox"
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = "false"
+          test "$FORBID_PRODUCTION" = "true"
+      - run: npm run test:service-discovery-capacity-closure

@@ -33,7 +33,7 @@
  * is reported separately from verified collections until a finance role confirms it. It is never hidden -
  * a manual collection that vanished until approved would be as misleading as one that counted too soon.
  */
-import{ACCT,periodOf,postJournal,round,type JournalMetadata}from"./finance-accounts";
+import{ACCT,periodOf,prepareJournalPosting,round,type JournalMetadata}from"./finance-accounts";
 import{registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-governance";
 
 type Db=D1Database;
@@ -151,28 +151,28 @@ function linesFor(event:CollectionEvent,config:CollectionLedgerConfig,amount:num
 const groupKeyFor=(input:CollectionEventInput)=>
   `COLL-${input.event}-${text(input.settlementId)||text(input.refundReference)||text(input.paymentId)}`;
 
-export async function postCollectionEvent(db:Db,input:CollectionEventInput){
+export async function prepareCollectionEventPosting(db:Db,input:CollectionEventInput){
   const[,policy]=await Promise.all([ensureCollectionLedgerTables(db),resolveCollectionLedgerPolicy(db,{serviceCode:input.serviceCode,cityId:input.cityId})]);
   const config=policy.config;
   const groupKey=groupKeyFor(input);
 
   // Money that has not arrived is not in the books. Not a provisional line, not a zero line - nothing.
   if(config.nonPostingEvents.map(String).includes(input.event)){
-    return{posted:false,groupKey,reason:"non_posting_event",verificationStatus:null,duplicatePrevented:false};
+    return{posted:false,groupKey,reason:"non_posting_event",verificationStatus:null,duplicatePrevented:false,statements:[] as D1PreparedStatement[]};
   }
   const amount=round(Math.max(0,Number(input.amount||0)));
-  if(amount<=0)return{posted:false,groupKey,reason:"zero_amount",verificationStatus:null,duplicatePrevented:false};
+  if(amount<=0)return{posted:false,groupKey,reason:"zero_amount",verificationStatus:null,duplicatePrevented:false,statements:[] as D1PreparedStatement[]};
   if(config.requireCollectorForCash&&input.event==="cash_collected_confirmed"&&!text(input.collectorId)){
     throw Response.json({error:"A cash collection needs the collector who took it",code:"cash_collector_required"},{status:400});
   }
 
   const existing=await db.prepare("SELECT group_key,verification_status FROM collection_ledger_postings WHERE group_key=?").bind(groupKey).first<Row>();
-  if(existing)return{posted:false,groupKey,reason:"already_posted",verificationStatus:text(existing.verification_status),duplicatePrevented:true};
+  if(existing)return{posted:false,groupKey,reason:"already_posted",verificationStatus:text(existing.verification_status),duplicatePrevented:true,statements:[] as D1PreparedStatement[]};
 
   const manual=input.manualEntry===true;
   const verificationStatus=manual&&config.manualCollectionRequiresFinanceVerification?"pending_finance_verification":"posted";
   const lines=linesFor(input.event,config,amount,input.refundInstrument??"gateway");
-  if(!lines.length)return{posted:false,groupKey,reason:"unknown_event",verificationStatus:null,duplicatePrevented:false};
+  if(!lines.length)return{posted:false,groupKey,reason:"unknown_event",verificationStatus:null,duplicatePrevented:false,statements:[] as D1PreparedStatement[]};
 
   const sourceId=text(input.settlementId)||text(input.refundReference)||text(input.paymentId);
   const metadata:JournalMetadata={
@@ -181,11 +181,20 @@ export async function postCollectionEvent(db:Db,input:CollectionEventInput){
     taxAmount:input.taxAmount??null,gatewayFee:input.gatewayFee??null,collectorId:input.collectorId??null,
     reversalReference:input.refundReference??null,transactionAt:input.transactionAt??null,verificationStatus,
   };
-  await postJournal(db,{groupKey,entryDate:input.entryDate,periodCode:periodOf(input.entryDate),
+  const journal=await prepareJournalPosting(db,{groupKey,entryDate:input.entryDate,periodCode:periodOf(input.entryDate),
     sourceType:input.event,sourceId,narration:`${input.event} ${sourceId}`,lines,metadata});
-  await db.prepare("INSERT INTO collection_ledger_postings (group_key,event,payment_id,settlement_id,reversal_reference,amount,period_code,manual_entry,verification_status,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(groupKey,input.event,input.paymentId??null,input.settlementId??null,input.refundReference??null,amount,periodOf(input.entryDate),manual?1:0,verificationStatus,input.actorId,Date.now()).run();
-  return{posted:true,groupKey,reason:null,verificationStatus,duplicatePrevented:false};
+  const marker=db.prepare("INSERT OR IGNORE INTO collection_ledger_postings (group_key,event,payment_id,settlement_id,reversal_reference,amount,period_code,manual_entry,verification_status,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(groupKey,input.event,input.paymentId??null,input.settlementId??null,input.refundReference??null,amount,periodOf(input.entryDate),manual?1:0,verificationStatus,input.actorId,Date.now());
+  return{posted:true,groupKey,reason:null,verificationStatus,duplicatePrevented:false,statements:[...journal.statements,marker]};
+}
+
+/** Journal rows and their collection marker commit together, including concurrent replays. */
+export async function postCollectionEvent(db:Db,input:CollectionEventInput){
+  const {statements,...result}=await prepareCollectionEventPosting(db,input);
+  if(!statements.length)return result;
+  const applied=await db.batch(statements);
+  if(Number(applied[applied.length-1]?.meta?.changes||0)===0)return{...result,posted:false,reason:"already_posted",duplicatePrevented:true};
+  return result;
 }
 
 /**

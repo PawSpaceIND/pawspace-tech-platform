@@ -44,11 +44,18 @@ test("canonical production provider credentials are injected only through Wrangl
 });
 
 test("canonical production provider identifiers are required and written as non-secret Worker vars", () => {
-  const configNames = ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"];
+  const variableConfigNames = ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID"];
+  const protectedIdentifierNames = ["META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"];
+  const configNames = [...variableConfigNames, ...protectedIdentifierNames];
   for (const name of configNames) {
     assert.match(prodConfig, new RegExp(`REQUIRED_PRODUCTION_CONFIG[\\s\\S]*["']${name}["']`));
-    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
     assert.match(workflow, new RegExp(`cfg\\.vars[\\s\\S]*${name}`));
+  }
+  for (const name of variableConfigNames)
+    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
+  for (const name of protectedIdentifierNames) {
+    assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`));
+    assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}\\s*\\}\\}`));
   }
 });
 
@@ -85,4 +92,14 @@ test("D1 backup and restore guard suites are tracked by the normal test glob", (
   assert.doesNotThrow(() => read("scripts/d1-backup.mjs"));
   assert.doesNotThrow(() => read("scripts/d1-restore.mjs"));
   assert.doesNotThrow(() => read("tests/d1-backup-restore-guards.test.mjs"));
+});
+
+test("production deploy reads the production D1 identifier from the protected secret source", () => {
+  const secretRefs = workflow.match(/PRODUCTION_D1_ID:\s*\$\{\{\s*secrets\.PRODUCTION_D1_ID\s*\}\}/g) || [];
+  assert.ok(secretRefs.length >= 2, "configuration and post-deploy certification must both use secrets.PRODUCTION_D1_ID");
+  assert.doesNotMatch(
+    workflow,
+    /PRODUCTION_D1_ID:\s*\$\{\{\s*vars\.PRODUCTION_D1_ID\s*\}\}/,
+    "production deployment must not read PRODUCTION_D1_ID from repository/environment variables",
+  );
 });

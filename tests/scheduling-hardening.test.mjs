@@ -238,7 +238,7 @@ test("route: double-booking is impossible — of two concurrent reserves for one
   // reservations table (the competing transaction "hasn't committed yet"), so evaluation passes —
   // only the atomic in-statement guard stands between it and a double booking.
   hideReservations = true;
-  const loser = await post(reserve({ clientRequestId: "race-b", customerId: "cus_other", ...slot }));
+  const loser = await post(reserve({ clientRequestId: "race-b", customerId: "cus_other", petIds: ["Bruno2"], ...slot }));
   hideReservations = false;
   assert.equal(loser.status, 409, JSON.stringify(loser.body));
   assert.equal(loser.body.error, "SLOT_TAKEN");

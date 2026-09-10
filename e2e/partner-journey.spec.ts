@@ -21,23 +21,7 @@ async function sandboxPartnerLogin(page: import("@playwright/test").Page) {
 
   const verifyOtp = page.waitForResponse(response => response.url().includes("/api/partner-otp") && response.request().method() === "POST" && response.ok());
   await page.getByRole("button", { name: "Verify & continue" }).click();
-  const verifyResponse = await verifyOtp;
-
-  const setCookie = await verifyResponse.headerValue("set-cookie") || "";
-  const issuedToken = setCookie.match(/(?:^|[,;]\s*)pawspace_identity_session=([^;]+)/)?.[1];
-  expect(issuedToken, "partner OTP verify must issue the platform session cookie").toBeTruthy();
-
-  const origin = new URL(page.url());
-  if (origin.protocol === "http:") {
-    await page.context().addCookies([{
-      name: "pawspace_identity_session",
-      value: decodeURIComponent(issuedToken!),
-      url: origin.origin,
-      httpOnly: true,
-      secure: false,
-      sameSite: "Lax",
-    }]);
-  }
+  await verifyOtp;
 
   await expect.poll(async () => page.evaluate(async () => {
     const response = await fetch("/api/identity-session", { cache: "no-store" });

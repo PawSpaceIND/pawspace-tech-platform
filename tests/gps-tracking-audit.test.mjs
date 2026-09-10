@@ -65,11 +65,11 @@ test("live grooming route is wired to universal evidence and no legacy event ins
  assert.doesNotMatch(route,/razorpay|PAWSPACE_PAYMENT_ENV/i);
 });
 
-test("arrival ignores raw lifecycle coordinates and binds to trusted server evidence with CAS",async()=>{
+test("arrival ignores raw lifecycle coordinates and binds to trusted server evidence with canonical CAS",async()=>{
  const lifecycle=await source("app/api/grooming-lifecycle/route.ts");
  assert.match(lifecycle,/latestTrustedGroomingObservation/);assert.match(lifecycle,/locationEventId/);
  assert.match(lifecycle,/UPDATE canonical_bookings SET status=\?,updated_at=\? WHERE id=\? AND status=\?/);
- assert.match(lifecycle,/claimed!==1/);
+ assert.match(lifecycle,/runAtomicProviderLifecycleTransition/);assert.match(lifecycle,/providerLifecycleAssertionStatement/);
  assert.doesNotMatch(lifecycle,/Number\(input\.latitude\)|Number\(input\.longitude\)/);
 });
 

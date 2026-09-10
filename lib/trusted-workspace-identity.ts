@@ -35,5 +35,7 @@ export function requestForAuthorization(request:Request,runtime:Record<string,un
  if(trustedWorkspaceHeaderIngress(request,runtime))return request;
  const headers=new Headers(request.headers);
  for(const name of WORKSPACE_IDENTITY_HEADERS)headers.delete(name);
- return new Request(request,{headers});
+ // Constructing from the original transfers its body and leaves the application route with a
+ // disturbed stream. Sanitize an independent clone so POST inspection cannot consume the route body.
+ return new Request(request.clone(),{headers});
 }

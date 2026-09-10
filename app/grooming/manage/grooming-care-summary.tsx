@@ -1,0 +1,11 @@
+"use client";
+import{useEffect,useState}from"react";
+import{apiSend}from"../../../lib/api-fetch";
+import styles from"./grooming-customer-booking.module.css";
+type Summary={bookingId:string;status:string;care:{checklist:string[];notes:string}|null;invoice:{number:string;status:string;currency:string;total:number;tax:number;subtotal:number;issuedAt:number}|null};
+export default function GroomingCareSummary({bookingId}:{bookingId:string}){
+ const[data,setData]=useState<Summary|null>(null),[error,setError]=useState(""),[refresh,setRefresh]=useState(0);
+ useEffect(()=>{let active=true;void apiSend<Summary>(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}`,{cache:"no-store"},"Unable to load your care summary").then(value=>{if(active){setData(value);setError("");}}).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load your care summary");});return()=>{active=false;};},[bookingId,refresh]);
+ const reload=()=>{setData(null);setError("");setRefresh(value=>value+1);};const invoice=data?.invoice;const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:invoice?.currency||"INR"}).format(value);
+ return <section className={styles.card} aria-label="Completed care summary"><h2>Care summary</h2>{error?<><p role="alert">{error}</p><button onClick={reload}>Retry care summary</button></>:!data?<p role="status">Loading your care summary…</p>:<>{data.care?<>{data.care.notes&&<p>{data.care.notes}</p>}{data.care.checklist.length>0&&<ul>{data.care.checklist.map((item,index)=><li key={`${index}:${item}`}>{item.replaceAll("_"," ")}</li>)}</ul>}</>:<p>Your completed care notes are not available yet.</p>}<h3>Invoice summary</h3>{invoice?<><p className={styles.reference}>{invoice.status==="issued_uat"?"UAT invoice":"Invoice"} · {invoice.number}</p><dl><div><dt>Subtotal</dt><dd>{money(invoice.subtotal)}</dd></div><div><dt>Tax</dt><dd>{money(invoice.tax)}</dd></div><div><dt>Total</dt><dd>{money(invoice.total)}</dd></div></dl><p className={styles.note}>These invoice totals do not confirm that payment has been received.</p></>:<p>An issued invoice is not available yet.</p>}<button onClick={reload}>Refresh care summary</button></>}</section>;
+}

@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+import {freshSqlite,makeD1,seedSittingBooking,customerSessionCookie} from './helpers/stay-harness.mjs';
+import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation,requestCustomerSittingDateChange} from '../lib/sitting-customer-view.ts';
+installWorkersHooks('__SIT_CUSTOMER_DB__','__SIT_CUSTOMER_ENV__');
+test('customer care and cancellation controls persist through the real owned routes',async t=>{
+ const sqlite=freshSqlite(),db=makeD1(sqlite);t.after(()=>sqlite.close());globalThis.__SIT_CUSTOMER_DB__=db;globalThis.__SIT_CUSTOMER_ENV__={PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
+ const seed=await seedSittingBooking(db,sqlite);let cookie=(await customerSessionCookie(db,{principalKey:'customer:care-owner',customerId:seed.customerId})).cookie;
+ const lifecycle=await import('../app/api/sitting-lifecycle/route.ts'),finance=await import('../app/api/sitting-finance/route.ts');
+ const previous=globalThis.fetch;t.after(()=>{globalThis.fetch=previous;});globalThis.fetch=async(path,init={})=>{const url=new URL(path,'https://uat.pawspace.in');const req=new Request(url,{...init,headers:{...init.headers,cookie}});const route=url.pathname==='/api/sitting-finance'?finance:lifecycle;return route[init.method||'GET'](req);};
+ const initial=await loadSittingCustomerView(seed.bookingId);assert.deepEqual(initial.events,[]);assert.equal(initial.carePlanStatus,null);
+ const plan={feeding:'Owner supplied routine',medication:'No medication specified by owner',emergencyContact:'UAT contact',vet:'UAT vet contact',homeAccess:'Customer handover'};
+ await saveSittingCustomerPlan(seed.bookingId,plan,'CARE-RETRY');await saveSittingCustomerPlan(seed.bookingId,plan,'CARE-RETRY');
+ const saved=await loadSittingCustomerView(seed.bookingId);assert.deepEqual(saved.carePlan,plan);assert.equal(saved.carePlanStatus,'ready');assert.equal(saved.events.filter(e=>e.type==='care_plan_ready').length,1,'same retry cannot fabricate a second care update');
+ const before=sqlite.prepare('SELECT status FROM canonical_bookings WHERE id=?').get(seed.bookingId).status;
+ const requestId=await requestCustomerSittingCancellation(seed.bookingId,'Travel plans changed');assert.equal(await requestCustomerSittingCancellation(seed.bookingId,'Travel plans changed'),requestId);
+ const row=sqlite.prepare('SELECT * FROM sitting_cancellation_requests WHERE id=?').get(requestId);assert.equal(row.booking_id,seed.bookingId);assert.equal(row.status,'policy_review_required');assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_cancellation_requests WHERE booking_id=?').get(seed.bookingId).n,1);assert.equal(sqlite.prepare('SELECT status FROM canonical_bookings WHERE id=?').get(seed.bookingId).status,before,'request does not claim cancellation completed');
+ const anchor=Date.now(),start=new Date(anchor+72*3600000).toISOString(),end=new Date(anchor+96*3600000).toISOString();
+ const oldWindow=sqlite.prepare('SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?').get(seed.bookingId);
+ const dateRequest=await requestCustomerSittingDateChange(seed.bookingId,start,end,'Travel dates changed');assert.equal(await requestCustomerSittingDateChange(seed.bookingId,start,end,'Travel dates changed'),dateRequest);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_date_change_requests WHERE booking_id=?').get(seed.bookingId).n,1);assert.deepEqual(sqlite.prepare('SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?').get(seed.bookingId),oldWindow);
+ cookie=(await customerSessionCookie(db,{principalKey:'customer:foreign',customerId:'FOREIGN-CUSTOMER'})).cookie;await assert.rejects(loadSittingCustomerView(seed.bookingId),/ownership/i);await assert.rejects(saveSittingCustomerPlan(seed.bookingId,plan,'FOREIGN-CARE'),/ownership/i);await assert.rejects(requestCustomerSittingDateChange(seed.bookingId,start,end,'Foreign request'),/ownership/i);assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM sitting_care_events WHERE booking_id=?').get(seed.bookingId).n,1);
+});

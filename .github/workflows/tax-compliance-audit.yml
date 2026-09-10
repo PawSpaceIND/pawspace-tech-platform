@@ -1,0 +1,39 @@
+name: Tax Compliance Audit
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - fix/statutory-tax-compliance-remediation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tax-compliance-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tax-compliance-audit:
+    name: Tax compliance audit (sandbox)
+    runs-on: ubuntu-latest
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Run statutory tax compliance audit
+        run: npm run test:tax-compliance-audit
+      - name: Typecheck remediation surface
+        run: npm run typecheck

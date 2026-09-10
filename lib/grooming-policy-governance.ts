@@ -41,17 +41,16 @@ export function parsePolicySnapshot(value:unknown):GroomingPolicy|null{if(!value
 
 export function evaluateBookingChange(policy:GroomingPolicy,input:{action:"cancel"|"reschedule";scheduledStart:string;status:string;bookingAmount:number;rescheduleCount?:number;now?:number}):BookingChangeEvaluation{
   const now=input.now??Date.now(),start=new Date(input.scheduledStart).getTime(),minutesUntilStart=Math.floor((start-now)/60_000),reasons:string[]=[];
-  let allowed=!policy.changeLockStatuses.includes(input.status),refundPercent=100,feeAmount=0;
+  let allowed=!policy.changeLockStatuses.includes(input.status);
   if(!allowed)reasons.push(`Booking status ${input.status} is locked by policy`);
   if(input.action==="cancel"){
-    const before=minutesUntilStart>=policy.cancellationCutoffMinutes;refundPercent=before?policy.refundPercentBeforeCutoff:policy.refundPercentAfterCutoff;reasons.push(before?"Cancellation is before the configured cutoff":"Cancellation is inside the configured cutoff");
+    const before=minutesUntilStart>=policy.cancellationCutoffMinutes;reasons.push(before?"Cancellation is before the configured cutoff":"Cancellation is inside the configured cutoff");
   }else{
     const before=minutesUntilStart>=policy.rescheduleCutoffMinutes;
     if(!before&&!policy.rescheduleAllowedAfterCutoff){allowed=false;reasons.push("Reschedule is inside the cutoff and late reschedule is disabled");}
     const count=input.rescheduleCount??0;if(policy.maxReschedules>0&&count>=policy.maxReschedules){allowed=false;reasons.push("Maximum reschedule count reached");}
-    if(policy.rescheduleFeeType==="flat")feeAmount=policy.rescheduleFeeValue;else if(policy.rescheduleFeeType==="percent")feeAmount=Math.round(input.bookingAmount*policy.rescheduleFeeValue)/100;
     reasons.push(before?"Reschedule is before the configured cutoff":"Reschedule is inside the configured cutoff");
   }
-  if(policy.enforcementMode==="observe"&&policy.changeLockStatuses.includes(input.status)===false){if(!allowed)reasons.push("Observe mode: policy would block this change but UAT behavior is preserved");allowed=true;refundPercent=100;feeAmount=0;}
-  return{policyVersion:policyVersion(policy),enforcementMode:policy.enforcementMode,allowed,minutesUntilStart,refundPercent:Math.max(0,Math.min(100,refundPercent)),feeAmount:Math.max(0,feeAmount),reasons};
+  if(policy.enforcementMode==="observe"&&policy.changeLockStatuses.includes(input.status)===false){if(!allowed)reasons.push("Observe mode: policy would block this change but UAT behavior is preserved");allowed=true;}
+  return{policyVersion:policyVersion(policy),enforcementMode:policy.enforcementMode,allowed,minutesUntilStart,refundPercent:100,feeAmount:0,reasons};
 }
