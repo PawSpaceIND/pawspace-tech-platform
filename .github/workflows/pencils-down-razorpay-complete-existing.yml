@@ -1,0 +1,71 @@
+name: Complete existing Razorpay Test checkout
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-razorpay-complete-existing.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pawspace-release-preview
+    env:
+      ORIGIN: https://pawspace-beta-golden-wallet-43ba4002.karthik-fce.workers.dev
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 43ba4002bacbd129b359bc6c8ec3fd4f260272bf
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact candidate and matching Chromium
+        run: |
+          npm run install:ci
+          node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Continue same booking through current Razorpay Test checkout
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          cat > /tmp/complete-checkout.mjs <<'NODE'
+          import fs from 'node:fs';
+          import {chromium} from './node_modules/playwright/index.js';
+          const origin=process.env.ORIGIN,bookingId='PS-UAT-MTV9TAXL-D586',expectedOrder='order_TaGn7hheH3NbJT',phone='9000000939';
+          const evidence='razorpay-completion-evidence';fs.mkdirSync(evidence,{recursive:true});
+          const report={candidate:'43ba4002bacbd129b359bc6c8ec3fd4f260272bf',origin,bookingId,expectedOrder,testOnly:true,productionChanged:false,steps:[]};
+          const save=()=>fs.writeFileSync(`${evidence}/report.json`,JSON.stringify(report,null,2)+'\n');
+          const step=(name,detail={})=>{report.steps.push({name,ok:true,...detail});save();console.log('PASS',name,JSON.stringify(detail));};
+          const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:390,height:844}});const page=await context.newPage();
+          async function checkoutFrame(){for(let attempt=0;attempt<120;attempt++){for(const frame of page.frames()){try{if(await frame.getByText(/PawSpace Test Checkout|Contact details|Payment methods/i).first().isVisible({timeout:50}))return frame;}catch{}}await page.waitForTimeout(100);}throw new Error('Razorpay checkout frame did not become readable');}
+          async function visibleInput(frame,pattern){const inputs=frame.locator('input');for(let i=0;i<await inputs.count();i++){const input=inputs.nth(i);if(!(await input.isVisible().catch(()=>false)))continue;const ph=String(await input.getAttribute('placeholder')||'');const al=String(await input.getAttribute('aria-label')||'');if(pattern.test(`${ph} ${al}`))return input;}return null;}
+          try{
+            const gate=await context.request.post(`${origin}/api/staging-login`,{data:{code:process.env.PAWSPACE_UAT_ACCESS_CODE,email:'founder@pawspace.in'}});if(!gate.ok())throw new Error(`UAT gate ${gate.status()}`);step('UAT gate');
+            await page.goto(`${origin}/mobile-app`,{waitUntil:'domcontentloaded',timeout:60000});const browse=page.getByRole('button',{name:'Browse without location',exact:true});if(await browse.isVisible().catch(()=>false))await browse.click();
+            await page.locator('nav').getByRole('button',{name:/account/i}).last().click();await page.getByPlaceholder('10-digit phone number').fill(phone);await page.getByRole('button',{name:'Send OTP'}).click();const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({timeout:20000});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)throw new Error('sandbox OTP missing');await page.getByPlaceholder('6-digit code').fill(code);await page.getByRole('button',{name:'Verify & continue'}).click();await page.getByPlaceholder('6-digit code').waitFor({state:'hidden',timeout:20000});step('Same customer session restored');
+            const panel=page.getByText('Payments & invoice summaries',{exact:true});await panel.click();const record=page.locator('article').filter({hasText:bookingId});await record.waitFor({state:'visible',timeout:30000});await page.getByText(/Due now ₹849\.00/).waitFor({timeout:20000});step('Same booking still due INR 849 after Wallet');
+            const orderResponse=page.waitForResponse(r=>r.url().endsWith('/api/payment-order')&&r.request().method()==='POST',{timeout:30000});await record.getByRole('button',{name:'Pay securely (Test)'}).click();const response=await orderResponse;const orderBody=await response.json();if(!response.ok())throw new Error(`payment-order ${response.status()}: ${JSON.stringify(orderBody)}`);if(orderBody.data?.orderId!==expectedOrder||Number(orderBody.data?.amountPaise)!==84900)throw new Error(`unexpected reused order: ${JSON.stringify(orderBody.data)}`);step('Same Razorpay Test order reused',{orderId:orderBody.data.orderId,amountPaise:orderBody.data.amountPaise});
+            let frame=await checkoutFrame();await page.screenshot({path:`${evidence}/01-contact.png`,fullPage:true});
+            let mobile=await visibleInput(frame,/mobile number|phone|contact/i);if(!mobile)throw new Error('Razorpay contact mobile field not found');await mobile.fill(phone);const cont=frame.getByRole('button',{name:/^Continue$/i}).last();await cont.click();await page.waitForTimeout(1500);frame=await checkoutFrame();report.afterContactText=(await frame.locator('body').innerText()).slice(0,6000);save();await page.screenshot({path:`${evidence}/02-methods.png`,fullPage:true});step('Razorpay contact step completed');
+            let vpa=await visibleInput(frame,/UPI|VPA|upi id/i);
+            if(!vpa){const upiButtons=frame.getByText(/^UPI$/i);for(let i=0;i<await upiButtons.count();i++){const item=upiButtons.nth(i);if(await item.isVisible().catch(()=>false)){await item.click();break;}}await page.waitForTimeout(1200);frame=await checkoutFrame();const enterUpi=frame.getByText(/enter.*UPI ID|UPI ID/i).first();if(await enterUpi.isVisible().catch(()=>false)){await enterUpi.click();await page.waitForTimeout(500);}vpa=await visibleInput(frame,/UPI|VPA|upi id/i);}
+            if(!vpa){report.upiScreenText=(await frame.locator('body').innerText()).slice(0,6000);save();await page.screenshot({path:`${evidence}/03-upi-missing.png`,fullPage:true});throw new Error('Razorpay UPI ID field not available after contact step');}
+            await vpa.fill('success@razorpay');await page.screenshot({path:`${evidence}/03-upi-filled.png`,fullPage:true});const action=frame.getByRole('button',{name:/Pay|Verify|Continue|Proceed/i}).last();await action.click();step('Razorpay documented Test UPI submitted',{upi:'success@razorpay'});
+            const deadline=Date.now()+30000;let completed=false;while(Date.now()<deadline){await page.waitForTimeout(500);const frames=page.frames();const all=await Promise.all(frames.map(async f=>{try{return (await f.locator('body').innerText()).slice(0,3000)}catch{return''}}));if(all.some(t=>/success|payment successful|paid/i.test(t))||frames.length===1){completed=true;break;}}
+            await page.screenshot({path:`${evidence}/04-after-upi.png`,fullPage:true});report.checkoutCompletionSignal=completed;save();if(!completed)throw new Error('Razorpay checkout did not expose a completion signal within 30s');step('Razorpay browser checkout completion signal observed');
+          }catch(error){report.failure=error instanceof Error?error.message:String(error);save();try{await page.screenshot({path:`${evidence}/failure.png`,fullPage:true});}catch{};console.error(error);process.exitCode=1;}finally{save();await browser.close();}
+          NODE
+          node /tmp/complete-checkout.mjs
+      - name: Upload Razorpay continuation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-existing-order-completion-43ba4002
+          path: razorpay-completion-evidence/
+          if-no-files-found: error
+          retention-days: 7
