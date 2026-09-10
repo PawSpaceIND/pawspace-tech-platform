@@ -1,3 +1,4 @@
+import { isSupportCaseOpen } from "./support-case-status";
 import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -51,4 +52,4 @@ for(const[id,base]of selected){const addresses=addressesBy.get(id)??[],pets=pets
 // lib/pnl-reporting.ts or lib/company-analytics.ts, so counting it as lifetime value made the
 // customer record disagree with every money report about the same customer (found by the Task-24
 // cross-module journey gate).
-lifetimeValue:bookingRecords.filter(item=>!['cancelled','refunded','draft'].includes(item.status)).reduce((sum,item)=>sum+item.totalAmount,0),lastServiceAt:bookingRecords[0]?.scheduledEnd||null,openTicketCount:tickets.filter(row=>String(row.status)!=='resolved').length,dataQuality:{score:Math.max(0,100-issues.length*20),issues,duplicateCandidateIds:duplicates}});}return result;}
+lifetimeValue:bookingRecords.filter(item=>!['cancelled','refunded','draft'].includes(item.status)).reduce((sum,item)=>sum+item.totalAmount,0),lastServiceAt:bookingRecords[0]?.scheduledEnd||null,openTicketCount:tickets.filter(row=>isSupportCaseOpen(row.status)).length+supportCases.filter(row=>row.case_type==='customer_complaint'&&isSupportCaseOpen(row.status)).length,dataQuality:{score:Math.max(0,100-issues.length*20),issues,duplicateCandidateIds:duplicates}});}return result;}

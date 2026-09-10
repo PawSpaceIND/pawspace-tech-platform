@@ -29,8 +29,11 @@ export const MEDIA_BUCKET_BINDING="PAWSPACE_MEDIA_BUCKET";
  * verifies what was stored, it does not need to write, list or delete, and a wider type would invite
  * somebody to use one.
  */
+export type MediaObjectBody={size?:number;httpMetadata?:{contentType?:string};body?:ReadableStream<Uint8Array>|null;arrayBuffer?:()=>Promise<ArrayBuffer>};
 export type MediaObjectStore={
   head(key:string):Promise<{size?:number;httpMetadata?:{contentType?:string}}|null>;
+  /** Optional for backwards-compatible HEAD-only bindings; governed download routes require it. */
+  get?(key:string):Promise<MediaObjectBody|null>;
 };
 
 export type MediaStorageStatus={
@@ -84,4 +87,16 @@ export async function headStoredObject(objectKey:string):Promise<StoredObjectFac
   const object=await store.head(objectKey).catch(()=>null);
   if(!object)return null;
   return{sizeBytes:Number(object.size??-1),contentType:object.httpMetadata?.contentType?String(object.httpMetadata.contentType):null};
+}
+
+
+/** Read a private object. Authorization is deliberately the caller's responsibility. */
+export async function readStoredObject(objectKey:string):Promise<(StoredObjectFacts&{body:ReadableStream<Uint8Array>|ArrayBuffer})|null>{
+  const store=await mediaObjectStore();
+  if(!store||typeof store.get!=="function")return null;
+  const object=await store.get(objectKey).catch(()=>null);
+  if(!object)return null;
+  const body=object.body??(typeof object.arrayBuffer==="function"?await object.arrayBuffer():null);
+  if(!body)return null;
+  return{body,sizeBytes:Number(object.size??-1),contentType:object.httpMetadata?.contentType?String(object.httpMetadata.contentType):null};
 }

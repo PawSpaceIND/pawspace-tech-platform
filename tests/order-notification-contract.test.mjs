@@ -23,8 +23,9 @@ test("customer notification API is ownership guarded and supports read acknowled
  const source=await read("app/api/order-notifications/route.ts");
  assert.match(source,/requireCustomerOwnership/);
  // Reading one customer inbox must not enqueue work across all customers. The scheduler owns sweeping.
- assert.doesNotMatch(source,/runOrderNotificationSweep/);
+ assert.doesNotMatch(source,/runOrderNotificationSweep/,"customer reads must not run platform-wide delivery sweeps");
  assert.match(source,/listOrderNotifications/);
+
  assert.match(source,/markOrderNotificationRead/);
  assert.match(source,/action!=="mark_read"/);
 });

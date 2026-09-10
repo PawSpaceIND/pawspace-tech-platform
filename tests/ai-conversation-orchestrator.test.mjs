@@ -25,7 +25,7 @@ test("AI conversation Gate 1 uses canonical conversation and minimum customer co
 test("AI conversation Gate 1 has explicit confidence fallback and human handoff",()=>{
  assert.match(orchestrator,/intent\.confidence<0\.65/);
  assert.match(orchestrator,/requestAiHumanHandoff/);
- assert.match(handoff,/assignConversation/);
+ // Assignment, rollback and AI pause are executed in ai-handoff-transaction-execution.test.mjs.
  assert.match(orchestrator,/human_handoff/);
  assert.match(orchestrator,/provider_unavailable/);
  assert.match(orchestrator,/provider_error/);

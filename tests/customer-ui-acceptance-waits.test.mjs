@@ -64,8 +64,17 @@ test("customer acceptance uses the governed east-zone UAT location for Training"
   assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
 });
 
-test("customer acceptance waits for Sitting rates and completes required stay consent fields", () => {
-  assert.match(source, /rateButtons\.first\(\)\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+test("customer acceptance retries one governed Sitting search before failing closed", () => {
+  assert.match(source, /async function sittingRates\(page\)/);
+  assert.match(source, /first\.waitFor\(\{state:"visible",timeout:20000\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Retry sitter search",exact:true\}\)/);
+  assert.match(source, /sittingDiscoveryRetries\+=1/);
+  assert.match(source, /retry\.click\(\);await first\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+  assert.match(source, /Sitting profile rates unavailable/);
+  assert.doesNotMatch(source, /while\(.*Retry sitter search/);
+});
+
+test("customer acceptance completes required stay consent fields", () => {
   assert.match(source, /getByLabel\("Vet contact"\)\.fill\("UAT Vet contact"\)/);
   assert.match(source, /getByLabel\("Emergency contact"\)\.fill\("UAT emergency contact"\)/);
   assert.match(source, /getByLabel\("Home access instructions"\)\.fill\("UAT home access instructions"\)/);

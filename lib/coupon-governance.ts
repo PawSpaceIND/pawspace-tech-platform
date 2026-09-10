@@ -1,3 +1,8 @@
+// Coupon totals can be zero, but must still be exact, finite paise amounts.
+function sameMoney(left:number,right:number){
+  const paise=(value:number)=>{if(!Number.isFinite(value)||value<0||!/^\d+(?:\.\d{1,2})?$/.test(String(value)))return null;const cents=Math.round(value*100);return Number.isSafeInteger(cents)?cents:null;};
+  const amount=paise(left);return amount!==null&&amount===paise(right);
+}
 export type CouponService="grooming"|"dog_training"|"boarding"|"pet_sitting";
 export type CouponChannel="customer_app"|"website"|"assisted_staff"|"whatsapp"|"partner_app";
 export type CouponCustomerKind="new"|"existing"|"subscriber";
@@ -72,7 +77,7 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   if(Number(quote.expires_at)<Date.now())throw new Error("Coupon quote has expired");
   const booking=await db.prepare("SELECT id,customer_id,service_code,city_id,package_code,total_amount,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
   if(!booking||String(booking.customer_id)!==input.customerId)throw new Error("Canonical booking does not belong to this customer");
-  const amount=Number(booking.total_amount),amountMatches=[Number(quote.order_value),Number(quote.final_amount)].some(value=>Math.round(value)===Math.round(amount));
+  const amount=Number(booking.total_amount),amountMatches=[Number(quote.order_value),Number(quote.final_amount)].some(value=>sameMoney(value,amount));
   if(String(booking.service_code)!==String(quote.service_code)||String(booking.city_id)!==String(quote.city_id)||String(booking.package_code)!==String(quote.package_code)||!amountMatches)throw new Error("Canonical booking does not match the coupon quote context");
   const [totalUsed,customerUsed,campaignRow]=await Promise.all([
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(quote.campaign_id).first<Row>(),
@@ -128,7 +133,7 @@ export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId
   if(String(quote.status)!=="open"||String(quote.campaign_status)!=="active")throw new Error("Coupon quote is no longer open");
   if(Number(quote.expires_at)<input.now)throw new Error("Coupon quote has expired");
   const discount=Number(quote.discount_amount),orderValue=Number(quote.order_value),finalAmount=Number(quote.final_amount);
-  if(Math.round(input.submittedDiscount)!==Math.round(discount)||Math.round(input.submittedTotal)!==Math.round(finalAmount))throw new Error("Booking amount does not match the governed coupon quote");
+  if(!sameMoney(input.submittedDiscount,discount)||!sameMoney(input.submittedTotal,finalAmount))throw new Error("Booking amount does not match the governed coupon quote");
   const [totalUsed,customerUsed]=await Promise.all([
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(quote.campaign_id).first<Row>(),
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(quote.campaign_id,input.customerId).first<Row>(),

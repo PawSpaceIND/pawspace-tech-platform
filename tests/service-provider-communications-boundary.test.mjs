@@ -153,3 +153,21 @@ test("a provisioned CX associate retains access to the staff conversation queue"
   assert.equal(result.reachedRoute, true);
   assert.equal(result.response.status, 200);
 });
+
+test('assigned provider reads only delivered conversation text, with internal metadata and contact details withheld', async()=>{
+ const {sqlite,db}=await world();
+ const {ensureTrustSafetyTables}=await import('../lib/trust-safety-governance.ts');
+ await ensureTrustSafetyTables(db);
+ sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,provider_id TEXT); INSERT INTO canonical_bookings VALUES ('BOOK-COMMS','PROVIDER-COMMS'); UPDATE communication_threads SET booking_id='BOOK-COMMS' WHERE id='THREAD-COMMS-VICTIM'");
+ sqlite.prepare("INSERT INTO provider_identity_links(email,provider_id,status,verified_at,updated_at) VALUES (?,?,'active',1,1)").run(PROVIDER_EMAIL,'PROVIDER-COMMS');
+ sqlite.prepare("UPDATE communication_messages SET payload_json=? WHERE id='MSG-COMMS-VICTIM'").run(JSON.stringify({text:'Please call 9999111122',internalNote:'refund dispute',customerPhone:'+919999111122',providerIdentity:{email:'private@pawspace.in'},financialContext:{refund:900},mediaUrl:'https://private.test/asset'}));
+ sqlite.exec("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,idempotency_key,policy_json,created_by,created_at,updated_at) SELECT 'MSG-QUEUED',thread_id,customer_id,'outbound',channel,purpose,template_key,'{\"text\":\"Not yet sent\"}','queued','queued-private',policy_json,created_by,created_at,updated_at FROM communication_messages WHERE id='MSG-COMMS-VICTIM'");
+ const {GET}=await import('../app/api/provider-chat/route.ts');
+ const request=()=>new Request(`${ORIGIN}/api/provider-chat?providerId=PROVIDER-COMMS&threadId=THREAD-COMMS-VICTIM`,{headers:{'oai-authenticated-user-email':PROVIDER_EMAIL}});
+ const response=await GET(request());assert.equal(response.status,200);
+ const body=await response.json();assert.equal(body.data.messages.length,1);
+ assert.deepEqual(Object.keys(body.data.messages[0].payload).sort(),['safetyRedacted','text']);
+ assert.doesNotMatch(JSON.stringify(body),/9999111122|refund dispute|private@|financialContext|private.test|Not yet sent/);
+ sqlite.exec("INSERT INTO provider_trust_state(provider_id,status,updated_at) VALUES ('PROVIDER-COMMS','suspended',1)");
+ assert.equal((await GET(request())).status,403);
+});
