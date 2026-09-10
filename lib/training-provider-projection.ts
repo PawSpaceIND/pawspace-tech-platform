@@ -1,97 +1,143 @@
+/**
+ * Provider-facing field projection for Dog Training sessions.
+ *
+ * Same class of gap as Grooming pilot audit P0-6: listTrainerSessions returned
+ * SELECT * row blobs plus raw training_session_events.detail_json and actor_id.
+ * Staff notes, emails, free-text reasons and unbounded event detail could reach
+ * service_provider sessions even when customer_name was already maskName'd.
+ *
+ * Rule: trainers get operational session state only. Contact data, internal
+ * notes, staff actor ids and unbounded free text are dropped.
+ */
+
 type Row = Record<string, unknown>;
 
-const SAFE_EVENT_DETAIL_KEYS = new Set([
-  "action", "from", "to", "status", "sessionId", "distanceMeters", "thresholdMeters",
-  "consumedExactlyOnce", "evidenceRefs", "ownerHandoverMinutes", "nextSession", "programme",
-  "closure", "reason", "code", "phase", "durationMinutes", "minimumMinutes", "completed",
-  "caseId", "consumption", "newStart", "newEnd", "scheduledStart", "scheduledEnd", "geofence",
-  "reportSaved",
-]);
-const PII_VALUE = /(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
-const SENSITIVE_KEY = /(?:email|phone|mobile|address|street|contact|staff|actor|internal|note)/i;
+type ScalarKind = "text" | "number" | "boolean";
+const EVENT_FIELDS: Record<string, ScalarKind> = {
+  action: "text", from: "text", to: "text", status: "text", sessionId: "text",
+  distanceMeters: "number", thresholdMeters: "number", consumedExactlyOnce: "boolean",
+  ownerHandoverMinutes: "number", code: "text",
+  phase: "text", durationMinutes: "number", minimumMinutes: "number", completed: "boolean",
+  caseId: "text", consumption: "text", newStart: "text", newEnd: "text",
+  scheduledStart: "text", scheduledEnd: "text", reportSaved: "boolean",
+};
+const NEXT_SESSION_FIELDS: Record<string, ScalarKind> = {
+  sessionId: "text", sequenceNo: "number", status: "text",
+};
+const PROGRAMME_FIELDS: Record<string, ScalarKind> = {
+  total: "number", completed: "number", noShow: "number", cancelled: "number",
+  status: "text", terminal: "boolean",
+};
+const CLOSURE_FIELDS: Record<string, ScalarKind> = {
+  certificateNumber: "text", reviewDispatched: "boolean",
+};
+const PROGRESS_FIELDS: Record<string, ScalarKind> = {
+  focus: "number", recall: "number", impulse: "number", parent: "number", sit: "number",
+};
+const PII_VALUE = /@|(?:\+?91[\s().-]*)?(?:\d[\s().-]*){9}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:street|road|nagar|layout|apartment|flat)\b|flat\s*#|\b(?:email|phone|mobile|contact)\b|called customer/i;
+const TRAINER_REQUIREMENT_GOALS = new Map([
+  "Toilet routine",
+  "Biting & chewing",
+  "Leash walking",
+  "Recall",
+  "Recall practice", // explicit legacy operational label retained for historical programmes
+  "Basic obedience",
+  "Socialisation",
+  "Excess barking",
+  "Separation anxiety",
+].map((goal) => [goal.toLowerCase(), goal] as const));
 
-function safeString(value: unknown, max = 240): string | null {
-  if (typeof value !== "string") return null;
-  const s = value.trim();
-  if (!s || s.length > max || PII_VALUE.test(s)) return null;
-  return s;
+function looksLikePii(value: unknown): boolean {
+  return typeof value === "string" && (value.trim().length > 240 || PII_VALUE.test(value));
 }
-function parseJsonObject(raw: unknown): Record<string, unknown> {
-  const text = String(raw ?? "").trim();
-  if (!text || text[0] !== "{") return {};
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
-  } catch {
-    return {};
-  }
+
+function object(value: unknown): Row {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 }
-function sanitizeOperationalObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+function projectScalars(value: unknown, fields: Record<string, ScalarKind>): Row {
+  const row = object(value);
   const out: Row = {};
-  for (const [key, raw] of Object.entries(value as Row)) {
-    if (SENSITIVE_KEY.test(key) || PII_VALUE.test(key)) continue;
-    if (typeof raw === "string") { const s = safeString(raw); if (s !== null) out[key] = s; continue; }
-    if (typeof raw === "number" && Number.isFinite(raw)) { if (!PII_VALUE.test(String(raw))) out[key] = raw; continue; }
-    if (typeof raw === "boolean" || raw === null) { out[key] = raw; continue; }
-    if (Array.isArray(raw)) { out[key] = raw.map(item => safeString(item)).filter((item): item is string => item !== null); }
-  }
-  return out;
-}
-function sanitizeAttendance(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const row = value as Row, out: Row = {};
-  const mode = safeString(row.mode, 32);
-  if (mode && ["parent", "trainer_led"].includes(mode)) out.mode = mode;
-  if (typeof row.safeAreaConfirmed === "boolean") out.safeAreaConfirmed = row.safeAreaConfirmed;
-  if (typeof row.parentOrCaretakerConfirmed === "boolean") out.parentOrCaretakerConfirmed = row.parentOrCaretakerConfirmed;
-  return out;
-}
-function sanitizeHomework(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const text = safeString((value as Row).text, 1000);
-  return text ? {text} : {};
-}
-function sanitizeProgress(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const out: Record<string, number> = {};
-  for (const [key, raw] of Object.entries(value as Row)) {
-    if (SENSITIVE_KEY.test(key) || PII_VALUE.test(key) || !/^[A-Za-z0-9 _-]{1,60}$/.test(key)) continue;
-    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 10) out[key] = raw;
-  }
-  return out;
-}
-function safeEvidenceRefs(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map(item => safeString(item, 180)).filter((item): item is string => item !== null && /^media:\/\/asset\/[A-Za-z0-9_-]+$/.test(item))
-    : [];
-}
-
-export function sanitizeTrainingEventDetail(detail: unknown): Record<string, unknown> {
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return {};
-  const out: Row = {};
-  for (const [key, value] of Object.entries(detail as Row)) {
-    if (!SAFE_EVENT_DETAIL_KEYS.has(key) || SENSITIVE_KEY.test(key)) continue;
-    if (key === "evidenceRefs") { out[key] = safeEvidenceRefs(value); continue; }
-    if (Array.isArray(value)) { out[key] = value.map(item => safeString(item)).filter((item): item is string => item !== null); continue; }
-    if (typeof value === "object" && value !== null) { out[key] = sanitizeOperationalObject(value); continue; }
-    if (typeof value === "string") { const s = safeString(value); if (s !== null) out[key] = s; continue; }
-    if (typeof value === "number" && Number.isFinite(value)) { out[key] = value; continue; }
-    if (typeof value === "boolean" || value === null) out[key] = value;
+  for (const [key, kind] of Object.entries(fields)) {
+    if (!Object.hasOwn(row, key)) continue;
+    const item = row[key];
+    if (kind === "text" && typeof item === "string" && !looksLikePii(item)) out[key] = item;
+    if (kind === "number" && typeof item === "number" && Number.isFinite(item)) out[key] = item;
+    if (kind === "boolean" && typeof item === "boolean") out[key] = item;
   }
   return out;
 }
 
-export function projectTrainingSessionEvent(row: Row) {
+function projectAttendance(value: unknown): Row {
+  const row = object(value);
+  const out = projectScalars(row, { parentOrCaretakerConfirmed: "boolean", safeAreaConfirmed: "boolean" });
+  if (row.mode === "parent" || row.mode === "trainer_led") out.mode = row.mode;
+  return out;
+}
+
+function projectHomework(value: unknown): Row {
+  const row = object(value);
+  return typeof row.text === "string" && row.text.trim().length > 0 && row.text.length <= 1000 && !PII_VALUE.test(row.text) ? { text: row.text } : {};
+}
+
+function projectProgress(value: unknown): Row {
+  return Object.fromEntries(Object.entries(projectScalars(value, PROGRESS_FIELDS))
+    .filter(([, score]) => Number(score) >= 1 && Number(score) <= 10));
+}
+
+function projectRequirements(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const canonical = TRAINER_REQUIREMENT_GOALS.get(raw.trim().toLowerCase());
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
+}
+
+function evidenceRefs(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string =>
+    typeof item === "string" && !PII_VALUE.test(item) && /^media:\/\/asset\/[A-Za-z0-9_-]{1,128}$/.test(item)) : [];
+}
+
+function parseJsonObject(raw: unknown): Row {
+  if (typeof raw !== "string") return object(raw);
+  try { return object(JSON.parse(raw)); } catch { return {}; }
+}
+
+export function sanitizeTrainingEventDetail(detail: unknown): Row {
+  const row = object(detail);
+  const out = projectScalars(row, EVENT_FIELDS);
+  for (const [key, fields] of Object.entries({
+    nextSession: NEXT_SESSION_FIELDS, programme: PROGRAMME_FIELDS, closure: CLOSURE_FIELDS,
+    geofence: { distanceMeters: "number", thresholdMeters: "number", verified: "boolean" } as const,
+  })) {
+    if (!Object.hasOwn(row, key)) continue;
+    if (row[key] === null) out[key] = null;
+    else out[key] = projectScalars(row[key], fields);
+  }
+  if (Object.hasOwn(row, "evidenceRefs")) out.evidenceRefs = evidenceRefs(row.evidenceRefs);
+  return out;
+}
+
+export function projectTrainingSessionEvent(value: unknown) {
+  const row = object(value);
   return {
-    eventType: String(row.event_type || ""),
+    eventType: typeof row.event_type === "string" && !looksLikePii(row.event_type) ? row.event_type : "",
     actorId: "provider_or_system",
-    detail: sanitizeTrainingEventDetail(typeof row.detail_json === "string" ? parseJsonObject(row.detail_json) : row.detail_json),
+    detail: sanitizeTrainingEventDetail(
+      typeof row.detail_json === "string" ? parseJsonObject(row.detail_json) : row.detail_json,
+    ),
     createdAt: Number(row.created_at || 0),
   };
 }
 
-export function projectTrainerSession(row: Row) {
+export function projectTrainerSession(value: unknown) {
+  const row = object(value);
   const events = Array.isArray(row.events) ? (row.events as Row[]).map(projectTrainingSessionEvent) : [];
   return {
     id: String(row.id || ""),
@@ -111,12 +157,12 @@ export function projectTrainerSession(row: Row) {
     no_show_sessions: Number(row.no_show_sessions || 0),
     cancelled_sessions: Number(row.cancelled_sessions || 0),
     programme_status: String(row.programme_status || ""),
-    petIds: Array.isArray(row.petIds) ? row.petIds.filter(x => typeof x === "string").map(String) : [],
-    requirements: Array.isArray(row.requirements) ? row.requirements.map(item => safeString(item)).filter((item): item is string => item !== null) : [],
-    attendance: sanitizeAttendance(row.attendance),
-    homework: sanitizeHomework(row.homework),
-    progress: sanitizeProgress(row.progress),
-    evidenceRefs: safeEvidenceRefs(row.evidenceRefs),
+    petIds: Array.isArray(row.petIds) ? row.petIds.filter((x) => typeof x === "string").map(String) : [],
+    requirements: projectRequirements(row.requirements),
+    attendance: projectAttendance(row.attendance),
+    homework: projectHomework(row.homework),
+    progress: projectProgress(row.progress),
+    evidenceRefs: evidenceRefs(row.evidenceRefs),
     events,
   };
 }
