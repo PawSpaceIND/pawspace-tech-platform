@@ -268,7 +268,7 @@ async function waitForProviderWebhook(dbId: string, bookingId: string, paymentId
   return { hit: null, rows };
 }
 test("PR674 current isolated Worker proves Razorpay Test capture and provider-origin webhook", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-chromium");
+  test.skip(testInfo.project.name !== "chromium");
   test.setTimeout(300_000);
   expect(ACCOUNT).toMatch(/^[a-f0-9]{32}$/i);
   expect(CF_TOKEN.length).toBeGreaterThan(20);
