@@ -8,7 +8,8 @@ const discoverySource = fs.readFileSync(new URL("../app/mobile-app/premium-disco
 test("customer acceptance waits for the asynchronous mobile shell before probing navigation", () => {
   assert.match(source, /async function bottomNav\(page\)/);
   assert.match(source, /await nav\.waitFor\(\{state:"visible",timeout:TIMEOUT\}\)/);
-  assert.match(source, /page\.locator\("nav"\)/);
+  assert.match(source, /page\.getByRole\("navigation",\{name:"Customer navigation"\}\)/);
+  assert.doesNotMatch(source, /page\.locator\("nav"\)/);
 });
 
 test("customer acceptance waits for OTP verification to replace the login UI", () => {
