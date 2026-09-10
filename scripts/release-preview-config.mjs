@@ -25,6 +25,10 @@
 //                                Worker secrets instead. A preview whose session cookie is signed with a
 //                                published key is a preview anyone can sign into, and neither D1
 //                                comparison says anything about that
+//   GOOGLE_MAPS_SERVER_API_KEY_UAT
+//                                required for governed address verification in Boarding, Sitting and
+//                                Walking. It is installed as an encrypted Worker secret; Maps mode stays
+//                                sandbox and live Maps billing remains disabled.
 import { readFileSync, writeFileSync } from "node:fs";
 
 // The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
@@ -54,6 +58,15 @@ export const CREDENTIAL_MIN_LENGTH = 32;
 // shape, because it is what a committed fallback looks like. That guard should stay blunt.
 const CREDENTIAL_SUFFIXES = ["UAT_ACCESS_CODE", "UAT_SIGNING_KEY", "IDENTITY_ASSERTION_SECRET_UAT"];
 export const UAT_CREDENTIALS = CREDENTIAL_SUFFIXES.map((suffix) => `PAWSPACE_${suffix}`);
+export const MAPS_CREDENTIAL = "GOOGLE_MAPS_SERVER_API_KEY_UAT";
+
+export function requiredIntegrationSecretProblem(name, value) {
+  const raw = String(value ?? "");
+  const trimmed = raw.trim();
+  if (!trimmed) return `${name} is not set. Supply it from a GitHub Actions secret (secrets.${name}); there is deliberately no default.`;
+  if (raw !== trimmed) return `${name} has surrounding whitespace. Fix the stored GitHub Actions secret before deploying.`;
+  return null;
+}
 
 /**
  * A credential that has ever been committed to this repository is public forever. Rather than repeat the
@@ -106,6 +119,8 @@ for (const name of UAT_CREDENTIALS) {
   const problem = credentialProblem(name, process.env[name]);
   if (problem) problems.push(problem);
 }
+const mapsProblem = requiredIntegrationSecretProblem(MAPS_CREDENTIAL, process.env[MAPS_CREDENTIAL]);
+if (mapsProblem) problems.push(mapsProblem);
 
 if (problems.length || !isolated) {
   console.error(`isolated=${environmentIsolated}`);
@@ -127,6 +142,7 @@ cfg.vars = {
   PAWSPACE_UAT_LOGIN: "on",
   PAWSPACE_RELEASE_SHA: releaseSha,
   PAWSPACE_ENVIRONMENT: "release-preview",
+  PAWSPACE_MAPS_ENV: "sandbox",
   PAWSPACE_LIVE_PAYMENTS: "false",
   PAWSPACE_LIVE_PAYOUTS: "false",
   PAWSPACE_LIVE_REFUNDS: "false",
@@ -153,6 +169,7 @@ cfg.vars = {
 delete cfg.vars.PAWSPACE_UAT_ACCESS_CODE;
 delete cfg.vars.PAWSPACE_UAT_SIGNING_KEY;
 delete cfg.vars.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT;
+delete cfg.vars.GOOGLE_MAPS_SERVER_API_KEY_UAT;
 delete cfg.vars.CLOUDFLARE_API_TOKEN;
 writeFileSync(path, JSON.stringify(cfg));
 

@@ -71,6 +71,7 @@ const GOOD = {
   PAWSPACE_UAT_ACCESS_CODE: "not-a-real-access-code-for-tests-only",
   PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
   PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
+  GOOGLE_MAPS_SERVER_API_KEY_UAT: "AIzaSyntheticReleasePreviewMapsKey123456789",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------
@@ -468,6 +469,19 @@ test("the gate script reports statuses and counts, never a credential or an id",
 // ---------------------------------------------------------------------------
 const UAT_CREDENTIALS = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
 
+test("E — a missing or whitespace-padded Maps UAT secret fails before preview configuration", () => {
+  for (const value of [undefined, "", "   ", ` ${GOOD.GOOGLE_MAPS_SERVER_API_KEY_UAT}`]) {
+    const env = { ...GOOD };
+    if (value === undefined) delete env.GOOGLE_MAPS_SERVER_API_KEY_UAT;
+    else env.GOOGLE_MAPS_SERVER_API_KEY_UAT = value;
+    const result = runConfig(env);
+    assert.notEqual(result.status, 0, "Maps UAT configuration must fail closed");
+    assert.match(result.stderr, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
+    assert.equal(result.config.name, "unset", "no preview Worker configuration may be written");
+    assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
+  }
+});
+
 test("E — a missing credential fails the deploy closed, and configures nothing", () => {
   for (const name of UAT_CREDENTIALS) {
     const absent = { ...GOOD };
@@ -524,11 +538,13 @@ test("E — no credential value reaches the log or the generated artifact", () =
   const result = runConfig(GOOD);
   assert.equal(result.status, 0, result.stderr);
   const printed = `${result.stdout}${result.stderr}`;
-  for (const name of UAT_CREDENTIALS) {
+  for (const name of [...UAT_CREDENTIALS, "GOOGLE_MAPS_SERVER_API_KEY_UAT"]) {
     assert.ok(!printed.includes(GOOD[name]), `${name}'s value must not be logged`);
     assert.ok(!JSON.stringify(result.config).includes(GOOD[name]), `${name}'s value must not be serialized`);
     assert.ok(!(name in result.config.vars), `${name} must not become a plaintext Worker var`);
   }
+  assert.equal(result.config.vars.PAWSPACE_MAPS_ENV, "sandbox");
+  assert.equal(result.config.vars.PAWSPACE_LIVE_MAPS_BILLING, "false");
 });
 
 test("E — the workflow hands the tool the credentials it is expected to validate", () => {
@@ -537,6 +553,8 @@ test("E — the workflow hands the tool the credentials it is expected to valida
   for (const name of UAT_CREDENTIALS) {
     assert.equal(configure.env[name], `\${{ secrets.${name} }}`, `${name} must arrive from a secret, or the validation has nothing to check`);
   }
+  assert.equal(configure.env.GOOGLE_MAPS_SERVER_API_KEY_UAT, "${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}",
+    "the Maps UAT key must be validated before any deploy");
   // The two comparators this PR exists for are still mandatory alongside them.
   assert.equal(configure.env.PRODUCTION_D1_ID, "${{ secrets.PRODUCTION_D1_ID }}");
   assert.equal(configure.env.SHARED_STAGING_D1_ID, "${{ secrets.SHARED_STAGING_D1_ID }}");
