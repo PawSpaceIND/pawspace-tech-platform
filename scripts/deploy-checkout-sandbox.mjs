@@ -8,7 +8,7 @@ import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, ac
 const candidate = resolve(process.env.CANDIDATE_DIR || "candidate");
 const evidence = resolve(process.env.CHECKOUT_EVIDENCE_DIR || "checkout-sandbox-evidence");
 mkdirSync(evidence, { recursive: true });
-const report = { candidateSha: process.env.EXPECTED_SHA, hosted: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
+const report = { candidateSha: process.env.EXPECTED_SHA, hosted: false, customerUiVerified: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
 let plan = checkoutSandboxPlan(process.env); // All safety/secret requirements BEFORE any network or resource creation.
 const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
 const token = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
@@ -83,7 +83,7 @@ try {
   const schedules = await cf(`/workers/scripts/${plan.worker}/schedules`);
   check("noBackgroundCron", Array.isArray(schedules.schedules) ? schedules.schedules.length === 0 : Array.isArray(schedules) && schedules.length === 0);
   const home = await app(origin, "/mobile-app");
-  check("rootCustomerHtml", home.status === 200 && /text\/html/i.test(home.type) && /pawspace/i.test(home.text));
+  check("rootDocumentReachable", home.status === 200 && /text\/html/i.test(home.type) && /pawspace/i.test(home.text));
   const login = await app(origin, "/staging-login");
   check("uatLoginPage", login.status === 200 && /text\/html/i.test(login.type));
   const anonymous = await app(origin, "/api/customer-checkout", { method: "POST", headers: { "content-type": "application/json", origin }, body: "{}" });
