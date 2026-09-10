@@ -12,8 +12,6 @@
 
 type Row = Record<string, unknown>;
 
-// Explicit schemas are the privacy boundary. A value-shaped PII check alone cannot
-// decide whether an arbitrary nested key (for example internalNote) is operational.
 type ScalarKind = "text" | "number" | "boolean";
 const EVENT_FIELDS: Record<string, ScalarKind> = {
   action: "text", from: "text", to: "text", status: "text", sessionId: "text",
@@ -42,6 +40,7 @@ const TRAINER_REQUIREMENT_GOALS = new Map([
   "Biting & chewing",
   "Leash walking",
   "Recall",
+  "Recall practice", // explicit legacy operational label retained for historical programmes
   "Basic obedience",
   "Socialisation",
   "Excess barking",
@@ -78,8 +77,6 @@ function projectAttendance(value: unknown): Row {
 
 function projectHomework(value: unknown): Row {
   const row = object(value);
-  // Homework is intentional trainer-facing content, not arbitrary metadata. Do not
-  // erase a legitimate assignment just because event summaries are shorter; retain the current 1000-character bound.
   return typeof row.text === "string" && row.text.trim().length > 0 && row.text.length <= 1000 && !PII_VALUE.test(row.text) ? { text: row.text } : {};
 }
 
@@ -103,8 +100,6 @@ function projectRequirements(value: unknown): string[] {
 }
 
 function evidenceRefs(value: unknown): string[] {
-  // The Training lifecycle/media API uses opaque canonical media refs. Never return
-  // signed URLs, arbitrary strings, or contact data smuggled into a refs array.
   return Array.isArray(value) ? value.filter((item): item is string =>
     typeof item === "string" && !PII_VALUE.test(item) && /^media:\/\/asset\/[A-Za-z0-9_-]{1,128}$/.test(item)) : [];
 }
@@ -116,7 +111,6 @@ function parseJsonObject(raw: unknown): Row {
 
 export function sanitizeTrainingEventDetail(detail: unknown): Row {
   const row = object(detail);
-  // Free-text staff reasons, actor IDs and reports are intentionally not event fields.
   const out = projectScalars(row, EVENT_FIELDS);
   for (const [key, fields] of Object.entries({
     nextSession: NEXT_SESSION_FIELDS, programme: PROGRAMME_FIELDS, closure: CLOSURE_FIELDS,
@@ -134,7 +128,6 @@ export function projectTrainingSessionEvent(value: unknown) {
   const row = object(value);
   return {
     eventType: typeof row.event_type === "string" && !looksLikePii(row.event_type) ? row.event_type : "",
-    // Never return staff email / actor id raw to trainers
     actorId: "provider_or_system",
     detail: sanitizeTrainingEventDetail(
       typeof row.detail_json === "string" ? parseJsonObject(row.detail_json) : row.detail_json,
@@ -143,11 +136,6 @@ export function projectTrainingSessionEvent(value: unknown) {
   };
 }
 
-/**
- * Project a single trainer session row for the provider-facing API.
- * customer_name is expected to already be maskName'd by the route; we still
- * refuse to pass through any other contact-shaped fields from the raw join.
- */
 export function projectTrainerSession(value: unknown) {
   const row = object(value);
   const events = Array.isArray(row.events) ? (row.events as Row[]).map(projectTrainingSessionEvent) : [];
@@ -161,7 +149,6 @@ export function projectTrainerSession(value: unknown) {
     scheduled_end: String(row.scheduled_end || ""),
     status: String(row.status || ""),
     customer_id: String(row.customer_id || ""),
-    // Opaque operational id only; display name must already be masked by caller
     customer_name: String(row.customer_name || "Customer"),
     plan_code: String(row.plan_code || ""),
     plan_name: String(row.plan_name || ""),
@@ -171,8 +158,6 @@ export function projectTrainerSession(value: unknown) {
     cancelled_sessions: Number(row.cancelled_sessions || 0),
     programme_status: String(row.programme_status || ""),
     petIds: Array.isArray(row.petIds) ? row.petIds.filter((x) => typeof x === "string").map(String) : [],
-    // Only the fixed customer UI goals are operational trainer requirements. Custom/free-text
-    // goals remain stored for customer/staff context but never cross the provider privacy boundary.
     requirements: projectRequirements(row.requirements),
     attendance: projectAttendance(row.attendance),
     homework: projectHomework(row.homework),
