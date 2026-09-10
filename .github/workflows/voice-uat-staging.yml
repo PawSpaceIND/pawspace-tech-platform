@@ -101,14 +101,27 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/voice-uat-settings.json"
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo 'VOICE_UAT_BINDINGS_READ=failed'; exit 1; }
+          SETTINGS="$SETTINGS" node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const j=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));
+          const b=Array.isArray(j?.result?.bindings)?j.result.bindings:[];
+          const required=['EXOTEL_API_KEY','EXOTEL_API_TOKEN','EXOTEL_SID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','EXOTEL_WEBHOOK_SECRET','PAWSPACE_VOICE_UAT_ALLOWLIST'];
+          for(const name of required){const x=b.find(v=>String(v?.name||'')===name); console.log(`VOICE_BINDING_${name}=${x&&/secret/i.test(String(x.type||''))?'secret_present':'missing_or_wrong_type'}`)}
+          const safe=['PAWSPACE_VOICE_ENV','PAWSPACE_VOICE_UAT_APPROVED','PAWSPACE_VOICE_UAT_AUTORUN','PAWSPACE_VOICE_STATUS_CALLBACK_URL','PAWSPACE_VOICE_STREAM_URL'];
+          for(const name of safe){const x=b.find(v=>String(v?.name||'')===name&&String(v?.type||'')==='plain_text'); console.log(`VOICE_SAFE_${name}=${x?String(x.text??x.value??''):'missing'}`)}
+          NODE
+          rm -f "$SETTINGS"
           echo 'VOICE_UAT_QUEUE'
           npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,status,call_id,last_state,failure_class,scheduled_for,started_at,finished_at,updated_at FROM voice_carrier_uat_queue ORDER BY updated_at DESC LIMIT 5"
           echo 'VOICE_UAT_CALL'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,idempotency_key,provider,provider_call_id,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,requested_at,dialed_at,connected_at,ended_at,updated_at FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' ORDER BY requested_at DESC LIMIT 1"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT id,idempotency_key,provider,provider_call_id,state,failure_reason_class,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,production_call,requested_at,dialed_at,connected_at,ended_at,updated_at FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' ORDER BY requested_at DESC LIMIT 1"
           echo 'VOICE_UAT_POLICY_COUNTS'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1)"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT COUNT(*) AS total_checks,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) AS passed_checks FROM voice_call_policy_decisions WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' LIMIT 1)"
           echo 'VOICE_UAT_PROVIDER_EVENTS'
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT event_kind,provider_status,applied,created_at FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-06:controlled-retry-3' LIMIT 1) ORDER BY created_at DESC LIMIT 10"
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --json --command "SELECT event_kind,provider_status,applied,created_at FROM voice_call_provider_events WHERE call_id=(SELECT id FROM voice_call_orders WHERE idempotency_key='voice-carrier-uat:2026-09-10:controlled-retry-4' LIMIT 1) ORDER BY created_at DESC LIMIT 10"
 
   activate:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-uat' }}
