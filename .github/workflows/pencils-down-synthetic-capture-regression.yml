@@ -24,28 +24,27 @@ jobs:
           WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: |
           python3 - <<'PY'
-          import hashlib, hmac, json, os, urllib.request
+          import hashlib, hmac, json, os
           booking=os.environ['BOOKING_ID']; order=os.environ['ORDER_ID']; secret=os.environ['WEBHOOK_SECRET']
-          event_id='evt_regression_golden_43ba4002_01'
-          payment_id='pay_regression_golden_43ba4002'
-          payload={
-            'event':'payment.captured',
-            'created_at':1789032000,
-            'payload':{'payment':{'entity':{
-              'id':payment_id,'order_id':order,'amount':84900,'currency':'INR',
-              'notes':{'booking_id':booking,'test_only':'synthetic_downstream_regression'}
-            }}}
-          }
+          event_id='evt_regression_golden_43ba4002_02'
+          payment_id='pay_regression_golden_43ba4002_02'
+          payload={'event':'payment.captured','created_at':1789032000,'payload':{'payment':{'entity':{'id':payment_id,'order_id':order,'amount':84900,'currency':'INR','notes':{'booking_id':booking,'test_only':'synthetic_downstream_regression'}}}}}
           raw=json.dumps(payload,separators=(',',':')).encode()
-          signature=hmac.new(secret.encode(),raw,hashlib.sha256).hexdigest()
-          req=urllib.request.Request(os.environ['ORIGIN']+'/api/razorpay-webhook',data=raw,method='POST',headers={
-            'content-type':'application/json','x-razorpay-signature':signature,'x-razorpay-event-id':event_id})
-          with urllib.request.urlopen(req,timeout=30) as response:
-            body=json.loads(response.read().decode() or '{}'); status=response.status
-          print(json.dumps({'httpStatus':status,'response':body},indent=2))
-          if status!=200 or not body.get('ok'): raise SystemExit('Synthetic regression capture was not accepted')
-          open('synthetic-capture-response.json','w').write(json.dumps({'testOnly':True,'providerDelivered':False,'eventId':event_id,'paymentId':payment_id,'response':body},indent=2)+'\n')
+          open('synthetic-body.json','wb').write(raw)
+          open('synthetic-signature.txt','w').write(hmac.new(secret.encode(),raw,hashlib.sha256).hexdigest())
+          open('synthetic-meta.json','w').write(json.dumps({'eventId':event_id,'paymentId':payment_id})+'\n')
           PY
+          signature=$(cat synthetic-signature.txt)
+          event_id=$(jq -r .eventId synthetic-meta.json)
+          status=$(curl -sS -o synthetic-http-body.json -w '%{http_code}' -X POST \
+            -H 'content-type: application/json' \
+            -H "x-razorpay-signature: $signature" \
+            -H "x-razorpay-event-id: $event_id" \
+            --data-binary @synthetic-body.json "$ORIGIN/api/razorpay-webhook")
+          jq -n --arg status "$status" --slurpfile body synthetic-http-body.json '{httpStatus:($status|tonumber),response:($body[0]//{})}' | tee synthetic-capture-response.json
+          test "$status" = 200
+          test "$(jq -r '.ok // false' synthetic-http-body.json)" = true
+          rm -f synthetic-signature.txt synthetic-body.json synthetic-meta.json synthetic-http-body.json
       - name: Read same isolated booking after synthetic capture
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -54,7 +53,7 @@ jobs:
           set -euo pipefail
           api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
           auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
-          db_id=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100" | jq -r '.result[]|select(.name=="pawspace-golden-wallet-43ba4002")|(.uuid // .id)' | head -1)
+          db_id=$(curl -fsS "${auth[@]}" "$api/d1/database?per_page=100" | jq -r '.result[]|select(.name=="pawspace-beta-golden-wallet-43ba4002")|(.uuid // .id)' | head -1)
           test -n "$db_id"
           query(){ curl -sS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$(jq -cn --arg sql "$1" '{sql:$sql}')" | jq -c 'if .success then ([.result[]?.results] | add // []) else {query_error:(.errors // [])} end'; }
           payment=$(query "SELECT id,status,amount,amount_due_now,gateway,detail_json FROM booking_payments WHERE booking_id='$BOOKING_ID'")
