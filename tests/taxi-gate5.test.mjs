@@ -608,8 +608,8 @@ test("Gate 5 declares itself sandbox-governed and explicitly not production read
       whatsappPush: "queued_only",
       payments: "sandbox_only",
       refunds: "sandbox_only",
-      tax: "resolved_completion_ledger",
-      driverPayout: "accrued_completion_ledger",
+      tax: "completion_resolved_invoice_policy_governed",
+      driverPayout: "canonical_projection_5_day_finance_approval",
       vehicleCompliance: "uat_only",
     },
   });
