@@ -1,0 +1,127 @@
+name: Verify deployed reviewed UI (no redeploy)
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-ui-verify.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pawspace-pencils-down-ui-readonly
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/ops/pencils-down-staging-ab40dc00'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+    steps:
+      - name: Checkout reviewed verification tools
+        uses: actions/checkout@v4
+        with:
+          ref: b9ab7b53948a517a4e78f698797426285c3ccec7
+          path: infra
+          persist-credentials: false
+      - name: Checkout exact already-deployed product
+        uses: actions/checkout@v4
+        with:
+          ref: 29142163c9934d373d2603fe8ceced6afae3f811
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read original deployment evidence without changing it
+        uses: actions/download-artifact@v4
+        with:
+          name: pencils-down-staging-evidence
+          run-id: 34434608625
+          github-token: ${{ github.token }}
+          path: original-deployment
+      - name: Prepare independent read-only version check
+        run: |
+          cat > "$RUNNER_TEMP/pawspace-ui-readback.py" <<'PY'
+          import importlib.util, json, os, pathlib, urllib.request
+          root=pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          original=json.loads((root/'original-deployment/report.json').read_text())
+          evidence=root/'pencils-down-evidence'; evidence.mkdir(exist_ok=True)
+          target=evidence/'report.json'
+          report=json.loads(target.read_text()) if target.exists() else dict(original)
+          spec=importlib.util.spec_from_file_location('deploy_tools',root/'infra/ops/pencils-down/deploy_frozen.py')
+          tools=importlib.util.module_from_spec(spec); spec.loader.exec_module(tools)
+          tools.source_gate()
+          assert original['candidate']==tools.SHA=='29142163c9934d373d2603fe8ceced6afae3f811'
+          assert original['worker']==tools.WORKER=='pawspace-beta-ui-5f12f6ef'
+          assert original['checks']['database_isolation']=='PASS_CREATE_RESPONSE_AND_READBACK'
+          assert original['checks']['active_source_and_sandbox_bindings']=='PASS'
+          assert original['checks']['frontend_http']=='PASS'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args,**kwargs): return None
+          opener=urllib.request.build_opener(NoRedirect)
+          def get(path):
+              assert path.startswith('/') and '..' not in path
+              url='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']+path
+              request=urllib.request.Request(url,method='GET',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+              try:
+                  with opener.open(request,timeout=40) as response: data=json.load(response)
+              except Exception: raise SystemExit('Read-only Cloudflare verification unavailable; no deployment or write attempted.')
+              assert data.get('success') is True
+              return data['result']
+          prefix='/workers/scripts/'+tools.WORKER
+          deployment=get(prefix+'/deployments')
+          entries=deployment.get('deployments',[]) if isinstance(deployment,dict) else deployment
+          latest=max(entries,key=lambda item:item.get('created_on',''))
+          versions=latest['versions']; assert len(versions)==1 and versions[0]['percentage']==100
+          version_id=versions[0]['version_id']; assert version_id==original['active_version']
+          bindings=get(prefix+'/versions/'+version_id)['resources']['bindings']
+          lookup=tools.binding_map({'bindings':bindings})
+          for name,value in tools.SAFE_VARS.items(): assert lookup.get(name,{}).get('text')==value, 'Test switch mismatch: '+name
+          allowed=set(tools.SAFE_VARS)|set(tools.UAT)|set(tools.RAZOR)|{'DB','ASSETS','IMAGES'}
+          assert not (set(lookup)-allowed), 'Unexpected binding'
+          assert get('/d1/database/'+lookup['DB']['id'])['name']==tools.WORKER
+          if 'read_only_active_recheck_before_browser' not in report['checks']:
+              report['prior_browser_prerequisite']='Original deployment installed the top-level Playwright browser; the test runner required a different pinned browser revision. No page test executed in that run.'
+              report['checks']['read_only_active_recheck_before_browser']='PASS'
+              report['outcome']='ISOLATED_APPLICATION_HTTP_READY'
+          else:
+              assert report['outcome']=='ISOLATED_REVIEWED_UI_DEPLOYMENT_AND_BROWSER_PARITY_PASS'
+              report['checks']['read_only_active_recheck_after_browser']='PASS'
+          report['verification_run_id']=os.environ['GITHUB_RUN_ID']
+          report['redeployed_for_verification']=False
+          target.write_text(json.dumps(report,indent=2)+'\n')
+          print('Exact deployed UI version and isolated sandbox bindings verified read-only; no resource writes.')
+          PY
+      - name: Verify live version and sandbox isolation before browser
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python "$RUNNER_TEMP/pawspace-ui-readback.py"
+      - name: Install unchanged candidate dependencies only
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Install the browser required by the exact test runner
+        working-directory: candidate
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Run real desktop and mobile reviewed-UI checks
+        run: node infra/ops/pencils-down/frontend-smoke.cjs
+      - name: Verify the active version did not change during the browser checks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python "$RUNNER_TEMP/pawspace-ui-readback.py"
+      - name: Upload visual proof and prior-run provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-ui-verified-evidence
+          path: |
+            pencils-down-evidence/
+            original-deployment/report.json
+          if-no-files-found: error
+          retention-days: 7
