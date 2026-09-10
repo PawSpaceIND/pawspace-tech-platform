@@ -2,6 +2,7 @@ import { defaultRoles, hasPermission, type Permission } from "./platform-securit
 import{isDevelopmentPreviewRequest}from"./development-preview";
 import { resolveUatStaffActor, signInRequiredResponse, uatLoginEnabled } from "./uat-staging-auth";
 import { resolvePlatformSession } from "./platform-session";
+import { runtimeControlBlock } from "./control-runtime-switches";
 
 type GatewayEnv={DB:D1Database;FOUNDER_EMAIL?:string};
 export type GatewayActor={email:string;roleCode:string;permissions:string[];preview:boolean};
@@ -27,6 +28,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/content-controls"){if(method==="GET")return url.searchParams.get("view")==="admin"?"marketing.manage":null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="set_feature"?"settings.manage":"marketing.manage";}
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
   if(url.pathname==="/api/control-tower")return "audit.view";
+  if(url.pathname==="/api/control-center-live")return method==="GET"?"audit.view":"settings.manage";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
   if(url.pathname==="/api/uat-provider-switch")return null;
@@ -159,6 +161,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
 async function audit(env:GatewayEnv,actor:GatewayActor,request:Request,outcome:string,detail:unknown){await env.DB.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),actor.email,actor.roleCode,request.method,new URL(request.url).pathname,null,outcome,JSON.stringify(detail),Date.now()).run();}
 
 export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promise<{actor:GatewayActor;permission:Permission|null}|Response>{const url=new URL(request.url);if(!url.pathname.startsWith("/api/"))return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};const permission=await requiredPermission(request);if(permission===null)return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};
+  const emergencyBlock=await runtimeControlBlock(env.DB,request);if(emergencyBlock)return emergencyBlock;
   if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}
   if(isDevelopmentPreviewRequest(request))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);

@@ -9,16 +9,14 @@ import ReferralsControlPanel from "./referrals-control-panel";
 import CityControlPanel from "./city-control-panel";
 import AccessControlPanel from "./access-control-panel";
 import CustomerDataPanel from "./customer-data-panel";
-import GroomingSubscriptionsPanel from "./grooming-subscriptions-panel";
 import BusinessIntelligencePanel from "./business-intelligence-panel";
-import PlatformAuditPanel from "./platform-audit-panel";
 import SchedulingControlPanel from "./scheduling-control-panel";
 import PricingControlPanel from "./pricing-control-panel";
-import MarketingControlPanel from "./marketing-control-panel";
 import FinanceControlPanel from "./finance-control-panel";
 import LaunchReadinessPanel from "./launch-readiness-panel";
 import BookingLifecyclePanel from "./booking-lifecycle-panel";
 import BusinessPolicyPanel from "./business-policy-panel";
+import LiveControlPanel from "./live-control-panel";
 type View =
   | "command"
   | "launch"
@@ -94,7 +92,7 @@ const modules = [
   [
     "Roles & access",
     "Least privilege, masking and quarterly reviews",
-    "access",
+    "access2",
   ],
   [
     "Approval policies",
@@ -109,7 +107,7 @@ const modules = [
   [
     "Data governance",
     "Imports, dedupe, consent, retention and merges",
-    "data",
+    "data2",
   ],
   [
     "Inventory & buying",
@@ -168,9 +166,9 @@ const longIstDay = (day: string) => {
 /** Views still rendering built-in example rows rather than the database, labelled on screen so a
  *  tester never files a bug against invented data. "access2" and "data2" are the live replacements
  *  for the older "access" and "data" prototypes and are deliberately not in this set. */
-const PROTOTYPE_CONTROL_VIEWS = new Set(["access", "approvals", "master", "data", "inventory", "quality", "security", "health"]);
+const PROTOTYPE_CONTROL_VIEWS = new Set<View>();
 /** Hand-authored assessment rather than a live count - true as written, but written by a person. */
-const AUTHORED_REGISTER_VIEWS = new Set(["audit"]);
+const AUTHORED_REGISTER_VIEWS = new Set<View>();
 
 /** The approvals backlog is a real count of what is waiting on a human, from /api/team-overview.
  *  Cold-safe: an environment without those tables reports null, which renders as "—". */
@@ -227,7 +225,7 @@ export default function Control() {
         <div className={styles.workspace}>
           <span>OWNER WORKSPACE</span>
           <strong>PawSpace India</strong>
-          <small>Restricted prototype</small>
+          <small>Governed live control plane</small>
         </div>
         <nav>
           {visibleNav.map((n) => (
@@ -264,7 +262,7 @@ export default function Control() {
             <p>PAWSPACE PLATFORM GOVERNANCE</p>
             <h1>{title}</h1>
           </div>
-          <button onClick={() => notify("Emergency control panel opened")}>
+          <button onClick={() => { setView("health"); notify("Emergency controls opened"); }}>
             Emergency controls
           </button>
         </header>
@@ -418,7 +416,7 @@ export default function Control() {
                   <i>◆</i>
                   <strong>{x[0]}</strong>
                   <p>{x[1]}</p>
-                  <span>{PROTOTYPE_CONTROL_VIEWS.has(x[2]) ? "Sample data" : AUTHORED_REGISTER_VIEWS.has(x[2]) ? "Authored register" : "Live data"}</span>
+                  <span>{PROTOTYPE_CONTROL_VIEWS.has(x[2] as View) ? "Sample data" : AUTHORED_REGISTER_VIEWS.has(x[2] as View) ? "Authored register" : "Live data"}</span>
                   <button onClick={() => setView(x[2] as View)}>Open →</button>
                 </article>
               ))}
@@ -515,7 +513,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "approvals" && (
+        {false && view === "approvals" && (
           <>
             {/* These four tiles used to be literals — 9 pending worth ₹1.84L, 42 approved today at a
                 median of 18 minutes, 128 auto-approved. Only the first has a source: payroll runs
@@ -592,7 +590,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "master" && (
+        {false && view === "master" && (
           <>
             <section className={styles.hero}>
               <div>
@@ -660,19 +658,23 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "audit" && <PlatformAuditPanel />}
+        {view === "audit" && <LiveControlPanel section="audit" notify={notify} />}
         {view === "cities" && <CityControlPanel notify={notify} />}
         {view === "policy" && <BusinessPolicyPanel notify={notify} />}
         {view === "business" && <BusinessIntelligencePanel notify={notify} />}
         {view === "scheduling" && <SchedulingControlPanel notify={notify} />}
         {view === "pricing" && <PricingControlPanel notify={notify} />}
-        {view === "marketing" && <MarketingControlPanel notify={notify} />}
+        {view === "marketing" && <LiveControlPanel section="marketing" notify={notify} />}
         {view === "finance" && <FinanceControlPanel notify={notify} />}
         {view === "access2" && <AccessControlPanel />}
         {view === "data2" && <CustomerDataPanel />}
-        {view === "subscriptions" && (
-          <GroomingSubscriptionsPanel notify={notify} />
-        )}
+        {view === "approvals" && <LiveControlPanel section="approvals" notify={notify} />}
+        {view === "master" && <LiveControlPanel section="master" notify={notify} />}
+        {view === "inventory" && <LiveControlPanel section="inventory" notify={notify} />}
+        {view === "quality" && <LiveControlPanel section="quality" notify={notify} />}
+        {view === "security" && <LiveControlPanel section="security" notify={notify} />}
+        {view === "health" && <LiveControlPanel section="health" notify={notify} />}
+        {view === "subscriptions" && <LiveControlPanel section="subscriptions" notify={notify} />}
         {view === "coupons" && <CouponsControlPanel notify={notify} />}
         {view === "referrals" && <ReferralsControlPanel notify={notify} />}
         {view === "data" && (
@@ -765,7 +767,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "inventory" && (
+        {false && view === "inventory" && (
           <>
             <section className={styles.metrics}>
               {[
@@ -856,7 +858,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "quality" && (
+        {false && view === "quality" && (
           <>
             <section className={styles.hero}>
               <div>
@@ -958,7 +960,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "security" && (
+        {false && view === "security" && (
           <>
             <section className={styles.hero}>
               <div>
@@ -1008,7 +1010,7 @@ export default function Control() {
             </section>
           </>
         )}
-        {view === "health" && (
+        {false && view === "health" && (
           <>
             <section className={styles.hero}>
               <div>
