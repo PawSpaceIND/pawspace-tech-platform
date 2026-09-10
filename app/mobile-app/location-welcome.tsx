@@ -7,6 +7,7 @@ import type { AddressSuggestion, AutocompleteResult, ResolvedAddress } from "../
 
 export const DISCOVERY_PIN_KEY = "pawspace.discovery.pin";
 export const WELCOME_SEEN_KEY = "pawspace.welcome.seen.v4";
+const PAWSPACE_LOGO = "/assets/pawspace-logo.jpeg";
 
 /** A discovery preference, never a verified doorstep or a booking/price authority. */
 export default function LocationWelcome({ onContinue, compact = false }: {
@@ -24,7 +25,6 @@ export default function LocationWelcome({ onContinue, compact = false }: {
   useEffect(() => {
     if (compact) return;
     const timer = window.setTimeout(() => { void locate(); }, 0);
-    // Location must never gate guest access, including an unanswered permission prompt.
     const deadline = window.setTimeout(() => finish(null), 8000);
     return () => { window.clearTimeout(timer); window.clearTimeout(deadline); };
   }, [compact]);
@@ -60,9 +60,7 @@ export default function LocationWelcome({ onContinue, compact = false }: {
     try {
       const result = await resolveServiceCoverage(value, AbortSignal.timeout(10000));
       if (request !== generation.current) return;
-      setPin(result.pincode);
-      setCoverage(result);
-      setNote("");
+      setPin(result.pincode); setCoverage(result); setNote("");
       if (!compact) finish(result);
     } catch {
       if (request !== generation.current) return;
@@ -73,12 +71,8 @@ export default function LocationWelcome({ onContinue, compact = false }: {
 
   async function locate() {
     const request = ++generation.current;
-    setCoverage(null);
-    setNote("");
-    if (!navigator.geolocation) {
-      setNote("Location isn’t available in this browser. Search for your neighbourhood instead.");
-      return;
-    }
+    setCoverage(null); setNote("");
+    if (!navigator.geolocation) { setNote("Location isn’t available in this browser. Search for your neighbourhood instead."); return; }
     setBusy(true);
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       if (request !== generation.current) return;
@@ -90,10 +84,7 @@ export default function LocationWelcome({ onContinue, compact = false }: {
         if (!response.ok || body.data?.status !== "configured" || !foundPin) throw new Error("location_unresolved");
         if (request === generation.current) await checkPin(foundPin, request);
       } catch {
-        if (request === generation.current) {
-          setBusy(false);
-          setNote("We couldn’t find your area automatically. Search for your neighbourhood instead.");
-        }
+        if (request === generation.current) { setBusy(false); setNote("We couldn’t find your area automatically. Search for your neighbourhood instead."); }
       }
     }, (error) => {
       if (request !== generation.current) return;
@@ -108,18 +99,16 @@ export default function LocationWelcome({ onContinue, compact = false }: {
       sessionStorage.setItem(WELCOME_SEEN_KEY, "1");
       if (selected) sessionStorage.setItem(DISCOVERY_PIN_KEY, selected.pincode);
       else sessionStorage.removeItem(DISCOVERY_PIN_KEY);
-    } catch { /* Browsing works without browser storage. */ }
+    } catch { }
     onContinue(selected);
   }
 
   if (!compact) return <section className={styles.logoOnly} data-location-welcome="true" role="status" aria-label="Opening PawSpace">
-    <img src="/assets/pawspace-official-lockup.png" alt="PawSpace — Your Petter Half" fetchPriority="high" />
+    <img src={PAWSPACE_LOGO} alt="PawSpace — Your Petter Half" fetchPriority="high" />
   </section>;
 
   return <section className={`${styles.welcome} ${compact ? styles.compact : ""}`} data-location-welcome={compact ? undefined : "true"} aria-labelledby={compact ? "location-edit-title" : "location-welcome-title"}>
-    {!compact && <>
-      <div className={styles.splash}><span className={styles.locationMark} aria-hidden="true">⌖</span><p>{coverage ? `${coverage.area}, ${coverage.city}` : busy ? "Finding your neighbourhood…" : "Care starts at your doorstep"}</p><img src="/assets/pawspace-official-lockup.png" alt="PawSpace — Your Petter Half" fetchPriority="high" /></div>
-    </>}
+    {!compact && <><div className={styles.splash}><span className={styles.locationMark} aria-hidden="true">⌖</span><p>{coverage ? `${coverage.area}, ${coverage.city}` : busy ? "Finding your neighbourhood…" : "Care starts at your doorstep"}</p><img src={PAWSPACE_LOGO} alt="PawSpace — Your Petter Half" fetchPriority="high" /></div></>}
     <div className={styles.content}>
       <small className={styles.eyebrow}>CARE, CLOSE TO HOME</small>
       <h1 id={compact ? "location-edit-title" : "location-welcome-title"}>{compact ? "Where is home?" : "Where does your pet call home?"}</h1>
@@ -131,12 +120,7 @@ export default function LocationWelcome({ onContinue, compact = false }: {
         <div className={styles.pinRow}><input id={compact ? "edit-area-search" : "welcome-area-search"} value={search} minLength={3} required placeholder="Area, landmark and city" disabled={busy} onChange={event => { setSearch(event.target.value); setCoverage(null); setSuggestions([]); setNote(""); }} /><button disabled={busy || search.trim().length < 3}>Search</button></div>
       </form>
       {suggestions.length > 0 && <ul className={styles.suggestions} aria-label="Matching areas">{suggestions.map(area => <li key={area.placeId}><button disabled={busy} onClick={() => void findArea(area.placeId)}><b>{area.mainText}</b><span>{area.secondaryText}</span></button></li>)}</ul>}
-      <details className={styles.fallback}><summary>Can’t find your area? Use a PIN code</summary>
-      <form onSubmit={event => { event.preventDefault(); setBusy(true); setCoverage(null); setNote(""); void checkPin(pin, ++generation.current); }}>
-        <label htmlFor={compact ? "edit-pin" : "welcome-pin"}>Or enter your area’s PIN code</label>
-        <div className={styles.pinRow}><input id={compact ? "edit-pin" : "welcome-pin"} inputMode="numeric" autoComplete="postal-code" value={pin} maxLength={6} pattern="[1-9][0-9]{5}" required placeholder="6-digit PIN code" disabled={busy} onChange={event => { setPin(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); setNote(""); }} /><button disabled={busy || !/^[1-9]\d{5}$/.test(pin)}>Check area</button></div>
-      </form>
-      </details>
+      <details className={styles.fallback}><summary>Can’t find your area? Use a PIN code</summary><form onSubmit={event => { event.preventDefault(); setBusy(true); setCoverage(null); setNote(""); void checkPin(pin, ++generation.current); }}><label htmlFor={compact ? "edit-pin" : "welcome-pin"}>Or enter your area’s PIN code</label><div className={styles.pinRow}><input id={compact ? "edit-pin" : "welcome-pin"} inputMode="numeric" autoComplete="postal-code" value={pin} maxLength={6} pattern="[1-9][0-9]{5}" required placeholder="6-digit PIN code" disabled={busy} onChange={event => { setPin(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); setNote(""); }} /><button disabled={busy || !/^[1-9]\d{5}$/.test(pin)}>Check area</button></div></form></details>
       {note && <p className={styles.notice} role="alert">{note}</p>}
       {busy && <span role="status" className={styles.locating}><img src="/assets/pawspace-icon.jpeg" alt="" />Finding care close to your pet…</span>}
       {coverage && <div className={styles.result} role="status"><b>{coverage.city}</b><span>{coverage.area} · {coverage.pincode}</span><button className={styles.primary} onClick={() => finish(coverage)}>Continue in {coverage.city} →</button></div>}
