@@ -474,3 +474,41 @@ test("Gate 3: two Finance approvals of one cancellation produce exactly one refu
   assert.equal(Number(refundRows(sqlite, bookingId)[0].amount), approvedAmount,
     "the refund on the ledger is the amount that was actually approved");
 });
+
+// ---------------------------------------------------------------------------------------------
+test("Gate 3: Razorpay booking-fee and final-balance captures preserve Taxi schedule plus verified canonical timeline", async () => {
+  const { ensureFinancialRuntimeTables } = await import("../lib/financial-runtime-schema.ts");
+  const { commitRazorpayCaptureAtomic, executeRazorpayCapturePostCommit } = await import("../lib/razorpay-capture-atomic.ts");
+  const world = await financeWorld({ bookingStatus: "payment_pending", paymentEvent: null });
+  const { sqlite, db, bookingId, customerId } = world;
+  const now = Date.now(), paymentId = `PAY-${bookingId}`;
+  sqlite.prepare("UPDATE provider_work_orders SET status='payment_pending' WHERE booking_id=?").run(bookingId);
+  await ensureFinancialRuntimeTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_gateway_links (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,environment TEXT NOT NULL,gateway_order_id TEXT UNIQUE,gateway_payment_link_id TEXT UNIQUE,gateway_payment_id TEXT UNIQUE,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_gateway_events (id TEXT PRIMARY KEY,provider TEXT NOT NULL,environment TEXT NOT NULL,event_id TEXT NOT NULL,event_type TEXT NOT NULL,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,gateway_refund_id TEXT,amount_subunits INTEGER,currency TEXT,signature_verified INTEGER NOT NULL,payload_hash TEXT NOT NULL,processing_status TEXT NOT NULL DEFAULT 'received',failure_reason TEXT,detail_json TEXT NOT NULL DEFAULT '{}',received_at INTEGER NOT NULL,processed_at INTEGER,UNIQUE(provider,event_id))");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_reconciliation_records (payment_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,gateway TEXT NOT NULL,environment TEXT NOT NULL,expected_amount REAL NOT NULL,captured_amount REAL NOT NULL DEFAULT 0,refunded_amount REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL,gateway_status TEXT NOT NULL DEFAULT 'not_started',reconciliation_status TEXT NOT NULL DEFAULT 'pending',variance_amount REAL NOT NULL DEFAULT 0,last_event_id TEXT,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS taxi_payment_schedules (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,total_amount REAL NOT NULL,booking_fee_amount REAL NOT NULL,balance_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'booking_fee_pending',booking_fee_paid_at INTEGER,booking_fee_reference TEXT,final_paid_at INTEGER,final_payment_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,created_at,updated_at) VALUES (?,?,?,?,?,'booking_fee_pending',?,?)").run(bookingId, customerId, 449, 100, 349, now, now);
+  sqlite.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,status,created_at,updated_at) VALUES (?,?,?,'razorpay','sandbox','active',?,?)").run(`PGL-${bookingId}`, bookingId, paymentId, now, now);
+  const seedIntent = (id, amountPaise, orderId) => sqlite.prepare(`INSERT INTO payment_intents (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,gateway_order_id,gross_service_value_paise,platform_fee_paise,partner_earning_paise,tds_paise,gst_paise,commission_rate_bps,commission_rate_version,tax_rule_version,commercial_snapshot_json,version,created_at,updated_at) VALUES (?,?,?,?,'razorpay','sandbox',?,?,'INR','CREATED','ORDER_CREATED',?,0,0,0,0,0,0,'test','test','{}',0,?,?)`).run(id, bookingId, customerId, paymentId, `idem-${id}`, amountPaise, orderId, now, now);
+  const seedInbox = (id, eventId) => sqlite.prepare("INSERT INTO gateway_webhook_events (id,provider,environment,event_id,event_type,raw_payload,payload_sha256,signature,processing_status,received_at) VALUES (?,'razorpay','sandbox',?,'payment.captured','{}',?,'test-signature','PROCESSING',?)").run(id, eventId, `hash-${eventId}`, Date.now());
+  const capture = async ({ intentId, inboxId, eventId, orderId, gatewayPaymentId, amountPaise }) => {
+    seedIntent(intentId, amountPaise, orderId); seedInbox(inboxId, eventId);
+    const committed = await commitRazorpayCaptureAtomic(db, { inboxId, eventId, environment: "sandbox", intentId, bookingId, paymentId, gatewayOrderId: orderId, gatewayPaymentId, amountPaise, currency: "INR", payloadHash: `hash-${eventId}` });
+    const effects = await executeRazorpayCapturePostCommit(db, { outboxId: committed.effectsOutboxId, workerId: `taxi-g3-${eventId}` });
+    assert.equal(effects.completed, true); return committed;
+  };
+  const fee = await capture({ intentId: "PI-TAXI-FEE", inboxId: "IN-TAXI-FEE", eventId: "evt_taxi_fee", orderId: "order_taxi_fee", gatewayPaymentId: "pay_taxi_fee", amountPaise: 10000 });
+  assert.equal(fee.collectedInFull, false);
+  let schedule = sqlite.prepare("SELECT * FROM taxi_payment_schedules WHERE booking_id=?").get(bookingId);
+  assert.deepEqual({ status: schedule.status, ref: schedule.booking_fee_reference }, { status: "pending_balance", ref: "pay_taxi_fee" });
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(bookingId).status, "confirmed");
+  assert.equal(sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id=?").get(bookingId).status, "assigned");
+  const balance = await capture({ intentId: "PI-TAXI-BAL", inboxId: "IN-TAXI-BAL", eventId: "evt_taxi_balance", orderId: "order_taxi_balance", gatewayPaymentId: "pay_taxi_balance", amountPaise: 34900 });
+  assert.equal(balance.collectedInFull, true);
+  schedule = sqlite.prepare("SELECT * FROM taxi_payment_schedules WHERE booking_id=?").get(bookingId);
+  assert.deepEqual({ status: schedule.status, ref: schedule.final_payment_reference }, { status: "paid", ref: "pay_taxi_balance" });
+  assert.equal(sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).captured_amount, 449);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id=? AND event_type='payment_captured'").get(bookingId).n, 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get().n, 2);
+});
