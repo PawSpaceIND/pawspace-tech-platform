@@ -1,0 +1,114 @@
+name: Deploy Golden geofence-fixed candidate to fresh UAT
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-golden-homebase-deploy.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-golden-homebase-f5095371
+  cancel-in-progress: false
+jobs:
+  certify-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    environment: pawspace-release-preview
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - name: Checkout deployment guardrails
+        uses: actions/checkout@v4
+        with:
+          ref: ops/pencils-down-staging-ab40dc00
+          path: infra
+          persist-credentials: false
+      - name: Checkout exact geofence-fixed candidate
+        uses: actions/checkout@v4
+        with:
+          ref: f5095371c0dfcf13aca68b0d43af6536e56a4805
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Retarget proven create-only deployment guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          script=Path('infra/ops/pencils-down/deploy_golden.py')
+          text=script.read_text()
+          replacements={
+            '8745bbca5e76185b65ca7c0a7fd4bda60acf35e6':'f5095371c0dfcf13aca68b0d43af6536e56a4805',
+            '321312aec6e2a96060496bdf4401d41cf024e40d':'a720823389d66d3f1fb8c2cd05571ea426df900f',
+            'pawspace-beta-golden-8745bbca':'pawspace-beta-golden-e2e-f50953',
+            'pawspace-golden-8745bbca':'pawspace-golden-e2e-f50953',
+          }
+          for old,new in replacements.items():
+            if old not in text: raise SystemExit('expected guard token missing: '+old)
+            text=text.replace(old,new)
+          script.write_text(text)
+          manifest=Path('infra/ops/pencils-down/payment-ui-source-manifest.json')
+          data=json.loads(manifest.read_text())
+          data['candidate']='f5095371c0dfcf13aca68b0d43af6536e56a4805'
+          data['tree']='a720823389d66d3f1fb8c2cd05571ea426df900f'
+          data['payment_ui_wiring']='customer Wallet -> reduced due-now -> Razorpay Test; UAT synthetic groomers now have test-only geofence home bases'
+          manifest.write_text(json.dumps(data,indent=2)+'\n')
+          print('Guard retargeted in runner workspace only; production and repository product source unchanged.')
+          PY
+      - name: Generate isolated session signing keys
+        id: keys
+        run: |
+          python - <<'PY'
+          import os,secrets
+          for name in ('signing','identity'):
+            value=secrets.token_hex(32); print('::add-mask::'+value)
+            with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(name+'='+value+'\n')
+          PY
+      - name: Preflight unused test namespace
+        env: &golden_env
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ steps.keys.outputs.signing }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ steps.keys.outputs.identity }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: python infra/ops/pencils-down/deploy_golden.py preflight
+      - name: Install locked dependencies
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Focused scheduling, identity and payment checks
+        working-directory: candidate
+        env:
+          PAWSPACE_SCHEDULING_ENV: uat
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/uat-grooming-homebase-fixture.test.mjs tests/ptja-identity-spine.test.mjs tests/beta-credit-parity.test.mjs tests/customer-payment-ui-wiring.test.mjs tests/payment-order-cross-customer-runtime.test.mjs
+      - name: Full typecheck
+        working-directory: candidate
+        run: npm run typecheck
+      - name: Full build
+        working-directory: candidate
+        run: npm run build
+      - name: Deploy fresh isolated Worker and D1
+        id: deploy
+        env: *golden_env
+        run: python infra/ops/pencils-down/deploy_golden.py deploy
+      - name: Upload deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-homebase-deployment-evidence
+          path: pencils-down-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Candidate URL
+        if: success()
+        run: echo "GOLDEN_ORIGIN=${{ steps.deploy.outputs.origin }}"
