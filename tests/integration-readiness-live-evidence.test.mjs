@@ -408,3 +408,24 @@ test("the readiness summary reports zero controlled-live integrations on a cold 
   assert.ok(listed.summary.p0Required > 0);
   assert.equal(listed.summary.p0ControlledLive, 0);
 });
+
+
+test("legacy system-owned payout readiness advances to RazorpayX Test Mode but human-owned rows do not", async () => {
+  const { sqlite, db } = await fresh();
+  const legacy = () => sqlite.prepare("UPDATE integration_registry SET provider='Provider not selected',environment='none',code_boundary_status='partial',credential_detector=NULL,credential_status='unknown',readiness_state='production_setup_required',updated_by=? WHERE integration_code='INT-PAY-02'");
+  legacy().run("system_seed");
+  await registry.ensureIntegrationReadinessTables(db);
+  const advanced = row(sqlite, "INT-PAY-02");
+  assert.equal(advanced.provider, "RazorpayX");
+  assert.equal(advanced.environment, "sandbox");
+  assert.equal(advanced.code_boundary_status, "code_ready");
+  assert.equal(advanced.credential_detector, "razorpayx_sandbox");
+  assert.equal(advanced.readiness_state, "sandbox_setup_required");
+
+  legacy().run("finance.owner@pawspace.in");
+  await registry.ensureIntegrationReadinessTables(db);
+  const humanOwned = row(sqlite, "INT-PAY-02");
+  assert.equal(humanOwned.provider, "Provider not selected");
+  assert.equal(humanOwned.code_boundary_status, "partial");
+  assert.equal(humanOwned.updated_by, "finance.owner@pawspace.in");
+});
