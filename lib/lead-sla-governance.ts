@@ -3,7 +3,7 @@ export type LeadSlaClockType="first_response"|"follow_up"|"quote_follow_up"|"hig
 export type LeadSlaClockStatus="running"|"paused"|"met"|"breached"|"cancelled";
 export type LeadBusinessHours={mode:"elapsed"|"windowed";weekdays?:Record<string,{startMinute:number;endMinute:number}>};
 
-import { reassignLead } from "./lead-assignment-governance";
+import { assignLead, reassignLead } from "./lead-assignment-governance";
 import { normalizeLeadServiceCode } from "./lead-lifecycle-governance";
 
 type Db=D1Database;
@@ -55,3 +55,21 @@ export async function runLeadSlaGovernance(db:Db,input:{actorId:string;asOf?:num
 function displayState(row:Row,asOf:number){if(text(row.status)==="breached")return{state:"breached",reason:"Configured SLA deadline passed"};if(text(row.status)==="paused")return{state:"paused",reason:text(row.pause_reason)||"Manually paused"};if(text(row.status)!=="running")return{state:text(row.status),reason:null};const hours=parseBusinessHours(row.business_hours_json);if(hours.mode==="windowed"&&!isWorkingMinute(asOf,text(row.timezone),hours))return{state:"paused",reason:"Outside configured business hours"};return{state:"running",reason:"Within configured SLA clock"};}
 
 export async function leadSlaDirectory(db:Db,asOf=Date.now()){await ensureLeadSlaTables(db);const[policies,clocks,events]=await Promise.all([db.prepare("SELECT * FROM lead_sla_policies ORDER BY updated_at DESC").all<Row>(),db.prepare("SELECT c.*,p.name policy_name,p.timezone,p.business_hours_json,l.owner legacy_owner,a.employee_email canonical_owner FROM lead_sla_clocks c JOIN lead_sla_policies p ON p.id=c.policy_id LEFT JOIN lead_work_items l ON l.id=c.lead_id LEFT JOIN lead_assignments a ON a.id=c.assignment_id ORDER BY c.started_at DESC LIMIT 300").all<Row>(),db.prepare("SELECT * FROM lead_sla_events ORDER BY created_at DESC LIMIT 300").all<Row>()]);return{policies:policies.results.map(policySnapshot),clocks:clocks.results.map(row=>({...row,display:displayState(row,asOf)})),events:events.results,truth:{slaSource:"lead_sla_policies + lead_sla_clocks",legacyFixed10And30MinuteRulesAuthoritative:false,nextActionGoverned:true,automaticReassignment:false,productionReady:false}};}
+
+export async function leadSlaPerformanceForOwner(db:Db,employeeEmail:string){
+ await ensureLeadSlaTables(db);
+ const row=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN c.status='met' AND c.breached_at IS NULL THEN 1 ELSE 0 END) met FROM lead_sla_clocks c JOIN lead_assignments a ON a.id=c.assignment_id WHERE c.clock_type='first_response' AND lower(a.employee_email)=lower(?)").bind(employeeEmail).first<Row>();
+ const total=Number(row?.total||0),met=Number(row?.met||0);
+ return{total,met,percent:total?Math.round((met/total)*100):0};
+}
+
+export async function rotateLeadAssignmentAndSla(db:Db,input:{leadId:string;actorId:string;reason:string;asOf:number;cycleKey:string}){
+ await ensureLeadSlaTables(db);
+ const current=await db.prepare("SELECT employee_email FROM lead_assignments WHERE lead_id=? AND status='current' ORDER BY assigned_at DESC LIMIT 1").bind(input.leadId).first<Row>().catch(()=>null);
+ const outcome=current?await reassignLead(db,{leadId:input.leadId,idempotencyKey:`crm:${input.cycleKey}:reassign:${input.leadId}`,reason:input.reason,actorId:input.actorId,excludeEmployeeEmail:text(current.employee_email),asOf:input.asOf}):await assignLead(db,{leadId:input.leadId,idempotencyKey:`crm:${input.cycleKey}:assign:${input.leadId}`,reason:"reopened",actorId:input.actorId,asOf:input.asOf});
+ const assignment=(outcome as {assignment?:Row}).assignment||{},owner=text(assignment.employee_email)||"Unassigned";
+ await db.prepare("UPDATE lead_sla_clocks SET status='cancelled',updated_at=? WHERE lead_id=? AND clock_type='first_response' AND status IN ('running','breached','paused')").bind(input.asOf,input.leadId).run().catch(()=>{});
+ const cycle=await db.prepare("SELECT COALESCE(MAX(cycle),0) n FROM lead_sla_clocks WHERE lead_id=? AND clock_type='first_response'").bind(input.leadId).first<Row>().catch(()=>null);
+ let sla:"canonical"|"policy_unavailable"="canonical";try{await startLeadSlaClock(db,{leadId:input.leadId,clockType:"first_response",idempotencyKey:`crm:${input.cycleKey}:sla:${input.leadId}`,actorId:input.actorId,asOf:input.asOf,cycle:Number(cycle?.n||0)+1});}catch{sla="policy_unavailable";}
+ return{owner,sla,assignment};
+}

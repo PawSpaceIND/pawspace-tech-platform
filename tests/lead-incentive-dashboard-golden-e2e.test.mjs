@@ -34,8 +34,8 @@ test("sales period approval is maker-checker and closed-month only",async()=>{
 });
 
 test("public intake and CRM lifecycle have no legacy ownership/SLA authority bypass",()=>{
- const publicRoute=fs.readFileSync("app/api/public-contact/route.ts","utf8"),crm=fs.readFileSync("app/api/revenue-crm/route.ts","utf8");
+ const publicRoute=fs.readFileSync("app/api/public-contact/route.ts","utf8"),crm=fs.readFileSync("app/api/revenue-crm/route.ts","utf8"),sla=fs.readFileSync("lib/lead-sla-governance.ts","utf8");
  assert.ok(publicRoute.indexOf("reconcileCanonicalLeadGovernance(db")<publicRoute.indexOf("startWhatsAppAiLead(db"),"WhatsApp thread receives canonical owner");
  assert.match(crm,/runLeadSlaGovernance\(db/);assert.doesNotMatch(crm,/async function runSla[\s\S]{0,1200}manager_alert_at<=/);
- assert.match(crm,/rotateCanonicalLead\(db/);assert.match(crm,/reassignLead\(db/);assert.match(crm,/startLeadSlaClock\(db/);
+ assert.match(crm,/rotateLeadAssignmentAndSla\(db/);assert.match(sla,/reassignLead\(db/);assert.match(sla,/startLeadSlaClock\(db/);
 });
