@@ -287,7 +287,9 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const policy = await quietHoursPolicy(db, text(input.cityId) || "blr");
   const localHour = new Date(now + IST_OFFSET_MINUTES * 60_000).getUTCHours();
   const quiet = inQuietHours(localHour, policy.quietStart, policy.quietEnd);
-  add("quiet_hours", !quiet, "blocked_quiet_hours", quiet ? `Local hour ${localHour} is inside quiet hours ${policy.quietStart}-${policy.quietEnd} (${policy.source})` : `Local hour ${localHour} is outside quiet hours (${policy.source})`);
+  const controlledUatPolicyIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
+  const quietHoursAllowed = !quiet || controlledUatPolicyIsolated;
+  add("quiet_hours", quietHoursAllowed, "blocked_quiet_hours", controlledUatPolicyIsolated && quiet ? "Controlled carrier UAT one-shot is explicitly isolated from quiet hours; production/public rules remain unchanged" : quiet ? `Local hour ${localHour} is inside quiet hours ${policy.quietStart}-${policy.quietEnd} (${policy.source})` : `Local hour ${localHour} is outside quiet hours (${policy.source})`);
 
   // Only calls that actually dialled count towards the cap. A call the gate refused never reached the
   // recipient, so counting it would let one blocked attempt suppress a legitimate later one.
@@ -295,7 +297,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
   const dailyCap = Math.min(useCase?.maxAttempts ?? 1, policy.maxAttempts);
-  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
+  const frequencyCapIsolated = controlledUatPolicyIsolated;
   const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
   add("frequency_cap", capOk, "blocked_frequency_cap",
     frequencyCapIsolated
@@ -321,7 +323,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     attempts24h,
     consentDecision: consentGranted ? "granted" : consent ? "revoked" : "missing",
     optOutDecision: optOut || leadOptOut ? "opted_out" : "clear",
-    quietHoursDecision: quiet ? "inside" : "outside",
+    quietHoursDecision: quiet && controlledUatPolicyIsolated ? "inside_uat_override" : quiet ? "inside" : "outside",
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
@@ -546,7 +548,7 @@ export async function requestControlledCarrierUatCall(db: Db, env: Env, input: O
     || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true"
     || text(env.PAWSPACE_VOICE_UAT_AUTORUN).toLowerCase() !== "true"
     || text(env.PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED).toLowerCase() !== "true") {
-    throw new Error("Controlled carrier UAT frequency isolation requires explicitly approved UAT autorun with confirmed consent");
+    throw new Error("Controlled carrier UAT policy isolation requires explicitly approved UAT autorun with confirmed consent");
   }
   if (gate.allowlist.length !== 1 || !targetKey || gate.allowlist[0] !== targetKey) throw new Error("Controlled carrier UAT requires exactly the single approved allowlisted recipient");
   if (text(input.useCase) !== "booking_confirmation" || !text(input.customerId) || !text(input.bookingId)) throw new Error("Controlled carrier UAT requires canonical booking-confirmation context");
