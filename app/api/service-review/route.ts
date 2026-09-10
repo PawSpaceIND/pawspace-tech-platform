@@ -1,6 +1,6 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
-import{ServiceReviewError,requestServiceReview,submitServiceReview,claimPublicReview,verifyPublicReview,redeemReviewReward,listReviewRewards}from"../../../lib/service-review-governance";
+import{ServiceReviewError,requestServiceReview,submitServiceReview,claimPublicReview,verifyPublicReview,redeemReviewReward,listReviewRewards,listCustomerPendingServiceReviews}from"../../../lib/service-review-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin review write blocked",{status:403});}
@@ -10,7 +10,7 @@ async function ownedContext(request:Request,requestedCustomerId?:string){const d
 export async function GET(request:Request){
   try{
     const url=new URL(request.url),{db,customerId}=await ownedContext(request,url.searchParams.get("customerId")||undefined);
-    return json({data:{rewards:await listReviewRewards(db,customerId)}});
+    return json({data:{rewards:await listReviewRewards(db,customerId),pending:await listCustomerPendingServiceReviews(db,customerId)}});
   }catch(error){return authError(error,"Unable to load review rewards");}
 }
 
