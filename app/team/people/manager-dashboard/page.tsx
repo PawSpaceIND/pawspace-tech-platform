@@ -64,7 +64,7 @@ export default function ManagerDashboardPage() {
             <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Sales / Telesales</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={th}>Name</th><th style={th}>Today&apos;s achievement</th><th style={th}>7-day total</th><th style={th}>Month achievement</th><th style={th}>Month target</th><th style={th}>Day closed?</th><th style={th}>Talk time today</th></tr></thead>
+                <thead><tr><th style={th}>Name</th><th style={th}>Today&apos;s achievement</th><th style={th}>7-day total</th><th style={th}>Month achievement</th><th style={th}>Month target</th><th style={th}>Incentive truth</th><th style={th}>Day closed?</th><th style={th}>Talk time today</th></tr></thead>
                 <tbody>
                   {data.verticals.sales.map((row) => (
                     <tr key={row.employeeEmail}>
@@ -73,6 +73,7 @@ export default function ManagerDashboardPage() {
                       <td style={td}>{(row.weekly as { achievedValue?: number })?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { achievedValue?: number } | null)?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { tierTarget?: number } | null)?.tierTarget ?? "—"}</td>
+                      <td style={td}>{row.incentiveTruth ? `${String((row.incentiveTruth as {status?:string}).status ?? "draft")} · ₹${Number((row.incentiveTruth as {total?:number}).total ?? 0).toLocaleString("en-IN")}` : "Not generated"}</td>
                       <td style={td}>{row.dayClosureReady === true ? "✅ Yes" : row.dayClosureReady === false ? "⚠ No" : "—"}</td>
                       <td style={td}>{(row.talkTimeMinutesToday as number | undefined) ?? "—"} min</td>
                     </tr>
