@@ -17,6 +17,7 @@ import {
 } from "../../../lib/employee-recognition-incentives";
 import { saveProviderHomeBase, currentHomeBase, homeBaseHistory } from "../../../lib/provider-home-base";
 import { computeDailyTravel, dailyTravelSummary } from "../../../lib/provider-daily-travel";
+import { buildSalesIncentivePeriodResult, approveSalesIncentivePeriodResult, salesIncentivePeriodTruth } from "../../../lib/daily-incentive-accrual";
 
 type Db=Awaited<ReturnType<typeof database>>;
 
@@ -47,7 +48,8 @@ export async function GET(request:Request){
     }
     if(kind==="sales"){
       const monthly=await computeMonthlySalesIncentive(db,{employeeId,monthStart,actorId:actor.email});
-      return Response.json({monthly});
+      const governance=await salesIncentivePeriodTruth(db,{employeeId,monthStart});
+      return Response.json({monthly,governance});
     }
     return Response.json({error:"kind must be groomer, trainer, or sales"},{status:400});
   }catch(error){return authError(error,"Unable to load service incentive engine")}
@@ -90,6 +92,10 @@ export async function POST(request:Request){
         return Response.json(await saveSalesBlitzDay(db,{blitzDate:String(body.blitzDate),reason:String(body.reason||""),actorId:actor.email}));
       case "compute_daily_sales":
         return Response.json(await computeDailySalesIncentive(db,{employeeId:String(body.employeeId),date:String(body.date),actorId:actor.email}));
+      case "generate_sales_period":
+        return Response.json(await buildSalesIncentivePeriodResult(db,{employeeId:String(body.employeeId),monthStart:String(body.monthStart),actorId:actor.email}));
+      case "approve_sales_period":
+        return Response.json(await approveSalesIncentivePeriodResult(db,{employeeId:String(body.employeeId),monthStart:String(body.monthStart),actorId:actor.email}));
 
       case "save_home_base":
         return Response.json(await saveProviderHomeBase(db,{providerId:String(body.providerId),address:String(body.address),latitude:Number(body.latitude),longitude:Number(body.longitude),effectiveFrom:Number(body.effectiveFrom),reason:String(body.reason||""),actorId:actor.email}));
