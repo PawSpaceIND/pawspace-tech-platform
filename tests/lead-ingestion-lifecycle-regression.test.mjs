@@ -18,6 +18,9 @@ test("lead lifecycle governance is persisted, normalized and compare-and-set",as
   assert.equal(lifecycle.normalizeLeadServiceCode("Dog Training"),"training");
   assert.equal(lifecycle.normalizeLeadServiceCode("pet-sitting"),"pet_sitting");
   assert.equal(lifecycle.normalizeLeadServiceCode("WhatsApp"),"general_inquiry");
+  assert.equal(lifecycle.normalizeLeadServiceCode("General enquiry"),"general_inquiry");
+  assert.equal(lifecycle.normalizeLeadServiceCode("Doorstep Vet"),"vet");
+  assert.equal(lifecycle.normalizeLeadServiceCode("Pet Farewell Support"),"funeral");
 });
 
 test("lead conversion attribution uses normalized service and lifecycle state",()=>{
