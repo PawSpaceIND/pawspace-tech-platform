@@ -18,11 +18,11 @@ export function checkoutSandboxPlan(env: Env) {
   const runId = required(env, "GITHUB_RUN_ID"), attempt = required(env, "GITHUB_RUN_ATTEMPT");
   if (!/^[1-9][0-9]{0,19}$/.test(runId) || !/^[1-9][0-9]{0,5}$/.test(attempt)) throw new Error("Invalid run identity");
   const worker = `pawspace-checkout-674-${runId}-${attempt}`;
-  const protectedIds = ["PRODUCTION_D1_ID", "SHARED_STAGING_D1_ID", "RELEASE_PREVIEW_D1_ID"].map(key => {
-    const value = required(env, key);
-    if (!uuid.test(value)) throw new Error(`Invalid database comparator: ${key}`);
-    return value.toLowerCase();
-  });
+  const previewId = required(env, "RELEASE_PREVIEW_D1_ID").toLowerCase();
+  if (!uuid.test(previewId)) throw new Error("Invalid frozen-preview database reference");
+  // Production/shared-staging UUIDs are discovered from Cloudflare, not opaque legacy secrets.
+  // No resource allocation is allowed until resolveCheckoutDatabaseGuards proves the full inventory.
+  const protectedIds = [previewId];
   const frozenWorker = required(env, "RELEASE_PREVIEW_WORKER_NAME");
   if (worker.toLowerCase() === frozenWorker.toLowerCase()) throw new Error("Frozen preview Worker collision");
   if (env.PAWSPACE_PAYMENT_ENV !== "sandbox" || env.FORBID_PRODUCTION !== "true" ||
@@ -40,8 +40,9 @@ export function checkoutSandboxPlan(env: Env) {
   }
   return { sha, worker, protectedIds, frozenWorker, secrets };
 }
-export function checkoutSandboxConfig(artifact: Record<string, unknown>, plan: ReturnType<typeof checkoutSandboxPlan>, databaseId: string) {
-  if (!uuid.test(databaseId) || plan.protectedIds.includes(databaseId.toLowerCase())) throw new Error("New database must be isolated from all protected targets");
+export function checkoutSandboxConfig(artifact: Record<string, unknown>, plan: ReturnType<typeof resolveCheckoutDatabaseGuards>, databaseId: string) {
+  if (plan.inventoryVerified !== true) throw new Error("A complete authoritative database inventory is required");
+  if (!uuid.test(databaseId) || plan.protectedIds.includes(databaseId.toLowerCase()) || plan.inventoryIds.includes(databaseId.toLowerCase())) throw new Error("New database must be isolated from all protected targets");
   const assets = artifact.assets as Record<string, unknown> | undefined;
   if (artifact.main !== "index.js" || assets?.directory !== "../client" || artifact.no_bundle !== true) throw new Error("Unexpected root vinext artifact");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(artifact.compatibility_date))) throw new Error("Invalid artifact compatibility date");
@@ -79,4 +80,49 @@ export function activeCheckoutVersion(deployments: { deployments?: { id?: string
   if (!active?.id || active.versions?.length !== 1 || active.versions[0].percentage !== 100 || !active.versions[0].version_id ||
       settings.annotations?.["workers/message"] !== `checkout-sandbox ${sha}`) throw new Error("Active deployment provenance is not the exact checkout candidate");
   return { deploymentId: active.id, versionId: active.versions[0].version_id };
+}
+
+export type CheckoutDatabase = { uuid: string; name: string };
+type DatabasePage = { result?: unknown; result_info?: { page?: number; per_page?: number } };
+/** Every page is read through an explicit empty terminal page. Missing/malformed/repeated pages fail. */
+export async function readCheckoutDatabaseInventory(readPage: (page: number) => Promise<DatabasePage>): Promise<CheckoutDatabase[]> {
+  const rows: CheckoutDatabase[] = [], seen = new Set<string>();
+  for (let page = 1; page <= 100; page++) {
+    const response = await readPage(page), items = response.result;
+    if (!Array.isArray(items) || items.length > 100 ||
+        (response.result_info?.page !== undefined && response.result_info.page !== page) ||
+        (response.result_info?.per_page !== undefined && response.result_info.per_page !== 100)) {
+      throw new Error("Database inventory pagination is incomplete or malformed");
+    }
+    if (!items.length) return rows;
+    for (const item of items) {
+      if (!item || typeof item.uuid !== "string" || !uuid.test(item.uuid) || typeof item.name !== "string" || !item.name.trim()) {
+        throw new Error("Database inventory contains an invalid identity");
+      }
+      const id = item.uuid.toLowerCase();
+      if (seen.has(id)) throw new Error("Database inventory repeated an identity; completion cannot be proved");
+      seen.add(id); rows.push({ uuid: id, name: item.name });
+    }
+  }
+  throw new Error("Database inventory exceeded its bounded page limit without a terminal page");
+}
+/** Resolve canonical protected names and cross-check the frozen Worker's actual DB binding. */
+export function resolveCheckoutDatabaseGuards(plan: ReturnType<typeof checkoutSandboxPlan>, inventory: CheckoutDatabase[], frozenSettings: { bindings?: { name?: string; type?: string; id?: string }[] }) {
+  const ids = inventory.map(row => row.uuid.toLowerCase());
+  if (inventory.some(row => !uuid.test(row.uuid) || !row.name) || new Set(ids).size !== ids.length) throw new Error("Invalid authoritative database inventory");
+  const protectedIds = [...plan.protectedIds];
+  for (const name of ["pawspace-prod-bengaluru", "pawspace-staging"]) {
+    const matches = inventory.filter(row => row.name === name);
+    if (matches.length !== 1) throw new Error(`Cannot unambiguously resolve protected database: ${name}`);
+    protectedIds.push(matches[0].uuid.toLowerCase());
+  }
+  const preview = inventory.filter(row => row.uuid.toLowerCase() === plan.protectedIds[0]);
+  const frozen = (frozenSettings.bindings || []).filter(binding => binding.type === "d1");
+  if (preview.length !== 1 || preview[0].name !== plan.frozenWorker || frozen.length !== 1 ||
+      frozen[0].name !== "DB" || String(frozen[0].id).toLowerCase() !== preview[0].uuid.toLowerCase()) {
+    throw new Error("Frozen preview binding does not match the authoritative database inventory");
+  }
+  if (new Set(protectedIds).size !== 3) throw new Error("Protected production, staging and preview databases overlap");
+  if (inventory.some(row => row.name === plan.worker)) throw new Error("New checkout database name already exists");
+  return { ...plan, protectedIds, inventoryIds: ids, inventoryVerified: true as const };
 }
