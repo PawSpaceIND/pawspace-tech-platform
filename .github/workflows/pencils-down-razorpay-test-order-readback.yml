@@ -1,0 +1,36 @@
+name: Read Razorpay Test order state
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-razorpay-test-order-readback.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pawspace-release-preview
+    env:
+      ORDER_ID: order_TaGn7hheH3NbJT
+    steps:
+      - name: Read Test order and payments only
+        env:
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          curl -fsS -u "$RAZORPAY_KEY_ID_SANDBOX:$RAZORPAY_KEY_SECRET_SANDBOX" "https://api.razorpay.com/v1/orders/$ORDER_ID" -o order.json
+          curl -fsS -u "$RAZORPAY_KEY_ID_SANDBOX:$RAZORPAY_KEY_SECRET_SANDBOX" "https://api.razorpay.com/v1/orders/$ORDER_ID/payments" -o payments.json
+          python3 - <<'PY'
+          import json
+          o=json.load(open('order.json')); p=json.load(open('payments.json'))
+          clean={'order':{'id':o.get('id'),'amount':o.get('amount'),'amount_paid':o.get('amount_paid'),'amount_due':o.get('amount_due'),'status':o.get('status'),'attempts':o.get('attempts')},'payments':[{'id':x.get('id'),'amount':x.get('amount'),'status':x.get('status'),'method':x.get('method'),'captured':x.get('captured'),'error_code':x.get('error_code'),'error_description':x.get('error_description')} for x in p.get('items',[])]}
+          print(json.dumps(clean,indent=2))
+          open('razorpay-test-order-readback.json','w').write(json.dumps(clean,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-test-order-readback
+          path: razorpay-test-order-readback.json
+          retention-days: 7
