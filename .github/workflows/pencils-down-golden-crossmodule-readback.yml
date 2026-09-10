@@ -38,7 +38,7 @@ jobs:
             local sql="$1"
             local body
             body=$(jq -cn --arg sql "$sql" '{sql:$sql}')
-            curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$body" | jq -c 'if .success then ([.result[]?.results] | add // []) else {query_error:.errors} end'
+            curl -sS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/d1/database/$db_id/query" --data "$body" | jq -c 'if .success then ([.result[]?.results] | add // []) else {query_error:(.errors // []),messages:(.messages // [])} end'
           }
           relevant=$(query "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%booking%' OR name LIKE '%wallet%' OR name LIKE '%journal%' OR name LIKE '%collection%' OR name LIKE '%invoice%' OR name LIKE '%lead%' OR name LIKE '%crm%' OR name LIKE '%payout%') ORDER BY name")
           booking=$(query "SELECT id,customer_id,provider_id,status,service_code,package_name,total_amount,currency,zone_id,scheduled_start,scheduled_end,schedule_group_id FROM canonical_bookings WHERE id='$BOOKING_ID'")
