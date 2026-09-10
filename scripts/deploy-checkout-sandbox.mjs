@@ -86,11 +86,14 @@ try {
   check("rootDocumentReachable", home.status === 200 && /text\/html/i.test(home.type) && /pawspace/i.test(home.text));
   const login = await app(origin, "/staging-login");
   check("uatLoginPage", login.status === 200 && /text\/html/i.test(login.type));
+  const maps = await app(origin, "/api/address-autocomplete?mode=search&query=Indiranagar%2C%20Bengaluru%20560038");
+  let mapsBody = {}; try { mapsBody = JSON.parse(maps.text); } catch { /* check below fails closed */ }
+  check("mapsAutocompleteConfigured", maps.status === 200 && mapsBody?.data?.status === "configured" && Array.isArray(mapsBody?.data?.suggestions) && mapsBody.data.suggestions.length > 0);
   const anonymous = await app(origin, "/api/customer-checkout", { method: "POST", headers: { "content-type": "application/json", origin }, body: "{}" });
   check("checkoutRejectsAnonymous", [401, 403].includes(anonymous.status));
   const unsigned = await app(origin, "/api/razorpay-webhook", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   check("canonicalWebhookRejectsUnsigned", unsigned.status === 400 || unsigned.status === 401);
-  report.surfaceStatus = { customer: home.status, login: login.status, anonymousCheckout: anonymous.status, unsignedWebhook: unsigned.status };
+  report.surfaceStatus = { customer: home.status, login: login.status, mapsAutocomplete: maps.status, anonymousCheckout: anonymous.status, unsignedWebhook: unsigned.status };
   const frozenAfter = await cf(`/workers/scripts/${plan.frozenWorker}/deployments`);
   check("frozenPreviewUnchanged", frozenAfter.deployments?.[0]?.id === report.frozenPreviewDeployment);
   report.hosted = true;
