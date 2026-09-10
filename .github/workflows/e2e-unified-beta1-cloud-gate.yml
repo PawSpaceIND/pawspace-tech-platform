@@ -1,0 +1,168 @@
+name: Unified beta1 definitive cloud E2E gate
+
+on:
+  push:
+    branches:
+      - e2e/unified-beta1-cloud-gate-20260910
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unified-beta1-cloud-e2e
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: "true"
+  PAWSPACE_LOCAL_PREVIEW: "on"
+  PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+  PAWSPACE_SCHEDULING_ENV: uat
+  PAWSPACE_MEDIA_ENV: uat
+  PAWSPACE_PAYMENT_ENV: sandbox
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+
+jobs:
+  definitive-e2e:
+    name: Definitive browser + booking + Razorpay sandbox gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Prove application source is exactly unified beta1
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_sha=97d006a54c6661d21bb455bf8968a97739430c67
+          test "$(git rev-parse HEAD^)" = "$tag_sha"
+          git diff --exit-code "$tag_sha" HEAD -- . ':(exclude).github/workflows/e2e-unified-beta1-cloud-gate.yml'
+          echo "PASS application tree matches v1.0.0-unified-beta.1 exactly"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build shipping worker
+        run: npm run build
+
+      - name: Hardened built-worker journeys (desktop + Pixel 7)
+        env:
+          E2E_SKIP_BUILD: "1"
+        run: npm run test:e2e
+
+      - name: Configure disposable UAT bindings for persona journeys
+        env:
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, secrets
+          from pathlib import Path
+          key = os.environ.get("GOOGLE_MAPS_SERVER_API_KEY_UAT", "").strip()
+          if not key:
+              raise SystemExit("BLOCKER: GOOGLE_MAPS_SERVER_API_KEY_UAT repository secret is missing")
+          access_code = secrets.token_hex(24)
+          signing_key = secrets.token_hex(32)
+          print("::add-mask::" + access_code)
+          bindings = {
+              "PAWSPACE_UAT_LOGIN": "on",
+              "PAWSPACE_UAT_ACCESS_CODE": access_code,
+              "PAWSPACE_UAT_SIGNING_KEY": signing_key,
+              "GOOGLE_MAPS_SERVER_API_KEY_UAT": key,
+              "PAWSPACE_MAPS_ENV": "sandbox",
+              "PAWSPACE_DEPLOYMENT_ENV": "e2e",
+              "PAWSPACE_LOCAL_PREVIEW": "on",
+              "PAWSPACE_SCHEDULING_ENV": "uat",
+              "PAWSPACE_MEDIA_ENV": "uat",
+              "PAWSPACE_VOICE_TRANSPORT": "local_simulator_non_production",
+              "PAWSPACE_PAYMENT_ENV": "sandbox",
+              "PAWSPACE_PAYMENT_LIVE_APPROVED": "false",
+              "NODE_ENV": "test",
+              "APP_ENV": "staging",
+              "FORBID_PRODUCTION": "true",
+          }
+          target = Path(".dev.vars")
+          with target.open("x") as handle:
+              os.chmod(target, 0o600)
+              handle.write("".join(name + "=" + json.dumps(value) + "\n" for name, value in bindings.items()))
+          with open(os.environ["GITHUB_ENV"], "a") as handle:
+              handle.write("PW_STAFF_UAT_ACCESS_CODE=" + access_code + "\n")
+          PY
+
+      - name: Persona booking/resilience journeys (desktop + Pixel 7)
+        run: npm run test:e2e-personas
+
+      - name: Remove disposable UAT bindings
+        if: always()
+        run: rm -f .dev.vars
+
+      - name: Four-vertical customer UI wiring gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export E2E_PORT=8788
+          export E2E_BASE_URL=http://127.0.0.1:8788
+          export E2E_SKIP_BUILD=1
+          export SERVE_LOG=/tmp/serve-acceptance.log
+          export WRANGLER_LOG_PATH=/tmp/wrangler-acceptance.log
+          pid="$(node scripts/e2e/start-server.mjs "$SERVE_LOG")"
+          cleanup() { kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$E2E_BASE_URL/mobile-app" || true)"
+            if [ "$code" != "000" ]; then break; fi
+            sleep 2
+          done
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$E2E_BASE_URL/mobile-app" || true)"
+          test "$code" != "000"
+          mkdir -p test-results
+          node scripts/customer-ui-acceptance-v2.mjs --base="$E2E_BASE_URL" --json=test-results/customer-ui-acceptance-report.json
+
+      - name: Razorpay webhook route verification and replay hardening
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/ptja-w3a-payment-webhook-verification.test.mjs tests/adversarial-webhook-replay-signature.test.mjs
+
+      - name: Real Razorpay sandbox provider contract
+        env:
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          RAZORPAY_SANDBOX_PAYMENT_ID: ${{ secrets.RAZORPAY_SANDBOX_PAYMENT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RAZORPAY_KEY_ID_SANDBOX:-}" || { echo "BLOCKER: RAZORPAY_KEY_ID_SANDBOX missing"; exit 1; }
+          test -n "${RAZORPAY_KEY_SECRET_SANDBOX:-}" || { echo "BLOCKER: RAZORPAY_KEY_SECRET_SANDBOX missing"; exit 1; }
+          test -n "${RAZORPAY_WEBHOOK_SECRET_SANDBOX:-}" || { echo "BLOCKER: RAZORPAY_WEBHOOK_SECRET_SANDBOX missing"; exit 1; }
+          case "$RAZORPAY_KEY_ID_SANDBOX" in
+            rzp_test_*) ;;
+            *) echo "BLOCKER: configured Razorpay key is not a test key"; exit 1 ;;
+          esac
+          node --experimental-strip-types --test --test-concurrency=1 tests/integration/razorpay-sandbox.contract.test.mjs
+          npm run test:razorpay:sandbox
+
+      - name: Upload definitive E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-beta1-definitive-e2e-evidence
+          path: |
+            test-results/
+            playwright-report/
+            /tmp/serve.log
+            /tmp/wrangler-e2e.log
+            /tmp/serve-acceptance.log
+            /tmp/wrangler-acceptance.log
+          if-no-files-found: warn
+          retention-days: 7
