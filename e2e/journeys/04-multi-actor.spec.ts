@@ -2,6 +2,7 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 const CUSTOMER_EMAIL = "e2e.customer@pawspace.test";
 const PROVIDER_EMAIL = "e2e.provider@pawspace.test";
+const AUTO_GROOMER_EMAIL = "e2e.auto.groomer@pawspace.test";
 const ADMIN_EMAIL = "e2e.admin@pawspace.test";
 const FINANCE_EMAIL = "e2e.finance@pawspace.test";
 const CUSTOMER_ID = "E2E-CUS-UI-001";
@@ -29,7 +30,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
   expect(baseURL).toBeTruthy();
   const origin = baseURL!;
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
-  const provider = await actorApi(origin, PROVIDER_EMAIL);
+  let provider: Awaited<ReturnType<typeof actorApi>> | null = null;
   const admin = await actorApi(origin, ADMIN_EMAIL);
   const finance = await actorApi(origin, FINANCE_EMAIL);
   test.info().annotations.push({ type: "isolation", description: "payment=sandbox; live-approved=false; local Miniflare only" });
@@ -92,7 +93,11 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
       expect(scheduleBody.data.duplicatePrevented).toBe(true);
     }
-    expect(scheduleBody?.data?.provider?.id).toBe(PROVIDER_ID);
+    const assignedProviderId=String(scheduleBody?.data?.provider?.id||"");
+    expect(assignedProviderId).toBeTruthy();
+    const assignedProviderEmail=assignedProviderId===PROVIDER_ID?PROVIDER_EMAIL:assignedProviderId==="groom_arun"?AUTO_GROOMER_EMAIL:"";
+    expect(assignedProviderEmail,`assigned provider ${assignedProviderId} needs a governed local E2E identity`).toBeTruthy();
+    provider=await actorApi(origin,assignedProviderEmail);
 
     const booked = await customer.post("/api/canonical-bookings", {
       data: {
@@ -155,7 +160,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["accept", "on_the_way"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     // ARRIVED is fail-closed against fresh, trusted, server-bound GPS evidence. Use the canonical
@@ -164,7 +169,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     const gps = await provider.post("/api/grooming-route", {
       data: {
         bookingId,
-        providerId: PROVIDER_ID,
+        providerId: assignedProviderId,
         latitude: serviceLatitude,
         longitude: serviceLongitude,
         accuracyMeters: 10,
@@ -179,7 +184,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["arrived", "start_service"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     const proof = await provider.post("/api/grooming-lifecycle", {
@@ -260,6 +265,6 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(adminUi?.status() ?? 500).toBeLessThan(500);
     await expect(page.locator("body")).toContainText(/booking/i);
   } finally {
-    await Promise.all([customer.dispose(), provider.dispose(), admin.dispose(), finance.dispose()]);
+    await Promise.all([customer.dispose(), provider?.dispose()??Promise.resolve(), admin.dispose(), finance.dispose()]);
   }
 });
