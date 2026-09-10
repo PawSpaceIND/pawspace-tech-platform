@@ -142,22 +142,16 @@ test("/admin is live and reads the database — it must not be retired by a stal
 // Main solved the same problem more thoroughly in #156: a purpose-built /api/control-tower, plus an
 // on-screen label for every view still rendering example rows. Main's version was kept on merge, so
 // this test pins MAIN's mechanism rather than the one this branch wrote.
-test("/control measures instead of asserting, and labels the views that are still prototypes", () => {
+test("/control measures instead of asserting and mounts only governed live control surfaces", () => {
   const control = read("app/control/page.tsx");
   for (const panel of ["MarketingControlPanel", "PricingControlPanel", "FinanceControlPanel", "AccessControlPanel", "BusinessIntelligencePanel"]) {
     assert.ok(control.includes(panel), `${panel} must stay mounted`);
   }
   assert.match(control, /fetch\("\/api\/control-tower"/, "the tower reads a real endpoint");
-  assert.match(control, /PROTOTYPE_CONTROL_VIEWS/, "views still showing example rows must be labelled on screen");
-  // main kept four invented approvals tiles behind that label; this branch's real backlog replaced
-  // the one of them that has a source, and the other three now state that they are not measured.
-  assert.match(control, /fetch\("\/api\/team-overview"/, "the pending tile reads a real backlog");
-  assert.match(control, /approvals\.pending/);
-  assert.match(control, /Not measured/, "unmeasured approval timing is stated, not invented");
-  // the invented tiles and badge counts this branch also removed must stay gone
-  for (const invented of ['"9", "₹1.84L value"', '"2", "Oldest 3h 18m"', '"42", "Median 18 min"', '"128", "Within safe limits"']) {
-    assert.ok(!control.includes(invented), `the fabricated approvals tile ${invented} must be gone`);
+  assert.doesNotMatch(control, /PROTOTYPE_CONTROL_VIEWS|AUTHORED_REGISTER_VIEWS|Sample data|Restricted prototype/, "prototype-labelled views are gone");
+  for (const mode of ["approvals", "master", "inventory", "quality", "security", "health", "audit"]) {
+    assert.match(control, new RegExp(`LiveGovernancePanel mode=\"${mode}\"`), `${mode} uses the live governance surface`);
   }
   assert.ok(!/\bcount: \d+/.test(control), "no hardcoded sidebar badge counts remain");
-  assert.match(control, /Not connected/);
+  assert.match(control, /unavailable sources display as not connected/i);
 });
