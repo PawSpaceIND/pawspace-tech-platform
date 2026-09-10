@@ -94,7 +94,8 @@ function transitionWouldDefer(intent:Row,target:PaymentState){
 async function retryCaptureEffects(db:D1Database,eventId:string){
   const outbox=await captureEffectsOutboxForEvent(db,eventId);
   if(!outbox)return null;
-  if(String(outbox.status)==="SUCCEEDED")return{claimed:false,completed:true,status:"SUCCEEDED",reason:undefined};
+  // The executor also repairs a missing historical capture timeline after a succeeded saga.
+  // It does not repeat collections; do not acknowledge recovery before that check.
   return executeRazorpayCapturePostCommit(db,{outboxId:String(outbox.id),workerId:`razorpay-webhook-retry:${crypto.randomUUID()}`});
 }
 
