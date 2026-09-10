@@ -12,11 +12,18 @@ on:
       - "lib/lead-lifecycle-governance.ts"
       - "lib/marketing-ad-atomic-sync.ts"
       - "lib/marketing-conversion-feedback.ts"
+      - "lib/marketing-supermetrics-connector.ts"
+      - "lib/marketing-ad-connectors.ts"
+      - "app/api/marketing-control/route.ts"
+      - "app/control/marketing-control-panel.tsx"
       - "lib/google-ads-conversion-consent.ts"
       - "db/schema-escrow-attribution.ts"
       - "drizzle/0029_marketing_attribution_typed.sql"
       - "tests/public-contact-ad-attribution.test.mjs"
       - "tests/marketing-attribution-lifecycle.test.mjs"
+      - "tests/marketing-ad-connectors.test.mjs"
+      - "tests/marketing-supermetrics-connector.test.mjs"
+      - "docs/MARKETING_CONNECTOR_CONFIGURATION.md"
       - ".github/workflows/marketing-attribution-closure.yml"
   workflow_dispatch:
 
@@ -45,6 +52,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Execute attribution closure protocol
-        run: node --experimental-strip-types --test --test-concurrency=1 tests/public-contact-ad-attribution.test.mjs tests/marketing-attribution-lifecycle.test.mjs
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/public-contact-ad-attribution.test.mjs tests/marketing-attribution-lifecycle.test.mjs tests/marketing-ad-connectors.test.mjs tests/marketing-supermetrics-connector.test.mjs
       - name: TypeScript check
         run: npm run typecheck
