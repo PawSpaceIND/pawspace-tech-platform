@@ -72,6 +72,7 @@ function transpileTsx(source, fileName) {
   }).outputText;
 }
 const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
+const nextLinkStubUrl = new URL("./next-link-stub.mjs", import.meta.url).href;
 
 function normalizedFileUrl(url) {
   const parsed = new URL(url);
@@ -157,6 +158,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
       nodeModule.registerHooks({
         resolve(specifier, context, nextResolve) {
           if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+          if (specifier === "next/link" || specifier === "next/link.js") return { url: nextLinkStubUrl, shortCircuit: true };
           try {
             return nextResolve(specifier, context);
           } catch (error) {
