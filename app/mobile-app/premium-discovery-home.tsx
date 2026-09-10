@@ -172,7 +172,7 @@ export default function PremiumDiscoveryHome({
           const symbols: Record<string, string> = { grooming: "✂", dog_training: "◎", boarding: "⌂", pet_sitting: "♡", pet_taxi: "↗", dog_walking: "🐾", food: "◒", relocation: "✈" };
           return <article className={`${styles.card} ${featured ? styles.featured : styles.compact}`} data-service={service.serviceCode} key={service.serviceCode}>
             <div className={styles.cardPhoto}>
-              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} width="96" height="96" loading="lazy" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
+              <img src={SERVICE_ART[service.serviceCode]?.image || service.image} alt={SERVICE_ART[service.serviceCode]?.alt || service.imageAlt} width="96" height="96" decoding="async" /><span className={styles.serviceIcon} aria-hidden="true">{symbols[service.serviceCode] || "♡"}</span>
               <div><b>{service.name}</b><small>{PROMISE[service.serviceCode] || service.subtitle}</small></div>
             </div>
             <button aria-label={`${cta(service.serviceCode)} · ${service.name}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>{paused ? "Currently paused" : <><span className={styles.ctaLabel}>{cta(service.serviceCode)}</span><span aria-hidden="true">↗</span></>}</button>

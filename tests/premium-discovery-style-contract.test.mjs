@@ -42,6 +42,12 @@ test("reviewed unified discovery source and CSS use the same presentation contra
   assert.doesNotMatch(component, /data-home-design="option-5-premium-visual"/);
   assert.match(component, />Care for every little need</);
   assert.match(component, /aria-label="Care services"/);
+  assert.match(component, /SERVICE_ART\[service\.serviceCode\]\?\.image/);
+  assert.doesNotMatch(
+    component,
+    /SERVICE_ART\[service\.serviceCode\]\?\.image[^>]*loading="lazy"/,
+    "service art hidden by Professional mode must be preloaded so switching to Cartoon never reveals blank cards",
+  );
   assert.match(component, /aria-label="Care with confidence"/);
   assert.match(component, /PawSpace Media slot · service education and clearly labelled approved campaigns/);
   assert.doesNotMatch(component, /Care for every kind of day/);
