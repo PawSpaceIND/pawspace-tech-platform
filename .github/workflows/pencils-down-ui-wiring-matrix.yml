@@ -1,0 +1,80 @@
+name: Pencils-down hosted UI wiring matrix
+on:
+  push:
+    branches: [ops/pencils-down-staging-ab40dc00]
+    paths: [.github/workflows/pencils-down-ui-wiring-matrix.yml]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: pawspace-pencils-down-ui-wiring
+  cancel-in-progress: false
+jobs:
+  wiring:
+    if: github.repository == 'PawSpaceIND/pawspace-tech-platform' && github.ref == 'refs/heads/ops/pencils-down-staging-ab40dc00'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pawspace-release-preview
+    env:
+      PREVIEW_URL: https://pawspace-beta-ui-5f12f6ef.karthik-fce.workers.dev
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      CI: 'true'
+    steps:
+      - name: Checkout exact corrected candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 29142163c9934d373d2603fe8ceced6afae3f811
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install unchanged candidate dependencies
+        run: npm run install:ci
+      - name: Install matching Chromium
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Run hosted multi-role UI wiring sweep with all API mutations blocked
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: >-
+          node scripts/release-ui-closure.mjs
+          --base=$PREVIEW_URL
+          --json=hosted-ui-wiring-report.json
+          --timeout=12000
+          --settle-ms=250
+          --max-controls=28
+      - name: Summarize wiring report without exposing secrets
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const file='hosted-ui-wiring-report.json';
+          if(!fs.existsSync(file)){ console.log('report_missing=true'); process.exit(0); }
+          const r=JSON.parse(fs.readFileSync(file,'utf8'));
+          const summary={
+            candidate:'29142163c9934d373d2603fe8ceced6afae3f811',
+            testOnly:true,
+            productionChanged:false,
+            mutationRequestsBlocked:true,
+            routes:r.routes?.length ?? r.routeCount ?? null,
+            visualChecks:r.visuals?.length ?? r.visualCheckCount ?? null,
+            controls:r.controls?.length ?? r.controlCount ?? null,
+            failures:r.failures?.length ?? r.failureCount ?? r.failures ?? null,
+            roles:r.roles ?? null,
+            outcome:r.outcome ?? null,
+          };
+          fs.writeFileSync('hosted-ui-wiring-summary.json',JSON.stringify(summary,null,2)+'\n');
+          console.log(JSON.stringify(summary));
+          NODE
+      - name: Upload sanitized hosted wiring evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-ui-wiring-matrix
+          path: |
+            hosted-ui-wiring-report.json
+            hosted-ui-wiring-summary.json
+          if-no-files-found: warn
+          retention-days: 7
