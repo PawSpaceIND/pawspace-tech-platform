@@ -123,23 +123,64 @@ jobs:
               uat_credentials_present_as_secrets:true, production_otp_path_disabled:true, staging_customer_otp_path_disabled:true,
               credential_strength_retested:false, human_role_access_tested:false };
           }
+          // Metadata-only isolation proof, following the reviewed canonical inventory in PR #682.
+          async function databaseInventory(read) {
+            const rows=[],seen=new Set();
+            for(let page=1;page<=100;page++) {
+              const response=await read(`/d1/database?per_page=100&page=${page}`);
+              const items=response?.result,info=response?.result_info;
+              need(Array.isArray(items) && items.length<=100 &&
+                (info?.page===undefined || info.page===page) &&
+                (info?.per_page===undefined || info.per_page===100),'D1_INVENTORY_PAGE_INVALID');
+              if(items.length===0)return {rows,pages_read:page,complete:true};
+              for(const item of items) {
+                need(typeof item?.uuid==='string' && UUID.test(item.uuid) &&
+                  typeof item.name==='string' && item.name.trim().length>0,'D1_INVENTORY_IDENTITY_INVALID');
+                const id=item.uuid.toLowerCase();
+                need(!seen.has(id),'D1_INVENTORY_DUPLICATE_IDENTITY');
+                seen.add(id);rows.push({uuid:id,name:item.name});
+              }
+            }
+            throw new SafeError('D1_INVENTORY_TERMINAL_PAGE_UNAVAILABLE');
+          }
+          function resolveProtectedDatabases(inventory,previewHash) {
+            need(inventory?.complete===true && Array.isArray(inventory.rows),'D1_INVENTORY_INCOMPLETE');
+            const ids=['pawspace-prod-bengaluru','pawspace-staging',WORKER].map(name=>{
+              const matches=inventory.rows.filter(row=>row.name===name);
+              need(matches.length===1,'PROTECTED_DATABASE_NAME_MISSING_OR_AMBIGUOUS');
+              return matches[0].uuid;
+            });
+            need(ids.every(id=>typeof id==='string' && UUID.test(id)) &&
+              new Set(ids.map(id=>id.toLowerCase())).size===3,'PROTECTED_DATABASE_IDENTITIES_OVERLAP_OR_INVALID');
+            need(sha256(ids[2])===previewHash,'PREVIEW_INVENTORY_IDENTITY_MISMATCH');
+            return {productionDb:ids[0],sharedDb:ids[1],previewDb:ids[2]};
+          }
           function client(account, token, fetchImpl=fetch) {
             need(/^[a-f0-9]{32}$/i.test(account) && token.length>0, 'CLOUDFLARE_CREDENTIALS_UNAVAILABLE');
-            const root=`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${WORKER}`;
+            const accountRoot=`https://api.cloudflare.com/client/v4/accounts/${account}`;
+            const root=`${accountRoot}/workers/scripts/${WORKER}`;
             return async (suffix) => {
-              need(suffix==='/deployments' || /^\/versions\/[a-f0-9-]{36}$/i.test(suffix), 'READ_ENDPOINT_NOT_ALLOWED');
+              const inventory=/^\/d1\/database\?per_page=100&page=([1-9][0-9]{0,2})$/.exec(suffix);
+              const inventoryRead=inventory!==null && Number(inventory[1])<=100;
+              need(inventoryRead || suffix==='/deployments' || /^\/versions\/[a-f0-9-]{36}$/i.test(suffix), 'READ_ENDPOINT_NOT_ALLOWED');
+              const url=inventoryRead?accountRoot+suffix:root+suffix;
               let response;
-              try { response=await fetchImpl(root+suffix,{method:'GET',headers:{authorization:`Bearer ${token}`,accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(20000)}); }
+              try { response=await fetchImpl(url,{method:'GET',headers:{authorization:`Bearer ${token}`,accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(20000)}); }
               catch { throw new SafeError('CLOUDFLARE_READ_TRANSPORT_FAILED'); }
               need(response.ok, `CLOUDFLARE_READ_HTTP_${response.status}`);
               let parsed; try { parsed=await response.json(); } catch { throw new SafeError('CLOUDFLARE_RESPONSE_NOT_JSON'); }
               need(parsed?.success===true && parsed.result && (!parsed.errors || parsed.errors.length===0), 'CLOUDFLARE_API_REFUSED');
-              return parsed.result;
+              return inventoryRead?{result:parsed.result,result_info:parsed.result_info}:parsed.result;
             };
           }
           async function verify(read, options, diagnostics={}) {
             const before=deployment(await read('/deployments'));
             diagnostics.active_deployment=before;
+            const inventory=await databaseInventory(read);
+            const protectedIds=resolveProtectedDatabases(inventory,options.dbHash);
+            diagnostics.database_inventory={source:'cloudflare_d1_metadata',complete:true,
+              pages_read:inventory.pages_read,database_count:inventory.rows.length,
+              protected_targets_resolved:3,preview_matches_pinned_hash:true};
             const baseline=await read(`/versions/${BASELINE}`);
             diagnostics.baseline_version_id=BASELINE;
             diagnostics.baseline_fingerprint=fingerprint(baseline?.resources?.script?.etag);
@@ -153,8 +194,13 @@ jobs:
                 active_fingerprint:activeFingerprint,
                 fingerprint_matches:activeFingerprint.present && diagnostics.baseline_fingerprint.present
                   ? data.resources.script.etag===baseline.resources.script.etag : null});
-              rows.push({...evaluate(data,v.version_id,baseline?.resources?.script?.etag,options.dbHash,options.productionDb,options.sharedDb),traffic_percentage:v.percentage});
+              rows.push({...evaluate(data,v.version_id,baseline?.resources?.script?.etag,options.dbHash,protectedIds.productionDb,protectedIds.sharedDb),traffic_percentage:v.percentage});
             }
+            const afterInventory=await databaseInventory(read);
+            const afterProtectedIds=resolveProtectedDatabases(afterInventory,options.dbHash);
+            diagnostics.protected_database_identities_stable_during_verification=
+              JSON.stringify(protectedIds)===JSON.stringify(afterProtectedIds);
+            need(diagnostics.protected_database_identities_stable_during_verification,'PROTECTED_DATABASE_IDENTITIES_CHANGED_DURING_VERIFICATION');
             const after=deployment(await read('/deployments'));
             diagnostics.active_deployment_stable_during_verification=JSON.stringify(before)===JSON.stringify(after);
             need(diagnostics.active_deployment_stable_during_verification, 'DEPLOYMENT_CHANGED_DURING_VERIFICATION');
@@ -202,7 +248,17 @@ jobs:
             const bad=structuredClone(d);bad.versions[0].percentage=99;check(()=>assert.throws(()=>deployment({deployments:[bad]}),SafeError));
             check(()=>assert.throws(()=>deployment({deployments:[d,{...d,id:ids[2]}]}),SafeError));
             let calls=[];
-            const read=async suffix=>{calls.push(suffix);if(suffix==='/deployments')return{deployments:[d]};return {...structuredClone(data),id:suffix.split('/').at(-1)};};
+            const inventoryRows=[{uuid:ids[1],name:'pawspace-prod-bengaluru'},
+              {uuid:ids[2],name:'pawspace-staging'},{uuid:db,name:WORKER}];
+            const read=async suffix=>{
+              calls.push(suffix);
+              if(suffix.startsWith('/d1/database?')) {
+                const page=Number(new URL('https://example.invalid'+suffix).searchParams.get('page'));
+                return {result:page===1?structuredClone(inventoryRows):[],result_info:{page,per_page:100}};
+              }
+              if(suffix==='/deployments')return{deployments:[d]};
+              return {...structuredClone(data),id:suffix.split('/').at(-1)};
+            };
             const result=await verify(read,options);assert.equal(result.active_versions.length,1);count++;
             assert.equal(calls.filter(x=>x==='/deployments').length,2);count++;
             let n=0;await assert.rejects(()=>verify(async s=>s==='/deployments'?{deployments:[++n===1?d:{...d,id:ids[2]}]}:read(s),options),/DEPLOYMENT_CHANGED/);count++;
@@ -240,6 +296,55 @@ jobs:
             // No mutable runtime/config value chooses the attested reference tuple.
             check(()=>assert.equal(Object.isFrozen(EVIDENCE),true));
             check(()=>assert.deepEqual([EVIDENCE.run_id,EVIDENCE.artifact_id,BASELINE],[34381979950,10117208448,'dc882e91-c758-4403-a5f2-f94210173a22']));
+            // Complete inventory proof must fail on missing, malformed, repeated or unbounded pages.
+            const resolved=resolveProtectedDatabases(await databaseInventory(read),options.dbHash);
+            check(()=>assert.deepEqual(resolved,{productionDb:ids[1],sharedDb:ids[2],previewDb:db}));
+            let inventoryCalls=0;
+            await databaseInventory(async suffix=>{inventoryCalls++;return read(suffix);});
+            check(()=>assert.equal(inventoryCalls,2));
+            for(const invalid of [{},{result:null},{result:{}},{result:Array(101).fill(inventoryRows[0])},
+              {result:[],result_info:{page:2}},{result:[],result_info:{per_page:50}}]) {
+              await assert.rejects(()=>databaseInventory(async()=>invalid),/D1_INVENTORY_PAGE_INVALID/);count++;
+            }
+            for(const invalid of [null,{}, {uuid:'bad',name:'x'},{uuid:ids[0],name:''},{uuid:ids[0],name:42}]) {
+              await assert.rejects(()=>databaseInventory(async()=>({result:[invalid]})),/D1_INVENTORY_IDENTITY_INVALID/);count++;
+            }
+            await assert.rejects(()=>databaseInventory(async()=>({result:[inventoryRows[0]]})),/D1_INVENTORY_DUPLICATE_IDENTITY/);count++;
+            let endlessPage=0;
+            await assert.rejects(()=>databaseInventory(async()=>({result:[{uuid:`00000000-0000-4000-8000-${String(++endlessPage).padStart(12,'0')}`,name:'extra'}]})),/D1_INVENTORY_TERMINAL_PAGE_UNAVAILABLE/);count++;
+            check(()=>assert.equal(endlessPage,100));
+            for(const rows of [[],inventoryRows.slice(1),[...inventoryRows,{uuid:ids[0],name:WORKER}]]) {
+              check(()=>assert.throws(()=>resolveProtectedDatabases({rows,complete:true},options.dbHash),/PROTECTED_DATABASE_NAME_MISSING_OR_AMBIGUOUS/));
+            }
+            check(()=>assert.throws(()=>resolveProtectedDatabases({rows:inventoryRows,complete:false},options.dbHash),/D1_INVENTORY_INCOMPLETE/));
+            check(()=>assert.throws(()=>resolveProtectedDatabases({rows:inventoryRows,complete:true},'wrong'),/PREVIEW_INVENTORY_IDENTITY_MISMATCH/));
+            check(()=>assert.throws(()=>resolveProtectedDatabases({rows:inventoryRows.map(row=>({...row,uuid:db})),complete:true},options.dbHash),/PROTECTED_DATABASE_IDENTITIES_OVERLAP_OR_INVALID/));
+            const mappedDiag={};await verify(read,{dbHash:options.dbHash},mappedDiag);
+            check(()=>assert.equal(mappedDiag.database_inventory.protected_targets_resolved,3));
+            check(()=>assert.equal(mappedDiag.protected_database_identities_stable_during_verification,true));
+            check(()=>assert.equal(JSON.stringify(mappedDiag).includes(db),false));
+            let pageOnes=0;
+            await assert.rejects(()=>verify(async suffix=>{
+              const response=await read(suffix);
+              if(suffix==='/d1/database?per_page=100&page=1' && ++pageOnes===2)response.result[0].uuid='55555555-5555-4555-8555-555555555555';
+              return response;
+            },{dbHash:options.dbHash}),/PROTECTED_DATABASE_IDENTITIES_CHANGED_DURING_VERIFICATION/);count++;
+            const requestLog=[];const metadataClient=client('a'.repeat(32),'test-token',async(url,init)=>{
+              requestLog.push({url,method:init.method,redirect:init.redirect});
+              return {ok:true,json:async()=>({success:true,result:inventoryRows,result_info:{page:1,per_page:100}})};
+            });
+            const metadata=await metadataClient('/d1/database?per_page=100&page=1');
+            check(()=>assert.equal(metadata.result_info.page,1));
+            check(()=>assert.equal(requestLog[0].url,`https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/d1/database?per_page=100&page=1`));
+            check(()=>assert.equal(requestLog[0].method,'GET'));
+            check(()=>assert.equal(requestLog[0].redirect,'error'));
+            for(const suffix of ['/d1/database?per_page=100&page=0','/d1/database?per_page=100&page=01',
+              '/d1/database?per_page=100&page=101','/d1/database?per_page=10&page=1',
+              '/d1/database?per_page=100&page=1&extra=1','/d1/database/query','/d1/database/raw',
+              '/workers/scripts/other/settings','/d1/database']) {
+              await assert.rejects(()=>metadataClient(suffix),/READ_ENDPOINT_NOT_ALLOWED/);count++;
+            }
+            check(()=>assert.equal(requestLog.length,1));
             console.log(`Verifier self-tests: ${count} PASS; no network, no production code executed.`);
             return count;
           }
@@ -256,7 +361,7 @@ jobs:
               const env=process.env;
               assertExecutionContext(env);
               const read=client(String(env.CLOUDFLARE_ACCOUNT_ID||'').trim(),String(env.CLOUDFLARE_API_TOKEN||'').trim());
-              Object.assign(report,await verify(read,{dbHash:PREVIEW_DB_HASH,productionDb:String(env.PRODUCTION_D1_ID||'').trim(),sharedDb:String(env.SHARED_STAGING_D1_ID||'').trim()},report.diagnostics));
+              Object.assign(report,await verify(read,{dbHash:PREVIEW_DB_HASH},report.diagnostics));
               report.status='PASS';
             } catch(error) { report.error_code=error instanceof SafeError?error.message:'UNEXPECTED_VERIFICATION_ERROR';process.exitCode=1; }
             mkdirSync('runtime-evidence',{recursive:true});
@@ -271,8 +376,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
-          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
         run: node "$RUNNER_TEMP/runtime-672.mjs"
       - name: Upload sanitized runtime evidence
         if: always()
