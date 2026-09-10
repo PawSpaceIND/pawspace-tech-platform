@@ -282,7 +282,9 @@ test("PR674 current isolated Worker proves Razorpay Test capture and provider-or
   const fixture = await seedPayableBooking(dbId, customerId);
   report.bookingId = fixture.bookingId;
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("navigation", { name: "Customer navigation" }).getByRole("button", { name: /Account$/i }).click();
+  const accountTab = page.getByRole("navigation", { name: "Customer navigation" }).getByRole("button", { name: /Account$/i });
+  await expect(accountTab).toBeVisible();
+  await accountTab.evaluate((button: HTMLButtonElement) => button.click());
   const billing = page.locator("details").filter({ has: page.locator("summary").filter({ hasText: "Payments & invoice summaries" }) });
   await billing.locator("summary").click();
   const pay = billing.getByRole("button", { name: /^(Review & pay|Check balance) \(test\)$/ }).first();
