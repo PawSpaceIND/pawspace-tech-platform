@@ -100,6 +100,7 @@ export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
  * build leaked it. */
 cfg.vars = {
   PAWSPACE_DEPLOYMENT_ENV: "staging",
+  PAWSPACE_PRODUCTION_ENFORCE: "false",
   PAWSPACE_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
   PAWSPACE_PAYMENT_ENV: "sandbox",
