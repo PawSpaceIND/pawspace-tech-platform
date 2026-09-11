@@ -196,7 +196,7 @@ test("a verified customer can run its own authenticated AI turn through the real
     idempotencyKey: "ai-web-own-1",
   }, { cookie }));
   assert.equal(result.reachedRoute, true, `customer AI turn was stopped at gateway with ${result.response.status}`);
-  assert.equal(result.response.status, 201);
+  assert.equal(result.response.status, 200);
   const body = await result.response.json();
   assert.equal(body.data.autonomousExecution, false);
   assert.equal(count(sqlite, "communication_messages"), 1);

@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as nodeModule from "node:module";
+
+// Route handlers below intentionally run as the explicitly triple-gated local test preview.
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+delete process.env.PAWSPACE_DEPLOYMENT_ENV;
 import { assertDoesNotScale, assertWithinBudget, freshCountingD1 } from "./helpers/d1-harness.mjs";
 
 // ---------------------------------------------------------------------------

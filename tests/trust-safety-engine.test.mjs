@@ -132,3 +132,20 @@ test('provider chat fails closed on assignment-store errors instead of trusting 
  const broken={...db,prepare:sql=>{if(sql.startsWith('SELECT provider_id FROM provider_work_orders'))return{bind:()=>({first:async()=>{throw new Error('injected assignment-store failure');}})};return db.prepare(sql);}};
  await assert.rejects(trust.recordProviderChatMessage(broken,{providerId:'PRV-TS-1',threadId:'THREAD-TS-1',actorId:'provider:PRV-TS-1',idempotencyKey:'store-failure',message:'Hello'}),/injected assignment-store failure/);
 });
+
+test("trust-safety blocklist trigger installs through a single prepared D1 statement", async () => {
+  const sqlite = freshSqlite(), base = makeD1(sqlite);
+  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL); CREATE TABLE canonical_customers (id TEXT PRIMARY KEY,primary_phone TEXT,updated_at INTEGER);");
+  const db = {
+    ...base,
+    exec: async (sql) => {
+      if (/CREATE\s+TRIGGER[\s\S]*trg_global_blocklist_booking_insert/i.test(String(sql))) {
+        throw new Error("D1 exec rejects trigger bodies as incomplete input");
+      }
+      return base.exec(sql);
+    },
+  };
+  await trust.ensureTrustSafetyTables(db);
+  const trigger = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='trg_global_blocklist_booking_insert'").get();
+  assert.ok(trigger?.sql, "the booking blocklist trigger must be installed");
+});
