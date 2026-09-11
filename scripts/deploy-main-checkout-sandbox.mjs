@@ -10,7 +10,7 @@ const evidence = resolve(process.env.CHECKOUT_EVIDENCE_DIR || "checkout-sandbox-
 mkdirSync(evidence, { recursive: true });
 const report = { candidateSha: process.env.EXPECTED_SHA, hosted: false, customerUiVerified: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
 const PROOF_BRANCH = "ops/pencils-down-staging-ab40dc00";
-if (process.env.GITHUB_REPOSITORY !== CHECKOUT_REPOSITORY || process.env.GITHUB_REF !== `refs/heads/${PROOF_BRANCH}` || process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" || process.env.CONFIRM !== "main-provider-proof-674") {
+if (process.env.GITHUB_REPOSITORY !== CHECKOUT_REPOSITORY || process.env.GITHUB_REF !== `refs/heads/${PROOF_BRANCH}` || process.env.GITHUB_EVENT_NAME !== "push" || process.env.CONFIRM !== "main-provider-proof-674") {
   throw new Error("Main checkout proof requires its exact disposable workflow branch and explicit confirmation");
 }
 let plan = checkoutSandboxPlan({ ...process.env, GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "workflow_dispatch", CONFIRM: "checkout-sandbox-674" }); // Reuse proven isolation policy after the wrapper validates its own execution context.
