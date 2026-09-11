@@ -37,7 +37,7 @@ if (Boolean(razorpayRelayOrigin) !== Boolean(razorpayRelaySha)) problems.push("R
 if (razorpayRelayOrigin && razorpayRelaySha) {
   let relayUrl;
   try { relayUrl = new URL(razorpayRelayOrigin); } catch { problems.push("Razorpay sandbox relay target origin is invalid."); }
-  if (relayUrl && (relayUrl.protocol !== "https:" || relayUrl.username || relayUrl.password || relayUrl.port || relayUrl.search || relayUrl.hash || !["", "/"].includes(relayUrl.pathname) || !/^pawspace-checkout-674-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}\.[a-z0-9-]+\.workers\.dev$/i.test(relayUrl.hostname))) problems.push("Razorpay sandbox relay target must be an exact isolated PR674 workers.dev origin.");
+  if (relayUrl && (relayUrl.protocol !== "https:" || relayUrl.username || relayUrl.password || relayUrl.port || relayUrl.search || relayUrl.hash || !["", "/"].includes(relayUrl.pathname) || !/^pawspace-checkout-736-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}\.[a-z0-9-]+\.workers\.dev$/i.test(relayUrl.hostname))) problems.push("Razorpay sandbox relay target must be an exact isolated certified PR736 workers.dev origin.");
   if (!/^[0-9a-f]{40}$/.test(razorpayRelaySha)) problems.push("Razorpay sandbox relay target SHA must be an exact lowercase commit SHA.");
 }
 if (!d1Id || d1Id === "00000000-0000-4000-8000-000000000000") {
