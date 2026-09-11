@@ -5,6 +5,8 @@
  * the business decides to. Deliberately its own tiny table so it never destabilises the richer funeral
  * case workflow; sandbox/UAT, no live money.
  */
+import{FUNERAL_FINANCE_POLICY_DOMAIN,resolveFuneralFinancePolicy,taxFromGrossMargin}from"./special-service-finance-policy";
+import{writeServicePolicy}from"./service-policy-governance";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -21,7 +23,7 @@ async function gstConfig(db:Db){
  return{enabled:Number(row?.gst_enabled||0)===1,rate:Number(row?.gst_rate||0.18)};
 }
 
-/** Toggle whether funeral manual orders charge 18% GST. Off by default; audited. Affects future orders only. */
+/** Compatibility control: writes the canonical Funeral finance policy. The legacy table remains audit/history only. */
 export async function setFuneralManualGstMode(db:Db,input:{enabled:boolean;gstRate?:number;actorId:string}){
  await ensureFuneralManualOrderTables(db);
  const rate=input.gstRate==null?0.18:Number(input.gstRate);
@@ -29,10 +31,11 @@ export async function setFuneralManualGstMode(db:Db,input:{enabled:boolean;gstRa
  const now=Date.now();
  await db.prepare("INSERT INTO funeral_manual_gst_config (id,gst_enabled,gst_rate,updated_by,updated_at) VALUES ('default',?,?,?,?) ON CONFLICT(id) DO UPDATE SET gst_enabled=excluded.gst_enabled,gst_rate=excluded.gst_rate,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
   .bind(input.enabled?1:0,rate,input.actorId,now).run();
- return{gstEnabled:input.enabled,gstRate:rate};
+ await writeServicePolicy(db,{domain:FUNERAL_FINANCE_POLICY_DOMAIN,serviceCode:"funeral_memorial",cityId:"*",config:{taxEnabled:input.enabled,taxRatePercent:rate*100,taxMode:"inclusive"},notes:"Compatibility bridge from manual converted-order finance control"},input.actorId,"Funeral tax policy compatibility update");
+ return{gstEnabled:input.enabled,gstRate:rate,canonicalTaxAuthority:FUNERAL_FINANCE_POLICY_DOMAIN};
 }
 
-/** Record a converted funeral order by hand. GST applied only if the toggle is on at capture time. */
+/** Record a converted order using the same canonical Funeral tax policy as the governed case workflow. */
 export async function recordFuneralConvertedOrder(db:Db,input:{customerName:string;phone:string;paymentMethod:string;orderValue:number;orderDate:string;note?:string;actorId:string}){
  await ensureFuneralManualOrderTables(db);
  if(!text(input.customerName))throw new Error("Customer name is required");
@@ -41,12 +44,11 @@ export async function recordFuneralConvertedOrder(db:Db,input:{customerName:stri
  const orderValue=money(input.orderValue);
  if(!(orderValue>0))throw new Error("Order value must be positive");
  if(!/^\d{4}-\d{2}-\d{2}$/.test(text(input.orderDate)))throw new Error("A real order date is required");
- const cfg=await gstConfig(db);
- const gstAmount=cfg.enabled?money(orderValue*cfg.rate):0;
- const total=money(orderValue+gstAmount),id=uid("FMO"),now=Date.now();
+ const policy=await resolveFuneralFinancePolicy(db,"blr"),tax=taxFromGrossMargin(orderValue,policy.config);
+ const gstAmount=tax.taxAmount,total=orderValue,id=uid("FMO"),now=Date.now();
  await db.prepare("INSERT INTO funeral_manual_orders (id,customer_name,phone,payment_method,order_value,gst_enabled,gst_amount,total_amount,order_date,note,recorded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-  .bind(id,text(input.customerName),text(input.phone),text(input.paymentMethod),orderValue,cfg.enabled?1:0,gstAmount,total,text(input.orderDate),text(input.note)||null,input.actorId,now).run();
- return{id,orderValue,gstEnabled:cfg.enabled,gstAmount,totalAmount:total,orderDate:text(input.orderDate)};
+  .bind(id,text(input.customerName),text(input.phone),text(input.paymentMethod),orderValue,policy.config.taxEnabled?1:0,gstAmount,total,text(input.orderDate),text(input.note)||null,input.actorId,now).run();
+ return{id,orderValue,gstEnabled:policy.config.taxEnabled,gstAmount,totalAmount:total,orderDate:text(input.orderDate),taxStatus:tax.taxStatus,canonicalTaxAuthority:FUNERAL_FINANCE_POLICY_DOMAIN};
 }
 
 /** Directory of manual funeral orders + current GST toggle. Cold-DB safe. */
@@ -54,5 +56,6 @@ export async function funeralManualOrderDirectory(db:Db){
  await ensureFuneralManualOrderTables(db);
  const cfg=await gstConfig(db);
  const rows=await db.prepare("SELECT * FROM funeral_manual_orders ORDER BY created_at DESC LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]}));
- return{gstEnabled:cfg.enabled,gstRate:cfg.rate,orders:rows.results.map(r=>({id:text(r.id),customerName:text(r.customer_name),phone:text(r.phone),paymentMethod:text(r.payment_method),orderValue:money(r.order_value),gstAmount:money(r.gst_amount),totalAmount:money(r.total_amount),orderDate:text(r.order_date),recordedBy:text(r.recorded_by)})),truth:{gstChargedByDefault:false,gstToggleable:true,liveMoney:false,productionReady:false}};
+ const policy=await resolveFuneralFinancePolicy(db,"blr");
+ return{gstEnabled:policy.config.taxEnabled,gstRate:Number(policy.config.taxRatePercent)/100,orders:rows.results.map(r=>({id:text(r.id),customerName:text(r.customer_name),phone:text(r.phone),paymentMethod:text(r.payment_method),orderValue:money(r.order_value),gstAmount:money(r.gst_amount),totalAmount:money(r.total_amount),orderDate:text(r.order_date),recordedBy:text(r.recorded_by)})),truth:{gstChargedByDefault:false,gstToggleable:true,canonicalTaxAuthority:FUNERAL_FINANCE_POLICY_DOMAIN,legacyGstToggleAuthoritative:false,liveMoney:false,productionReady:false}};
 }

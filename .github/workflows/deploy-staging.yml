@@ -54,11 +54,11 @@ on:
           - disabled
           - approved
       razorpay_relay_target_origin:
-        description: 'Optional exact PR674 isolated workers.dev origin for sandbox webhook shadow relay'
+        description: 'Optional exact certified PR736 isolated workers.dev origin for sandbox webhook shadow relay'
         required: false
         default: ''
       razorpay_relay_target_sha:
-        description: 'Required exact PR674 SHA when relay target origin is supplied'
+        description: 'Required exact certified PR736 SHA when relay target origin is supplied'
         required: false
         default: ''
 
