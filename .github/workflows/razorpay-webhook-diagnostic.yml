@@ -28,9 +28,9 @@ jobs:
           set -euo pipefail
           test -n "$STAGING_D1_ID"
           echo '--- payment_gateway_events ---'
-          npx --yes wrangler@4.92.0 d1 execute "$STAGING_D1_ID" --remote --json --command "SELECT event_type,processing_status,signature_verified,gateway_payment_id,gateway_order_id FROM payment_gateway_events WHERE gateway_payment_id='$PAYMENT_ID' OR gateway_order_id='$ORDER_ID' ORDER BY received_at DESC LIMIT 20;"
+          npx --yes wrangler@4.92.0 d1 execute pawspace-staging --remote --json --command "SELECT event_type,processing_status,signature_verified,gateway_payment_id,gateway_order_id FROM payment_gateway_events WHERE gateway_payment_id='$PAYMENT_ID' OR gateway_order_id='$ORDER_ID' ORDER BY received_at DESC LIMIT 20;"
           echo '--- gateway_webhook_events ---'
-          npx --yes wrangler@4.92.0 d1 execute "$STAGING_D1_ID" --remote --json --command "SELECT event_type,processing_status,failure_reason,event_id FROM gateway_webhook_events WHERE raw_payload LIKE '%' || '$PAYMENT_ID' || '%' OR raw_payload LIKE '%' || '$ORDER_ID' || '%' ORDER BY received_at DESC LIMIT 20;"
+          npx --yes wrangler@4.92.0 d1 execute pawspace-staging --remote --json --command "SELECT event_type,processing_status,failure_reason,event_id FROM gateway_webhook_events WHERE raw_payload LIKE '%' || '$PAYMENT_ID' || '%' OR raw_payload LIKE '%' || '$ORDER_ID' || '%' ORDER BY received_at DESC LIMIT 20;"
       - name: Inspect Razorpay Test webhook inventory when provider API supports it
         shell: bash
         run: |
