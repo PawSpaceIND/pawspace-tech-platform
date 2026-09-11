@@ -32,12 +32,14 @@ const d1Id = String(process.env.STAGING_D1_ID || "").trim();
 const r2BucketName = String(process.env.STAGING_R2_BUCKET_NAME || "").trim();
 const razorpayRelayOrigin = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN || "").trim();
 const razorpayRelaySha = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA || "").trim();
+let razorpayRelayWorker = "";
 const problems = [];
 if (Boolean(razorpayRelayOrigin) !== Boolean(razorpayRelaySha)) problems.push("Razorpay sandbox relay origin and SHA must be configured together.");
 if (razorpayRelayOrigin && razorpayRelaySha) {
   let relayUrl;
   try { relayUrl = new URL(razorpayRelayOrigin); } catch { problems.push("Razorpay sandbox relay target origin is invalid."); }
   if (relayUrl && (relayUrl.protocol !== "https:" || relayUrl.username || relayUrl.password || relayUrl.port || relayUrl.search || relayUrl.hash || !["", "/"].includes(relayUrl.pathname) || !/^pawspace-checkout-736-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}\.[a-z0-9-]+\.workers\.dev$/i.test(relayUrl.hostname))) problems.push("Razorpay sandbox relay target must be an exact isolated certified PR736 workers.dev origin.");
+  if (relayUrl && !problems.some(problem => problem.includes("relay target"))) razorpayRelayWorker = relayUrl.hostname.split(".")[0];
   if (!/^[0-9a-f]{40}$/.test(razorpayRelaySha)) problems.push("Razorpay sandbox relay target SHA must be an exact lowercase commit SHA.");
 }
 if (!d1Id || d1Id === "00000000-0000-4000-8000-000000000000") {
@@ -73,6 +75,14 @@ cfg.name = WORKER_NAME;
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
+// Same-zone global fetches from pawspace-staging to another *.workers.dev Worker are refused by
+// Cloudflare. Bind exactly the certified checkout Worker when shadow relay is enabled; never grant
+// staging a broad Worker-to-Worker global-fetch capability.
+if (razorpayRelayWorker) {
+  cfg.services = [{ binding: "PAWSPACE_RAZORPAY_SANDBOX_RELAY_SERVICE", service: razorpayRelayWorker }];
+} else {
+  delete cfg.services;
+}
 
 /* Vars that only ever make sense on a developer's machine. PAWSPACE_LOCAL_PREVIEW is the runtime
  * switch for an AUTHENTICATION-FREE actor: combined with a forged `Host: localhost` it is two thirds
