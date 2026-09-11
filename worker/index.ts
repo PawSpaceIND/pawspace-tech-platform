@@ -31,6 +31,8 @@ import{secureApiResponse}from"../lib/api-security-headers";
 import{requestForAuthorization}from"../lib/trusted-workspace-identity";
 import{drainGatewayInboundQueue,purgeExpiredInboundPayloads}from"../lib/gateway-inbound-queue";
 import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
+import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+import * as Sentry from"@sentry/cloudflare";
 
 interface Env {
   ASSETS: Fetcher;
@@ -44,6 +46,9 @@ interface Env {
       };
     };
   };
+  PUBLIC_CONTACT_RATE_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
+  AI_VOICE_RATE_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
+  SENTRY_DSN?:string;
   [key:string]:unknown;
 }
 
@@ -58,9 +63,12 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
+async function nativePublicRateLimit(request:Request,env:Env,url:URL){const binding=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;if(!binding)return null;const ip=String(request.headers.get("cf-connecting-ip")||"").trim();if(!ip)return new Response("Request origin could not be verified",{status:429});const result=await binding.limit({key:`${url.pathname}:${ip}`});return result.success?null:new Response("Rate limit exceeded",{status:429,headers:{"retry-after":"60"}});}
+function financialMutationPath(request:Request,url:URL){return !["GET","HEAD","OPTIONS"].includes(request.method.toUpperCase())&&/(payment|refund|payout|finance|settlement|razorpay)/i.test(url.pathname);}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
+    const url = new URL(request.url);const limited=await nativePublicRateLimit(request,env,url);if(limited)return limited;
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
     // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.
@@ -113,7 +121,7 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    try{const response=await handler.fetch(request,env,ctx);if(response.status>=400&&financialMutationPath(request,url))Sentry.captureMessage("Financial mutation failed",{level:response.status>=500?"error":"warning",tags:{method:request.method,path:url.pathname,status:String(response.status)}});return response;}catch(error){Sentry.captureException(error,{tags:{method:request.method,path:url.pathname}});throw error;}
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
@@ -144,7 +152,7 @@ const worker = {
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -162,6 +170,7 @@ const worker = {
         runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
         runExotelStaleCallReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:10}),
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
+        runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,limit:100}),
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -181,10 +190,11 @@ const worker = {
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
       if(exotelVoiceReconciliation.status==="rejected")errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.reason instanceof Error?exotelVoiceReconciliation.reason.message:String(exotelVoiceReconciliation.reason)}`);else if(exotelVoiceReconciliation.value.failed)errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.value.failed} call(s) failed authoritative refresh`);
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
+      if(dpdpRetention.status==="rejected")errors.push(`dpdp retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);
       if(templateSyncError)errors.push(templateSyncError);
-      if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
+      if(errors.length){const error=new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);Sentry.captureException(error,{tags:{component:"scheduled-worker"}});throw error;}
     })());
   },
 };
 
-export default worker;
+export default Sentry.withSentry((env:Env)=>env.SENTRY_DSN?{dsn:env.SENTRY_DSN,environment:String(env.PAWSPACE_DEPLOYMENT_ENV||"unknown"),sendDefaultPii:false,tracesSampleRate:0}:undefined,worker);
