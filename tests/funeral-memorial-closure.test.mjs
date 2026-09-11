@@ -73,6 +73,8 @@ test("Funeral and Memorial runs the urgent-request to closure lifecycle", async 
   assert.equal(coordinated.status, "pickup_coordinated");
 
   await act(db, created.id, "assign_vendor", { vendorId: "VENDOR-CREMATORIUM-1" });
+  await act(db, created.id, "record_payment", { paymentReference: "UAT-FUN-CLOSE-1" });
+  await governance.mutateFuneralCase(db,{caseId:created.id,action:"set_vendor_cost",actorId:FINANCE,amount:5000});
   await act(db, created.id, "complete_milestone", { milestoneCode: "pickup_complete" });
   await act(db, created.id, "complete_milestone", { milestoneCode: "ritual_scheduled" });
   const ritual = await act(db, created.id, "complete_milestone", { milestoneCode: "ritual_complete" });
@@ -99,6 +101,15 @@ test("Funeral and Memorial runs the urgent-request to closure lifecycle", async 
   assert.equal(closed.status, "closed");
   assert.equal(closed.closure_note, "Ashes handed to the family");
   assert.equal(Object.fromEntries(closed.milestones.map((row) => [row.code, row.status])).closure_confirmed, "complete");
+  assert.equal(Number(closed.settlement.vendor_cost),5000);
+  assert.equal(closed.settlement.approval_status,"awaiting_finance_approval");
+  assert.equal(closed.settlement.tax_status,"disabled_by_policy");
+  const journal=await db.prepare("SELECT SUM(debit) debit,SUM(credit) credit FROM finance_journal_entries WHERE source_id=?").bind(created.id).first();
+  assert.equal(Number(journal.debit),6500); assert.equal(Number(journal.credit),6500);
+  const approved=await governance.mutateFuneralCase(db,{caseId:created.id,action:"approve_vendor_settlement",actorId:FINANCE});
+  assert.equal(approved.settlement.approval_status,"approved");
+  const reconciled=await governance.mutateFuneralCase(db,{caseId:created.id,action:"reconcile_finance",actorId:FINANCE});
+  assert.equal(reconciled.reconciliation.status,"balanced");
 
   // Every step is on the timeline for the SAME case.
   const eventTypes = closed.events.map((row) => row.event_type);
@@ -127,6 +138,9 @@ test("Funeral and Memorial refuses closure while the promised outcome is outstan
 
   // With the ritual done and no memorial promised, closure is allowed.
   await act(db, early.id, "complete_milestone", { milestoneCode: "ritual_complete" });
+  await act(db,early.id,"assign_vendor",{vendorId:"VENDOR-PLAIN"});
+  await act(db,early.id,"record_payment",{paymentReference:"UAT-FUN-PLAIN"});
+  await governance.mutateFuneralCase(db,{caseId:early.id,action:"set_vendor_cost",actorId:FINANCE,amount:5000});
   const closedPlain = await act(db, early.id, "close_case", { closureNote: "Service completed" });
   assert.equal(closedPlain.status, "closed");
 
@@ -142,6 +156,9 @@ test("Funeral and Memorial refuses closure while the promised outcome is outstan
   assert.match(badType.message, /Unknown memorial record type/);
 
   await act(db, plantation.id, "create_memorial_record", { recordType: "plantation", reference: "SAPLING-42" });
+  await act(db,plantation.id,"assign_vendor",{vendorId:"VENDOR-PLANT"});
+  await act(db,plantation.id,"record_payment",{paymentReference:"UAT-FUN-PLANT"});
+  await governance.mutateFuneralCase(db,{caseId:plantation.id,action:"set_vendor_cost",actorId:FINANCE,amount:5000});
   const closedPlantation = await act(db, plantation.id, "close_case", { closureNote: "Sapling planted" });
   assert.equal(closedPlantation.status, "closed");
   assert.equal(closedPlantation.memorialRecords?.length ?? closedPlantation.memorial_records?.length ?? 1, 1);
@@ -220,13 +237,13 @@ test("Funeral and Memorial money is sandbox-only, invoiced untaxed, and refunded
   const paymentEvent = paid.events.find((row) => row.event_type === "payment_recorded");
   assert.equal(paymentEvent.detail.liveMoney, false);
   assert.equal(paymentEvent.detail.provider, "internal_uat");
-  assert.equal(paymentEvent.detail.taxConfigured, false);
+  assert.equal(paymentEvent.detail.taxStatus, "disabled_by_policy");
 
   // An invoice is raised, and it is explicit that tax is not configured.
   const invoice = await db.prepare("SELECT amount,status,tax_status FROM funeral_invoices WHERE case_id=?").bind(created.id).first();
   assert.equal(Number(invoice.amount), 6500);
   assert.equal(invoice.status, "uat_issued");
-  assert.equal(invoice.tax_status, "not_configured", "no tax is invented on a sandbox invoice");
+  assert.equal(invoice.tax_status, "disabled_by_policy", "no tax is invented when governed tax policy is disabled");
 
   // Refunds need an amount and a reason, and are DECIDED, never executed.
   const thin = await refusal(act(db, created.id, "request_refund", { refundAmount: 0, reason: "Changed mind" }));
@@ -274,6 +291,19 @@ test("Funeral and Memorial money is sandbox-only, invoiced untaxed, and refunded
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Funeral finance refuses over-refunds and closure without explicit vendor economics", async () => {
+  const { db } = await funeralWorld(); await enable(db,"cremation",{baseAmount:6500});
+  const c=await newCase(db,{memorialOption:"none"});
+  await act(db,c.id,"assign_vendor",{vendorId:"VENDOR-GUARD"});
+  await act(db,c.id,"record_payment",{paymentReference:"UAT-FUN-GUARD"});
+  await act(db,c.id,"complete_milestone",{milestoneCode:"ritual_complete"});
+  const missing=await refusal(act(db,c.id,"close_case",{closureNote:"Done"}));
+  assert.equal(missing?.status,409); assert.match(missing.message,/explicit vendor cost/);
+  const over=await refusal(act(db,c.id,"request_refund",{refundAmount:6501,reason:"Customer request"}));
+  assert.equal(over?.status,409); assert.match(over.message,/cannot exceed remaining collected/);
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Funeral and Memorial preserves sensitive communication and non-production boundaries", async () => {
   const { db } = await funeralWorld();
   await enable(db, "cremation");
@@ -282,9 +312,9 @@ test("Funeral and Memorial preserves sensitive communication and non-production 
   assert.deepEqual(governance.funeralMemorialReadiness, {
     liveVendorApi: false, livePaymentGateway: false, liveMoney: false, productionMediaStorage: false,
     externalMessaging: false, externalRefundExecution: false, walletConnected: false,
-    cashCollectionConnected: false, taxConfigured: false, payoutPolicyConfigured: false,
+    cashCollectionConnected: false, taxPolicyConfigurable: true, payoutPolicyConfigured: true,
     supportPhoneConfigured: false, manualVendorCoordinationTrackable: true,
-    sensitiveTemplates: "internal_uat", fulfillmentReports: true,
+    sensitiveTemplates: "internal_uat", fulfillmentReports: true, canonicalFinance:true, refundCeiling:true, vendorSettlementApproval:true,
   });
 
   // The bereavement templates are real, non-empty text held internally -- not an external campaign.
