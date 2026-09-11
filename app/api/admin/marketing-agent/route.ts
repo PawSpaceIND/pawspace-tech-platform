@@ -31,21 +31,19 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     sameOrigin(request);
+    const actor = await authorize(request, "marketing.manage");
     const body = await request.json() as Record<string, unknown>;
     const action = text(body.action);
     const db = await database();
     await ensureMarketingAgentGatewayTables(db);
 
     if (action === "marketing.ads.read_metrics") {
-      await authorize(request, "marketing.view");
       return json({ data: await marketingAdsReadMetrics(db, { from: text(body.from), to: text(body.to), platform: body.platform as MarketingAdPlatform | undefined, campaignId: text(body.campaignId) || undefined }) });
     }
     if (action === "marketing.ads.search_terms.analyze") {
-      await authorize(request, "marketing.view");
       return json({ data: await marketingSearchTermsAnalyze(db, { from: text(body.from), to: text(body.to), campaignId: text(body.campaignId) || undefined, minSpendMinor: Number(body.minSpendMinor || 0), minClicks: Number(body.minClicks || 0) }) });
     }
     if (action === "marketing.proposal.submit") {
-      const actor = await authorize(request, "marketing.manage");
       const toolName = text(body.toolName);
       if (!["marketing.ads.budget.reallocate", "marketing.ads.keyword.mutate"].includes(toolName)) return json({ error: "Only governed marketing mutation tools may be proposed" }, 400);
       if (!["google_ads", "meta_ads"].includes(text(body.platform)) || !text(body.why) || !body.payload || typeof body.payload !== "object") return json({ error: "platform, why and exact payload are required" }, 400);
@@ -53,35 +51,7 @@ export async function POST(request: Request) {
       await securityAudit(db, actor, "marketing.proposal.submit", "pending_approval", data.id, "completed", { toolName, platform: body.platform, payloadHash: data.payloadHash, externalMutation: false, approvalRequired: true });
       return json({ data }, 201);
     }
-
-    const founder = requireFounderRole(await resolveActor(request));
-    if (action === "marketing.proposal.decide") {
-      const decision = text(body.decision);
-      if (!body.approvalId || !["approved", "rejected"].includes(decision)) return json({ error: "approvalId and approved/rejected decision are required" }, 400);
-      const data = await founderDecideMarketingProposal(db, { approvalId: text(body.approvalId), decision: decision as "approved" | "rejected", founderActor: founder.email, note: text(body.note) });
-      await securityAudit(db, founder, `marketing.proposal.${decision}`, "pending_approval", text(body.approvalId), "completed", { explicitFounderApproval: decision === "approved" });
-      return json({ data });
-    }
-    if (action === "marketing.budget_envelope.upsert") {
-      const platform = text(body.platform), accountId = text(body.accountId), resourceId = text(body.resourceId), dailyLimitMinor = Math.trunc(Number(body.dailyLimitMinor));
-      if (!['google_ads','meta_ads'].includes(platform) || !accountId || !Number.isFinite(dailyLimitMinor) || dailyLimitMinor < 0) return json({ error: "platform, accountId and non-negative dailyLimitMinor are required" }, 400);
-      const now = Date.now(), id = text(body.id) || `GBE-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-      await db.prepare("INSERT INTO gce_budget_envelopes (id,platform,account_id,resource_id,daily_limit_minor,currency,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,?,?,'INR','active',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET platform=excluded.platform,account_id=excluded.account_id,resource_id=excluded.resource_id,daily_limit_minor=excluded.daily_limit_minor,status='active',effective_from=excluded.effective_from,effective_to=excluded.effective_to,approved_by=excluded.approved_by,approved_at=excluded.approved_at,updated_at=excluded.updated_at")
-        .bind(id, platform, accountId, resourceId || null, dailyLimitMinor, Number(body.effectiveFrom || now), body.effectiveTo == null ? null : Number(body.effectiveTo), founder.email, now, now, now).run();
-      await securityAudit(db, founder, "marketing.budget_envelope.upsert", "gce_budget_envelope", id, "completed", { platform, accountId, resourceId: resourceId || null, dailyLimitMinor });
-      return json({ data: { id, platform, accountId, resourceId: resourceId || null, dailyLimitMinor, approvedBy: founder.email } });
-    }
-    if (action === "marketing.ads.budget.reallocate") {
-      const data = await marketingBudgetReallocate(db, await runtime(), { approvalId: text(body.approvalId), platform: body.platform as MarketingAdPlatform, accountId: text(body.accountId), fromResourceId: text(body.fromResourceId), toResourceId: text(body.toResourceId), fromDailyMinor: Number(body.fromDailyMinor), toDailyMinor: Number(body.toDailyMinor), shiftMinor: Number(body.shiftMinor), reason: text(body.reason), actor: founder.email });
-      await securityAudit(db, founder, "marketing.ads.budget.reallocate", String(body.platform), text(body.approvalId), "completed", { explicitFounderApproval: true, budgetEnvelopeValidated: true });
-      return json({ data });
-    }
-    if (action === "marketing.ads.keyword.mutate") {
-      const data = await marketingKeywordMutate(db, await runtime(), { approvalId: text(body.approvalId), platform: body.platform as MarketingAdPlatform, accountId: text(body.accountId), campaignId: text(body.campaignId), adGroupId: text(body.adGroupId), criterionId: text(body.criterionId) || undefined, keyword: text(body.keyword), operation: body.operation as "add_negative" | "pause" | "enable", matchType: body.matchType as "EXACT" | "PHRASE" | "BROAD" | undefined, currentDailyMinor: Number(body.currentDailyMinor), reason: text(body.reason), actor: founder.email });
-      await securityAudit(db, founder, "marketing.ads.keyword.mutate", "google_ads", text(body.approvalId), "completed", { explicitFounderApproval: true, budgetEnvelopeValidated: true });
-      return json({ data });
-    }
-    return json({ error: "Unsupported Head of Marketing action" }, 400);
+    return json({ error: "Founder-only marketing mutations use /api/admin/marketing-agent/founder" }, 403);
   } catch (error) {
     if (error instanceof Response) return json({ error: await error.text() }, error.status);
     return authError(error, "Unable to execute Head of Marketing gateway action");
