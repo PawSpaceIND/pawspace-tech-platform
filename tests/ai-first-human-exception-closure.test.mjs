@@ -30,10 +30,11 @@ test("WhatsApp auto-send permits only grounded low-risk replies",()=>{
  for(const patch of[{humanOwned:true},{customerConsented:false},{optedOut:true},{grounded:false},{containsHighImpactClaim:true},{intent:"refund_review",messageType:null},{outcome:"handoff"}])assert.equal(control.evaluateWhatsAppAutoSend({...base,...patch}).allowed,false,JSON.stringify(patch));
 });
 
-test("high-impact tools remain outside autonomous allow-list",()=>{
- for(const code of["refund.issue","payment.capture","payout.release","price.override","provider.assign","campaign.activate","communication.send","customer.merge"])assert.equal(control.NEVER_AUTONOMOUS_TOOLS.has(code),true,code);
+test("financial high-impact tools remain blocked while policy-safe operational mutations are confirmable",()=>{
+ for(const code of["refund.issue","payment.capture","payout.release","price.override","campaign.activate","communication.send","customer.merge"])assert.equal(control.NEVER_AUTONOMOUS_TOOLS.has(code),true,code);
+ assert.equal(control.NEVER_AUTONOMOUS_TOOLS.has("provider.assign"),false,"raw provider.assign is no longer the AI control-plane gate; the registry still refuses it and exposes policy execution instead");
  for(const code of["service_catalogue.read","customer_bookings.read","booking_status.read","provider_status.read","subscription_wallet.read","case_status.read","approved_knowledge.read","quote.request"])assert.equal(control.LOW_RISK_AUTO_TOOLS.has(code),true,code);
- assert.equal(control.CONFIRMABLE_SAFE_MUTATIONS.has("booking.request"),true);
+ for(const code of["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"])assert.equal(control.CONFIRMABLE_SAFE_MUTATIONS.has(code),true,code);
 });
 
 test("controlled-live readiness never mistakes configured credentials for verified traffic",()=>{

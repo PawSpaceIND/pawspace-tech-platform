@@ -42,10 +42,10 @@ export async function requestGovernedCustomerCallback(db:D1Database,env:Env,inpu
 export const LOW_RISK_AUTO_TOOLS=new Set<AiToolCode>([
  "service_catalogue.read","customer_bookings.read","booking_status.read","provider_status.read","subscription_wallet.read","case_status.read","approved_knowledge.read","quote.request"
 ]);
-export const CONFIRMABLE_SAFE_MUTATIONS=new Set<AiToolCode>(["booking.request"]);
-export const NEVER_AUTONOMOUS_TOOLS=new Set<AiToolCode>(["refund.issue","payment.capture","payout.release","price.override","provider.assign","campaign.activate","communication.send","customer.merge","booking_reschedule.request","booking_cancel.request"]);
+export const CONFIRMABLE_SAFE_MUTATIONS=new Set<AiToolCode>(["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]);
+export const NEVER_AUTONOMOUS_TOOLS=new Set<AiToolCode>(["refund.issue","payment.capture","payout.release","price.override","campaign.activate","communication.send","customer.merge"]);
 
-export async function executeGovernedLowRiskTool(db:D1Database,input:{actor:AuthenticatedActor;toolCode:AiToolCode;threadId:string;customerId:string;intent:AiToolIntent;channel:AiToolChannel;arguments?:Record<string,unknown>;idempotencyKey?:string;customerConfirmed?:boolean}){
+export async function executeGovernedLowRiskTool(db:D1Database,input:{sourceRequest?:Request;actor:AuthenticatedActor;toolCode:AiToolCode;threadId:string;customerId:string;intent:AiToolIntent;channel:AiToolChannel;arguments?:Record<string,unknown>;idempotencyKey?:string;customerConfirmed?:boolean}){
  if(NEVER_AUTONOMOUS_TOOLS.has(input.toolCode))throw new Response("This tool requires deterministic approval or human review",{status:403});
  if(!LOW_RISK_AUTO_TOOLS.has(input.toolCode)&&!CONFIRMABLE_SAFE_MUTATIONS.has(input.toolCode))throw new Response("Tool is not on the AI-first allow-list",{status:403});
  if(CONFIRMABLE_SAFE_MUTATIONS.has(input.toolCode)&&!input.customerConfirmed)throw new Response("Explicit customer confirmation is required",{status:409});
@@ -53,7 +53,7 @@ export async function executeGovernedLowRiskTool(db:D1Database,input:{actor:Auth
  if(LOW_RISK_AUTO_TOOLS.has(input.toolCode))return{...prepared,autonomyClass:"low_risk_read",humanReviewRequired:false};
  const requestId="requestId"in prepared&&typeof prepared.requestId==="string"?prepared.requestId:"";
  if(!requestId)throw new Error("Governed mutation did not create a confirmation request");
- const confirmed=await confirmAiToolExecution(db,{actor:input.actor,requestId});
+ const confirmed=await confirmAiToolExecution(db,{actor:input.actor,requestId,sourceRequest:input.sourceRequest});
  return{...confirmed,autonomyClass:"customer_confirmed_safe_mutation",humanReviewRequired:false};
 }
 
