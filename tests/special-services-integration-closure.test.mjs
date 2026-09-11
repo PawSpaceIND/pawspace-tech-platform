@@ -7,27 +7,38 @@ const relocation=await import("../lib/relocation-governance.ts");
 const funeral=await import("../lib/funeral-memorial-governance.ts");
 const manual=await import("../lib/funeral-manual-order.ts");
 
-test("Relocation case creation lands in canonical CRM and communication outbox",async()=>{
+// Exercise both sides of the IST quiet-hours boundary independently of CI wall time.
+for (const scenario of [
+ { name: "20:59 IST", now: "2026-09-11T15:29:00Z", status: "queued", due: "2026-09-11T15:29:00Z" },
+ { name: "21:00 IST", now: "2026-09-11T15:30:00Z", status: "scheduled", due: "2026-09-12T03:30:00Z" },
+]) {
+test(`Relocation case creation lands in canonical CRM and communication outbox at ${scenario.name}`,async(t)=>{
+ t.mock.timers.enable({apis:["Date"],now:new Date(scenario.now)});
  const sqlite=freshSqlite(),db=makeD1(sqlite),customerId="CUST-RELO-LINK";
  const row=await relocation.createRelocationCase(db,{customerId,petName:"Milo",breed:"Indie",ageYears:4,sizeClass:"medium",travelMode:"air",originCountry:"India",originCity:"Bengaluru",destinationCountry:"UAE",destinationCity:"Dubai",targetTravelDate:new Date(Date.now()+30*86400000).toISOString(),crateRequirement:"assessment_required"},"agent@pawspace.test");
  const link=sqlite.prepare("SELECT * FROM special_service_case_links WHERE case_id=?").get(row.id);
  assert.equal(link.customer_id,customerId); assert.equal(link.service_code,"relocation");
  const lead=sqlite.prepare("SELECT service,lifecycle_state FROM lead_work_items WHERE id=?").get(link.lead_id);
  assert.equal(lead.service,"relocation"); assert.equal(lead.lifecycle_state,"qualified");
- const message=sqlite.prepare("SELECT m.template_key,o.status FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
- assert.equal(message.template_key,"relocation_case_created"); assert.equal(message.status,"queued");
+ const message=sqlite.prepare("SELECT m.template_key,o.status,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
+ assert.equal(message.template_key,"relocation_case_created"); assert.equal(message.status,scenario.status);
+ assert.equal(message.next_attempt_at,Date.parse(scenario.due));
 });
 
-test("Funeral request uses canonical sensitive-care CRM and lifecycle communication",async()=>{
+test(`Funeral request uses canonical sensitive-care CRM and lifecycle communication at ${scenario.name}`,async(t)=>{
+ t.mock.timers.enable({apis:["Date"],now:new Date(scenario.now)});
  const sqlite=freshSqlite(),db=makeD1(sqlite),customerId="CUST-FUN-LINK";
  await funeral.saveFuneralServiceConfig(db,{serviceType:"cremation",enabled:true,baseAmount:6500,cashAllowed:false},"ops@pawspace.test");
  const row=await funeral.createFuneralCase(db,{customerId,petName:"Bruno",petSpecies:"dog",pickupAddress:"HSR Layout",serviceType:"cremation",memorialOption:"none"},"care@pawspace.test");
  const link=sqlite.prepare("SELECT * FROM special_service_case_links WHERE case_id=?").get(row.id);
  assert.equal(link.customer_id,customerId); assert.equal(link.service_code,"funeral");
- const message=sqlite.prepare("SELECT m.template_key,m.payload_json,o.status FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
- assert.equal(message.template_key,"funeral_request_received"); assert.equal(message.status,"queued");
+ const message=sqlite.prepare("SELECT m.template_key,m.payload_json,o.status,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
+ assert.equal(message.template_key,"funeral_request_received"); assert.equal(message.status,scenario.status);
+ assert.equal(message.next_attempt_at,Date.parse(scenario.due));
  assert.match(JSON.parse(message.payload_json).message,/received your request/i);
 });
+
+}
 
 test("Funeral manual converted orders take tax only from canonical Funeral finance policy",async()=>{
  const sqlite=freshSqlite(),db=makeD1(sqlite);
