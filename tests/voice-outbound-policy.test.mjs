@@ -298,7 +298,6 @@ test("a retry re-proves the whole gate, is correlated, and is bounded", async ()
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_policy_decisions WHERE call_id=?").get(retry.callId).c, 10, "the retry re-ran every check");
 
   // The first real dial consumes the 14-day identity allowance, so retries remain policy-blocked until the window expires.
-  // Hard retry exhaustion and its CRM disposition are covered independently below.
 });
 
 test("a policy refusal is never retryable - the decision would just be re-made", async () => {

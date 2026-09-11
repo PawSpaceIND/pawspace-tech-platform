@@ -61,7 +61,7 @@
     "recharts": "3.10.1"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.54.7",
+    "@cloudflare/vite-plugin": "^1.54.7",
     "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -78,7 +78,7 @@
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",
-    "wrangler": "4.131.0"
+    "wrangler": "^4.131.0"
   },
   "type": "module",
   "displayName": "PawSpace Grooming"

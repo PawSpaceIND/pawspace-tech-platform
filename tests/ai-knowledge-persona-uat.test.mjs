@@ -25,11 +25,11 @@ test("human-by-exception intents fail closed before an external model call",()=>
  assert.equal(runtime.requiresImmediateHumanHandoff("What is the price for doorstep dog training?"),false);
 });
 
-test("grounding uses approved internal read tools and never invokes mutation tools",()=>{
+test("grounding uses approved reads and exposes mutations only through the governed action plane",()=>{
  const source=read("lib/ai-grounded-runtime-provider.ts");
  assert.match(source,/toolCode:\"approved_knowledge\.read\"/);assert.match(source,/toolCode:\"service_catalogue\.read\"/);
  for(const forbidden of["refund.issue","payment.capture","price.override","provider.assign","booking.request","booking_cancel.request","booking_reschedule.request"])assert.doesNotMatch(source,new RegExp(`toolCode:\\"${forbidden.replaceAll(".","\\.")}\\"`));
- assert.match(source,/mutationsAuthorized:false/);assert.match(source,/readOnlyToolsOnly:true/);
+ assert.match(source,/mutationsAuthorizedOnlyViaGovernedActionPlane:true/);assert.match(source,/availableActionTools/);
 });
 
 test("canonical UAT catalogue coverage includes the major PawSpace service verticals",()=>{
@@ -42,6 +42,6 @@ test("Chat, WhatsApp and Voice all use the same grounded runtime provider",()=>{
  const web=read("lib/ai-web-chat-adapter.ts"),wa=read("lib/meta-whatsapp-ai-executor.ts"),voice=read("lib/inbound-ai-telephony.ts");
  for(const source of[web,wa,voice])assert.match(source,/createGroundedAiRuntimeProvider/);
  assert.match(web,/createGroundedAiRuntimeProvider\(db,input\.actor,\"chat\"\)/);
- assert.match(wa,/createGroundedAiRuntimeProvider\(db,serviceActor,\"whatsapp\"\)/);
+ assert.match(wa,/createGroundedAiRuntimeProvider\(db,serviceActor,\"whatsapp\",/);
  assert.match(voice,/createGroundedAiRuntimeProvider\(db,serviceActor,\"voice\"\)/);
 });

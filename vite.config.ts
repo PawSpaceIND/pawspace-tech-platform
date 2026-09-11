@@ -13,9 +13,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" },
-  triggers:{crons:["*/5 * * * *","*/15 * * * *","15 2 * * *","30 2 * * *"]},
-  ratelimits:[{name:"PUBLIC_API_RATE_LIMITER",namespace_id:"1001",simple:{limit:100,period:60 as const}}],
+  vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: process.env.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE === "on" ? "on" : "off", PAWSPACE_UAT_SERVICE_CLOCK: process.env.PAWSPACE_UAT_SERVICE_CLOCK || "off", PAWSPACE_UAT_EXECUTION_NOW_MS: process.env.PAWSPACE_UAT_EXECUTION_NOW_MS || "" },
   d1_databases: d1
     ? [
         {

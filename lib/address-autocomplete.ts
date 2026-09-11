@@ -7,8 +7,10 @@ async function mapsCredentials(){
   const mode=String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase();
   if(mode!=="sandbox")return{ok:false as const,error:"Maps UAT adapter is locked to sandbox"};
   const key=String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();
+  const testFixture=String(runtime.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE||"").trim().toLowerCase()==="on";
+  if(!key&&testFixture)return{ok:true as const,key:"__pawspace_explicit_uat_fixture__",fixture:true as const};
   if(!key)return{ok:false as const,error:"GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured"};
-  return{ok:true as const,key};
+  return{ok:true as const,key,fixture:false as const};
 }
 
 function validCoordinates(latitude:number,longitude:number){
@@ -28,6 +30,7 @@ export async function searchAddressSuggestions(input:{query:string;sessionToken?
   if(query.length<3)return{status:"configured",suggestions:[]};
   const creds=await mapsCredentials();
   if(!creds.ok)return{status:"configuration_required",suggestions:[],error:creds.error};
+  if(creds.fixture)return{status:"configured",suggestions:[{placeId:"pawspace-e2e-indiranagar",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]};
   try{
     const response=await fetch("https://places.googleapis.com/v1/places:autocomplete",{
       method:"POST",
@@ -44,6 +47,7 @@ export async function searchAddressSuggestions(input:{query:string;sessionToken?
 export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:string}):Promise<ResolvedAddress>{
   const creds=await mapsCredentials();
   if(!creds.ok)return{status:"configuration_required",error:creds.error};
+  if(creds.fixture)return{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356};
   try{
     const url=new URL(`https://places.googleapis.com/v1/places/${encodeURIComponent(input.placeId)}`);
     if(input.sessionToken)url.searchParams.set("sessionToken",input.sessionToken);
@@ -63,6 +67,7 @@ export async function geocodeAddress(input:{address:string}):Promise<ResolvedAdd
   if(address.length<8)return{status:"provider_error",error:"A complete service address is required"};
   const creds=await mapsCredentials();
   if(!creds.ok)return{status:"configuration_required",error:creds.error};
+  if(creds.fixture)return{status:"configured",address,latitude:12.9783692,longitude:77.6408356};
   try{
     const url=new URL("https://maps.googleapis.com/maps/api/geocode/json");
     url.searchParams.set("address",address);

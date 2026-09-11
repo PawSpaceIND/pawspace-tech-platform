@@ -37,7 +37,7 @@ test("WhatsApp-governed AI action plan executes reserve -> booking -> Razorpay o
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
  const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
  globalThis.fetch=async(url,init)=>{
-  assert.match(String(url),/api\.razorpay\.com\/v1\/orders/);
+  assert.match(String(url),/^https:\/\/api\.razorpay\.com\/v1\/orders$/);
   const body=JSON.parse(String(init?.body||"{}"));
   return Response.json({id:"order_AI_CHAIN",entity:"order",amount:body.amount,amount_paid:0,amount_due:body.amount,currency:body.currency,receipt:body.receipt,status:"created"});
  };
