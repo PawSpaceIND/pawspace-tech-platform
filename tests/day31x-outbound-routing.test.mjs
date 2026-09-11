@@ -13,7 +13,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { world } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__D31X_OUT_DB__", "__D31X_OUT_ENV__");
 
