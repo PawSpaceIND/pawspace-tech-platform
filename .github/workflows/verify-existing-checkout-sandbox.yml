@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type verify-checkout-sandbox-674'
+        description: 'Type verify-checkout-sandbox-736'
         required: true
         default: ''
       expected_sha:
-        description: 'Exact current PR674 head'
+        description: 'Exact current PR736 head'
         required: true
         default: ''
       worker_name:
@@ -20,11 +20,11 @@ permissions:
   pull-requests: read
   actions: read
 concurrency:
-  group: pawspace-checkout-sandbox-674-verify
+  group: pawspace-checkout-sandbox-736-verify
   cancel-in-progress: false
 jobs:
   verify-existing:
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'verify-checkout-sandbox-674' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'verify-checkout-sandbox-736' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pawspace-release-preview
@@ -48,11 +48,11 @@ jobs:
           if(!/^[a-f0-9]{40}$/.test(sha||''))throw Error('Exact SHA required');
           const base='https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform';
           const get=async path=>{const r=await fetch(base+path,{headers:{authorization:'Bearer '+process.env.GH_TOKEN},redirect:'error',signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error('GitHub verification failed');return r.json();};
-          const pr=await get('/pulls/674');
-          if(pr.state!=='open'||pr.head.sha!==sha||pr.head.ref!=='fix/customer-sandbox-checkout-wiring-20260909'||pr.head.repo.full_name!=='PawSpaceIND/pawspace-tech-platform')throw Error('PR674 moved or identity mismatches');
+          const pr=await get('/pulls/736');
+          if(pr.state!=='closed'||pr.merged!==true||pr.head.sha!==sha||pr.head.ref!=='test/razorpay-recon-untrusted-evidence-20260911'||pr.head.repo.full_name!=='PawSpaceIND/pawspace-tech-platform')throw Error('PR736 moved or identity mismatches');
           const runs=(await get('/actions/runs?event=pull_request&head_sha='+sha+'&per_page=100')).workflow_runs;
           for(const name of ['Release CI','Pre-UAT Staging Protocol','Browser E2E (hardened, preview superuser disabled)','Browser E2E (personas, sandbox locked)']){const run=runs.filter(r=>r.name===name).sort((a,b)=>b.id-a.id)[0];if(!run||run.status!=='completed'||run.conclusion!=='success')throw Error('Candidate certification incomplete: '+name);}
-          console.log('Exact PR674 head and four required workflow groups verified.');
+          console.log('Exact PR736 head and four required workflow groups verified.');
           NODE
       - name: Checkout immutable product candidate
         uses: actions/checkout@v4
