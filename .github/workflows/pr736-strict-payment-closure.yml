@@ -1,0 +1,249 @@
+name: PR736 strict Razorpay payment closure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type pr736-strict-close'
+        required: true
+        default: ''
+      main_sha:
+        description: 'Exact current main SHA used for the temporary staging relay and restoration'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+  PAWSPACE_PAYMENT_ENV: sandbox
+  FORBID_PRODUCTION: 'true'
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+  PAWSPACE_LIVE_PAYMENTS: 'false'
+  PAWSPACE_LIVE_REFUNDS: 'false'
+  PAWSPACE_LIVE_PAYOUTS: 'false'
+
+jobs:
+  strict-provider-proof:
+    if: ${{ github.ref == 'refs/heads/uat/pr736-strict-payment-closure-20260911' && github.event.inputs.confirm == 'pr736-strict-close' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    concurrency: pawspace-staging-deploy
+    steps:
+      - name: Checkout strict evidence infrastructure
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: infra
+      - name: Checkout immutable PR736 product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          path: candidate
+      - name: Checkout exact current main for staging relay
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.main_sha }}
+          path: staging
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: |
+            infra/package-lock.json
+            candidate/package-lock.json
+            staging/package-lock.json
+      - name: Validate immutable identities and TEST-only declarations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAIN_SHA: ${{ github.event.inputs.main_sha }}
+        run: |
+          set -euo pipefail
+          test "$CHECKOUT_CANDIDATE_SHA" = "244ee2cdff4a268c569909ae10bb7daafdfe67d6"
+          test "$MAIN_SHA" = "$(git -C staging rev-parse HEAD)"
+          test "$PAWSPACE_PAYMENT_ENV" = sandbox
+          test "$FORBID_PRODUCTION" = true
+          test "$PAWSPACE_PAYMENT_LIVE_APPROVED" = false
+          test "$PAWSPACE_LIVE_PAYMENTS" = false
+          test "$PAWSPACE_LIVE_REFUNDS" = false
+          test "$PAWSPACE_LIVE_PAYOUTS" = false
+          test "$(gh api repos/PawSpaceIND/pawspace-tech-platform/pulls/736 --jq .head.sha)" = "$CHECKOUT_CANDIDATE_SHA"
+          test "$(gh api repos/PawSpaceIND/pawspace-tech-platform/pulls/736 --jq .merged)" = true
+      - name: Install strict harness and immutable candidate
+        run: |
+          npm --prefix infra ci
+          npm --prefix candidate ci
+          npm --prefix candidate run build
+          cd infra && npx playwright install --with-deps chromium
+      - name: Discover authoritative frozen-preview D1 guard
+        id: preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const account=process.env.CLOUDFLARE_ACCOUNT_ID,token=process.env.CLOUDFLARE_API_TOKEN;
+          const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/pawspace-release-preview/settings`,{headers:{authorization:`Bearer ${token}`},redirect:'error'});
+          const b=await r.json(); if(!r.ok||b.success!==true) throw Error('frozen preview settings unavailable');
+          const d=(b.result?.bindings||[]).find(x=>x.type==='d1'&&x.name==='DB');
+          if(!d?.id||!/^[0-9a-f-]{36}$/i.test(d.id)) throw Error('frozen preview D1 binding unavailable');
+          console.log(`d1=${d.id}`); console.log('worker=pawspace-release-preview');
+          NODE
+      - name: Provision one isolated immutable checkout Worker and D1
+        id: isolated
+        working-directory: infra
+        env:
+          CONFIRM: checkout-sandbox-736
+          EXPECTED_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/evidence/hosting
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_PREVIEW_D1_ID: ${{ steps.preview.outputs.d1 }}
+          RELEASE_PREVIEW_WORKER_NAME: ${{ steps.preview.outputs.worker }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/deploy-checkout-sandbox.mjs
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import{readFileSync}from'node:fs';const r=JSON.parse(readFileSync(process.env.CHECKOUT_EVIDENCE_DIR+'/hosting-report.json','utf8'));
+          if(!r.hosted||!r.worker||!r.origin)throw Error('isolated host not proven');
+          console.log(`worker=${r.worker}`);console.log(`origin=${r.origin}`);
+          NODE
+      - name: Verify authenticated hosted customer UI before staging mutation
+        working-directory: infra
+        env:
+          EXPECTED_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/evidence/hosting
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node --experimental-strip-types scripts/verify-checkout-hosted-browser.mjs
+      - name: Install and build exact current main staging artifact
+        working-directory: staging
+        run: |
+          npm ci
+          npm run build
+      - name: Configure exact temporary service-bound relay
+        working-directory: staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ steps.isolated.outputs.origin }}
+          PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/verify-razorpay-sandbox-relay-target.mjs
+          node scripts/stage-config.mjs
+      - name: Deploy temporary staging relay lock
+        working-directory: staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/pr736-staging-secrets.json"; trap 'rm -f "$f"' EXIT
+          node --input-type=module -e 'import{writeFileSync}from"node:fs";const n=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","GOOGLE_MAPS_SERVER_API_KEY_UAT"];const v=Object.fromEntries(n.map(k=>[k,process.env[k]||""]));if(Object.values(v).some(x=>!x))throw Error("strict staging proof secret missing");writeFileSync(process.argv[1],JSON.stringify(v),{mode:0o600})' "$f"
+          npx wrangler deploy --message "staging ${{ github.event.inputs.main_sha }} pr736-strict-relay" --secrets-file "$f"
+      - name: Payment-free product-native scheduling preflight
+        working-directory: infra
+        env:
+          PR736_PRECHECK_ONLY: 'true'
+          CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PW_BASE_URL: https://example.invalid
+        run: npx playwright test e2e/checkout-provider-webhook-proof-736.spec.ts --project=chromium --retries=0 --output=${{ github.workspace }}/test-results/precheck
+      - name: Exactly one product-native one-rupee Razorpay TEST capture and signed-webhook proof
+        working-directory: infra
+        env:
+          PR736_PRECHECK_ONLY: 'false'
+          CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PW_BASE_URL: https://example.invalid
+        run: npx playwright test e2e/checkout-provider-webhook-proof-736.spec.ts --project=chromium --retries=0 --output=${{ github.workspace }}/test-results/final
+      - name: Retain strict sanitized proof before cleanup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr736-strict-payment-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/
+            test-results/
+            infra/playwright-report/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Restore normal staging with relay disabled
+        if: always()
+        working-directory: staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: |
+          set -euo pipefail
+          unset PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA || true
+          node scripts/stage-config.mjs
+          f="$RUNNER_TEMP/pr736-restore-secrets.json"; trap 'rm -f "$f"' EXIT
+          node --input-type=module -e 'import{writeFileSync}from"node:fs";const n=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","GOOGLE_MAPS_SERVER_API_KEY_UAT"];writeFileSync(process.argv[1],JSON.stringify(Object.fromEntries(n.filter(k=>process.env[k]).map(k=>[k,process.env[k]]))),{mode:0o600})' "$f"
+          npx wrangler deploy --message "staging ${{ github.event.inputs.main_sha }} pr736-strict-restored" --secrets-file "$f"
+      - name: Delete only the exact isolated PR736 Worker and D1
+        if: always() && steps.isolated.outputs.worker != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ steps.isolated.outputs.worker }}
+        run: |
+          node --input-type=module <<'NODE'
+          const a=process.env.CLOUDFLARE_ACCOUNT_ID,t=process.env.CLOUDFLARE_API_TOKEN,w=process.env.WORKER;
+          if(!/^pawspace-checkout-736-[1-9][0-9]*-[1-9][0-9]*$/.test(w))throw Error('cleanup target refused');
+          const call=async(path,init={})=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${a}${path}`,{...init,headers:{authorization:`Bearer ${t}`}});if(r.status===404)return null;const b=await r.json();if(!r.ok||b.success!==true)throw Error(`cleanup failed ${path}`);return b.result};
+          let db=null;
+          for(let page=1;page<=50&&!db;page++){
+            const rows=await call(`/d1/database?per_page=100&page=${page}`)||[];
+            db=rows.find(x=>x.name===w)||null;
+            if(rows.length<100)break;
+          }
+          if(!db?.uuid)throw Error('isolated D1 cleanup target not found by exact Worker name');
+          await call(`/workers/scripts/${w}`,{method:'DELETE'}).catch(e=>console.log('worker delete already absent or service-retired'));
+          await call(`/d1/database/${db.uuid}`,{method:'DELETE'});
+          console.log(JSON.stringify({worker:w,workerCleanupRequested:true,databaseCleanupRequested:true,liveMoney:false}));
+          NODE
