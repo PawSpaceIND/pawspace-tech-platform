@@ -3,18 +3,20 @@ import{actorCanAccessConversation,conversationAccessPredicate,ensureConversation
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
-export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated";
+export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated"|"high_value_enterprise_objection";
 export type AiHandoffAction="take_over"|"resume_ai";
 
 const text=(value:unknown)=>String(value??"").trim();
 function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.manage")||actor.permissions.includes("customers.manage");}
-function queueFor(reason:AiHandoffReason){if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
+function queueFor(reason:AiHandoffReason){if(reason==="high_value_enterprise_objection")return{queue:"sales-hot",slaMinutes:5};if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
 
 export async function ensureAiHumanHandoff(db:D1Database){await ensureConversationGovernance(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_handoffs (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,session_id TEXT,reason TEXT NOT NULL,confidence REAL,queue_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',summary_json TEXT NOT NULL,requested_by TEXT NOT NULL,taken_over_by TEXT,resumed_by TEXT,created_at INTEGER NOT NULL,taken_over_at INTEGER,resumed_at INTEGER)"),
  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS ai_handoff_active_thread_idx ON ai_handoffs(thread_id) WHERE status IN ('queued','staff_active')"),
  db.prepare("CREATE INDEX IF NOT EXISTS ai_handoff_queue_idx ON ai_handoffs(status,queue_code,created_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_handoff_events (id TEXT PRIMARY KEY,handoff_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_email TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS ai_lead_ownership (lead_id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ai_owned',clarification_count INTEGER NOT NULL DEFAULT 0,max_clarifications INTEGER NOT NULL DEFAULT 2,escalation_reason TEXT,human_owner TEXT,enterprise_objection INTEGER NOT NULL DEFAULT 0,customer_requested_human INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL)"),
 ]);}
 
 async function sessionUpdate(db:D1Database,threadId:string,status:string,now:number,eventId:string){
@@ -33,6 +35,17 @@ function assignmentStatements(db:D1Database,input:{threadId:string;assignedTo:st
 async function authorizeThread(db:D1Database,actor:AuthenticatedActor,threadId:string,customerId:string){const thread=await db.prepare("SELECT id,customer_id,status,booking_id,ticket_id,assigned_to,sla_due_at FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==customerId)throw new Response("Conversation thread/customer mismatch",{status:403});if(isStaff(actor)){if(!(await actorCanAccessConversation(db,actor,threadId)))throw new Response("Conversation access denied",{status:403});}else await requireCustomerOwnership(db,actor,customerId);return thread;}
 async function summary(db:D1Database,threadId:string,customerId:string,reason:AiHandoffReason,confidence?:number|null){const messages=await db.prepare("SELECT direction,channel,payload_json,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 12").bind(threadId).all<Row>();const transcript=messages.results.reverse().map(row=>{let payload:Record<string,unknown>={};try{payload=JSON.parse(text(row.payload_json)||"{}")as Record<string,unknown>}catch{}return{direction:text(row.direction),channel:text(row.channel),text:text(payload.text||payload.message||payload.body||payload.content).slice(0,500),createdAt:Number(row.created_at||0)};});const latestTurn=await db.prepare("SELECT intent_code,intent_confidence,handoff_reason,context_id,policy_decision,outcome FROM ai_conversation_turns WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>().catch(()=>null);return{threadId,customerId,reason,confidence:confidence??(latestTurn?Number(latestTurn.intent_confidence||0):null),latestIntent:latestTurn?text(latestTurn.intent_code):null,policyDecision:latestTurn?text(latestTurn.policy_decision):null,contextId:latestTurn?text(latestTurn.context_id):null,transcript};}
 
+async function markAttachedLeadHumanOwned(db:D1Database,input:{threadId:string;reason:AiHandoffReason;queue:string;now:number}){
+ await ensureConversationAccessTables(db);
+ const thread=await db.prepare("SELECT lead_id FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();const leadId=text(thread?.lead_id);if(!leadId)return;const lead=await db.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>().catch(()=>null);if(!lead)return;const contactId=text(lead.customer_id);
+ await db.batch([
+  db.prepare("UPDATE ai_lead_ownership SET status='human_escalated',escalation_reason=?,human_owner=?,customer_requested_human=CASE WHEN ?='customer_requested_human' THEN 1 ELSE customer_requested_human END,updated_at=? WHERE lead_id=?").bind(input.reason,input.queue,input.reason,input.now,leadId),
+  db.prepare("UPDATE lead_work_items SET owner=?,manager='Human Sales Manager',next_action_at=?,updated_at=? WHERE id=?").bind(input.queue,input.now,input.now,leadId),
+  db.prepare("UPDATE crm_contacts SET owner=?,next_action=?,updated_at=? WHERE id=?").bind(input.queue,`AI escalation: ${input.reason}`,input.now,contactId),
+  db.prepare("INSERT OR IGNORE INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,'High','Open',?)").bind(`AI-ESC-${leadId}`,contactId,`AI escalation: ${input.reason}`,input.queue,input.now,input.now),
+ ]);
+}
+
 export async function requestAiHumanHandoff(db:D1Database,input:{actorEmail:string;threadId:string;customerId:string;sessionId?:string|null;reason:AiHandoffReason;confidence?:number|null}){
  await ensureAiHumanHandoff(db);
  const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();
@@ -50,6 +63,7 @@ export async function requestAiHumanHandoff(db:D1Database,input:{actorEmail:stri
   if(/unique constraint/i.test(error instanceof Error?error.message:String(error))){const raced=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active')").bind(input.threadId,input.customerId).first<Row>();if(raced)return{handoff:raced,duplicatePrevented:true,aiPaused:true};}
   throw error;
  }
+ await markAttachedLeadHumanOwned(db,{threadId:input.threadId,reason:input.reason,queue:routing.queue,now});
  return{handoff:await db.prepare("SELECT * FROM ai_handoffs WHERE id=?").bind(id).first<Row>(),duplicatePrevented:false,aiPaused:true};
 }
 
