@@ -29,3 +29,4 @@ binding = "AI"
 [[vectorize]]
 binding = "ATLAS_VECTORIZE"
 index_name = "pawspace-atlas-memory"
+remote = false

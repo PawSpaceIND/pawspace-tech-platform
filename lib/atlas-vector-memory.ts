@@ -2,6 +2,17 @@ type Row=Record<string,unknown>;
 type AiBinding={run(model:string,input:unknown):Promise<unknown>};
 type VectorIndex={upsert(vectors:Array<{id:string;values:number[];metadata:Record<string,unknown>}>):Promise<unknown>;query(values:number[],options:{topK:number;filter:Record<string,unknown>;returnMetadata?:boolean}):Promise<{matches?:Array<{id:string;score?:number;metadata?:Record<string,unknown>}>}>};
 export type AtlasMemoryEnv={AI?:AiBinding;ATLAS_VECTORIZE?:VectorIndex;ATLAS_SECURE_CONTEXT_KEY?:string};
+
+export async function ensureAtlasMemoryTables(db:D1Database){
+ const statements=[
+  "CREATE TABLE IF NOT EXISTS atlas_vector_memories (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pet_id TEXT,memory_type TEXT NOT NULL DEFAULT 'behavioral',sensitivity TEXT NOT NULL DEFAULT 'non_sensitive' CHECK(sensitivity='non_sensitive'),content_hash TEXT NOT NULL,content_text TEXT NOT NULL,vector_id TEXT NOT NULL UNIQUE,embedding_model TEXT NOT NULL DEFAULT '@cf/baai/bge-m3' CHECK(embedding_model='@cf/baai/bge-m3'),embedding_dimensions INTEGER NOT NULL DEFAULT 1024 CHECK(embedding_dimensions=1024),status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_atlas_vector_memories_scope ON atlas_vector_memories(customer_id,pet_id,status,updated_at DESC)",
+  "CREATE TABLE IF NOT EXISTS atlas_secure_context_facts (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pet_id TEXT,fact_type TEXT NOT NULL,sensitivity TEXT NOT NULL CHECK(sensitivity IN ('pii','credential','restricted')),ciphertext_b64 TEXT NOT NULL,iv_b64 TEXT NOT NULL,content_hash TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_atlas_secure_context_scope ON atlas_secure_context_facts(customer_id,pet_id,status,updated_at DESC)",
+  "CREATE TABLE IF NOT EXISTS atlas_memory_audit (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pet_id TEXT,action TEXT NOT NULL,storage_class TEXT NOT NULL CHECK(storage_class IN ('vector','secure_context')),content_hash TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)",
+ ];
+ for(const sql of statements)await db.prepare(sql).run();
+}
 const MODEL="@cf/baai/bge-m3",DIMENSIONS=1024;
 const text=(v:unknown)=>String(v??"").trim();
 const b64=(bytes:Uint8Array)=>{let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s)};
@@ -24,6 +35,7 @@ async function embed(env:AtlasMemoryEnv,value:string){
  const vector=Array.isArray(data)&&Array.isArray(data[0])?data[0]:Array.isArray((data as Row)?.data)?((data as Row).data as unknown[])[0]:null;
  if(!Array.isArray(vector)||vector.length!==DIMENSIONS)throw new Error("bge-m3 embedding must be exactly 1024 dimensions");return vector.map(Number);
 }export async function storeAtlasMemory(db:D1Database,env:AtlasMemoryEnv,input:{customerId:string;petId?:string|null;content:string;actorId:string}){
+ await ensureAtlasMemoryTables(db);
  const content=text(input.content);if(!content)throw new Error("Memory content is required");const classification=classifyAtlasMemory(content),contentHash=await hash(content),now=Date.now(),id=`ATM-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
  if(classification.storage==="secure_context"){
   const enc=await encrypt(env,content);
@@ -38,6 +50,7 @@ async function embed(env:AtlasMemoryEnv,value:string){
  return{id,storage:"vector" as const,sensitivity:"non_sensitive" as const,vectorized:true};
 }
 export async function retrieveAtlasMemoryForLlm(db:D1Database,env:AtlasMemoryEnv,input:{customerId:string;petId?:string|null;query:string;topK?:number}){
+ await ensureAtlasMemoryTables(db);
  if(classifyAtlasMemory(input.query).storage==="secure_context")return{matches:[],secureContextExcluded:true};if(!env.ATLAS_VECTORIZE)throw new Error("ATLAS_VECTORIZE binding is required");
  const values=await embed(env,input.query),filter:Record<string,unknown>={customer_id:input.customerId,pet_id:input.petId||"",sensitivity:"non_sensitive"};
  const result=await env.ATLAS_VECTORIZE.query(values,{topK:Math.max(1,Math.min(20,input.topK||6)),filter,returnMetadata:true});const ids=(result.matches||[]).map(m=>text(m.metadata?.memory_id)).filter(Boolean);
@@ -45,6 +58,7 @@ export async function retrieveAtlasMemoryForLlm(db:D1Database,env:AtlasMemoryEnv
  const rows=await db.prepare(`SELECT id,customer_id,pet_id,memory_type,sensitivity,content_text,vector_id,updated_at FROM atlas_vector_memories WHERE customer_id=? AND sensitivity='non_sensitive' AND status='active' AND id IN (${ids.map(()=>'?').join(",")})`).bind(input.customerId,...ids).all<Row>();
  return{matches:rows.results,secureContextExcluded:true};
 }export async function readAtlasSecureContext(db:D1Database,env:AtlasMemoryEnv,input:{customerId:string;petId?:string|null;actorId:string;purpose:"human_operation"|"deterministic_dispatch"}){
+ await ensureAtlasMemoryTables(db);
  const rows=await db.prepare("SELECT * FROM atlas_secure_context_facts WHERE customer_id=? AND (pet_id IS NULL OR pet_id=?) AND status='active' ORDER BY updated_at DESC LIMIT 50").bind(input.customerId,input.petId||null).all<Row>();
  const k=await key(env),out=[] as Array<{id:string;factType:string;sensitivity:string;value:string}>;
  for(const row of rows.results){const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64(text(row.iv_b64))},k,fromB64(text(row.ciphertext_b64)));out.push({id:text(row.id),factType:text(row.fact_type),sensitivity:text(row.sensitivity),value:new TextDecoder().decode(plain)})}
