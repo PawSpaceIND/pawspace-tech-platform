@@ -78,7 +78,7 @@ export default function BookingCommandCenter() {
     </aside>
 
     <section className={styles.workspace}>
-      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh now</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
+      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
       <section className={styles.metrics}>
         <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
         <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>

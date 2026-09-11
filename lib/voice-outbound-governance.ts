@@ -98,7 +98,7 @@ export async function ensureVoiceCallTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,purpose TEXT NOT NULL DEFAULT 'unknown',reserved_at INTEGER NOT NULL,released_at INTEGER)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL,disposition TEXT,disposition_detail TEXT,completed_at INTEGER)"),
   ]);
 }
 
