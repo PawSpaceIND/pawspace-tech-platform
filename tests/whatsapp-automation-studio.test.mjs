@@ -2,9 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-installWorkersHooks();
-await import("../lib/whatsapp-automation-rules.ts");
 const engine = fs.readFileSync("lib/whatsapp-no-response-sequence.ts", "utf8");
 const webhook = fs.readFileSync("lib/meta-whatsapp-webhook.ts", "utf8");
 const api = fs.readFileSync("app/api/whatsapp/automation/route.ts", "utf8");

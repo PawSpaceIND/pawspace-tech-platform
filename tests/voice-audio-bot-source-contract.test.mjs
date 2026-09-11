@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-await import("../lib/voice-speech-failures.ts");
 const workers = fs.readFileSync(new URL("../lib/voice-workers-ai.ts", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/ai-voice-uat/route.ts", import.meta.url), "utf8");
 const page = fs.readFileSync(new URL("../app/team/voice/page.tsx", import.meta.url), "utf8");

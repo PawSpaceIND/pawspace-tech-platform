@@ -46,3 +46,4 @@ export type SalesPromptContext = {
   channel: AiSalesChannel;
   offer: OfferEnvelope;
 };
+

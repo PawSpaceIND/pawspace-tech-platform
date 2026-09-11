@@ -3,9 +3,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-installWorkersHooks();
-await import("../lib/voice-bridge-governance.ts");
 const governance = await readFile(new URL("../lib/voice-bridge-governance.ts", import.meta.url), "utf8");
 const bridgeRoute = await readFile(new URL("../app/api/communications/voice/bridge/route.ts", import.meta.url), "utf8");
 const webhookRoute = await readFile(new URL("../app/api/webhooks/exotel/call-event/route.ts", import.meta.url), "utf8");

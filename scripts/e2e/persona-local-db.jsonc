@@ -1,6 +1,6 @@
 {
   "name": "pawspace-persona-local-fixtures",
-  "compatibility_date": "2026-05-22",
+  "compatibility_date": "2026-07-01",
   "d1_databases": [{
     "binding": "DB",
     "database_name": "site-creator-d1",

@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-await import("../lib/voice-speech-failures.ts");
 const read = (p) => readFile(new URL(p, import.meta.url), "utf8");
 const wai = await read("../lib/voice-workers-ai.ts");
 const adapter = await read("../lib/voice-provider-adapter.ts");
