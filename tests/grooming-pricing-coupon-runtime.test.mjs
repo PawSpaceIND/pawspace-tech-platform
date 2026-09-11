@@ -174,6 +174,8 @@ test("real coupon booking preparation preserves governed amount and rejects tamp
 
   await assert.rejects(() => prepareCouponBooking(db, { ...input, submittedTotal: 901, idempotencyKey: "prepare-tampered-total" }), /Booking amount does not match the governed coupon quote/);
   await assert.rejects(() => prepareCouponBooking(db, { ...input, submittedDiscount: 99, idempotencyKey: "prepare-tampered-discount" }), /Booking amount does not match the governed coupon quote/);
+  await assert.rejects(() => prepareCouponBooking(db, { ...input, submittedTotal: 899.99 }), /Booking amount does not match/);
+  await assert.rejects(() => prepareCouponBooking(db, { ...input, submittedDiscount: 100.01 }), /Booking amount does not match/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM coupon_redemptions").get().count, 0);
   assert.deepEqual({ ...sqlite.prepare("SELECT status,booking_id FROM coupon_quotes WHERE id=?").get(quote.quoteId) }, { status: "open", booking_id: null });
 });

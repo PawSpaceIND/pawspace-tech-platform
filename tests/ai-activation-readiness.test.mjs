@@ -26,8 +26,11 @@ test("AI activation is a single, reversible, fail-safe key switch", () => {
   // pins the SET of environment names the adapter reads: a second credential name is a second switch,
   // and a second switch is how "AI is off" stops being a single reversible fact.
   const envNames = [...new Set([...adapter.matchAll(/"(PAWSPACE_[A-Z_0-9]+|[A-Z_0-9]*API_KEY|[A-Z_0-9]*TOKEN|[A-Z_0-9]*SECRET)"/g)].map(m => m[1]))].sort();
-  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS"],
-    `the adapter reads ${envNames.join(", ")}; only the first is a credential and there must be no other`);
+  const credentialNames = envNames.filter(name => /(?:API_KEY|TOKEN|SECRET)$/.test(name));
+  assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY"],
+    `AI activation must remain one credential switch; found ${credentialNames.join(", ") || "none"}`);
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_DEPLOYMENT_ENV"],
+    `the adapter reads an unexpected environment input: ${envNames.join(", ")}`);
   assert.match(adapter, /https:\/\/api\.anthropic\.com\/v1\/messages/);
   assert.match(adapter, /"x-api-key": apiKey/);
   // No local generation: an offline fallback string would make a silent provider look like an answer.

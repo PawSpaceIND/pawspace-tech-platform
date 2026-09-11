@@ -8,6 +8,7 @@ type Dashboard = {
   asOf: number; today: string; scope: string; employeeCount: number;
   verticals: { sales: EmployeeRow[]; groomers: EmployeeRow[]; trainers: EmployeeRow[]; other: EmployeeRow[] };
   classificationBasis: Record<string, string>;
+  operations: {openCases:number;criticalCases:number;unownedCases:number;firstResponseOverdue:number;resolutionOverdue:number;managerEscalationsDue:number;refundsPending:number;refundsFailed:number;workQueueOpen:number;sopPending:number;legacyTicketsOpen:number};
   note: string;
 };
 
@@ -51,11 +52,19 @@ export default function ManagerDashboardPage() {
             <p style={{ fontSize: 12, color: "#6e6576", marginTop: 12, marginBottom: 0 }}>{data.note}</p>
           </section>
 
+          <section style={{...card,overflowX:"auto"}}>
+            <h2 style={{marginTop:0,fontSize:16}}>Operations control</h2>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}}>
+              {[["Open cases",data.operations.openCases],["Critical",data.operations.criticalCases],["Response overdue",data.operations.firstResponseOverdue],["Resolution overdue",data.operations.resolutionOverdue],["Manager escalations",data.operations.managerEscalationsDue],["Refunds pending",data.operations.refundsPending],["Refunds failed",data.operations.refundsFailed],["Work queue",data.operations.workQueueOpen],["SOP pending",data.operations.sopPending],["Legacy tickets",data.operations.legacyTicketsOpen]].map(([label,value])=><div key={String(label)} style={{border:"1px solid #eee",borderRadius:12,padding:12}}><small style={{color:"#6e6576"}}>{label}</small><h3 style={{margin:"4px 0"}}>{value}</h3></div>)}
+            </div>
+            <p style={{fontSize:12,color:"#6e6576",marginBottom:0}}>Founder-wide counts are shown only to all-scope roles. Line managers receive case counts restricted to their direct-report owners; finance/global queues remain hidden from scoped managers.</p>
+          </section>
+
           {data.verticals.sales.length > 0 && (
             <section style={{...card,overflowX:"auto"}}>
               <h2 style={{ marginTop: 0, fontSize: 16 }}>Sales / Telesales</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={th}>Name</th><th style={th}>Today&apos;s achievement</th><th style={th}>7-day total</th><th style={th}>Month achievement</th><th style={th}>Month target</th><th style={th}>Day closed?</th><th style={th}>Talk time today</th></tr></thead>
+                <thead><tr><th style={th}>Name</th><th style={th}>Today&apos;s achievement</th><th style={th}>7-day total</th><th style={th}>Month achievement</th><th style={th}>Month target</th><th style={th}>Incentive truth</th><th style={th}>Day closed?</th><th style={th}>Talk time today</th></tr></thead>
                 <tbody>
                   {data.verticals.sales.map((row) => (
                     <tr key={row.employeeEmail}>
@@ -64,6 +73,7 @@ export default function ManagerDashboardPage() {
                       <td style={td}>{(row.weekly as { achievedValue?: number })?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { achievedValue?: number } | null)?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { tierTarget?: number } | null)?.tierTarget ?? "—"}</td>
+                      <td style={td}>{row.incentiveTruth ? `${String((row.incentiveTruth as {status?:string}).status ?? "draft")} · ₹${Number((row.incentiveTruth as {total?:number}).total ?? 0).toLocaleString("en-IN")}` : "Not generated"}</td>
                       <td style={td}>{row.dayClosureReady === true ? "✅ Yes" : row.dayClosureReady === false ? "⚠ No" : "—"}</td>
                       <td style={td}>{(row.talkTimeMinutesToday as number | undefined) ?? "—"} min</td>
                     </tr>

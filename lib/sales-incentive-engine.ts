@@ -1,3 +1,5 @@
+import{normalizeLeadServiceCode}from"./lead-lifecycle-governance";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -23,7 +25,7 @@ const monthlyTiers:Record<SalesVertical,Array<{target:number;incentive:number}>>
  grooming_both:[{target:300000,incentive:4500},{target:600000,incentive:8500},{target:600000,incentive:5000},{target:700000,incentive:6000}],
 };
 const blitzMultiplier=2;
-const crossSellServiceCodes=["grooming","dog_training","boarding","pet_sitting"];
+const crossSellServiceCodes=new Set(["grooming","training","boarding","pet_sitting"]);
 
 function bestTierReached(tiers:Array<{target:number;incentive:number}>,achieved:number){
  let best:{target:number;incentive:number}|null=null;
@@ -35,6 +37,7 @@ export async function ensureSalesIncentiveTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS sales_employee_base (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,base_vertical TEXT NOT NULL,effective_from TEXT NOT NULL,effective_until TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_sales_base_employee ON sales_employee_base(employee_id,effective_from)"),
  db.prepare("CREATE TABLE IF NOT EXISTS sales_attributed_bookings (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,employee_id TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS sales_attribution_exceptions (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,lead_id TEXT NOT NULL,expected_employee_id TEXT NOT NULL,actual_employee_id TEXT,reason TEXT NOT NULL,created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
  db.prepare("CREATE TABLE IF NOT EXISTS sales_blitz_days (id TEXT PRIMARY KEY,blitz_date TEXT NOT NULL UNIQUE,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);}
 
@@ -65,13 +68,53 @@ export async function attributeBookingToSalesEmployee(db:Db,input:{bookingId:str
  if(!text(input.bookingId)||!text(input.employeeId))throw new Error("Booking and employee code are required");
  const booking=await db.prepare("SELECT id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
  if(!booking)throw new Error("Canonical booking not found");
- if(!crossSellServiceCodes.includes(String(booking.service_code)))throw new Error("This service is not eligible for sales-team attribution (Pet Taxi and other excluded services never credit an individual's sales number)");
+ if(!crossSellServiceCodes.has(normalizeLeadServiceCode(booking.service_code)))throw new Error("This service is not eligible for sales-team attribution (Pet Taxi and other excluded services never credit an individual's sales number)");
  const existing=await db.prepare("SELECT employee_id FROM sales_attributed_bookings WHERE booking_id=?").bind(input.bookingId).first<Row>();
  if(existing)throw new Error("This booking is already attributed to an employee and cannot be reattributed");
  const now=Date.now();
  await db.prepare("INSERT INTO sales_attributed_bookings (id,booking_id,employee_id,recorded_by,recorded_at) VALUES (?,?,?,?,?)")
    .bind(uid("SAB"),input.bookingId,input.employeeId,input.actorId,now).run();
  return{bookingId:input.bookingId,employeeId:input.employeeId};
+}
+
+/**
+ * Canonical automatic sales credit: a converted lead credits the real lead owner only when that owner
+ * has an effective sales base on the booking date. Replays are idempotent. A pre-existing attribution
+ * to somebody else is never overwritten; it is surfaced as a durable exception for manager review.
+ * Payment capture must not fail because an incentive exception exists, so conflicts return explicitly.
+ */
+export async function attributeConvertedLeadBookingToOwner(db:Db,input:{leadId:string;bookingId:string;actorId:string}){
+ await ensureSalesIncentiveTables(db);
+ const lead=await db.prepare("SELECT owner,converted_booking_id FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>().catch(()=>null);
+ if(!lead||text(lead.converted_booking_id)!==input.bookingId)return{attributed:false,duplicatePrevented:false,conflict:false,reason:"lead_not_converted_to_booking"};
+ const employeeId=text(lead.owner).toLowerCase();
+ if(!employeeId||employeeId==="unassigned")return{attributed:false,duplicatePrevented:false,conflict:false,reason:"lead_owner_unassigned"};
+ const booking=await db.prepare("SELECT id,service_code,date(scheduled_start) booking_date FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+ if(!booking)return{attributed:false,duplicatePrevented:false,conflict:false,reason:"booking_not_found"};
+ const service=normalizeLeadServiceCode(booking.service_code);
+ if(!crossSellServiceCodes.has(service))return{attributed:false,duplicatePrevented:false,conflict:false,reason:"service_not_sales_eligible"};
+ const bookingDate=text(booking.booking_date)||new Date().toISOString().slice(0,10);
+ const base=await currentSalesBase(db,employeeId,bookingDate);
+ if(!base)return{attributed:false,duplicatePrevented:false,conflict:false,reason:"owner_not_sales_configured"};
+ const existing=await db.prepare("SELECT employee_id FROM sales_attributed_bookings WHERE booking_id=?").bind(input.bookingId).first<Row>();
+ if(existing){
+  const actual=text(existing.employee_id).toLowerCase();
+  if(actual===employeeId)return{attributed:true,employeeId,duplicatePrevented:true,conflict:false};
+  await db.prepare("INSERT OR IGNORE INTO sales_attribution_exceptions (id,booking_id,lead_id,expected_employee_id,actual_employee_id,reason,created_at) VALUES (?,?,?,?,?,'booking_already_attributed_to_different_employee',?)")
+   .bind(uid("SAE"),input.bookingId,input.leadId,employeeId,actual,Date.now()).run();
+  return{attributed:false,employeeId,actualEmployeeId:actual,duplicatePrevented:true,conflict:true,reason:"booking_already_attributed_to_different_employee"};
+ }
+ const now=Date.now();
+ await db.prepare("INSERT OR IGNORE INTO sales_attributed_bookings (id,booking_id,employee_id,recorded_by,recorded_at) VALUES (?,?,?,?,?)")
+   .bind(uid("SAB"),input.bookingId,employeeId,input.actorId,now).run();
+ const winner=await db.prepare("SELECT employee_id FROM sales_attributed_bookings WHERE booking_id=?").bind(input.bookingId).first<Row>();
+ const actual=text(winner?.employee_id).toLowerCase();
+ if(actual!==employeeId){
+  await db.prepare("INSERT OR IGNORE INTO sales_attribution_exceptions (id,booking_id,lead_id,expected_employee_id,actual_employee_id,reason,created_at) VALUES (?,?,?,?,?,'concurrent_attribution_conflict',?)")
+   .bind(uid("SAE"),input.bookingId,input.leadId,employeeId,actual||null,now).run();
+  return{attributed:false,employeeId,actualEmployeeId:actual||null,duplicatePrevented:true,conflict:true,reason:"concurrent_attribution_conflict"};
+ }
+ return{attributed:true,employeeId,duplicatePrevented:false,conflict:false};
 }
 
 export async function saveSalesBlitzDay(db:Db,input:{blitzDate:string;reason:string;actorId:string}){

@@ -1,4 +1,4 @@
-export type SittingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"reconcile";
+export type SittingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"approve_settlement"|"reconcile";
 export type SittingFinanceMutation={bookingId:string;action:SittingFinanceAction;idempotencyKey:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;replacementGroupId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
 
 export async function updateSittingFinance(input:SittingFinanceMutation){const response=await fetch("/api/sitting-finance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});const body=await response.json() as {data?:Record<string,unknown>;error?:string};if(!response.ok||!body.data)throw new Error(body.error??"Unable to update Sitting finance");return body.data;}

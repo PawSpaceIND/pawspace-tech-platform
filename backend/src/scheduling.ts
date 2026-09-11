@@ -24,6 +24,8 @@ export interface ScheduleRequest {
   manualProviderId?: string;
   manualOverrideReason?: string;
   customRules?: CustomScheduleRule[];
+  preferredProviderMode?: "strict"|"preference"|"disabled";
+  rankingWeights?: {qualityWeight:number;fullTimeBonus:number;preferredProviderBonus:number;repeatProviderBonus:number;distanceWeight:number;residualCapacityWeight:number;workloadPenalty:number};
 }
 
 export interface ScheduleOccurrence { start: string; end: string; occurrenceNumber: number; }
@@ -119,6 +121,7 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
   const overnight=input.serviceCode==="boarding"||(input.serviceCode==="pet_sitting"&&input.careMode==="overnight");
   let distanceKm=Number.POSITIVE_INFINITY,workload=0,residualCapacity=0;
   if(input.excludeProviderIds?.includes(provider.id)){eligible=false;reasons.push("Provider excluded after decline or Ops action");}
+  if(input.preferredProviderMode==="strict"&&input.preferredProviderId&&provider.id!==input.preferredProviderId){eligible=false;reasons.push("Another provider was explicitly selected by the customer");}
   if(input.manualProviderId&&provider.id!==input.manualProviderId){eligible=false;reasons.push("Another provider selected by Ops override");}
   if(input.serviceRadiusKm!==undefined){const located=provider as Provider&{latitude?:number;longitude?:number};distanceKm=haversineDistanceKm({latitude:Number(input.latitude),longitude:Number(input.longitude)},{latitude:Number(located.latitude),longitude:Number(located.longitude)});if(!Number.isFinite(distanceKm)){eligible=false;reasons.push("Provider has no active geocoded home base for radius verification");}else if(distanceKm>Number(input.serviceRadiusKm)){eligible=false;reasons.push(`Provider is ${distanceKm.toFixed(2)} km from booking, outside ${Number(input.serviceRadiusKm).toFixed(2)} km service radius`);}else reasons.push(`Provider is ${distanceKm.toFixed(2)} km from booking, inside service radius`);}
   for(const rule of input.customRules??[]){const actual=rule.field==="zone"?input.zoneId:rule.field==="capacity"?(provider.capacity??1):rule.field==="providerId"?provider.id:provider[rule.field];const expected=rule.value;const values=Array.isArray(expected)?expected:[expected];const passed=rule.operator==="eq"?actual===expected:rule.operator==="neq"?actual!==expected:rule.operator==="gte"?Number(actual)>=Number(expected):rule.operator==="lte"?Number(actual)<=Number(expected):rule.operator==="in"?values.includes(String(actual)):!values.includes(String(actual));if(!passed){eligible=false;reasons.push(`Custom rule ${rule.code} rejected provider (${rule.field} ${rule.operator} ${String(expected)})`);}}
@@ -149,10 +152,12 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
     }
   }
   if(eligible)reasons.push(overnight?"Availability and date-range capacity locked":"Roster, interval leave, conflicts, travel buffer and daily limit passed");
-  const distanceBonus=Number.isFinite(distanceKm)?Math.max(0,16-distanceKm)*0.5:0;
-  const residualBonus=Math.min(6,residualCapacity);
-  const workloadDecay=Math.min(12,workload*2);
-  const score=provider.qualityScore+(provider.model==="full_time"?5:0)+(provider.id===input.preferredProviderId?20:0)+(provider.id===input.repeatProviderId?12:0)+distanceBonus+residualBonus-workloadDecay;
+  const weights=input.rankingWeights??{qualityWeight:1,fullTimeBonus:5,preferredProviderBonus:20,repeatProviderBonus:12,distanceWeight:.5,residualCapacityWeight:1,workloadPenalty:2};
+  const distanceBonus=Number.isFinite(distanceKm)?Math.max(0,16-distanceKm)*weights.distanceWeight:0;
+  const residualBonus=Math.min(6,residualCapacity)*weights.residualCapacityWeight;
+  const workloadDecay=Math.min(12,workload)*weights.workloadPenalty;
+  const preferredBonus=input.preferredProviderMode==="disabled"?0:(provider.id===input.preferredProviderId?weights.preferredProviderBonus:0);
+  const score=provider.qualityScore*weights.qualityWeight+(provider.model==="full_time"?weights.fullTimeBonus:0)+preferredBonus+(provider.id===input.repeatProviderId?weights.repeatProviderBonus:0)+distanceBonus+residualBonus-workloadDecay;
   return {providerId:provider.id,providerName:provider.name,eligible,score,reasons,workload,distanceKm,residualCapacity};
 }
 

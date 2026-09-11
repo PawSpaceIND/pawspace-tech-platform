@@ -115,7 +115,9 @@ export async function redeemPoints(db: Db, input: { customerId: string; points: 
   const maxDiscount = Math.min(Math.floor(bookingTotal * MAX_REDEEM_FRACTION), Math.floor(payable));
   let pointsUsed = Math.min(requested, balance);
   let discount = Math.floor(pointsUsed * REDEEM_RUPEE_PER_POINT);
-  if (discount > maxDiscount) { discount = maxDiscount; pointsUsed = Math.ceil(discount / REDEEM_RUPEE_PER_POINT); }
+  if (discount > maxDiscount) discount = maxDiscount;
+  // Discounts are whole rupees; retain any odd point that does not fund that discount.
+  pointsUsed = Math.ceil(discount / REDEEM_RUPEE_PER_POINT);
   if (discount <= 0) throw new Error(payable > 0 ? "Not enough points for a redeemable discount on this booking" : "This booking is already fully covered by credit you have applied, so there is nothing left to discount");
   // Guarded debit: the ledger row is only written while the live SUM can still cover the spend
   // inside the same statement, so concurrent redemptions on different bookings can never drive the

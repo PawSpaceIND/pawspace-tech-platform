@@ -20,6 +20,7 @@ const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 /** IST calendar date (YYYY-MM-DD) for a timestamp. */
 function istDate(ms:number){return new Date(ms+19800000).toISOString().slice(0,10);}
+export function istMonthStart(ms=Date.now()){return istDate(ms).slice(0,7)+"-01";}
 
 export async function ensureDailyIncentiveAccrualTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS daily_incentive_accruals (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,accrual_date TEXT NOT NULL,base_vertical TEXT NOT NULL,achieved_value REAL NOT NULL,base_incentive REAL NOT NULL,blitz INTEGER NOT NULL DEFAULT 0,incentive REAL NOT NULL,status TEXT NOT NULL DEFAULT 'accrued',source TEXT NOT NULL DEFAULT 'auto_daily_sweep',created_at INTEGER NOT NULL,UNIQUE(employee_id,accrual_date))"),
@@ -61,3 +62,48 @@ export async function dailyIncentiveAccrualSummary(db:Db,input:{employeeId?:stri
  const list=rows.results.map(r=>({employeeId:text(r.employee_id),date:text(r.accrual_date),baseVertical:text(r.base_vertical),achievedValue:money(r.achieved_value),incentive:money(r.incentive),blitz:num(r.blitz)===1,status:text(r.status)}));
  return{list,total:money(list.reduce((a,r)=>a+r.incentive,0))};
 }
+
+export type SalesPayrollIncentiveEntry={sourceType:"sales_incentive_period";sourceId:string;label:string;kind:"earning";amount:number;policyVersion:string};
+
+async function ensureSalesIncentivePeriodTables(db:Db){await db.batch([
+ db.prepare("CREATE TABLE IF NOT EXISTS sales_incentive_period_results (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,month_start TEXT NOT NULL,daily_accrued_total REAL NOT NULL,monthly_achieved_value REAL NOT NULL,monthly_tier_target REAL,monthly_bonus REAL NOT NULL,approved_total REAL NOT NULL,status TEXT NOT NULL DEFAULT 'draft',generated_by TEXT NOT NULL,generated_at INTEGER NOT NULL,approved_by TEXT,approved_at INTEGER,UNIQUE(employee_id,month_start))"),
+ db.prepare("CREATE TABLE IF NOT EXISTS sales_incentive_payroll_links (id TEXT PRIMARY KEY,result_id TEXT NOT NULL UNIQUE,payroll_run_id TEXT NOT NULL,payroll_result_id TEXT NOT NULL,employee_id TEXT NOT NULL,amount REAL NOT NULL,created_at INTEGER NOT NULL)"),
+]);}
+function monthEnd(monthStart:string){const[y,m]=monthStart.split("-").map(Number);return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);}
+function msDate(ms:number){return new Date(ms).toISOString().slice(0,10);}
+
+/** Canonical sales incentive result for a month: daily accrual evidence plus the published monthly tier bonus. */
+export async function buildSalesIncentivePeriodResult(db:Db,input:{employeeId:string;monthStart:string;actorId:string}){
+ await ensureDailyIncentiveAccrualTables(db);await ensureSalesIncentivePeriodTables(db);
+ if(!/^\d{4}-\d{2}-01$/.test(input.monthStart))throw new Error("monthStart must be the first day of a month");
+ const existing=await db.prepare("SELECT * FROM sales_incentive_period_results WHERE employee_id=? AND month_start=?").bind(input.employeeId,input.monthStart).first<Row>();
+ if(existing&&text(existing.status)!=="draft")return{result:existing,immutable:true};
+ const end=monthEnd(input.monthStart),daily=await dailyIncentiveAccrualSummary(db,{employeeId:input.employeeId,from:input.monthStart,to:end});
+ const {computeMonthlySalesIncentive}=await import("./sales-incentive-engine");
+ const monthly=await computeMonthlySalesIncentive(db,{employeeId:input.employeeId,monthStart:input.monthStart,actorId:input.actorId});
+ const total=money(daily.total+monthly.incentive),now=Date.now(),id=existing?text(existing.id):uid("SIPR");
+ await db.prepare("INSERT INTO sales_incentive_period_results (id,employee_id,month_start,daily_accrued_total,monthly_achieved_value,monthly_tier_target,monthly_bonus,approved_total,status,generated_by,generated_at) VALUES (?,?,?,?,?,?,?,?, 'draft',?,?) ON CONFLICT(employee_id,month_start) DO UPDATE SET daily_accrued_total=excluded.daily_accrued_total,monthly_achieved_value=excluded.monthly_achieved_value,monthly_tier_target=excluded.monthly_tier_target,monthly_bonus=excluded.monthly_bonus,approved_total=excluded.approved_total,generated_by=excluded.generated_by,generated_at=excluded.generated_at WHERE sales_incentive_period_results.status='draft'")
+  .bind(id,input.employeeId,input.monthStart,money(daily.total),money(monthly.achievedValue),monthly.tierTarget==null?null:money(monthly.tierTarget),money(monthly.incentive),total,input.actorId,now).run();
+ return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE employee_id=? AND month_start=?").bind(input.employeeId,input.monthStart).first<Row>(),immutable:false};
+}
+
+export async function approveSalesIncentivePeriodResult(db:Db,input:{employeeId:string;monthStart:string;actorId:string;asOf?:number}){
+ await ensureSalesIncentivePeriodTables(db);const row=await db.prepare("SELECT * FROM sales_incentive_period_results WHERE employee_id=? AND month_start=?").bind(input.employeeId,input.monthStart).first<Row>();
+ if(!row)throw new Error("Generate the sales incentive period result before approval");if(text(row.status)==="payroll_included")return{result:row,duplicatePrevented:true};if(text(row.status)==="approved")return{result:row,duplicatePrevented:true};
+ const actor=text(input.actorId).toLowerCase(),generator=text(row.generated_by).toLowerCase();if(actor.startsWith("system:"))throw new Error("Sales incentive approval requires a human actor");
+ if(generator&&!generator.startsWith("system:")&&generator===actor)throw new Error("Sales incentive maker cannot approve their own generated result");
+ const now=input.asOf??Date.now();if(input.monthStart>=istMonthStart(now))throw new Error("Sales incentive approval is allowed only after the month is complete");
+ const claim=await db.prepare("UPDATE sales_incentive_period_results SET status='approved',approved_by=?,approved_at=? WHERE id=? AND status='draft'").bind(input.actorId,now,row.id).run();
+ if(!num(claim.meta?.changes))return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:true};
+ return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:false};
+}
+
+export async function approvedSalesIncentiveEntriesForPayroll(db:Db,input:{employeeId:string;periodStart:number;periodEnd:number}):Promise<SalesPayrollIncentiveEntry[]>{
+ await ensureSalesIncentivePeriodTables(db);const from=msDate(input.periodStart).slice(0,7)+"-01",to=msDate(Math.max(input.periodStart,input.periodEnd-1)).slice(0,7)+"-01";
+ const rows=await db.prepare("SELECT r.* FROM sales_incentive_period_results r LEFT JOIN sales_incentive_payroll_links l ON l.result_id=r.id WHERE r.employee_id=? AND r.status='approved' AND r.month_start>=? AND r.month_start<=? AND l.id IS NULL AND r.approved_total>0 ORDER BY r.month_start").bind(input.employeeId,from,to).all<Row>();
+ return rows.results.map(r=>({sourceType:"sales_incentive_period" as const,sourceId:text(r.id),label:`Approved sales incentive · ${text(r.month_start)}`,kind:"earning" as const,amount:money(r.approved_total),policyVersion:`sales_rate_sheet:${text(r.month_start)}`}));
+}
+export async function markSalesIncentiveEntriesIncluded(db:Db,input:{entries:SalesPayrollIncentiveEntry[];payrollRunId:string;payrollResultId:string;employeeId:string}){
+ await ensureSalesIncentivePeriodTables(db);const now=Date.now();for(const e of input.entries){await db.prepare("INSERT OR IGNORE INTO sales_incentive_payroll_links (id,result_id,payroll_run_id,payroll_result_id,employee_id,amount,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("SIPL"),e.sourceId,input.payrollRunId,input.payrollResultId,input.employeeId,e.amount,now).run();await db.prepare("UPDATE sales_incentive_period_results SET status='payroll_included' WHERE id=? AND status='approved'").bind(e.sourceId).run();}}
+
+export async function salesIncentivePeriodTruth(db:Db,input:{employeeId:string;monthStart:string}){await ensureSalesIncentivePeriodTables(db);const row=await db.prepare("SELECT r.*,l.payroll_run_id,l.payroll_result_id,l.created_at payroll_included_at FROM sales_incentive_period_results r LEFT JOIN sales_incentive_payroll_links l ON l.result_id=r.id WHERE r.employee_id=? AND r.month_start=?").bind(input.employeeId,input.monthStart).first<Row>();if(!row)return null;return{employeeId:text(row.employee_id),monthStart:text(row.month_start),dailyAccruedTotal:money(row.daily_accrued_total),monthlyAchievedValue:money(row.monthly_achieved_value),monthlyTierTarget:row.monthly_tier_target==null?null:money(row.monthly_tier_target),monthlyBonus:money(row.monthly_bonus),total:money(row.approved_total),status:text(row.status),approvedBy:row.approved_by?text(row.approved_by):null,approvedAt:row.approved_at?num(row.approved_at):null,payrollRunId:row.payroll_run_id?text(row.payroll_run_id):null,payrollResultId:row.payroll_result_id?text(row.payroll_result_id):null,payrollIncludedAt:row.payroll_included_at?num(row.payroll_included_at):null};}

@@ -9,6 +9,7 @@ import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reco
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 import{postBookingRefundCollectionReversal}from"../../../lib/refund-collection-reversal";
+import{forwardVerifiedRazorpaySandboxWebhook}from"../../../lib/razorpay-sandbox-webhook-relay";
 
 type RazorEntity=Record<string,unknown>;
 type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{entity?:RazorEntity}>};
@@ -88,6 +89,8 @@ function transitionWouldDefer(intent:Row,target:PaymentState){
   const current=String(intent.state||"") as PaymentState;
   if(!(current in rank))throw new Error("Payment intent contains an unknown state");
   if(rank[current]>=90)return true;
+  // A verified capture is sufficient provider evidence even when authorization delivery is late.
+  if(current==="CREATED"&&target==="CAPTURED")return false;
   return rank[target]>rank[current]+1;
 }
 
@@ -102,7 +105,9 @@ export async function POST(request:Request){
   try{
     const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
     const gate=resolvePaymentWebhookGate(runtime);if(!gate.ok)return json({error:gate.reason},gate.status);
-    const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase(),eventId=(request.headers.get("x-razorpay-event-id")||"").trim();if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
+    const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase();
+    let eventId=(request.headers.get("x-razorpay-event-id")||"").trim();
+    if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
     let raw:string;
     try{raw=await readBoundedRequestText(request,MAX_WEBHOOK_BYTES);}catch(error){
       if(error instanceof VoiceFetchRefused)return json({error:"Razorpay webhook payload is too large"},413);
@@ -119,6 +124,14 @@ export async function POST(request:Request){
       if(message.includes("replayed with a different payload"))return json({error:"Razorpay event ID payload mismatch"},409);
       throw error;
     }
+    // Only a signature-verified sandbox body may be shadow-relayed. Relay failure never weakens or
+    // blocks the stable staging receiver; the exact isolated target remains independently HMAC-gated.
+    if(gate.environment==="sandbox"){
+      const relay=await forwardVerifiedRazorpaySandboxWebhook(runtime,{rawBody:raw,signature,eventId,contentType:request.headers.get("content-type")||"application/json"});
+      if(relay.enabled)console.log(`Razorpay sandbox relay ${relay.delivered?"delivered":"not-delivered"}; targetSha=${relay.targetSha}; status=${relay.status}`);
+    }
+    // The verified inbox identity also owns retries of subscription/refund domain effects.
+    eventId=String(accepted.row.event_id||eventId);
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
@@ -174,7 +187,7 @@ export async function POST(request:Request){
         }
         const effects=atomic.effectsOutboxId?await executeRazorpayCapturePostCommit(db,{outboxId:atomic.effectsOutboxId,workerId:`razorpay-webhook:${crypto.randomUUID()}`}):null;
         if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,status:"processed",atomicCapture:true,coreCommitted:true,captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
-        return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
+        return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:atomic.duplicateCapture?String(intent.state):"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});
       }
 
       const result=await processGatewayEvent(db,event);

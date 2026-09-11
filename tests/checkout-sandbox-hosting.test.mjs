@@ -38,7 +38,7 @@ test("generated config strips inherited credentials, routes, schedules and unrel
  const cfg=checkoutSandboxConfig(built,plan,freshId),serialized=JSON.stringify(cfg);
  assert.equal(cfg.name,plan.worker);assert.deepEqual(cfg.routes,[]);assert.deepEqual(cfg.triggers,{crons:[]});
  assert.deepEqual(cfg.d1_databases,[{binding:"DB",database_name:plan.worker,database_id:freshId}]);
- assert.equal(cfg.vars.PAWSPACE_LOCAL_PREVIEW,"off");assert.equal(cfg.vars.FORBID_PRODUCTION,"true");assert.equal(cfg.vars.PAWSPACE_PAYMENT_ENV,"sandbox");assert.equal(cfg.vars.PAWSPACE_PAYMENT_LIVE_APPROVED,"false");
+ assert.equal(cfg.vars.PAWSPACE_LOCAL_PREVIEW,"off");assert.equal(cfg.vars.FORBID_PRODUCTION,"true");assert.equal(cfg.vars.PAWSPACE_PAYMENT_ENV,"sandbox");assert.equal(cfg.vars.PAWSPACE_PAYMENT_LIVE_APPROVED,"false");assert.equal(cfg.vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE,"on");
  for(const value of Object.values(plan.secrets))assert.equal(serialized.includes(value),false);
  for(const key of ["services","r2_buckets","queues"])assert.equal(key in cfg,false);
  for(const [key,value] of Object.entries(cfg.vars))if(key.startsWith("PAWSPACE_LIVE_"))assert.equal(value,"false");
@@ -156,6 +156,7 @@ test("hosted UI workflow uses actual UAT authentication and keeps provider secre
  assert.ok(workflow.indexOf("npx playwright install")<workflow.indexOf("Create-only isolated root"));
  assert.match(browser,/context.request.post\(origin\+"\/api\/staging-login"/);
  assert.match(browser,/pawspace-prototype-converged/);assert.match(browser,/viewports.some\(row=>!row.pass\)/);
+ assert.match(browser,/expect\.poll\(\(\)=>img\.evaluate\(n=>n\.complete&&n\.naturalWidth>0\),\{timeout:20_000\}\)\.toBe\(true\)/,"hosted artwork readiness must keep the full-load assertion and use the verifier’s bounded 20s timeout");
  assert.doesNotMatch(browser,/setExtraHTTPHeaders|addCookies|\.route\(/);
 });
 

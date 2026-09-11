@@ -75,6 +75,14 @@ async function financeWorld({ bookingStatus = "confirmed", tripStatus = "schedul
   return { sqlite, db, ...seeded };
 }
 
+function seedCanonicalCompletionFinance(sqlite, world, { providerNetPayout = 314.30, providerPayable = 310.00, resolvedAt = Date.now() - 6 * 24 * 60 * 60 * 1000 } = {}) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,provider_net_payout REAL NOT NULL,computed_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_journal_entries (id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,account_code TEXT NOT NULL,debit REAL NOT NULL DEFAULT 0,credit REAL NOT NULL DEFAULT 0,posted INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO provider_payout_computations (booking_id,provider_id,service_code,provider_net_payout,computed_at) VALUES (?,?,?,?,?)").run(world.bookingId, world.providerId, "pet_taxi", providerNetPayout, resolvedAt);
+  sqlite.prepare("INSERT OR REPLACE INTO finance_journal_entries (id,source_type,source_id,account_code,debit,credit,posted,created_at) VALUES (?,?,?,?,0,?,1,?)").run(`JE-${world.bookingId}`, "service_completion", world.bookingId, "2110-Provider Payable", providerPayable, resolvedAt);
+  return { providerNetPayout, providerPayable, resolvedAt };
+}
+
 /** Drive mutateTaxiFinance directly, with a fresh idempotency key unless one is given. */
 const act = (db, bookingId, action, extra = {}) =>
   finance.mutateTaxiFinance(db, { bookingId, action, actorId: extra.actorId ?? FINANCE_MAKER, idempotencyKey: extra.key ?? nextKey(action), ...extra });
@@ -276,38 +284,55 @@ test("Gate 3: the refund ledger is sandbox-only and replay resistant", async () 
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Gate 3: settlement waits for a completed, paid trip and invents no payout or tax", async () => {
-  // NOT completed: settlement is refused.
+test("Gate 3: settlement waits for completed payment and projects canonical completion finance", async () => {
   const open = await financeWorld({ paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-5" } });
   assert.equal((await refusal(act(open.db, open.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "early settlement" })))?.status, 409);
   assert.equal(open.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger").get().c, 0);
 
-  // Completed but UNPAID: still refused. A driver is not settled out of money nobody collected.
   const unpaid = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "due" } });
   assert.equal((await refusal(act(unpaid.db, unpaid.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "settle now" })))?.status, 409);
-  assert.equal(unpaid.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger").get().c, 0);
 
-  // Completed AND paid: readiness is prepared, and every unconfigured field says so rather than
-  // guessing a number.
+  const missing = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-MISSING", amount: 449 } });
+  assert.equal((await refusal(act(missing.db, missing.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "canonical finance required" })))?.status, 409);
+
   const world = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-6", amount: 449 } });
-  const prepared = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "trip completed and paid" });
-  assert.deepEqual(prepared, {
-    bookingId: world.bookingId, status: "not_ready", grossPaidValue: 449,
-    payoutRule: "rule_pending", tax: "configuration_required", payout: "not_instructed",
-  });
+  const canonical = seedCanonicalCompletionFinance(world.sqlite, world);
+  const key = nextKey("SETTLE");
+  const prepared = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, key, reason: "trip completed and paid" });
+  assert.equal(prepared.status, "settlement_prepared");
+  assert.equal(prepared.payoutAmount, canonical.providerPayable);
+  assert.equal(prepared.basePayout, canonical.providerNetPayout);
+  assert.equal(prepared.payoutRule, "rule_applied");
+  assert.equal(prepared.tax, "resolved");
+  assert.equal(prepared.approvalStatus, "awaiting_finance_approval");
+  assert.equal(prepared.payoutStatus, "not_instructed");
+  assert.equal(prepared.payoutSlaDays, 5);
   const ledger = world.sqlite.prepare("SELECT * FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId);
-  assert.equal(String(ledger.provider_id), world.providerId);
-  assert.equal(Number(ledger.gross_paid_value), 449);
-  // NOT A SINGLE payout number is invented: base, allowance, incentives, penalties and the total are
-  // all null, and the statuses name what is missing.
-  assert.deepEqual([ledger.base_payout, ledger.travel_allowance, ledger.incentives, ledger.penalties, ledger.payout_amount], [null, null, null, null, null]);
-  assert.deepEqual({ rule: String(ledger.payout_rule_status), tax: String(ledger.tax_status), approval: String(ledger.approval_status), payout: String(ledger.payout_status) },
-    { rule: "rule_pending", tax: "configuration_required", approval: "not_ready", payout: "not_instructed" });
-  assert.ok(Number(ledger.eligible_at) > 0, "and the trip is recorded as eligible from now");
+  assert.equal(Number(ledger.payout_amount), canonical.providerPayable);
+  assert.equal(Number(ledger.base_payout), canonical.providerNetPayout);
+  assert.equal(Number(ledger.eligible_at), canonical.resolvedAt + 5 * 24 * 60 * 60 * 1000);
+  assert.deepEqual({ rule: ledger.payout_rule_status, tax: ledger.tax_status, approval: ledger.approval_status, payout: ledger.payout_status }, { rule: "rule_applied", tax: "resolved", approval: "awaiting_finance_approval", payout: "not_instructed" });
 
-  // Preparing again refreshes the same row rather than creating a second settlement.
-  await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "re-prepared after a correction" });
+  const replay = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, key, reason: "trip completed and paid" });
+  assert.equal(replay.duplicatePrevented, true);
   assert.equal(Number(world.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId).c), 1);
+
+  const tooEarlyWorld = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-EARLY", amount: 449 } });
+  seedCanonicalCompletionFinance(tooEarlyWorld.sqlite, tooEarlyWorld, { resolvedAt: Date.now() });
+  await act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "prepare early" });
+  const tooEarly = await refusal(act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" }));
+  assert.equal(tooEarly?.status, 409);
+  assert.match(tooEarly.message, /5-day payout policy/i);
+
+  const approved = await act(world.db, world.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" });
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.payoutAmount, canonical.providerPayable);
+  assert.equal(approved.payoutStatus, "not_instructed");
+  assert.equal(approved.liveMoney, false);
+  const approvedRow = world.sqlite.prepare("SELECT approval_status,approved_by,payout_status,payout_amount FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId);
+  assert.equal(approvedRow.approval_status, "approved");
+  assert.equal(approvedRow.approved_by, FINANCE_CHECKER);
+  assert.equal(approvedRow.payout_status, "not_instructed");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -327,13 +352,15 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   // PAID: the unpaid total clears, but tax is still unconfigured so attention stands. Fail-closed
   // reporting: "balanced" must not be reachable while a statutory field is unresolved.
   await act(db, bookingId, "record_trip_payment", { actorId: FINANCE_CHECKER, reason: "collected", paymentReference: "SBX-PAY-R1" });
+  seedCanonicalCompletionFinance(sqlite, world);
   await act(db, bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "completed and paid" });
+  await act(db, bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" });
   const paid = await act(db, bookingId, "reconcile", { actorId: FINANCE_CHECKER, reason: "after payment" });
   assert.deepEqual({ paid: paid.paidTotal, unpaid: paid.unpaidTripTotal, refund: paid.refundTotal, net: paid.netPaidTotal },
     { paid: 449, unpaid: 0, refund: 0, net: 449 });
-  assert.equal(paid.settlementState, "not_ready");
-  assert.equal(paid.taxState, "configuration_required");
-  assert.equal(paid.status, "attention_required", "an unconfigured tax status is never reported as balanced");
+  assert.equal(paid.settlementState, "approved");
+  assert.equal(paid.taxState, "resolved");
+  assert.equal(paid.status, "balanced", "approved canonical settlement reconciles cleanly");
 
   // A recorded refund reduces the NET but not the paid total — both figures are kept. It has to be a
   // different booking: a refund requires a cancellation, and a completed booking cannot be cancelled.
@@ -346,9 +373,11 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   assert.equal(refunded.settlementState, "not_due", "a cancelled trip owes the driver nothing");
 
   // Each reconciliation is a new immutable row, so the history is auditable.
-  const rows = sqlite.prepare("SELECT paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at,id").all(bookingId);
+  const rows = sqlite.prepare("SELECT id,paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=?").all(bookingId);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((row) => Number(row.net_paid_total)), [0, 449]);
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  assert.equal(Number(byId.get(String(unpaid.reconciliationId))?.net_paid_total), 0, "the first reconciliation preserves the unpaid snapshot");
+  assert.equal(Number(byId.get(String(paid.reconciliationId))?.net_paid_total), 449, "the second reconciliation preserves the paid snapshot");
   assert.deepEqual([...new Set(rows.map((row) => String(row.checked_by)))], [FINANCE_CHECKER], "the checker recorded is the acting identity");
   assert.deepEqual(JSON.parse(String(sqlite.prepare("SELECT detail_json FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").get(bookingId).detail_json)).productionPaymentTimingPolicy, "pending");
 });
@@ -375,7 +404,7 @@ test("Gate 3: the Finance API separates a customer request from Finance authorit
   assert.ok([401, 403].includes(intruder.status), `a stranger must be refused: ${JSON.stringify(intruder)}`);
 
   // EVERY money action is refused to the customer, and none of them writes anything.
-  for (const action of ["approve_cancel", "record_trip_payment", "record_refund", "prepare_settlement", "reconcile"]) {
+  for (const action of ["approve_cancel", "record_trip_payment", "record_refund", "prepare_settlement", "approve_settlement", "reconcile"]) {
     const attempt = await asCustomer(owner, { bookingId, action, idempotencyKey: nextKey("route"), reason: "trying to self-serve money", approvedRefundAmount: 449, paymentReference: "SBX-SELF", refundReference: "SBX-SELF" });
     assert.ok([401, 403].includes(attempt.status), `${action} must be Finance-only: ${JSON.stringify(attempt)}`);
   }

@@ -196,8 +196,8 @@ test("a table with no rows scores nothing, not 100%", async () => {
 
   // The screen tells the two apart: total===null is a missing table, total===0 is an empty one.
   const page = read("app/control/page.tsx");
-  assert.match(page, /area\.total === null \? "not connected" : area\.total === 0 \? "nothing recorded yet"/);
-  assert.match(page, /area\.total === null \? "n\/c" : area\.total === 0 \? "—"/);
+  assert.match(page, /a\.total===null\?"not connected":a\.total===0\?"nothing recorded yet"/);
+  assert.match(page, /a\.total===null\?"n\/c":a\.total===0\?"—"/);
 });
 
 test("the audit trail reads the columns security_audit_events actually has", async () => {
@@ -233,27 +233,14 @@ test("bot-call conversion claims surface until a human reconciles them", async (
   assert.equal(claims.severity, "critical");
 });
 
-test("the /control screen renders the live tower and labels what is still sample data", () => {
+test("the /control screen renders only live canonical control surfaces", () => {
   const page = read("app/control/page.tsx");
-  // The invented headline figures are gone.
-  assert.doesNotMatch(page, /"Audited areas"/, "the invented audited-areas figure is gone");
-  assert.doesNotMatch(page, /"Verified requirements"/);
-  assert.doesNotMatch(page, /"P0 release blockers"/);
-  assert.doesNotMatch(page, /\["Identity & access", 94\]/, "the invented assurance percentages are gone");
-  assert.doesNotMatch(page, /Accounts access review overdue/, "the hand-written owner signals are gone");
-  // It now fetches, and every posture bar publishes the ratio behind its score.
+  assert.doesNotMatch(page, /"Audited areas"|"Verified requirements"|"P0 release blockers"|PROTOTYPE_CONTROL_VIEWS|AUTHORED_REGISTER_VIEWS|Sample data|Restricted prototype/);
   assert.match(page, /fetch\("\/api\/control-tower"/);
-  assert.match(page, /tower\?\.signals\.map/);
-  assert.match(page, /tower\?\.posture\.map/);
-  assert.match(page, /`\$\{area\.good\} of \$\{area\.total\}`/, "each bar publishes the ratio behind its score");
-  // Views still on sample rows say so, and the authored register is not passed off as measurement.
-  assert.match(page, /PROTOTYPE_CONTROL_VIEWS/);
-  assert.match(page, /AUTHORED_REGISTER_VIEWS/);
-  assert.match(page, /still shows built-in example rows/);
-  // Nav badges carried invented queue lengths.
-  const navBlock = page.slice(page.indexOf("const nav:"), page.indexOf("const roles ="));
-  assert.doesNotMatch(navBlock, /count:\s*\d+/);
-  // Gateway + route contract.
+  assert.match(page, /tower\.data\?\.signals\.length/);
+  assert.match(page, /tower\.data\?\.posture\.map/);
+  assert.match(page, /`\$\{a\.good\} of \$\{a\.total\}`/, "each posture bar publishes its measured ratio");
+  for (const mode of ["audit","approvals","master","inventory","quality","security","health"]) assert.match(page,new RegExp(`LiveGovernancePanel mode=\"${mode}\"`));
   assert.match(read("lib/api-gateway.ts"), /url\.pathname==="\/api\/control-tower"\)return "audit\.view"/);
   assert.match(read("app/api/control-tower/route.ts"), /authorize\(request,"audit\.view"\)/);
 });

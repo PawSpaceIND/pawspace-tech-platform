@@ -531,3 +531,72 @@ test("WH-18: a signed capture claiming a booking that does not own the gateway o
   assert.equal(Number(money("PAY-bkg_adv_thief")?.captured_amount ?? 0), 0, "no money may land on the claiming booking");
   assert.equal(payStatus("PAY-bkg_adv_thief"), "created", "and its payment must stay unpaid");
 });
+
+
+for (const recovery of ["webhook", "scheduled_retry", "expired_lease"]) test(`capture-first delivery records money and recovers downstream via ${recovery}`, async () => {
+  freshDb();
+  const { makeD1: transactionalD1 } = await import("./helpers/taxi-harness.mjs");
+  db = transactionalD1(sqlite);
+  globalThis.__ADV_WH_DB__ = db;
+  const bookingId = "BK-CAPTURE-FIRST";
+  seedBooking({ id: bookingId });
+  await linkGatewayOrder(db, { bookingId, gatewayOrderId: "order_ADV1", environment: "sandbox", actor: "audit" });
+  const { claimPaymentIntent } = await import("../lib/financial-lifecycle.ts");
+  const intent = await claimPaymentIntent(db, {
+    bookingId, customerId: "cus_adv", paymentId: `PAY-${bookingId}`,
+    idempotencyKey: "capture-first", amountPaise: 200000, currency: "INR", environment: "sandbox",
+  });
+  sqlite.prepare("UPDATE payment_intents SET gateway_order_id='order_ADV1',order_request_state='ORDER_CREATED' WHERE id=?").run(intent.id);
+  const capture = captureEvent(bookingId, 200000);
+  db.onSql("INSERT OR IGNORE INTO booking_lifecycle_events", () => { throw new Error("notification event storage unavailable"); });
+  const first = await postSigned(capture, { eventId: "evt_capture_first" });
+  assert.equal(first.status, 503, "capture is committed but its downstream event needs retry");
+  assert.equal(first.body.deferred, undefined, JSON.stringify(first));
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "CAPTURED");
+  assert.equal(money(`PAY-${bookingId}`).captured_amount, 2000);
+  assert.equal(sqlite.prepare("SELECT status FROM financial_outbox WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").get().status, "RETRY");
+  // Advance retry eligibility without issuing a new checkout or recapturing money.
+  sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=0 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+  if (recovery === "webhook") {
+    const recovered = await postSigned(capture, { eventId: "evt_capture_recovery_header" });
+    assert.equal(recovered.status, 200, JSON.stringify(recovered));
+    assert.equal(recovered.body.captureEffectsRecovered, true);
+  } else {
+    const { runRazorpayCaptureOutboxSweep } = await import("../lib/razorpay-capture-atomic.ts");
+    if (recovery === "expired_lease") {
+      sqlite.prepare("UPDATE financial_outbox SET status='PROCESSING',lease_owner='dead-worker',lease_expires_at=1 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+    } else {
+      sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=? WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run(Date.now() + 60000);
+      assert.equal((await runRazorpayCaptureOutboxSweep(db)).processed, 0, "backoff must be respected");
+      sqlite.prepare("UPDATE financial_outbox SET next_attempt_at=0 WHERE event_type='RAZORPAY_CAPTURE_POST_COMMIT'").run();
+    }
+    const concurrent = await Promise.all([runRazorpayCaptureOutboxSweep(db), runRazorpayCaptureOutboxSweep(db)]);
+    assert.equal(concurrent.reduce((n, result) => n + result.succeeded, 0), 1, "only one worker may execute recovery");
+    assert.equal(concurrent.reduce((n, result) => n + result.failed, 0), 0);
+    assert.equal((await runRazorpayCaptureOutboxSweep(db)).processed, 0, "completed work must not rerun");
+  }
+  const { runOrderNotificationSweep, listOrderNotifications } = await import("../lib/order-notification-governance.ts");
+  await runOrderNotificationSweep(db);
+  const receipt = (await listOrderNotifications(db, "cus_adv")).filter(row => row.booking_id === bookingId && row.event_type === "payment_captured");
+  assert.equal(receipt.length, 1, "verified capture must reach the customer receipt notification");
+  const late = await postSigned(authorizedEvent(bookingId, 200000), { eventId: "evt_authorized_late" });
+  assert.equal(late.status, 200, JSON.stringify(late));
+  await postSigned(capture, { eventId: "evt_capture_replayed_header" });
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "CAPTURED");
+  assert.equal(money(`PAY-${bookingId}`).captured_amount, 2000);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get().n, 1);
+  sqlite.prepare("UPDATE payment_intents SET state='SETTLED' WHERE id=?").run(intent.id);
+  const settledReplay = await postSigned({ ...capture, event: "order.paid" }, { eventId: "evt_order_paid_after_settlement" });
+  assert.equal(settledReplay.body.duplicateCapture, true, JSON.stringify(settledReplay));
+  assert.equal(sqlite.prepare("SELECT state FROM payment_intents WHERE id=?").get(intent.id).state, "SETTLED");
+  await runOrderNotificationSweep(db);
+  assert.equal((await listOrderNotifications(db, "cus_adv")).filter(row => row.booking_id === bookingId && row.event_type === "payment_captured").length, 1);
+  const { readCustomerBilling } = await import("../lib/customer-billing.ts");
+  const billing = await readCustomerBilling(db, "cus_adv");
+  assert.equal(billing.payments.find(row => row.booking_id === bookingId).status, "captured");
+  const { collectionsTotal } = await import("../lib/collection-ledger.ts");
+  const totals = await collectionsTotal(db, new Date().toISOString().slice(0, 7));
+  assert.equal(totals.verified, 2000);
+  assert.equal(totals.netCollected, 2000, "finance summary must not count webhook or notification retries as new money");
+  assert.equal(sqlite.prepare("SELECT SUM(CASE WHEN direction='DEBIT' THEN amount_paise ELSE -amount_paise END) variance FROM journal_entries").get().variance, 0);
+});

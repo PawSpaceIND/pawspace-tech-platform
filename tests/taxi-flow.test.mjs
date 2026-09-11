@@ -15,85 +15,39 @@ const commercialClientSource = fs.readFileSync("lib/taxi-commercial-client.ts", 
 
 // --- Contract tests (source text) -----------------------------------------------------------
 
-test("the taxi flow prices everything from /api/taxi-commercial and never hardcodes fares", () => {
-  assert.match(flowSource, /import\s*\{[^}]*loadTaxiRouteClasses[^}]*createTaxiQuote[^}]*\}\s*from\s*"\.\.\/\.\.\/lib\/taxi-commercial-client"/);
-  // the import chain is what fetches the route/quote endpoint
-  assert.match(commercialClientSource, /\/api\/taxi-commercial/);
-  // canonical seed fares (449/699/999) must never be baked into the UI
-  assert.doesNotMatch(flowSource, /449|699|999/);
-  // amounts rendered come off the server quote / route-class rows
-  assert.match(flowSource, /quote\.totalAmount/);
-  assert.match(flowSource, /item\.amount/);
-  // the drop-off time is server-owned (route duration), never computed client-side
-  assert.match(flowSource, /quote\.scheduledEnd/);
-  assert.match(flowSource, /fresh\.scheduledEnd/);
+test("the Taxi v2 flow gets fare truth from /api/taxi-commercial",()=>{
+ assert.match(flowSource,/createTaxiRideQuote/);assert.match(commercialClientSource,/createTaxiRideQuote/);assert.match(commercialClientSource,/\/api\/taxi-commercial/);
+ assert.doesNotMatch(flowSource,/₹500 first|₹600 first|35\/km|40\/km/,"distance tariff must not be duplicated in the customer component");
+ assert.match(flowSource,/option\?\.quotedTotal/);assert.match(flowSource,/option\?\.bookingFee/);assert.match(flowSource,/option\?\.finalBalanceBeforeAdjustments/);
 });
 
-test("booking creation goes through lib/taxi-booking-client.ts — the component makes no direct API calls", () => {
-  assert.match(flowSource, /import\s*\{[^}]*createCanonicalTaxiBooking[^}]*reserveTaxiSchedule[^}]*\}\s*from\s*"\.\.\/\.\.\/lib\/taxi-booking-client"/);
-  // every network interaction is a client-lib call: the component itself never fetches
-  assert.doesNotMatch(flowSource, /fetch\(/);
-  assert.doesNotMatch(flowSource, /\/api\/taxi-bookings/);
-  assert.doesNotMatch(flowSource, /\/api\/uat-scheduling/);
+test("booking and scheduling go through the canonical Taxi client",()=>{
+ assert.match(flowSource,/createCanonicalTaxiRideBooking/);assert.match(flowSource,/reserveTaxiSchedule/);assert.match(bookingClientSource,/\/api\/taxi-ride-bookings/);assert.match(bookingClientSource,/serviceCode:"pet_taxi"/);
+ assert.doesNotMatch(flowSource,/fetch\("\/api\/taxi-ride-bookings/);assert.doesNotMatch(flowSource,/fetch\("\/api\/uat-scheduling/);
 });
 
-test("pet selection welcomes dogs AND cats, one pet per trip", () => {
-  // The customer's OWN pets are loaded and selectable — any species, no dogs-only guard.
-  assert.match(flowSource, /loadCustomerPets/, "the flow loads the customer's real pets");
-  assert.match(flowSource, /Dogs and cats welcome/);
-  assert.match(flowSource, /one pet per trip/);
-  // no dogs-only guard — a cat is selectable like any other pet
-  assert.doesNotMatch(flowSource, /DOGS ONLY|dogs-only/);
-  // the selected pet's real canonical id and real species are sent to the reserve/booking
-  assert.match(flowSource, /petIds: \[pet\.id\]/, "the reserve gets the pet's owned canonical id");
-  assert.match(flowSource, /species: pet\.species === "cat"/, "the selected pet's real species is sent to the booking");
+test("Taxi v2 supports 1-6 owned dogs or cats and preserves canonical pet identity",()=>{
+ assert.match(flowSource,/loadCustomerPets/);assert.match(flowSource,/Select 1–6 pets/);assert.match(flowSource,/chosenPets\.length>=1&&chosenPets\.length<=6/);assert.match(flowSource,/petIds:chosenPets\.map\(p=>p\.id\)/);assert.match(flowSource,/p\.species==="cat"\?"cat":p\.species==="dog"\?"dog"/);assert.doesNotMatch(flowSource,/DOGS ONLY|dogs-only/);
 });
 
-test("pickup/drop use the real commercial contract fields and mirror the server validation", () => {
-  assert.match(flowSource, /originLabel/);
-  assert.match(flowSource, /destinationLabel/);
-  // server rule mirrored client-side: ≥3 chars each, distinct case-insensitively
-  assert.match(flowSource, /origin\.length >= 3 && destination\.length >= 3 && origin\.toLowerCase\(\) !== destination\.toLowerCase\(\)/);
-  assert.match(flowSource, /resolveServiceCoverage\(pincode\)/, "the service PIN must resolve before scheduling");
-  assert.match(flowSource, /zoneId: coverage\.zoneId/);
-  assert.match(flowSource, /cityId: coverage\.cityId/);
-  assert.doesNotMatch(flowSource, /zoneId:\s*"blr-east"|cityId:\s*"blr"|latitude|longitude/, "no hardcoded zone/city or invented coordinates");
+test("pickup, drop, round trip and city coverage use the v2 commercial contract",()=>{
+ assert.match(flowSource,/pickup\.trim\(\)\.length>=5&&drop\.trim\(\)\.length>=5/);assert.match(flowSource,/tripType==="one_way"\|\|returnDrop\.trim\(\)\.length>=5/);assert.match(flowSource,/resolveServiceCoverage\(pincode\)/);assert.match(flowSource,/cityId:coverage\.cityId/);assert.match(flowSource,/zoneId:coverage\.zoneId/);assert.match(flowSource,/returnDropLabel:tripType==="round_trip"/);
 });
 
-test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {
-  assert.match(flowSource, /^"use client";/m);
-  assert.match(flowSource, /export default function TaxiFlow\(\{ customer \}: \{ customer: LoggedInCustomer \}\)/);
-  assert.doesNotMatch(flowSource, /from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/, "must not import from any other flow file");
-  assert.doesNotMatch(flowSource, /globalThis/);
-  assert.doesNotMatch(bookingClientSource, /globalThis/);
-  assert.match(flowSource, /from "\.\/taxi-flow\.module\.css"/);
-  assert.match(cssSource, /#01261F/i);
-  assert.match(cssSource, /#E6B34E/i);
+test("the flow remains a standalone customer component",()=>{
+ assert.match(flowSource,/^"use client";/m);assert.match(flowSource,/export default function TaxiFlow\(\{customer,sourceBookingId\}:\{customer:LoggedInCustomer;sourceBookingId\?:string\}\)/);assert.doesNotMatch(flowSource,/from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/);assert.doesNotMatch(flowSource,/globalThis/);assert.match(flowSource,/from "\.\/taxi-flow\.module\.css"/);assert.match(cssSource,/#01261F/i);assert.match(cssSource,/#E6B34E/i);
 });
 
-test("the flow respects the scheduler's pet_taxi roster hours (06:00-22:00 IST)", () => {
-  assert.match(flowSource, /PICKUP_HOURS = \[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20\]/);
-  assert.match(flowSource, /6:00 AM and 10:00 PM/);
+test("3-hour Taxi reservations expose only pickup times that can finish inside 06:00-22:00 IST",()=>{
+ assert.match(flowSource,/const TIMES=Array\.from\(\{length:27\}/);assert.match(flowSource,/const mins=6\*60\+i\*30/);assert.match(flowSource,/blocks one driver and one physical car for 3 hours/);
 });
 
-test("taxi-booking-client was extended additively — existing signatures unchanged", () => {
-  assert.match(bookingClientSource, /export async function createCanonicalTaxiBooking\(input:TaxiBookingInput\)\{const response=await fetch\("\/api\/taxi-bookings"/);
-  assert.match(bookingClientSource, /export async function reserveTaxiSchedule\(/);
-  assert.match(bookingClientSource, /serviceCode:"pet_taxi"/);
-  assert.match(bookingClientSource, /occurrences:1/);
-  assert.match(bookingClientSource, /\/api\/uat-scheduling/);
+test("legacy Taxi client signatures remain additive beside Taxi v2",()=>{
+ assert.match(bookingClientSource,/export async function createCanonicalTaxiBooking/);assert.match(bookingClientSource,/export async function reserveTaxiSchedule/);assert.match(bookingClientSource,/export async function createCanonicalTaxiRideBooking/);
 });
 
-test("confirmation shows driver name + rating, an honest vehicle status, and the trip window", () => {
-  assert.match(flowSource, /driver\.name/);
-  assert.match(flowSource, /driver\.rating/);
-  assert.match(flowSource, /Vehicle: /);
-  // vehicle_id is NULL at creation — the flow must label assignment honestly, never invent a vehicle
-  assert.doesNotMatch(flowSource, /KA-\d|Maruti|Swift|WagonR|vehicleNumber/, "no fabricated vehicle details");
-  assert.match(flowSource, /booking\.trip\.originLabel/);
-  assert.match(flowSource, /booking\.trip\.destinationLabel/);
-  assert.match(flowSource, /booking\.trip\.scheduledStart/);
-  assert.match(flowSource, /booking\.trip\.estimatedDurationMinutes/);
+test("confirmation shows real reserved vehicle, assigned driver, rating when present, and verified-payment truth",()=>{
+ assert.match(flowSource,/booking\.reservedVehicle\.label/);assert.match(flowSource,/driver\?\.name/);assert.match(flowSource,/driver\?\.rating/);assert.match(flowSource,/3-hour reserved window/);assert.match(flowSource,/Pay 50% booking fee/);assert.match(flowSource,/signed Razorpay capture webhook/);assert.match(flowSource,/Verified PawSpace \+ partner fleet/);
 });
 
 // --- Real-execution tests: the exact server contract the flow depends on --------------------

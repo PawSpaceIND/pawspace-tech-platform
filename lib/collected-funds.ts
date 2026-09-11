@@ -44,9 +44,20 @@ export async function collectedForBooking(db:Db,bookingId:string):Promise<number
  if(!payment)return 0;
  if(!COLLECTED_PAYMENT_STATUSES.includes(String(payment.status) as typeof COLLECTED_PAYMENT_STATUSES[number]))return 0;
 
+ // Connected gateway captures are the exact CASH truth. amount_due_now is the commercial stage amount
+ // and can be higher than cash when Wallet/PawPoints funded the remainder.
+ const paymentIdentity=await db.prepare("SELECT id FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const paymentId=String(paymentIdentity?.id??"").trim();
+ if(paymentId){
+  const reconciliation=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
+  if(reconciliation&&Number.isFinite(Number(reconciliation.captured_amount)))return Math.max(0,round2(Number(reconciliation.captured_amount||0)));
+ }
+
  // A split booking's truth lives in its schedule: the first instalment always, plus the balance only
  // once it has actually been paid.
- const schedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const schedule=staySchedule??taxiSchedule;
  if(schedule){
   const paidNow=Number(schedule.paid_now_amount||0);
   const balance=String(schedule.status)==="paid"?Number(schedule.balance_amount||0):0;

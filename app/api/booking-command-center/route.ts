@@ -1,3 +1,4 @@
+import { bookingSupportCases } from "../../../lib/booking-support-cases";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
@@ -42,6 +43,12 @@ export async function GET(request: Request) {
       ORDER BY b.scheduled_start DESC LIMIT 150`;
     const rows = scope?await db.prepare(sql).bind(scope.cityId).all<Row>():await db.prepare(sql).all<Row>();
 
+    const supportCases = await bookingSupportCases(db, rows.results.map(row => String(row.id)));
+    const casesByBooking = new Map<string, Row[]>();
+    for (const supportCase of supportCases) {
+      const id = String(supportCase.booking_id);
+      casesByBooking.set(id, [...(casesByBooking.get(id) || []), supportCase]);
+    }
     const bookings = [];
     for (const row of rows.results) {
       const [pets, lifecycle, operations, notifications, rebooking, refunds, tickets, adminActions] = await Promise.all([
@@ -65,7 +72,7 @@ export async function GET(request: Request) {
         notifications: notifications.results,
         rebooking: rebooking.results,
         refunds: refunds.results,
-        tickets: tickets.results,
+        tickets: [...tickets.results, ...(casesByBooking.get(String(row.id)) || [])],
         adminActions: adminActions.results,
       });
     }

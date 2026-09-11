@@ -44,8 +44,8 @@ test("all customer booking flows propagate resolved city instead of hard-coding 
   assert.match(sources["app/mobile-app/grooming-flow.tsx"], /serviceCode:"grooming",cityId:serviceLocation\.assignment\.cityId,zoneId/);
   assert.match(sources["app/mobile-app/stay-flow.tsx"], /serviceCode:mode==="boarding"\?"boarding":"pet_sitting",cityId:serviceLocation\.assignment\.cityId,zoneId/);
   assert.ok((sources["app/mobile-app/training-flow.tsx"].match(/serviceCode:"dog_training",cityId:serviceCoverage\.cityId,zoneId:serviceCoverage\.zoneId/g) || []).length >= 2);
-  assert.match(sources["app/mobile-app/walking-flow.tsx"], /cityId: coverage\.cityId, zoneId: coverage\.zoneId/);
-  assert.match(sources["app/mobile-app/taxi-flow.tsx"], /cityId: coverage\.cityId, zoneId: coverage\.zoneId/);
+  assert.match(sources["app/mobile-app/walking-flow.tsx"], /cityId:\s*coverage\.cityId,\s*zoneId:\s*coverage\.zoneId/);
+  assert.match(sources["app/mobile-app/taxi-flow.tsx"], /cityId:\s*coverage\.cityId,\s*zoneId:\s*coverage\.zoneId/);
   assert.match(sources["app/mobile-app/food-flow.tsx"], /cityId: resolved\.cityId/);
 });
 

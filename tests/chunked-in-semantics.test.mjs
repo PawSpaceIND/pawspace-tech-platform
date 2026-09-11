@@ -58,10 +58,9 @@ test("a guarded read wrapped in chunkedIn does not pay its table guard once per 
 
   const result = await assertWithinBudget(
     harness,
-    // Eight guarded lookups. Memoised, their guards cost 8 reads for the whole request; charged per
-    // chunk they cost 8 x 63 = 504 on their own, which measured 1,012 subrequests in total and put
-    // the screen back over the ceiling the chunking was introduced to get it under.
-    { max: chunks * 8 + 60, label: "buildUnitEconomics over 5,000 bookings" },
+    // Nine guarded lookups, including redeemed feedback rewards. Memoised guards stay one read per
+    // table rather than one guard per chunk, keeping the large-booking report bounded.
+    { max: chunks * 9 + 60, label: "buildUnitEconomics over 5,000 bookings" },
     () => buildUnitEconomics(harness.db, {}),
   );
 
@@ -150,4 +149,17 @@ test("a chunked LIMIT returns the newest n overall, not n per chunk", async () =
   assert.ok(descending, "the trail is ordered newest-first across chunk boundaries");
   const expectedOldestKept = [...stamps].sort((left, right) => right - left)[APPROVAL_LIMIT - 1];
   assert.equal(Number(events[APPROVAL_LIMIT - 1].created_at), expectedOldestKept, "the 200 kept are the 200 newest, not the first 200 found");
+});
+
+test('booking complaints are newest first across multiple booking chunks, with deterministic ties',async()=>{
+ const {db,sqlite}=freshCountingD1();
+ sqlite.exec(`CREATE TABLE unified_cases(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,case_type TEXT,severity TEXT,status TEXT,title TEXT,description TEXT,owner_email TEXT,owner_team TEXT,first_response_due_at INTEGER,created_at INTEGER,updated_at INTEGER,resolved_at INTEGER,reopen_count INTEGER,resolution_note TEXT)`);
+ const ids=Array.from({length:D1_IN_CHUNK*2+5},(_,index)=>`BOOK-${index}`);
+ const insert=sqlite.prepare("INSERT INTO unified_cases(id,booking_id,customer_id,case_type,created_at) VALUES (?,?,'CUS','customer_complaint',?)");
+ for(let index=0;index<ids.length;index++)insert.run(`CASE-${String(index).padStart(4,'0')}`,ids[index],Math.floor(index/2));
+ const {bookingSupportCases}=await import('../lib/booking-support-cases.ts');
+ const rows=await bookingSupportCases(db,ids);
+ assert.equal(rows.length,ids.length);
+ const expected=sqlite.prepare("SELECT id FROM unified_cases ORDER BY created_at DESC,id").all().map(row=>row.id);
+ assert.deepEqual(rows.map(row=>row.id),expected);
 });

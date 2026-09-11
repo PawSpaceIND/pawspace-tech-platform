@@ -271,7 +271,7 @@ test("marketing panel no longer makes false claims about its data or backends", 
   assert.doesNotMatch(marketingPanel, /Finance-verified cost/, "fabricated tiles cannot claim finance verification");
   assert.doesNotMatch(marketingPanel, /NOT YET BUILT/, "the automation backend exists and is wired — the stale claim is gone");
   assert.doesNotMatch(marketingPanel, /No automation-rule governance backend exists yet/);
-  assert.match(marketingPanel, /ILLUSTRATIVE SAMPLE DATA/, "fabricated scorecard/funnel are labeled illustrative");
-  assert.match(marketingPanel, /Illustrative sample/, "metric tiles carry the illustrative label");
+  assert.match(marketingPanel, /CANONICAL DATA/, "marketing performance must come from canonical facts");
+  assert.doesNotMatch(marketingPanel, /ILLUSTRATIVE SAMPLE DATA|Illustrative sample/, "illustrative marketing performance data must not return");
   assert.match(marketingPanel, /Customer coupon: \{p\.coupon_code\}/, "the promotion's live coupon linkage is visible to ops");
 });
