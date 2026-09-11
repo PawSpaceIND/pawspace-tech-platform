@@ -23,6 +23,7 @@ export default function BookingCommandCenter() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [liveConnected, setLiveConnected] = useState(false);
   const [actionReason, setActionReason] = useState("Customer service and booking follow-up");
 
   async function load() {
@@ -38,17 +39,20 @@ export default function BookingCommandCenter() {
   }
   useEffect(() => {
     let active = true;
-    fetch("/api/booking-command-center", { cache: "no-store" })
-      .then(async response => {
-        const payload = await response.json() as { bookings?: Booking[]; error?: string };
-        if (!response.ok) throw new Error(payload.error || "Unable to load bookings");
-        if (!active) return;
+    const source = new EventSource("/api/booking-command-center?stream=1");
+    const apply = (event: MessageEvent<string>) => {
+      if (!active) return;
+      try {
+        const payload = JSON.parse(event.data) as { bookings?: Booking[] };
         setBookings(payload.bookings || []);
-        setSelectedId(payload.bookings?.[0]?.id as string || "");
-      })
-      .catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "Unable to load bookings"); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+        setSelectedId(current => current || payload.bookings?.[0]?.id as string || "");
+        setError(""); setLoading(false); setLiveConnected(true);
+      } catch { setError("Unable to read live booking update"); }
+    };
+    source.addEventListener("bookings", apply as EventListener);
+    source.onopen = () => { if (active) setLiveConnected(true); };
+    source.onerror = () => { if (active) setLiveConnected(false); };
+    return () => { active = false; source.close(); };
   }, []);
 
   const visible = useMemo(() => bookings.filter(booking => {
@@ -86,7 +90,7 @@ export default function BookingCommandCenter() {
     </aside>
 
     <section className={styles.workspace}>
-      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
+      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh now</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
       <section className={styles.metrics}>
         <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
         <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
@@ -102,7 +106,7 @@ export default function BookingCommandCenter() {
 
       {!loading && !error && bookings.length > 0 && <section className={styles.commandGrid}>
         <div className={styles.listPanel}>
-          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>Snapshot from shared UAT database · refresh to update</small></header>
+          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>{liveConnected ? "Live SSE · canonical booking status updates automatically" : "Live stream reconnecting · manual refresh available"}</small></header>
           <div className={styles.listHead}><span>Booking</span><span>Customer & service</span><span>Provider</span><span>Payment</span><span>Risk</span></div>
           <div className={styles.rows}>{visible.map(booking => {
             const petNames = booking.pets.map(pet => pet.name).join(", ") || "Pet not recorded";

@@ -298,6 +298,12 @@ test("a retry re-proves the whole gate, is correlated, and is bounded", async ()
   // booking_confirmation allows 2 attempts total, so a second retry has none left.
   await gov.transitionVoiceCall(db, { callId: retry.callId, to: "busy", reason: "provider", actor: "test", asOf: DAYTIME });
   await assert.rejects(() => gov.retryVoiceCall(db, env, { callId: retry.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME }), /no retry remains/);
+  const terminal=sqlite.prepare("SELECT contact_id,status,disposition,disposition_detail,completed_at FROM crm_tasks WHERE id=?").get(`VOICE-RETRY-${first.callId}`);
+  assert.equal(terminal.contact_id,"CON-V1");
+  assert.equal(terminal.status,"Closed");
+  assert.equal(terminal.disposition,"voice_retry_exhausted");
+  assert.match(terminal.disposition_detail,/hard retry limit 2/);
+  assert.ok(terminal.completed_at>0,"terminal retry disposition is timestamped");
 });
 
 test("a policy refusal is never retryable - the decision would just be re-made", async () => {

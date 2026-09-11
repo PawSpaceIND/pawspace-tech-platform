@@ -26,60 +26,76 @@ function parse(value: unknown) {
   try { return JSON.parse(String(value || "{}")); } catch { return {}; }
 }
 
+async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){
+  const sql=`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
+    w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,w.assignment_json,
+    p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json
+    FROM canonical_bookings b
+    JOIN canonical_customers c ON c.id=b.customer_id
+    JOIN provider_work_orders w ON w.booking_id=b.id
+    JOIN booking_payments p ON p.booking_id=b.id
+    ${scope?"WHERE lower(b.city_id)=?":""}
+    ORDER BY b.scheduled_start DESC LIMIT 150`;
+  return scope?db.prepare(sql).bind(scope.cityId).all<Row>():db.prepare(sql).all<Row>();
+}
+
+async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){
+  const rows=await bookingRows(db,scope);
+  const supportCases=await bookingSupportCases(db,rows.results.map(row=>String(row.id)));
+  const casesByBooking=new Map<string,Row[]>();
+  for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
+  const bookings=[];
+  for(const row of rows.results){
+    const[pets,lifecycle,operations,notifications,rebooking,refunds,tickets,adminActions]=await Promise.all([
+      db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
+      db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM booking_rebooking_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+      db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
+    ]);
+    bookings.push({...row,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
+  }
+  return{source:"canonical UAT database live stream",bookings,organizationalScope:scope??"global"};
+}
+
+async function bookingStatusFingerprint(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){
+  const sql=`SELECT id,status,updated_at FROM canonical_bookings ${scope?"WHERE lower(city_id)=?":""} ORDER BY updated_at DESC,id LIMIT 150`;
+  const result=scope?await db.prepare(sql).bind(scope.cityId).all<Row>():await db.prepare(sql).all<Row>();
+  return JSON.stringify(result.results.map(row=>[row.id,row.status,row.updated_at]));
+}
+
 export async function GET(request: Request) {
   try {
-    const actor=await authorize(request, "bookings.manage");
-    const db = await database();
+    const actor=await authorize(request,"bookings.manage"),db=await database();
     await ensureTables(db);
     const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);
-    const sql=`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
-      w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,w.assignment_json,
-      p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json
-      FROM canonical_bookings b
-      JOIN canonical_customers c ON c.id=b.customer_id
-      JOIN provider_work_orders w ON w.booking_id=b.id
-      JOIN booking_payments p ON p.booking_id=b.id
-      ${scope?"WHERE lower(b.city_id)=?":""}
-      ORDER BY b.scheduled_start DESC LIMIT 150`;
-    const rows = scope?await db.prepare(sql).bind(scope.cityId).all<Row>():await db.prepare(sql).all<Row>();
-
-    const supportCases = await bookingSupportCases(db, rows.results.map(row => String(row.id)));
-    const casesByBooking = new Map<string, Row[]>();
-    for (const supportCase of supportCases) {
-      const id = String(supportCase.booking_id);
-      casesByBooking.set(id, [...(casesByBooking.get(id) || []), supportCase]);
-    }
-    const bookings = [];
-    for (const row of rows.results) {
-      const [pets, lifecycle, operations, notifications, rebooking, refunds, tickets, adminActions] = await Promise.all([
-        db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id, row.pet_ids_json).all<Row>(),
-        db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM booking_rebooking_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-        db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      ]);
-      bookings.push({
-        ...row,
-        pricing: parse(row.pricing_json),
-        assignment: parse(row.assignment_json),
-        paymentDetail: parse(row.payment_detail_json),
-        pets: pets.results,
-        lifecycle: lifecycle.results,
-        operations: operations.results,
-        notifications: notifications.results,
-        rebooking: rebooking.results,
-        refunds: refunds.results,
-        tickets: [...tickets.results, ...(casesByBooking.get(String(row.id)) || [])],
-        adminActions: adminActions.results,
-      });
-    }
-    return Response.json({ source: "canonical UAT database snapshot", bookings, organizationalScope:scope??"global" });
-  } catch (error) {
-    return authError(error, "Unable to load Booking Command Center");
-  }
+    const wantsStream=new URL(request.url).searchParams.get("stream")==="1";
+    if(!wantsStream)return Response.json(await bookingSnapshot(db,scope));
+    const encoder=new TextEncoder();
+    let stopped=false,timer:ReturnType<typeof setTimeout>|null=null,lastFingerprint="";
+    const stream=new ReadableStream<Uint8Array>({
+      async start(controller){
+        const send=(event:string,payload:unknown)=>controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
+        const close=()=>{if(stopped)return;stopped=true;if(timer)clearTimeout(timer);try{controller.close();}catch{}};
+        request.signal.addEventListener("abort",close,{once:true});
+        const tick=async()=>{
+          if(stopped)return;
+          try{
+            const fingerprint=await bookingStatusFingerprint(db,scope);
+            if(fingerprint!==lastFingerprint){lastFingerprint=fingerprint;send("bookings",await bookingSnapshot(db,scope));}
+            else controller.enqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
+          }catch(error){send("error",{error:"Unable to refresh Booking Command Center stream"});close();return;}
+          if(!stopped)timer=setTimeout(()=>void tick(),3000);
+        };
+        await tick();
+      },
+      cancel(){stopped=true;if(timer)clearTimeout(timer);},
+    });
+    return new Response(stream,{headers:{"content-type":"text/event-stream; charset=utf-8","cache-control":"no-cache, no-transform","connection":"keep-alive","x-accel-buffering":"no"}});
+  } catch (error) { return authError(error,"Unable to load Booking Command Center"); }
 }
 
 export async function POST(request: Request) {

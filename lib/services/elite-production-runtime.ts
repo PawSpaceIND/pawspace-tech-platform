@@ -10,6 +10,7 @@ type Db = D1Database;
 type Row = Record<string, unknown>;
 const text = (value: unknown) => String(value ?? "").trim();
 const number = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>().catch(()=>null));}
 
 async function ensureTables(db: Db) {
   await db.batch([
@@ -98,10 +99,12 @@ export async function calculateEliteSurgeOverlay(db: Db, input: { service: "mobi
 }
 
 async function scoreCustomerChurn(db: Db, customerId: string, now: number) {
-  const activity = await db.prepare("SELECT MAX(updated_at) last_activity FROM lead_work_items WHERE customer_id=?").bind(customerId).first<Row>().catch(() => null);
+  const since90Days=now-90*24*60*60_000,hasBookings=await tableExists(db,"canonical_bookings"),hasRatings=await tableExists(db,"booking_ratings");
+  const bookingFacts=hasBookings?await db.prepare("SELECT COALESCE(MAX(CASE WHEN status='completed' THEN updated_at END),0) last_service_at,COALESCE(CAST(SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) AS REAL)/NULLIF(COUNT(*),0),0) cancellation_frequency,COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) completed_bookings FROM canonical_bookings WHERE customer_id=? AND created_at>=?").bind(customerId,since90Days).first<Row>():null;
+  const ratingFacts=hasRatings?await db.prepare("SELECT COALESCE(CAST(SUM(CASE WHEN stars<3 THEN 1 ELSE 0 END) AS REAL)/NULLIF(COUNT(*),0),0) low_rating_frequency FROM booking_ratings WHERE customer_id=? AND created_at>=?").bind(customerId,since90Days).first<Row>():null;
   const prefs = await contactSafety(db, customerId);
-  const days = activity?.last_activity ? Math.max(0, (now - number(activity.last_activity)) / 86_400_000) : 90;
-  const result = await scorePredictiveChurn({ customerId, telemetry: { daysSinceLastCompletedService: days, appSessionsLast30Days: 0, appSessionsPrevious30Days: 0, averageResponseLatencyHours: 0, cancellationRate90Days: 0, completedBookings90Days: 0, negativeSentimentRate90Days: 0 }, contactSafety: prefs });
+  const days=Number(bookingFacts?.last_service_at||0)>0?Math.max(0,(now-number(bookingFacts?.last_service_at))/86_400_000):90;
+  const result = await scorePredictiveChurn({ customerId, telemetry: { daysSinceLastCompletedService: days, appSessionsLast30Days: 0, appSessionsPrevious30Days: 0, averageResponseLatencyHours: 0, cancellationRate90Days: Math.max(0,number(bookingFacts?.cancellation_frequency)), completedBookings90Days: Math.max(0,number(bookingFacts?.completed_bookings)), negativeSentimentRate90Days: Math.max(0,number(ratingFacts?.low_rating_frequency)) }, contactSafety: prefs });
   await db.prepare("INSERT INTO elite_churn_scores (customer_id,risk_score,risk_band,engagement_state,win_back_trigger,reason_codes_json,model_version,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET risk_score=excluded.risk_score,risk_band=excluded.risk_band,engagement_state=excluded.engagement_state,win_back_trigger=excluded.win_back_trigger,reason_codes_json=excluded.reason_codes_json,model_version=excluded.model_version,updated_at=excluded.updated_at")
     .bind(customerId, result.riskScore, result.riskBand, result.engagementState, result.winBackTrigger, JSON.stringify(result.reasonCodes), result.modelVersion, now).run();
   await audit(db, "predictive_churn", customerId, "scored", { riskScore: result.riskScore, riskBand: result.riskBand, winBackTrigger: result.winBackTrigger }, now);

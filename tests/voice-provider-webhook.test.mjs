@@ -528,3 +528,32 @@ test("a whitespace-only credential is not reported as configured anywhere", asyn
   const route = await readFile(new URL("../app/api/system-integration/route.ts", import.meta.url), "utf8");
   assert.match(route, /String\(runtime\[name\] \?\? ""\)\.trim\(\)\.length > 0/, "the readiness surface trims too");
 });
+
+test("final failed Exotel retry writes one terminal CRM disposition so automated dialing cannot loop", async () => {
+  const { sqlite, db, env } = await fresh();
+  const root = await dial(db, env, "retry-terminal-root");
+  const rootBody = eventBody(root.callId, { CallStatus: "no-answer" });
+  const rootFailure = await gov.recordVoiceProviderEvent(db, env, { rawBody: rootBody, headers: await signedHeaders(rootBody) });
+  assert.equal(rootFailure.accepted, true);
+  assert.equal(state(sqlite, root.callId), "no_answer");
+
+  const retry = await gov.retryVoiceCall(db, env, {
+    callId: root.callId,
+    actorId: "operator@pawspace.in",
+    actorPermissions: FOUNDER_PERMISSIONS,
+    asOf: DAYTIME,
+  });
+  assert.equal(retry.retryAttempt, 1);
+  const retryBody = eventBody(retry.callId, { CallStatus: "busy" });
+  const finalFailure = await gov.recordVoiceProviderEvent(db, env, { rawBody: retryBody, headers: await signedHeaders(retryBody) });
+  assert.equal(finalFailure.accepted, true);
+  assert.equal(finalFailure.retryTermination?.terminated, true);
+  assert.equal(finalFailure.retryTermination?.disposition, "voice_retry_exhausted");
+
+  const task = sqlite.prepare("SELECT status,disposition,disposition_detail,completed_at FROM crm_tasks WHERE id=?").get(`VOICE-RETRY-${root.callId}`);
+  assert.equal(task.status, "Closed");
+  assert.equal(task.disposition, "voice_retry_exhausted");
+  assert.match(task.disposition_detail, /no further automated dial is permitted/);
+  assert.ok(task.completed_at > 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM crm_tasks WHERE id=?").get(`VOICE-RETRY-${root.callId}`).c, 1, "provider redelivery cannot create duplicate terminal CRM work");
+});
