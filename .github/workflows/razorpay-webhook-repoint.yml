@@ -34,6 +34,19 @@ jobs:
           if (!key.startsWith('rzp_test_') || !secret || !webhookSecret) throw new Error('Sandbox webhook credentials are incomplete or not Test Mode');
           const auth = `Basic ${Buffer.from(`${key}:${secret}`).toString('base64')}`;
           const api = `https://api.razorpay.com/v1/webhooks/${id}`;
+          const normalizeEvents = raw => {
+            if (Array.isArray(raw)) return raw.flatMap(v => typeof v === 'string' ? [v] : typeof v?.name === 'string' ? [v.name] : []);
+            if (!raw || typeof raw !== 'object') return [];
+            const fromKeys = Object.keys(raw).filter(k => k.includes('.') && Boolean(raw[k]));
+            const fromValues = Object.values(raw).flatMap(v => {
+              if (typeof v === 'string' && v.includes('.')) return [v];
+              if (v && typeof v === 'object') {
+                for (const field of ['name','event','event_name']) if (typeof v[field] === 'string' && v[field].includes('.')) return [v[field]];
+              }
+              return [];
+            });
+            return [...new Set([...fromKeys, ...fromValues])];
+          };
           const get = async () => {
             const r = await fetch(api, { headers: { authorization: auth }, redirect: 'error', signal: AbortSignal.timeout(15000) });
             if (!r.ok) throw new Error(`Fetch webhook failed HTTP ${r.status}`);
@@ -41,7 +54,7 @@ jobs:
           };
           const before = await get();
           if (before.id !== id || before.url !== oldUrl || before.active !== true) throw new Error('Webhook state drifted; refusing mutation');
-          const events = Array.isArray(before.events) ? before.events : Object.keys(before.events || {}).filter(k => before.events[k]);
+          const events = normalizeEvents(before.events);
           for (const required of ['payment.authorized','payment.captured','payment.failed','order.paid']) {
             if (!events.includes(required)) throw new Error(`Required event missing before update: ${required}`);
           }
@@ -55,7 +68,7 @@ jobs:
           const text = await response.text();
           if (!response.ok) throw new Error(`Update webhook failed HTTP ${response.status}: ${text.slice(0,300)}`);
           const after = await get();
-          const afterEvents = Array.isArray(after.events) ? after.events : Object.keys(after.events || {}).filter(k => after.events[k]);
+          const afterEvents = normalizeEvents(after.events);
           if (after.id !== id || after.url !== newUrl || after.active !== true) throw new Error('Webhook did not converge to current staging URL');
           for (const required of ['payment.authorized','payment.captured','payment.failed','order.paid']) {
             if (!afterEvents.includes(required)) throw new Error(`Required event lost during update: ${required}`);
