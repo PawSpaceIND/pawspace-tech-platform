@@ -71,7 +71,7 @@ export async function executeGovernedConversationTool(db:D1Database,input:{actor
 
 export type WhatsAppAutoSendInput={intent:string;outcome:string;humanOwned:boolean;customerConsented:boolean;optedOut:boolean;grounded:boolean;containsHighImpactClaim:boolean;messageType?:string|null};
 const LOW_RISK_WHATSAPP_INTENTS=new Set(["service_info","booking_status","subscription_wallet"]);
-const LOW_RISK_MESSAGE_TYPES=new Set(["booking_confirmation","eta_update","payment_link_reminder","schedule_details","standard_faq"]);
+const LOW_RISK_MESSAGE_TYPES=new Set(["booking_confirmation","eta_update","payment_link_reminder","schedule_details","standard_faq","action_confirmation_request"]);
 export function evaluateWhatsAppAutoSend(input:WhatsAppAutoSendInput){
  const reasons:string[]=[];
  if(input.humanOwned)reasons.push("human_owned");if(!input.customerConsented)reasons.push("consent_missing");if(input.optedOut)reasons.push("opted_out");if(!input.grounded)reasons.push("not_grounded");if(input.containsHighImpactClaim)reasons.push("high_impact_claim");if(input.outcome!=="reply_ready")reasons.push(`outcome_${input.outcome||"unknown"}`);
