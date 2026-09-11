@@ -16,7 +16,7 @@ export async function ensureAiHumanHandoff(db:D1Database){await ensureConversati
  db.prepare("CREATE INDEX IF NOT EXISTS ai_handoff_queue_idx ON ai_handoffs(status,queue_code,created_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_handoff_events (id TEXT PRIMARY KEY,handoff_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_email TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_lead_ownership (lead_id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ai_owned',clarification_count INTEGER NOT NULL DEFAULT 0,max_clarifications INTEGER NOT NULL DEFAULT 2,escalation_reason TEXT,human_owner TEXT,enterprise_objection INTEGER NOT NULL DEFAULT 0,customer_requested_human INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
- db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL,disposition TEXT,disposition_detail TEXT,completed_at INTEGER)"),
 ]);}
 
 async function sessionUpdate(db:D1Database,threadId:string,status:string,now:number,eventId:string){

@@ -1,4 +1,5 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
+import * as Sentry from "@sentry/cloudflare";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
@@ -33,12 +34,20 @@ import{drainGatewayInboundQueue,purgeExpiredInboundPayloads}from"../lib/gateway-
 import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
 import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
+import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+
+interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   FOUNDER_EMAIL?: string;
   AI?: unknown;
+  SENTRY_DSN?:string;
+  PAWSPACE_DEPLOYMENT_ENV?:string;
+  PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
+  PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
+  AI_VOICE_RATE_LIMITER?:RateLimitBinding;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -75,6 +84,8 @@ const worker = {
     if(url.pathname==="/api/admin/atlas-chat"&&(request.headers.get("upgrade")||"").toLowerCase()==="websocket")return handleAtlasWebSocket(request);
 
     if (url.pathname.startsWith("/api/")) {
+      const edgeLimiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;
+      if(edgeLimiter){const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()||"unknown";const decision=await edgeLimiter.limit({key:`${url.pathname}:${ip}`});if(!decision.success)return secureApiResponse(Response.json({error:"Too many requests"},{status:429,headers:{"retry-after":"60","cache-control":"no-store"}}));}
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
@@ -148,7 +159,8 @@ const worker = {
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,atlasDaily]=await Promise.allSettled([
+      const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention"}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,atlasDaily,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -167,6 +179,7 @@ const worker = {
         runExotelStaleCallReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:10}),
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         atlasDailyTask,
+        dpdpRetentionTask,
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -187,10 +200,11 @@ const worker = {
       if(exotelVoiceReconciliation.status==="rejected")errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.reason instanceof Error?exotelVoiceReconciliation.reason.message:String(exotelVoiceReconciliation.reason)}`);else if(exotelVoiceReconciliation.value.failed)errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.value.failed} call(s) failed authoritative refresh`);
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
       if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
+      if(dpdpRetention.status==="rejected")errors.push(`DPDP retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);else if(dpdpRetention.value.failed)errors.push(`DPDP retention: ${dpdpRetention.value.failed} erasure exception(s)`);
       if(templateSyncError)errors.push(templateSyncError);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
 };
 
-export default worker;
+export default Sentry.withSentry((env:Env)=>({dsn:env.SENTRY_DSN||undefined,environment:env.PAWSPACE_DEPLOYMENT_ENV||"unknown",tracesSampleRate:0.05,sendDefaultPii:false}),worker);

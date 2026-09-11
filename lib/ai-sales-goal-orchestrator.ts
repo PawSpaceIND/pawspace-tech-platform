@@ -77,7 +77,7 @@ function parseStringArray(value: unknown): string[] {
   try {
     const parsed = JSON.parse(text(value) || "[]");
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch { return []; }
+  } catch { return Array<string>(); }
 }
 
 function targetFromRow(row: Row): AiSalesTarget {
