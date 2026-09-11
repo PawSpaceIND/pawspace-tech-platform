@@ -22,6 +22,8 @@ const registry = await import("../lib/ai-tool-registry.ts");
 async function world() {
   const { sqlite, db } = freshAiDb();
   await registry.ensureAiToolRegistry(db);
+  const {seedDefaultGroomingTaxPolicy}=await import("../lib/grooming-invoice.ts");
+  await seedDefaultGroomingTaxPolicy(db,"blr");
   seedCustomer(sqlite, "CUS-1", "Asha", "9876500001");
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,package_name,status,scheduled_start,scheduled_end,channel,total_amount,currency,created_at,updated_at) VALUES ('BKG-1','CUS-1','grooming','GRM-BASIC','Basic groom','confirmed','2026-09-01T10:00:00Z','2026-09-01T11:00:00Z','chat',899,'INR',?,?)").run(NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,package_name,status,scheduled_start,scheduled_end,channel,total_amount,currency,created_at,updated_at) VALUES ('BKG-OTHER','CUS-2','grooming','GRM-BASIC','Basic groom','confirmed','2026-09-02T10:00:00Z','2026-09-02T11:00:00Z','chat',899,'INR',?,?)").run(NOW, NOW);
@@ -114,11 +116,17 @@ test("a quote is computed from the catalogue and cannot be steered by out-of-ran
   assert.equal(ok.status, "completed");
   assert.equal(ok.result.serverAuthoritative, true);
   assert.equal(ok.result.liveMoney, false);
+  const multiPackage=(await import("../lib/grooming-governance.ts")).groomingCatalogue.find(item=>item.active&&item.multiPetPrice);
+  const multi=await registry.prepareAiToolExecution(db,{actor:staffActor,toolCode:"quote.request",threadId:"THREAD-1",customerId:"CUS-1",intent:"booking_create",channel:"chat",arguments:{packageCode:multiPackage.code,petCount:2,cityId:"blr"}});
+  assert.equal(multi.result.baseSubtotal,multiPackage.singlePrice*2);
+  assert.equal(multi.result.multiPetDiscount,(multiPackage.singlePrice-multiPackage.multiPetPrice)*2);
+  assert.equal(Math.round((multi.result.taxableAmount+multi.result.gstAmount)*100)/100,multi.result.totalAmount);
+  assert.equal(multi.result.taxMode,"inclusive");
 
-  for (const petCount of [0, -1, 5, 999]) {
+  for (const petCount of [0, -1, 1.5, 5, 999]) {
     await assert.rejects(
       registry.prepareAiToolExecution(db, { actor: staffActor, toolCode: "quote.request", threadId: "THREAD-1", customerId: "CUS-1", intent: "booking_create", channel: "chat", arguments: { packageCode: "GRM-BASIC", petCount } }),
-      /pet count must be between 1 and 4|Active governed package not found/);
+      /pet count must be a whole number between 1 and 4|Active governed package not found/);
   }
 });
 

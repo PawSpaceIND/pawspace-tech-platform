@@ -55,3 +55,25 @@ test("surge route contract is preview-only and declares no customer price mutati
   assert.match(route, /mode: "preview_only"/);
   assert.match(route, /customerPriceMutation: false/);
 });
+
+
+test("churn telemetry SQL coalesces NULLs and derives low-rating and cancellation frequencies", async () => {
+  const [runtime,production]=await Promise.all([read("lib/services/elite-runtime.ts"),read("lib/services/elite-production-runtime.ts")]);
+  for(const source of[runtime,production]){
+    assert.match(source,/COALESCE/);
+    assert.match(source,/stars<3/);
+    assert.match(source,/cancellation_frequency/);
+    assert.match(source,/days_since_last_service|last_service_at/);
+  }
+  assert.match(runtime,/COALESCE\(sc\.days_since_last_service,0\)/);
+  assert.match(runtime,/negativeSentimentRate90Days: Math\.max\(0,number\(customer\.low_rating_frequency\)\)/);
+});
+
+test("media persistence is atomic with its canonical message or provider event ledger", async () => {
+  const [meta,profile]=await Promise.all([read("lib/meta-whatsapp-media-ingestion.ts"),read("lib/provider-onboarding-human-activation.ts")]);
+  assert.match(meta,/INSERT OR IGNORE INTO communication_message_media[\s\S]*WHERE EXISTS \(SELECT 1 FROM communication_messages WHERE id=\?\)/);
+  assert.match(meta,/JOIN communication_messages c ON c\.id=m\.message_id/);
+  assert.match(meta,/inbound event remains retryable/);
+  assert.match(profile,/addProviderProfileMedia[\s\S]*await db\.batch\(\[/);
+  assert.match(profile,/provider_profile_media_added/);
+});
