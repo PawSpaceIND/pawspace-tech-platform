@@ -42,7 +42,7 @@ const stage = (name, status, detail) => STAGES.push({ name, status, detail });
 /* PAWSPACE_SCHEDULING_ENV=uat is what lets seedUatRoster publish synthetic availability; without it
  * every provider is refused with "No published availability", which is the production-shaped answer
  * (lib/scheduling-roster-authority.ts). Tests that care about the production shape set it themselves. */
-const UAT_ENV = { PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_LOCAL_PREVIEW: "off" };
+const UAT_ENV = { PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on", PAWSPACE_LOCAL_PREVIEW: "off" };
 
 function assignWorld(env = UAT_ENV) {
   const { sqlite, db } = world("__ASSIGN_DB__", "__ASSIGN_ENV__", env);
@@ -68,7 +68,10 @@ function slot(daysAhead = 4, istHour = 11, durationMinutes = 120) {
 
 async function reserve(body) {
   const route = await import("../app/api/uat-scheduling/route.ts");
-  return attempt(() => route.POST(asActor(OPS, "/api/uat-scheduling", { method: "POST", body: JSON.stringify(body) })));
+  // Assignment is not the address-policy subject of this suite. Supply a complete synthetic service
+  // location so the production SERVICE_ADDRESS_REQUIRED/verification gates remain active.
+  const request = { serviceAddress: "42, Indiranagar Double Road, Bengaluru", servicePincode: "560038", ...body };
+  return attempt(() => route.POST(asActor(OPS, "/api/uat-scheduling", { method: "POST", body: JSON.stringify(request) })));
 }
 
 const parsed = (result) => { try { return JSON.parse(result.body ?? "{}"); } catch { return {}; } };
@@ -390,7 +393,7 @@ test("PRA-10 a production-shaped environment never invents availability to place
    * CAPABILITY gated on an explicit PAWSPACE_SCHEDULING_ENV=uat declaration, and an absent variable is
    * not a declaration. Without it the roster is empty, every partner fails the availability rule, and
    * the correct answer is "nobody" - not a guess. */
-  const { sqlite, db } = assignWorld({ PAWSPACE_LOCAL_PREVIEW: "off" });
+  const { sqlite, db } = assignWorld({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on", NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "off" });
   await ops(sqlite, db);
   const groupId = "ASG-GRP-PROD";
   const result = await reserve({ clientRequestId: groupId, customerId: CUSTOMER, petIds: [PET], serviceCode: "grooming", cityId: CITY, zoneId: ZONE, ...slot() });

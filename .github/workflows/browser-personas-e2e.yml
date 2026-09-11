@@ -95,9 +95,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
       RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
       RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-      RAZORPAY_SANDBOX_PAYMENT_ID: ${{ secrets.RAZORPAY_SANDBOX_PAYMENT_ID }}
+      # This requested lane creates a test order only; no refund has been authorized.
+      RAZORPAY_SANDBOX_PAYMENT_ID: ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -120,12 +125,8 @@ jobs:
             exit 1
           fi
           echo 'PASS live-key rejection and secret redaction guard'
-      - name: Run real Razorpay sandbox provider check when credentials are configured
+      - name: Run real Razorpay sandbox order probe or report blocked prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${RAZORPAY_KEY_ID_SANDBOX:-}" ] || [ -z "${RAZORPAY_KEY_SECRET_SANDBOX:-}" ]; then
-            echo 'SKIP real Razorpay provider check: sandbox credentials are not configured in GitHub Actions.'
-            exit 0
-          fi
           npm run test:razorpay:sandbox

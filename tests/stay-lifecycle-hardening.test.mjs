@@ -2,28 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks, enterWorkersDbScope } from "./helpers/module-hooks.mjs";
 
-// Test-only resolve hook (same pattern as tests/customer-offers.test.mjs).
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      try { return nextResolve(specifier, context); } catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `export async function resolve(specifier, context, nextResolve) {
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+installWorkersHooks("__STAY_LIFECYCLE_DB__", "__STAY_LIFECYCLE_ENV__");
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const staysRoute = read("app/api/boarding-stays/route.ts");
@@ -52,6 +33,15 @@ function makeD1(sqlite) {
 const DAY = 86_400_000;
 const NOW = Date.now();
 const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+const isolatedUatEnv = {
+  NODE_ENV: "test", FORBID_PRODUCTION: "true", PAWSPACE_LOCAL_PREVIEW: "on",
+  PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+};
+const setExecutionClock = (atMs) => {
+  globalThis.__STAY_LIFECYCLE_ENV__ = {
+    ...isolatedUatEnv, PAWSPACE_UAT_SERVICE_CLOCK: "on", PAWSPACE_UAT_EXECUTION_NOW_MS: String(atMs),
+  };
+};
 // Mirrors istDate() in lib/boarding-stay-lifecycle.ts: #388 requires every boarding care milestone
 // to name the stay day it belongs to, and that day must fall inside the stay window.
 const istDay = (offsetMs) => new Date(NOW + offsetMs + 330 * 60_000).toISOString().slice(0, 10);
@@ -59,6 +49,9 @@ const istDay = (offsetMs) => new Date(NOW + offsetMs + 330 * 60_000).toISOString
 async function stayStack() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__STAY_LIFECYCLE_DB__ = db;
+  globalThis.__STAY_LIFECYCLE_ENV__ = { ...isolatedUatEnv };
+  enterWorkersDbScope(db);
   // Real DDL through the real ensure chains + extraction for cross-module tables.
   for (const source of [read("app/api/grooming-lifecycle/route.ts"), read("app/api/uat-scheduling/route.ts"), read("lib/provider-capacity-governance.ts")]) {
     for (const sql of statementsOf(source)) if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) sqlite.exec(sql);
@@ -141,6 +134,9 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   await rejects(mutate(stack, "STAY-1", "submit_care_plan", { carePlan: { feeding: "2x" } }), 409, /emergency contact and vet/);
   await mutate(stack, "STAY-1", "submit_care_plan", { actorId: "customer@test", carePlan: { emergencyContact: "9999900701", vet: "Dr Rao", feeding: "2x" } });
 
+  // The stay is deliberately future-dated so quote/scheduling guards stay real. Move only the server-owned
+  // isolated-UAT execution clock to the exact check-in boundary before exercising service execution.
+  setExecutionClock(NOW + 2 * DAY);
   const checkedIn = await mutate(stack, "STAY-1", "check_in");
   assert.equal(checkedIn.status, "in_progress");
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-S1'").get().status, "in_progress");
@@ -264,6 +260,7 @@ test("real execution: an unpaid 50/50 balance blocks Boarding check-in; paying i
   assert.equal(plan.balance, 3000);
   await stack.payments.staySplitScheduleStatement(stack.db, { bookingId: "BK-PAY", serviceCode: "boarding", customerId: "CUS-STAY-1", totalAmount: 6000, paidNowAmount: plan.dueNow, balanceAmount: plan.balance, balanceDueAt: plan.balanceDueAt }).run();
 
+  setExecutionClock(NOW + 3 * DAY);
   await rejects(mutate(stack, "STAY-PAY", "check_in"), 409, /remaining 50% stay balance must be paid before check-in/);
 
   // Overdue balances block identically.
@@ -293,6 +290,7 @@ test("real execution: the same balance guard protects Sitting check-in", async (
   const plan = stack.payments.splitPaymentPlan({ totalAmount: 2400, scheduledStart: iso(3 * DAY) });
   await stack.payments.staySplitScheduleStatement(stack.db, { bookingId: "BK-SIT", serviceCode: "pet_sitting", customerId: "CUS-STAY-1", totalAmount: 2400, paidNowAmount: plan.dueNow, balanceAmount: plan.balance, balanceDueAt: plan.balanceDueAt }).run();
 
+  setExecutionClock(NOW + 3 * DAY);
   await rejects(stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "check_in", actorId: "sitter@test", idempotencyKey: "sit-ci-1" }), 409, /balance must be paid before check-in/);
   await stack.payments.payStayBalance(stack.db, { bookingId: "BK-SIT", actorId: "customer@test", idempotencyKey: "sit-bal-1" });
   const checkedIn = await stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "check_in", actorId: "sitter@test", idempotencyKey: "sit-ci-2", latitude: 12.9784, longitude: 77.6408 });

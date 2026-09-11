@@ -44,6 +44,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const coupons=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,chunk,guards));
  const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk,guards));
  const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk,guards));
+ const reviewRewards=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["review_reward_codes"],`SELECT redeemed_booking_id booking_id,COALESCE(applied_amount,discount_amount) applied_value FROM review_reward_codes WHERE status='redeemed' AND discount_amount>0 AND redeemed_booking_id IN (${placeholders})`,chunk,guards));
  const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk,guards));
  const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status IN ('processing','processed','completed') AND booking_id IN (${placeholders})`,chunk,guards));
  const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk,guards));
@@ -58,6 +59,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  addByBooking(coupons,row=>Number(row.discount_amount||0),(ladder,value)=>{ladder.discounts+=value;});
  addByBooking(points,row=>Math.abs(Number(row.points||0))*0.5,(ladder,value)=>{ladder.discounts+=value;});
  addByBooking(wallet,row=>Number(row.applied_value||0),(ladder,value)=>{ladder.discounts+=value;});
+ addByBooking(reviewRewards,row=>Number(row.applied_value||0),(ladder,value)=>{ladder.discounts+=value;});
  addByBooking(payouts,row=>Number(row.amount||0),(ladder,value)=>{ladder.providerPayout+=value;});
  addByBooking(refunds,row=>Number(row.amount||0),(ladder,value)=>{ladder.refunds+=value;});
 
@@ -159,7 +161,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
 function emptyCompany(){return{gmv:0,orders:0,cancelled:0,discounts:0,providerPayout:0,refunds:0,contributionKnown:0,cancellationRatePct:null,activeCustomers:0,ltvPerActiveCustomer:null,utilisationPct:null,cac:{status:"configuration_required",spend:null,newCustomers:null,cacPerNewCustomer:null}};}
 function coverageNote(){return{
  gmv:"canonical_bookings (cancelled/draft excluded)",
- discounts:"coupon_redemptions + paw_points_ledger redemptions (Rs.0.50/point) + pawspace_wallet_ledger applied value",
+ discounts:"coupon_redemptions + paw_points_ledger redemptions (Rs.0.50/point) + pawspace_wallet_ledger applied value + redeemed feedback rewards",
  providerPayout:"provider_order_payouts (sandbox rail)",
  refunds:"booking_refund_cases status=processing|processed|completed",
  utilisation:"authoritative scheduling_availability capacity-hours; governed capacity when present, unit-capacity fallback only for missing legacy profile data; authored roster wins over uat_roster; city-scoped when requested",

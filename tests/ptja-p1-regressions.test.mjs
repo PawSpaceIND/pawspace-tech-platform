@@ -93,11 +93,11 @@ async function post(modulePath, path, body, headers = {}) {
 // says so in as many words: "the gateway is the first gate, this is the second". This one did not.
 // =====================================================================================================
 
-async function schedulingWorld() {
+async function schedulingWorld(runtimeOverrides = {}) {
   // PAWSPACE_SCHEDULING_ENV declared: /api/uat-scheduling no longer fabricates provider roster unless
   // the runtime says it is a UAT runtime (PTJA W1-F27), and this world reserves through the real path
   // with no Ops-published availability.
-  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" });
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", ...runtimeOverrides });
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   const { ensureSchedulingTables } = await import("../lib/scheduling-store.ts").catch(() => ({ ensureSchedulingTables: null }));
@@ -578,7 +578,7 @@ test("P1-F3: a lead replaying its own key is still a duplicate", async () => {
 const F28_DAY = (day, hour) => new Date(Date.UTC(2026, 10, day, hour, 0, 0)).toISOString();
 
 async function reserveWorld() {
-  const { sqlite, db } = await schedulingWorld();
+  const { sqlite, db } = await schedulingWorld({ PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on", NODE_ENV: "test" });
   const customerId = "CUST-F28";
   await seedOwnedPet(db, customerId, "PET-F28");
   const cookie = await customerCookie(db, customerId);

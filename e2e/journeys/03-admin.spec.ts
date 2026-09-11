@@ -25,6 +25,20 @@ test("the control workspace renders and exposes governed sections", async ({ pag
   expect(body).toMatch(/control|audit|finance|operations/i);
 });
 
+test("Control health exposes six server-enforced emergency stops without mutating them", async ({ page, request }) => {
+  const res = await page.goto("/control", { waitUntil: "domcontentloaded" });
+  expect(res?.status()).toBe(200);
+  await page.getByRole("button", { name: "System health", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Server-enforced stop switches", exact: true })).toBeVisible();
+  const controls = await request.get("/api/control-runtime-switches");
+  expect(controls.status()).toBe(200);
+  const body = await controls.json() as { data?: { switches?: Array<{ code: string; enabled: boolean }> } };
+  expect(body.data?.switches).toHaveLength(6);
+  expect(body.data?.switches?.every(item => item.enabled)).toBe(true);
+  await expect(page.getByText("Outbound voice", { exact: true })).toBeVisible();
+  await expect(page.getByText("Payments & refunds", { exact: true })).toBeVisible();
+});
+
 test("an admin CAN adjudicate a cancellation case - the staff gate is not blanket-deny", async ({ request }) => {
   /* Non-vacuity for the provider refusal in 02-partner. "return 403 always" would satisfy that test
    * and break the product; staff must get past the same gate. The case id does not exist, so the
@@ -85,6 +99,7 @@ test("Control scheduling reads real rules and saves the selected location", asyn
   await page.getByLabel("Rule name",{exact:true}).fill("South zone rating");
   await page.getByLabel("Location",{exact:true}).selectOption("blr-south");
   await page.getByLabel("Required value",{exact:true}).fill("4.7");
+  await page.getByLabel("Mandatory change reason",{exact:true}).fill("E2E scheduling rule change");
   await page.getByRole("button",{name:"Save & activate rule",exact:true}).click();
   await expect(page.getByText("South zone rating",{exact:true})).toBeVisible();
   expect(submitted?.zoneId).toBe("blr-south");

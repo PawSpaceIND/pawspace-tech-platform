@@ -2,6 +2,7 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 const CUSTOMER_EMAIL = "e2e.customer@pawspace.test";
 const PROVIDER_EMAIL = "e2e.provider@pawspace.test";
+const AUTO_GROOMER_EMAIL = "e2e.auto.groomer@pawspace.test";
 const ADMIN_EMAIL = "e2e.admin@pawspace.test";
 const FINANCE_EMAIL = "e2e.finance@pawspace.test";
 const CUSTOMER_ID = "E2E-CUS-UI-001";
@@ -29,7 +30,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
   expect(baseURL).toBeTruthy();
   const origin = baseURL!;
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
-  const provider = await actorApi(origin, PROVIDER_EMAIL);
+  let provider: Awaited<ReturnType<typeof actorApi>> | null = null;
   const admin = await actorApi(origin, ADMIN_EMAIL);
   const finance = await actorApi(origin, FINANCE_EMAIL);
   test.info().annotations.push({ type: "isolation", description: "payment=sandbox; live-approved=false; local Miniflare only" });
@@ -92,7 +93,11 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
       expect(scheduleBody.data.duplicatePrevented).toBe(true);
     }
-    expect(scheduleBody?.data?.provider?.id).toBe(PROVIDER_ID);
+    const assignedProviderId=String(scheduleBody?.data?.provider?.id||"");
+    expect(assignedProviderId).toBeTruthy();
+    const assignedProviderEmail=assignedProviderId===PROVIDER_ID?PROVIDER_EMAIL:assignedProviderId==="groom_arun"?AUTO_GROOMER_EMAIL:"";
+    expect(assignedProviderEmail,`assigned provider ${assignedProviderId} needs a governed local E2E identity`).toBeTruthy();
+    provider=await actorApi(origin,assignedProviderEmail);
 
     const booked = await customer.post("/api/canonical-bookings", {
       data: {
@@ -155,7 +160,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["accept", "on_the_way"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     // ARRIVED is fail-closed against fresh, trusted, server-bound GPS evidence. Use the canonical
@@ -164,7 +169,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     const gps = await provider.post("/api/grooming-route", {
       data: {
         bookingId,
-        providerId: PROVIDER_ID,
+        providerId: assignedProviderId,
         latitude: serviceLatitude,
         longitude: serviceLongitude,
         accuracyMeters: 10,
@@ -179,7 +184,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["arrived", "start_service"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     const proof = await provider.post("/api/grooming-lifecycle", {
@@ -225,10 +230,13 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await page.locator("nav").getByRole("button",{name:/account/i}).last().click();await page.getByPlaceholder("10-digit phone number").fill("9800000111");await page.getByRole("button",{name:"Send OTP",exact:true}).click();
     const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await page.getByPlaceholder("6-digit code").fill(code!);
     const name=page.getByPlaceholder("Your name (first time only)");if(await name.isVisible().catch(()=>false))await name.fill("E2E UI Customer");
+    // The customer shell immediately reads the owned account after OTP establishes the browser cookie.
+    // Observe that real browser-owned request instead of starting a duplicate fetch while the shell is hydrating.
+    const ownAccountResponse=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/customer-account"&&response.status()===200);
     await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
-    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not.
-    // Read through the actual browser session, without manually copying or weakening cookies.
-    const ownAccount=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(ownAccount.status).toBe(200);expect(ownAccount.body.data.customerId).toBe(CUSTOMER_ID);
+    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not. This response
+    // is emitted by the actual customer UI using the cookie the browser received from OTP verification.
+    const ownAccount=await ownAccountResponse,ownAccountBody=await ownAccount.json();expect(ownAccountBody.data.customerId).toBe(CUSTOMER_ID);
     await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
     const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoiceNumber));
     const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(Number(financeItem.gross_amount));expect(summary.body.data.invoice.tax).toBe(Number(financeItem.tax_amount));expect(summary.body.data).not.toHaveProperty("payoutReadiness");
@@ -236,27 +244,27 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await page.goto("/mobile-app");
     await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();
     await page.getByRole("button",{name:"History",exact:true}).click();
-    const ratingCard=page.getByRole("article",{name:`Rate booking ${bookingId}`,exact:true});
-    await expect(ratingCard).toBeVisible();
-    await page.route("**/api/booking-rating",async route=>{if(route.request().method()==="POST")await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Rating is temporarily unavailable. Please retry."})});else await route.continue();});
-    await ratingCard.getByRole("button",{name:"4 stars",exact:true}).click();
-    await expect(page.getByRole("alert")).toContainText("Rating is temporarily unavailable");
-    await expect(ratingCard).toBeVisible();
-    await page.unroute("**/api/booking-rating");
-    const savedRating=page.waitForResponse(response=>response.url().endsWith("/api/booking-rating")&&response.request().method()==="POST");
-    await ratingCard.getByRole("button",{name:"4 stars",exact:true}).click();
-    const ratingResponse=await savedRating;expect(ratingResponse.status()).toBe(201);const ratingRequest=ratingResponse.request().postDataJSON();expect(ratingRequest.bookingId).toBe(bookingId);expect(ratingRequest.stars).toBe(4);
-    await expect(ratingCard).toHaveCount(0);
+    const feedbackCard=page.getByRole("article",{name:`Feedback for booking ${bookingId}`,exact:true});
+    await expect(feedbackCard).toBeVisible();
+    const fourStarAnswers=feedbackCard.getByRole("button",{name:/4 out of 5$/});expect(await fourStarAnswers.count()).toBe(5);for(let i=0;i<5;i++)await fourStarAnswers.nth(i).click();
+    await page.route("**/api/service-review",async route=>{if(route.request().method()==="POST")await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Feedback is temporarily unavailable. Please retry."})});else await route.continue();});
+    await feedbackCard.getByRole("button",{name:"Submit feedback & receive reward",exact:true}).click();
+    await expect(feedbackCard.getByRole("alert")).toContainText("Feedback is temporarily unavailable");await expect(feedbackCard).toBeVisible();
+    await page.unroute("**/api/service-review");
+    const savedFeedback=page.waitForResponse(response=>response.url().endsWith("/api/service-review")&&response.request().method()==="POST");
+    await feedbackCard.getByRole("button",{name:"Submit feedback & receive reward",exact:true}).click();
+    const feedbackResponse=await savedFeedback;expect(feedbackResponse.status()).toBe(201);const feedbackRequest=feedbackResponse.request().postDataJSON();expect(feedbackRequest.customerId).toBe(CUSTOMER_ID);expect(Object.keys(feedbackRequest.answers)).toHaveLength(5);expect(Object.values(feedbackRequest.answers)).toEqual([4,4,4,4,4]);const feedbackBody=await feedbackResponse.json();expect(feedbackBody.data.average).toBe(4);const rewardCode=String(feedbackBody.data.feedbackReward.code);expect(rewardCode).toMatch(/^FB-/);
+    await expect(feedbackCard).toHaveCount(0);
     await page.reload();await page.locator("nav").getByRole("button",{name:/activity/i}).last().click();await page.getByRole("button",{name:"History",exact:true}).click();
-    const persistedRating=await page.evaluate(async()=>{const response=await fetch("/api/booking-rating",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(persistedRating.status).toBe(200);expect(persistedRating.body.data.ratableBookings.some((item:{bookingId:string})=>item.bookingId===bookingId)).toBe(false);
-    await expect(ratingCard).toHaveCount(0);await expect(page.getByText(bookingId,{exact:false}).first()).toBeVisible();
-    await page.screenshot({path:test.info().outputPath(`customer-rating-saved-${assignmentMode}.png`),fullPage:true});
+    const persistedFeedback=await page.evaluate(async()=>{const response=await fetch("/api/service-review",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(persistedFeedback.status).toBe(200);expect(persistedFeedback.body.data.pending.some((item:{bookingId:string})=>item.bookingId===bookingId)).toBe(false);expect(persistedFeedback.body.data.rewards.some((item:{code:string})=>item.code===rewardCode)).toBe(true);
+    await expect(feedbackCard).toHaveCount(0);await expect(page.getByText(bookingId,{exact:false}).first()).toBeVisible();
+    await page.screenshot({path:test.info().outputPath(`customer-feedback-saved-${assignmentMode}.png`),fullPage:true});
     await page.context().clearCookies();
     await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL });
     const adminUi = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
     expect(adminUi?.status() ?? 500).toBeLessThan(500);
     await expect(page.locator("body")).toContainText(/booking/i);
   } finally {
-    await Promise.all([customer.dispose(), provider.dispose(), admin.dispose(), finance.dispose()]);
+    await Promise.all([customer.dispose(), provider?.dispose()??Promise.resolve(), admin.dispose(), finance.dispose()]);
   }
 });

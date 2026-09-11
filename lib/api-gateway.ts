@@ -28,6 +28,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
   if(url.pathname==="/api/control-tower")return "audit.view";
   if(url.pathname==="/api/control-center-operations")return "audit.view";
+  if(url.pathname==="/api/control-runtime-switches")return method==="GET"?"audit.view":"settings.manage";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
   if(url.pathname==="/api/uat-provider-switch")return null;
@@ -103,7 +104,10 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/walking-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}
   if(url.pathname==="/api/walking-ops")return "bookings.manage";
   if(url.pathname==="/api/walking-recovery")return "bookings.view";
+  if(url.pathname==="/api/taxi-fleet-control")return "settings.manage";
   if(url.pathname==="/api/taxi-bookings")return "scheduling.book";
+  if(url.pathname==="/api/taxi-ride-bookings")return "scheduling.book";
+  if(url.pathname==="/api/taxi-adjustments"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";return "bookings.view";}
   if(url.pathname==="/api/taxi-lifecycle"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="no_show"?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/taxi-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_cancel"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/taxi-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}

@@ -93,3 +93,19 @@ test("provider API failure leaves D1 unchanged and fails closed for carrier retr
  const response=await post(new URLSearchParams({CallSid:EXOTEL_CALL_SID,CallStatus:"completed"}).toString());
  assert.equal(response.status,503);assert.equal(state(sqlite,call.callId).state,"dialing");assert.equal(events(sqlite).length,0);
 });
+
+
+test("scheduled stale-call reconciliation repairs a missed Exotel callback without touching fresh calls",async()=>{
+ const{sqlite,db,env,call}=await fresh();
+ sqlite.prepare("UPDATE voice_call_orders SET updated_at=? WHERE id=?").run(DAYTIME-5*60_000,call.callId);
+ exotelDetailsSequence([{Status:"completed",Duration:12}]);
+ const recon=await import("../lib/exotel-call-reconciliation.ts");
+ const result=await recon.runExotelStaleCallReconciliationSweep(db,env,{asOf:DAYTIME,staleAfterMs:120_000,limit:10});
+ assert.deepEqual({processed:result.processed,applied:result.applied,failed:result.failed},{processed:1,applied:1,failed:0});
+ assert.equal(state(sqlite,call.callId).state,"completed");
+ const before=events(sqlite).length;
+ sqlite.prepare("UPDATE voice_call_orders SET state='dialing',updated_at=? WHERE id=?").run(DAYTIME,call.callId);
+ const freshResult=await recon.runExotelStaleCallReconciliationSweep(db,env,{asOf:DAYTIME,staleAfterMs:120_000,limit:10});
+ assert.equal(freshResult.processed,0);
+ assert.equal(events(sqlite).length,before);
+});

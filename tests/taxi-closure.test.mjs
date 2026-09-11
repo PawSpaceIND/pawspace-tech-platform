@@ -139,7 +139,7 @@ test("Closure: one booking travels the customer, driver, Operations and Finance 
   assert.equal(paid.status, "sandbox_paid");
   const settlement = await finance.mutateTaxiFinance(db, { bookingId: trip.bookingId, action: "prepare_settlement", actorId: FINANCE_STAFF, idempotencyKey: nextKey("settle"), reason: "completed and paid" });
   assert.equal(settlement.grossPaidValue, trip.amount);
-  assert.equal(settlement.tax, "configuration_required", "and Finance still invents no tax status");
+  assert.equal(settlement.tax, "resolved", "Taxi settlement projects resolved canonical completion tax truth");
 
   // OPERATIONS reflects the collection: the payment flag clears, and the queue is one booking, not two.
   const afterPayment = await ops.getTaxiOpsSnapshot(db);

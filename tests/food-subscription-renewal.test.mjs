@@ -11,7 +11,7 @@ test("renewal payment link uses the canonical communications outbox with an idem
 
 test("confirmed renewal payment creates one invoice then queues paid confirmation and invoice messages",async()=>{const source=await read("lib/food-subscription-governance.ts");for(const token of["food_subscription_invoices","paid_invoiced","food_subscription_renewal_paid","food_subscription_renewal_invoice","food-subscription-paid:","food-subscription-invoice:","next_renewal_at","duplicatePayment"])assert.equal(source.includes(token),true,token)});
 
-test("Food renewal invoice keeps tax and production boundaries explicit",async()=>{const source=await read("lib/food-subscription-governance.ts");for(const token of["tax_rule_status","configuration_required","uat_renewal_invoice","productionTaxInvoice:false","deliveryOrderGeneration:\"governed_separate_step\""])assert.equal(source.includes(token),true,token)});
+test("Food renewal invoice keeps tax and production boundaries explicit",async()=>{const source=await read("lib/food-subscription-governance.ts");for(const token of["tax_rule_status","configuration_required","uat_renewal_invoice","productionTaxInvoice:false","deliveryOrderGeneration:\"canonical_reserved_prepaid\""])assert.equal(source.includes(token),true,token)});
 
 test("Food subscription API separates customer controls from Finance automation/payment authority",async()=>{const source=await read("app/api/food-subscriptions/route.ts");for(const token of["scheduling.book","finance.manage","process_due","record_payment","requireCustomerOwnership","securityAudit"])assert.equal(source.includes(token),true,token)});
 

@@ -5,6 +5,7 @@ type SessionAccess={actor:{email:string;roleCode:string;permissions:string[];pre
 type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:string};
 
 async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
+  if(url.pathname==="/api/customer-checkout"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/provider-chat"&&method==="GET")return{permission:"communications.message",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/provider-chat"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"communications.message",subjectType:"provider",subjectId:String(body.providerId||"")};}

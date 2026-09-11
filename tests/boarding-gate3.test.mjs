@@ -202,7 +202,53 @@ test("Boarding Gate 3 refund ledger is sandbox-only and refuses a reused referen
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Boarding Gate 3 host settlement waits for checkout and invents neither payout nor tax", async () => {
+test("Boarding Gate 3 date change preserves the booking and charges no reschedule fee when the server price is unchanged", async () => {
+  const world = await financeWorld({ amount: 499, amountDueNow: 499 });
+  const requestedStart = new Date(Date.now() + 72 * 3_600_000).toISOString();
+  const requestedEnd = new Date(Date.now() + 76 * 3_600_000).toISOString();
+  const before = await world.db.prepare("SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+
+  const requested = await world.act("request_date_change", {
+    reason: "customer needs a later stay window", requestedStart, requestedEnd,
+  });
+  assert.equal(requested.status, "commercial_quote_required");
+  assert.equal(requested.stayWindowUnchanged, true);
+  const parked = await world.db.prepare("SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  assert.deepEqual(parked, before, "requesting a new date cannot mutate the paid booking before server pricing and capacity checks");
+
+  const governance = await import("../lib/boarding-governance.ts");
+  const quote = await governance.createBoardingQuote(world.db, {
+    packageCode: "boarding-4h", petCount: 1, scheduledStart: requestedStart, scheduledEnd: requestedEnd,
+    paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east",
+  });
+  assert.equal(quote.totalAmount, 499, "same governed package/window must not invent a repricing surcharge");
+
+  const applied = await world.act("apply_date_change", {
+    actorId: CHECKER, quoteId: quote.quoteId, reason: "server quote and capacity verified",
+  });
+  assert.equal(applied.status, "date_changed");
+  assert.equal(applied.bookingId, world.bookingId, "date change keeps the same canonical booking identity");
+  assert.equal(applied.amountDelta, 0, "founder policy: no reschedule fee is added to an unchanged server price");
+
+  const booking = await world.db.prepare("SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
+  assert.equal(booking.scheduled_start, requestedStart);
+  assert.equal(booking.scheduled_end, requestedEnd);
+  assert.equal(Number(booking.total_amount), 499);
+  const payment = await world.db.prepare("SELECT id,amount,amount_due_now FROM booking_payments WHERE booking_id=?").bind(world.bookingId).first();
+  assert.equal(payment.id, `PAY-${world.bookingId}`, "reschedule cannot replace the booking/payment identity");
+  assert.equal(Number(payment.amount), 499);
+  assert.equal(Number(payment.amount_due_now), 499);
+  const change = await world.db.prepare("SELECT status,amount_delta,payment_adjustment_reference FROM boarding_date_change_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(world.bookingId).first();
+  assert.equal(change.status, "applied");
+  assert.equal(Number(change.amount_delta), 0);
+  assert.equal(change.payment_adjustment_reference, null, "zero-delta reschedule needs no extra payment reference or fee");
+  const reservation = await world.db.prepare("SELECT scheduled_start,scheduled_end FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(world.groupId).first();
+  assert.equal(reservation.scheduled_start, requestedStart);
+  assert.equal(reservation.scheduled_end, requestedEnd);
+});
+
+// ---------------------------------------------------------------------------------------------
+test("Boarding Gate 3 host settlement waits for checkout and projects canonical completion finance with the 5-day SLA", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
 
   const early = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
@@ -212,25 +258,29 @@ test("Boarding Gate 3 host settlement waits for checkout and invents neither pay
   const rows = await world.db.prepare("SELECT COUNT(*) n FROM boarding_host_settlement_ledger WHERE booking_id=?").bind(world.bookingId).all();
   assert.equal(Number(rows.results[0].n), 0, "a refused settlement writes no ledger row");
 
-  // Drive the stay to a real checkout, then settle.
+  // A status-only completion is insufficient: Boarding settlement must be sourced from the canonical
+  // payout computation + posted provider-payable journal created by service completion.
   await world.db.prepare("UPDATE boarding_stays SET status='completed',check_out_status='complete' WHERE id=?").bind(world.stayId).run();
   await world.db.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").bind(world.bookingId).run();
+  const unresolved = await refusal(world.act("prepare_settlement", { actorId: CHECKER }));
+  assert.equal(unresolved?.status, 409);
+  assert.match(unresolved.message, /completion finance must be resolved/i);
+
+  const resolvedAt = Date.now();
+  await world.db.exec("CREATE TABLE provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT,service_code TEXT,provider_net_payout REAL,breakdown_json TEXT,computed_at INTEGER); CREATE TABLE finance_journal_entries (id TEXT PRIMARY KEY,source_type TEXT,source_id TEXT,account_code TEXT,debit REAL,credit REAL,posted INTEGER,created_at INTEGER)");
+  await world.db.prepare("INSERT INTO provider_payout_computations VALUES (?,?, 'boarding',1400,'{}',?)").bind(world.bookingId, world.providerId, resolvedAt).run();
+  await world.db.prepare("INSERT INTO finance_journal_entries VALUES ('J-BRD-PAY','service_completion',?,'2110-Provider Payable',0,1380,1,?)").bind(world.bookingId, resolvedAt).run();
 
   const prepared = await world.act("prepare_settlement", { actorId: CHECKER });
   assert.ok(prepared);
   const settlement = await world.db.prepare("SELECT * FROM boarding_host_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
-  // Every one of these is a refusal to guess. A payout rule, a tax status and an approval that say
-  // anything else are money moving on an assumption.
-  //
-  // TWO EQUIVALENT MUTATIONS, recorded rather than chased. Changing the DDL DEFAULTs for
-  // payout_rule_status and tax_status survives, because the INSERT always names both columns
-  // explicitly — the defaults are unreachable. Changing the INSERT's values instead turns this test
-  // red, which is checked: 'ready' payout rule, 'gst_18' tax, 'ready' approval and 'instructed'
-  // payout each fail here. The assertion is on the row that is actually written.
-  assert.equal(settlement.payout_rule_status, "rule_pending");
-  assert.equal(settlement.tax_status, "configuration_required");
-  assert.equal(settlement.approval_status, "not_ready");
-  assert.equal(settlement.payout_status, "not_instructed");
+  assert.equal(Number(settlement.base_payout), 1400);
+  assert.equal(Number(settlement.payout_amount), 1380, "the settlement amount is the posted canonical provider payable after statutory withholding");
+  assert.equal(settlement.payout_rule_status, "rule_applied");
+  assert.equal(settlement.tax_status, "resolved");
+  assert.equal(settlement.approval_status, "awaiting_finance_approval");
+  assert.equal(settlement.payout_status, "not_instructed", "projection must not bypass Finance approval");
+  assert.equal(Number(settlement.eligible_at), resolvedAt + 5 * 24 * 60 * 60 * 1000, "host payout is eligible exactly five days after canonical completion finance");
 });
 
 // ---------------------------------------------------------------------------------------------

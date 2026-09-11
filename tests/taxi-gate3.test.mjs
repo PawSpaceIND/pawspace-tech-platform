@@ -75,6 +75,14 @@ async function financeWorld({ bookingStatus = "confirmed", tripStatus = "schedul
   return { sqlite, db, ...seeded };
 }
 
+function seedCanonicalCompletionFinance(sqlite, world, { providerNetPayout = 314.30, providerPayable = 310.00, resolvedAt = Date.now() - 6 * 24 * 60 * 60 * 1000 } = {}) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,provider_net_payout REAL NOT NULL,computed_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_journal_entries (id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,account_code TEXT NOT NULL,debit REAL NOT NULL DEFAULT 0,credit REAL NOT NULL DEFAULT 0,posted INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO provider_payout_computations (booking_id,provider_id,service_code,provider_net_payout,computed_at) VALUES (?,?,?,?,?)").run(world.bookingId, world.providerId, "pet_taxi", providerNetPayout, resolvedAt);
+  sqlite.prepare("INSERT OR REPLACE INTO finance_journal_entries (id,source_type,source_id,account_code,debit,credit,posted,created_at) VALUES (?,?,?,?,0,?,1,?)").run(`JE-${world.bookingId}`, "service_completion", world.bookingId, "2110-Provider Payable", providerPayable, resolvedAt);
+  return { providerNetPayout, providerPayable, resolvedAt };
+}
+
 /** Drive mutateTaxiFinance directly, with a fresh idempotency key unless one is given. */
 const act = (db, bookingId, action, extra = {}) =>
   finance.mutateTaxiFinance(db, { bookingId, action, actorId: extra.actorId ?? FINANCE_MAKER, idempotencyKey: extra.key ?? nextKey(action), ...extra });
@@ -276,38 +284,55 @@ test("Gate 3: the refund ledger is sandbox-only and replay resistant", async () 
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Gate 3: settlement waits for a completed, paid trip and invents no payout or tax", async () => {
-  // NOT completed: settlement is refused.
+test("Gate 3: settlement waits for completed payment and projects canonical completion finance", async () => {
   const open = await financeWorld({ paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-5" } });
   assert.equal((await refusal(act(open.db, open.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "early settlement" })))?.status, 409);
   assert.equal(open.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger").get().c, 0);
 
-  // Completed but UNPAID: still refused. A driver is not settled out of money nobody collected.
   const unpaid = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "due" } });
   assert.equal((await refusal(act(unpaid.db, unpaid.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "settle now" })))?.status, 409);
-  assert.equal(unpaid.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger").get().c, 0);
 
-  // Completed AND paid: readiness is prepared, and every unconfigured field says so rather than
-  // guessing a number.
+  const missing = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-MISSING", amount: 449 } });
+  assert.equal((await refusal(act(missing.db, missing.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "canonical finance required" })))?.status, 409);
+
   const world = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-6", amount: 449 } });
-  const prepared = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "trip completed and paid" });
-  assert.deepEqual(prepared, {
-    bookingId: world.bookingId, status: "not_ready", grossPaidValue: 449,
-    payoutRule: "rule_pending", tax: "configuration_required", payout: "not_instructed",
-  });
+  const canonical = seedCanonicalCompletionFinance(world.sqlite, world);
+  const key = nextKey("SETTLE");
+  const prepared = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, key, reason: "trip completed and paid" });
+  assert.equal(prepared.status, "settlement_prepared");
+  assert.equal(prepared.payoutAmount, canonical.providerPayable);
+  assert.equal(prepared.basePayout, canonical.providerNetPayout);
+  assert.equal(prepared.payoutRule, "rule_applied");
+  assert.equal(prepared.tax, "resolved");
+  assert.equal(prepared.approvalStatus, "awaiting_finance_approval");
+  assert.equal(prepared.payoutStatus, "not_instructed");
+  assert.equal(prepared.payoutSlaDays, 5);
   const ledger = world.sqlite.prepare("SELECT * FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId);
-  assert.equal(String(ledger.provider_id), world.providerId);
-  assert.equal(Number(ledger.gross_paid_value), 449);
-  // NOT A SINGLE payout number is invented: base, allowance, incentives, penalties and the total are
-  // all null, and the statuses name what is missing.
-  assert.deepEqual([ledger.base_payout, ledger.travel_allowance, ledger.incentives, ledger.penalties, ledger.payout_amount], [null, null, null, null, null]);
-  assert.deepEqual({ rule: String(ledger.payout_rule_status), tax: String(ledger.tax_status), approval: String(ledger.approval_status), payout: String(ledger.payout_status) },
-    { rule: "rule_pending", tax: "configuration_required", approval: "not_ready", payout: "not_instructed" });
-  assert.ok(Number(ledger.eligible_at) > 0, "and the trip is recorded as eligible from now");
+  assert.equal(Number(ledger.payout_amount), canonical.providerPayable);
+  assert.equal(Number(ledger.base_payout), canonical.providerNetPayout);
+  assert.equal(Number(ledger.eligible_at), canonical.resolvedAt + 5 * 24 * 60 * 60 * 1000);
+  assert.deepEqual({ rule: ledger.payout_rule_status, tax: ledger.tax_status, approval: ledger.approval_status, payout: ledger.payout_status }, { rule: "rule_applied", tax: "resolved", approval: "awaiting_finance_approval", payout: "not_instructed" });
 
-  // Preparing again refreshes the same row rather than creating a second settlement.
-  await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "re-prepared after a correction" });
+  const replay = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, key, reason: "trip completed and paid" });
+  assert.equal(replay.duplicatePrevented, true);
   assert.equal(Number(world.sqlite.prepare("SELECT COUNT(*) c FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId).c), 1);
+
+  const tooEarlyWorld = await financeWorld({ bookingStatus: "completed", tripStatus: "completed", paymentEvent: { status: "sandbox_paid", reference: "SBX-PAID-EARLY", amount: 449 } });
+  seedCanonicalCompletionFinance(tooEarlyWorld.sqlite, tooEarlyWorld, { resolvedAt: Date.now() });
+  await act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "prepare early" });
+  const tooEarly = await refusal(act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" }));
+  assert.equal(tooEarly?.status, 409);
+  assert.match(tooEarly.message, /5-day payout policy/i);
+
+  const approved = await act(world.db, world.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" });
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.payoutAmount, canonical.providerPayable);
+  assert.equal(approved.payoutStatus, "not_instructed");
+  assert.equal(approved.liveMoney, false);
+  const approvedRow = world.sqlite.prepare("SELECT approval_status,approved_by,payout_status,payout_amount FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId);
+  assert.equal(approvedRow.approval_status, "approved");
+  assert.equal(approvedRow.approved_by, FINANCE_CHECKER);
+  assert.equal(approvedRow.payout_status, "not_instructed");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -327,13 +352,15 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   // PAID: the unpaid total clears, but tax is still unconfigured so attention stands. Fail-closed
   // reporting: "balanced" must not be reachable while a statutory field is unresolved.
   await act(db, bookingId, "record_trip_payment", { actorId: FINANCE_CHECKER, reason: "collected", paymentReference: "SBX-PAY-R1" });
+  seedCanonicalCompletionFinance(sqlite, world);
   await act(db, bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "completed and paid" });
+  await act(db, bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" });
   const paid = await act(db, bookingId, "reconcile", { actorId: FINANCE_CHECKER, reason: "after payment" });
   assert.deepEqual({ paid: paid.paidTotal, unpaid: paid.unpaidTripTotal, refund: paid.refundTotal, net: paid.netPaidTotal },
     { paid: 449, unpaid: 0, refund: 0, net: 449 });
-  assert.equal(paid.settlementState, "not_ready");
-  assert.equal(paid.taxState, "configuration_required");
-  assert.equal(paid.status, "attention_required", "an unconfigured tax status is never reported as balanced");
+  assert.equal(paid.settlementState, "approved");
+  assert.equal(paid.taxState, "resolved");
+  assert.equal(paid.status, "balanced", "approved canonical settlement reconciles cleanly");
 
   // A recorded refund reduces the NET but not the paid total — both figures are kept. It has to be a
   // different booking: a refund requires a cancellation, and a completed booking cannot be cancelled.
@@ -346,9 +373,11 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   assert.equal(refunded.settlementState, "not_due", "a cancelled trip owes the driver nothing");
 
   // Each reconciliation is a new immutable row, so the history is auditable.
-  const rows = sqlite.prepare("SELECT paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at,id").all(bookingId);
+  const rows = sqlite.prepare("SELECT id,paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=?").all(bookingId);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((row) => Number(row.net_paid_total)), [0, 449]);
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  assert.equal(Number(byId.get(String(unpaid.reconciliationId))?.net_paid_total), 0, "the first reconciliation preserves the unpaid snapshot");
+  assert.equal(Number(byId.get(String(paid.reconciliationId))?.net_paid_total), 449, "the second reconciliation preserves the paid snapshot");
   assert.deepEqual([...new Set(rows.map((row) => String(row.checked_by)))], [FINANCE_CHECKER], "the checker recorded is the acting identity");
   assert.deepEqual(JSON.parse(String(sqlite.prepare("SELECT detail_json FROM taxi_finance_reconciliation WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").get(bookingId).detail_json)).productionPaymentTimingPolicy, "pending");
 });
@@ -375,7 +404,7 @@ test("Gate 3: the Finance API separates a customer request from Finance authorit
   assert.ok([401, 403].includes(intruder.status), `a stranger must be refused: ${JSON.stringify(intruder)}`);
 
   // EVERY money action is refused to the customer, and none of them writes anything.
-  for (const action of ["approve_cancel", "record_trip_payment", "record_refund", "prepare_settlement", "reconcile"]) {
+  for (const action of ["approve_cancel", "record_trip_payment", "record_refund", "prepare_settlement", "approve_settlement", "reconcile"]) {
     const attempt = await asCustomer(owner, { bookingId, action, idempotencyKey: nextKey("route"), reason: "trying to self-serve money", approvedRefundAmount: 449, paymentReference: "SBX-SELF", refundReference: "SBX-SELF" });
     assert.ok([401, 403].includes(attempt.status), `${action} must be Finance-only: ${JSON.stringify(attempt)}`);
   }
@@ -444,4 +473,42 @@ test("Gate 3: two Finance approvals of one cancellation produce exactly one refu
   const approvedAmount = Number(cancellationRow(sqlite, bookingId).approved_refund_amount);
   assert.equal(Number(refundRows(sqlite, bookingId)[0].amount), approvedAmount,
     "the refund on the ledger is the amount that was actually approved");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("Gate 3: Razorpay booking-fee and final-balance captures preserve Taxi schedule plus verified canonical timeline", async () => {
+  const { ensureFinancialRuntimeTables } = await import("../lib/financial-runtime-schema.ts");
+  const { commitRazorpayCaptureAtomic, executeRazorpayCapturePostCommit } = await import("../lib/razorpay-capture-atomic.ts");
+  const world = await financeWorld({ bookingStatus: "payment_pending", paymentEvent: null });
+  const { sqlite, db, bookingId, customerId } = world;
+  const now = Date.now(), paymentId = `PAY-${bookingId}`;
+  sqlite.prepare("UPDATE provider_work_orders SET status='payment_pending' WHERE booking_id=?").run(bookingId);
+  await ensureFinancialRuntimeTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_gateway_links (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,environment TEXT NOT NULL,gateway_order_id TEXT UNIQUE,gateway_payment_link_id TEXT UNIQUE,gateway_payment_id TEXT UNIQUE,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_gateway_events (id TEXT PRIMARY KEY,provider TEXT NOT NULL,environment TEXT NOT NULL,event_id TEXT NOT NULL,event_type TEXT NOT NULL,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,gateway_refund_id TEXT,amount_subunits INTEGER,currency TEXT,signature_verified INTEGER NOT NULL,payload_hash TEXT NOT NULL,processing_status TEXT NOT NULL DEFAULT 'received',failure_reason TEXT,detail_json TEXT NOT NULL DEFAULT '{}',received_at INTEGER NOT NULL,processed_at INTEGER,UNIQUE(provider,event_id))");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_reconciliation_records (payment_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,gateway TEXT NOT NULL,environment TEXT NOT NULL,expected_amount REAL NOT NULL,captured_amount REAL NOT NULL DEFAULT 0,refunded_amount REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL,gateway_status TEXT NOT NULL DEFAULT 'not_started',reconciliation_status TEXT NOT NULL DEFAULT 'pending',variance_amount REAL NOT NULL DEFAULT 0,last_event_id TEXT,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS taxi_payment_schedules (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,total_amount REAL NOT NULL,booking_fee_amount REAL NOT NULL,balance_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'booking_fee_pending',booking_fee_paid_at INTEGER,booking_fee_reference TEXT,final_paid_at INTEGER,final_payment_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,created_at,updated_at) VALUES (?,?,?,?,?,'booking_fee_pending',?,?)").run(bookingId, customerId, 449, 100, 349, now, now);
+  sqlite.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,status,created_at,updated_at) VALUES (?,?,?,'razorpay','sandbox','active',?,?)").run(`PGL-${bookingId}`, bookingId, paymentId, now, now);
+  const seedIntent = (id, amountPaise, orderId) => sqlite.prepare(`INSERT INTO payment_intents (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,gateway_order_id,gross_service_value_paise,platform_fee_paise,partner_earning_paise,tds_paise,gst_paise,commission_rate_bps,commission_rate_version,tax_rule_version,commercial_snapshot_json,version,created_at,updated_at) VALUES (?,?,?,?,'razorpay','sandbox',?,?,'INR','CREATED','ORDER_CREATED',?,0,0,0,0,0,0,'test','test','{}',0,?,?)`).run(id, bookingId, customerId, paymentId, `idem-${id}`, amountPaise, orderId, now, now);
+  const seedInbox = (id, eventId) => sqlite.prepare("INSERT INTO gateway_webhook_events (id,provider,environment,event_id,event_type,raw_payload,payload_sha256,signature,processing_status,received_at) VALUES (?,'razorpay','sandbox',?,'payment.captured','{}',?,'test-signature','PROCESSING',?)").run(id, eventId, `hash-${eventId}`, Date.now());
+  const capture = async ({ intentId, inboxId, eventId, orderId, gatewayPaymentId, amountPaise }) => {
+    seedIntent(intentId, amountPaise, orderId); seedInbox(inboxId, eventId);
+    const committed = await commitRazorpayCaptureAtomic(db, { inboxId, eventId, environment: "sandbox", intentId, bookingId, paymentId, gatewayOrderId: orderId, gatewayPaymentId, amountPaise, currency: "INR", payloadHash: `hash-${eventId}` });
+    const effects = await executeRazorpayCapturePostCommit(db, { outboxId: committed.effectsOutboxId, workerId: `taxi-g3-${eventId}` });
+    assert.equal(effects.completed, true); return committed;
+  };
+  const fee = await capture({ intentId: "PI-TAXI-FEE", inboxId: "IN-TAXI-FEE", eventId: "evt_taxi_fee", orderId: "order_taxi_fee", gatewayPaymentId: "pay_taxi_fee", amountPaise: 10000 });
+  assert.equal(fee.collectedInFull, false);
+  let schedule = sqlite.prepare("SELECT * FROM taxi_payment_schedules WHERE booking_id=?").get(bookingId);
+  assert.deepEqual({ status: schedule.status, ref: schedule.booking_fee_reference }, { status: "pending_balance", ref: "pay_taxi_fee" });
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(bookingId).status, "confirmed");
+  assert.equal(sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id=?").get(bookingId).status, "assigned");
+  const balance = await capture({ intentId: "PI-TAXI-BAL", inboxId: "IN-TAXI-BAL", eventId: "evt_taxi_balance", orderId: "order_taxi_balance", gatewayPaymentId: "pay_taxi_balance", amountPaise: 34900 });
+  assert.equal(balance.collectedInFull, true);
+  schedule = sqlite.prepare("SELECT * FROM taxi_payment_schedules WHERE booking_id=?").get(bookingId);
+  assert.deepEqual({ status: schedule.status, ref: schedule.final_payment_reference }, { status: "paid", ref: "pay_taxi_balance" });
+  assert.equal(sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).captured_amount, 449);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id=? AND event_type='payment_captured'").get(bookingId).n, 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get().n, 2);
 });

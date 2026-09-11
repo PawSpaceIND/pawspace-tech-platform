@@ -237,3 +237,30 @@ export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId
     return { connected: false, environment, reason: `Razorpay sandbox payment-link request failed: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
+
+export type OrderPaymentsResult =
+  | { connected: true; environment: PaymentEnvironment; payments: Record<string, unknown>[] }
+  | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
+
+/** Server-authoritative read used only to reconcile a capture when the provider webhook is delayed/missing. */
+export async function fetchPaymentOrderPayments(env: RazorEnv, input: { orderId: string }): Promise<OrderPaymentsResult> {
+  const resolved = resolveCredentials(env);
+  if (!resolved.declared) return { connected: false, environment: "unconfigured", reason: resolved.reason };
+  const { environment, keyId, keySecret } = resolved;
+  if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") return { connected: false, environment, reason: "Live Razorpay payment reconciliation is not approved" };
+  if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured for capture reconciliation` };
+  const orderId = String(input.orderId || "").trim();
+  if (!/^order_[A-Za-z0-9_]{1,100}$/.test(orderId)) return { connected: false, environment, reason: "A valid Razorpay order id is required for capture reconciliation" };
+  try {
+    const { response, body } = await providerRequest(env, environment, `/v1/orders/${encodeURIComponent(orderId)}/payments`, {
+      method: "GET",
+      headers: { authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`, accept: "application/json" },
+    });
+    if (!response.ok) return { connected: false, environment, reason: `Razorpay ${environment} order-payment read failed (${response.status}): ${String((body.error as Record<string, unknown> | undefined)?.description || "request failed")}` };
+    if (!Array.isArray(body.items)) return { connected: false, environment, reason: "Razorpay order-payment response has no items collection" };
+    const payments = body.items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+    return { connected: true, environment, payments };
+  } catch (error) {
+    return { connected: false, environment, reason: `Razorpay order-payment read failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}

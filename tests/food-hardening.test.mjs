@@ -419,6 +419,20 @@ test("real execution: renewal generates a payment LINK (no auto-charge), payment
   assert.equal(paid.body.data.amount, 998);
   assert.equal(paid.body.data.nextRenewalAt, firstDue + 14 * DAY, "next delivery = previous due + interval");
   assert.ok(paid.body.data.invoiceNumber);
+  assert.ok(paid.body.data.deliveryOrderId, "paid renewal creates a canonical delivery order");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_orders").get().n, 2, "source + exactly one renewal order");
+  const renewalPayment = sqlite.prepare("SELECT status,detail_json FROM food_order_payments WHERE order_id=?").get(paid.body.data.deliveryOrderId);
+  assert.equal(renewalPayment.status, "paid", "renewal order is prepaid, not deferred again");
+  assert.equal(JSON.parse(renewalPayment.detail_json).source, "food_subscription_renewal");
+  assert.equal(sqlite.prepare("SELECT status FROM food_inventory_reservations WHERE order_id=?").get(paid.body.data.deliveryOrderId).status, "reserved");
+  const paidReplay = await call(subscriptionsRoute.POST, "POST", { action: "record_payment", renewalId: renewal.renewalId, paymentReference: "UATREF-9001" });
+  assert.equal(paidReplay.body.data.deliveryOrderId, paid.body.data.deliveryOrderId);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_orders").get().n, 2, "payment replay does not create a second renewal order");
+  for (const [action, extra] of [["accept_order", {}],["pick_order", { lotId: "FLOT-CAT-A-01" }],["pack_order", {}],["dispatch_order", { dispatchReference: "UAT-RENEWAL-DELIVERY" }],["confirm_delivery", { handoverMethod: "customer" }]]) {
+    const deliveredRenewal = await fulfil(paid.body.data.deliveryOrderId, action, extra);
+    assert.equal(deliveredRenewal.status, 200, `${action}: ${JSON.stringify(deliveredRenewal.body)}`);
+  }
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_order_payment_events WHERE order_id=?").get(paid.body.data.deliveryOrderId).n, 0, "prepaid renewal delivery never creates a second payment due");
   // Pause stops the engine; cancel is terminal
   const paused = await call(subscriptionsRoute.POST, "POST", { action: "pause", subscriptionId, reason: "travelling this month" });
   assert.equal(String(paused.body.data.subscription.status), "paused");

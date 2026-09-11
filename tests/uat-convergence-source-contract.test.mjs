@@ -92,3 +92,12 @@ test("UAT convergence: completion finance is balanced and place-of-supply aware"
   assert.match(tcs,/supplyType/);
   assert.match(tcs,/igst/);
 });
+
+test("UAT convergence: hardened multi-actor runner isolates built-worker transactions",()=>{
+  const runner=read("scripts/e2e/run-hardened.sh");
+  assert.match(runner,/for assignment_mode in auto admin_choice/);
+  assert.match(runner,/start_server[\s\S]*--grep="correlated journey\.\*\$\{assignment_mode\}"/);
+  assert.match(runner,/test-results\/\$\(basename .*\)\/\$project\/\$assignment_mode/);
+  assert.match(runner,/stop_server[\s\S]*done[\s\S]*continue/);
+  assert.doesNotMatch(runner,/04-multi-actor[^\n]*--retries/);
+});

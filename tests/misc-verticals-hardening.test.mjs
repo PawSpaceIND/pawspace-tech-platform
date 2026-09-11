@@ -167,10 +167,10 @@ test("review config is maker/checker gated and drives the request cadence", asyn
   await assert.rejects(() => config.approveReviewConfig(db, { id: draft.id, approvalReference: "  ", actor: OPS_TWO }), /approval reference is required/);
   await config.approveReviewConfig(db, { id: draft.id, approvalReference: "OPS-2026-07", actor: OPS_TWO });
 
-  // Without an active config for a service, nothing is requested (rather than a guessed default).
+  // Every completed service gets the five-question default even before a service-specific config exists.
   const none = await reviews.requestServiceReview(db, { bookingId: "BK-NOCFG", serviceCode: "pet_taxi", customerId: "CUS-1" });
-  assert.equal(none.requested, false);
-  assert.equal(none.reason, "no_active_review_config");
+  assert.equal(none.requested, true);
+  assert.equal(none.questions.length, 5);
 
   const first = await reviews.requestServiceReview(db, { bookingId: "BK-G1", serviceCode: "grooming", customerId: "CUS-1" });
   assert.equal(first.requested, true);
@@ -189,104 +189,46 @@ test("review config is maker/checker gated and drives the request cadence", asyn
   assert.equal(sixth.sequence, 2, "the same training booking asks again at the next cadence point");
 });
 
-test("review submission is owner-only, single-shot, and only 5 stars offers the public-review reward", async () => {
+test("five-question feedback is owner-only, single-shot, and rewards completion independent of score", async () => {
   const { sqlite, db, reviews, activate } = await reviewWorld();
   booking(sqlite, "BK-R1", "CUS-1", "grooming");
   booking(sqlite, "BK-R2", "CUS-1", "grooming");
-  await activate({ serviceCode: "grooming", questions: [{ text: "How was the groomer?" }, { text: "Was the pet comfortable?" }], triggerType: "every_service", channels: ["notification"] });
+  await activate({ serviceCode: "grooming", questions: [{ id:"custom", text: "How was the groomer?" }], triggerType: "every_service", channels: ["notification"], publicReviewDestination:"google" });
   const request = await reviews.requestServiceReview(db, { bookingId: "BK-R1", serviceCode: "grooming", customerId: "CUS-1" });
-
-  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-OTHER", stars: 5 }), /only submit your own review/);
-  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-1", stars: 6 }), /whole number from 1 to 5/);
-  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-1", stars: 4.5 }), /whole number from 1 to 5/);
-
-  const threeStar = await reviews.requestServiceReview(db, { bookingId: "BK-R2", serviceCode: "grooming", customerId: "CUS-1" });
-  const low = await reviews.submitServiceReview(db, { requestId: threeStar.requestId, customerId: "CUS-1", stars: 3, answers: { comment: "Late arrival" } });
-  assert.equal(low.fiveStar, false);
-  assert.ok(!("publicReviewRewardAvailable" in low), "a 3-star review is not asked to post publicly");
-
-  const high = await reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-1", stars: 5 });
-  assert.equal(high.fiveStar, true);
-  assert.equal(high.publicReviewRewardAvailable, true);
-  assert.ok(high.googleReviewLink.startsWith("https://"));
-  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-1", stars: 5 }), /already been submitted/);
+  const five=(req,value)=>Object.fromEntries(req.questions.map(q=>[q.id,value]));
+  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-OTHER", answers:five(request,5) }), /only submit your own review/);
+  await assert.rejects(() => reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-1", answers:{...five(request,5),[request.questions[0].id]:6} }), /all five/);
+  const request2=await reviews.requestServiceReview(db,{bookingId:"BK-R2",serviceCode:"grooming",customerId:"CUS-1"});
+  const low=await reviews.submitServiceReview(db,{requestId:request2.requestId,customerId:"CUS-1",answers:five(request2,3)});
+  assert.equal(low.average,3);assert.equal(low.feedbackReward.discount,500);assert.equal(low.feedbackReward.scope,"any");assert.equal(low.publicReviewPrompt.eligible,true);
+  const high=await reviews.submitServiceReview(db,{requestId:request.requestId,customerId:"CUS-1",answers:five(request,5)});
+  assert.equal(high.average,5);assert.equal(high.feedbackReward.discount,500);assert.equal(high.publicReviewPrompt.destination,"google");
+  await assert.rejects(()=>reviews.submitServiceReview(db,{requestId:request.requestId,customerId:"CUS-1",answers:five(request,5)}),/already been submitted/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM review_reward_codes WHERE customer_id='CUS-1' AND reward_kind='feedback_completion'").get().c,2);
 });
 
-test("public-review rewards: Rs.250 for one platform, Rs.400 grooming-only for both, single-use", async () => {
-  const { sqlite, db, reviews, activate } = await reviewWorld();
-  await activate({ serviceCode: "grooming", questions: [{ text: "How was the groomer?" }], triggerType: "every_service", channels: ["notification"] });
-  booking(sqlite, "BK-CLAIM", "CUS-1", "grooming");
-  booking(sqlite, "BK-BOARD", "CUS-1", "boarding");
-  booking(sqlite, "BK-STRANGER", "CUS-OTHER", "grooming");
-
-  await assert.rejects(() => reviews.claimPublicReview(db, { bookingId: "BK-STRANGER", customerId: "CUS-1", platform: "google", actorId: "CUS-1" }), /your own order/);
-  await assert.rejects(() => reviews.claimPublicReview(db, { bookingId: "BK-CLAIM", customerId: "CUS-1", platform: "instagram", actorId: "CUS-1" }), /'google' or 'app'/);
-
-  const google = await reviews.claimPublicReview(db, { bookingId: "BK-CLAIM", customerId: "CUS-1", platform: "google", actorId: "CUS-1" });
-  assert.equal(google.reward.discount, 250);
-  assert.equal(google.reward.scope, "any");
-  assert.equal(google.verification, "self_declared", "we cannot verify a Google review without their API, and say so");
-
-  const app = await reviews.claimPublicReview(db, { bookingId: "BK-CLAIM", customerId: "CUS-1", platform: "app", actorId: "CUS-1" });
-  assert.equal(app.claimNumber, 2);
-  assert.equal(app.reward.discount, 400);
-  assert.equal(app.reward.scope, "grooming");
-
-  await assert.rejects(() => reviews.claimPublicReview(db, { bookingId: "BK-CLAIM", customerId: "CUS-1", platform: "google", actorId: "CUS-1" }), /already claimed/);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM review_reward_codes WHERE customer_id='CUS-1'").get().c, 2, "a rejected re-claim issues no extra reward");
-
-  // The Rs.400 reward is grooming-only; the Rs.250 one works anywhere.
-  await assert.rejects(() => reviews.redeemReviewReward(db, { code: app.reward.code, customerId: "CUS-1", bookingId: "BK-BOARD", actorId: "CUS-1" }), /valid on grooming only/);
-  await assert.rejects(() => reviews.redeemReviewReward(db, { code: google.reward.code, customerId: "CUS-OTHER", bookingId: "BK-STRANGER", actorId: "CUS-OTHER" }), /belongs to another account/);
-  const redeemed = await reviews.redeemReviewReward(db, { code: google.reward.code, customerId: "CUS-1", bookingId: "BK-BOARD", actorId: "CUS-1" });
-  assert.equal(redeemed.discountApplied, 250);
-  assert.equal(redeemed.duplicatePrevented, false);
-  await assert.rejects(() => reviews.redeemReviewReward(db, { code: google.reward.code, customerId: "CUS-1", bookingId: "BK-BOARD", actorId: "CUS-1" }), /already been used/);
-
-  const remaining = await reviews.listReviewRewards(db, "CUS-1");
-  assert.deepEqual(remaining.map((row) => row.discount), [400], "only the unspent reward is still offered");
+test("public reviews are recorded but never issue coupons, discounts or service rewards",async()=>{
+  const{sqlite,db,reviews}=await reviewWorld();booking(sqlite,"BK-CLAIM","CUS-1","grooming");booking(sqlite,"BK-STRANGER","CUS-OTHER","grooming");
+  await assert.rejects(()=>reviews.claimPublicReview(db,{bookingId:"BK-STRANGER",customerId:"CUS-1",platform:"google",actorId:"CUS-1"}),/your own order/);
+  await assert.rejects(()=>reviews.claimPublicReview(db,{bookingId:"BK-CLAIM",customerId:"CUS-1",platform:"instagram",actorId:"CUS-1"}),/'google' or 'app'/);
+  const google=await reviews.claimPublicReview(db,{bookingId:"BK-CLAIM",customerId:"CUS-1",platform:"google",actorId:"CUS-1"});
+  assert.equal(google.recorded,true);assert.equal(google.reward,null);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM review_reward_codes").get().c,0,"public-review posting creates no financial incentive");
+  await assert.rejects(()=>reviews.claimPublicReview(db,{bookingId:"BK-CLAIM",customerId:"CUS-1",platform:"google",actorId:"CUS-1"}),/already recorded/);
 });
 
-test("a review reward cannot be spent twice by two concurrent redemptions", async () => {
-  const { sqlite, db, reviews, activate } = await reviewWorld();
-  await activate({ serviceCode: "grooming", questions: [{ text: "How was the groomer?" }], triggerType: "every_service", channels: ["notification"] });
-  booking(sqlite, "BK-RACE", "CUS-R", "grooming");
-  booking(sqlite, "BK-RACE-A", "CUS-R", "grooming");
-  booking(sqlite, "BK-RACE-B", "CUS-R", "grooming");
-  const claim = await reviews.claimPublicReview(db, { bookingId: "BK-RACE", customerId: "CUS-R", platform: "google", actorId: "CUS-R" });
-  const results = await Promise.allSettled([
-    reviews.redeemReviewReward(db, { code: claim.reward.code, customerId: "CUS-R", bookingId: "BK-RACE-A", actorId: "CUS-R" }),
-    reviews.redeemReviewReward(db, { code: claim.reward.code, customerId: "CUS-R", bookingId: "BK-RACE-B", actorId: "CUS-R" }),
-  ]);
-  const applied = results.filter((r) => r.status === "fulfilled" && r.value.duplicatePrevented === false);
-  assert.equal(applied.length, 1, "only one booking gets the discount");
-  const row = sqlite.prepare("SELECT status,redeemed_booking_id FROM review_reward_codes WHERE code=?").get(claim.reward.code);
-  assert.equal(row.status, "redeemed");
-  assert.ok(["BK-RACE-A", "BK-RACE-B"].includes(row.redeemed_booking_id));
+test("the Rs.500 feedback master reward is customer-owned, any-service and single-use under concurrency",async()=>{
+  const{sqlite,db,reviews}=await reviewWorld();booking(sqlite,"BK-FB","CUS-R","grooming");booking(sqlite,"BK-A","CUS-R","boarding");booking(sqlite,"BK-B","CUS-R","pet_sitting");booking(sqlite,"BK-X","CUS-X","grooming");
+  const req=await reviews.requestServiceReview(db,{bookingId:"BK-FB",serviceCode:"grooming",customerId:"CUS-R"}),answers=Object.fromEntries(req.questions.map(q=>[q.id,4]));
+  const done=await reviews.submitServiceReview(db,{requestId:req.requestId,customerId:"CUS-R",answers}),code=done.feedbackReward.code;
+  await assert.rejects(()=>reviews.redeemReviewReward(db,{code,customerId:"CUS-X",bookingId:"BK-X",actorId:"CUS-X"}),/belongs to another account/);
+  const results=await Promise.allSettled([reviews.redeemReviewReward(db,{code,customerId:"CUS-R",bookingId:"BK-A",actorId:"CUS-R"}),reviews.redeemReviewReward(db,{code,customerId:"CUS-R",bookingId:"BK-B",actorId:"CUS-R"})]);
+  assert.equal(results.filter(r=>r.status==="fulfilled"&&r.value.duplicatePrevented===false).length,1);
+  const row=sqlite.prepare("SELECT status,redeemed_booking_id,discount_amount,service_scope FROM review_reward_codes WHERE code=?").get(code);assert.equal(row.status,"redeemed");assert.equal(row.discount_amount,500);assert.equal(row.service_scope,"any");assert.ok(["BK-A","BK-B"].includes(row.redeemed_booking_id));
 });
 
-test("rejecting a self-declared review claim voids its unspent reward", async () => {
-  const { sqlite, db, reviews, activate } = await reviewWorld();
-  await activate({ serviceCode: "grooming", questions: [{ text: "How was the groomer?" }], triggerType: "every_service", channels: ["notification"] });
-  booking(sqlite, "BK-FAKE", "CUS-F", "grooming");
-  booking(sqlite, "BK-FAKE-USE", "CUS-F", "grooming");
-  const claim = await reviews.claimPublicReview(db, { bookingId: "BK-FAKE", customerId: "CUS-F", platform: "google", actorId: "CUS-F" });
-  const claimId = sqlite.prepare("SELECT id FROM review_public_claims WHERE booking_id='BK-FAKE'").get().id;
-
-  const rejected = await reviews.verifyPublicReview(db, { claimId, actor: OPS, verified: false });
-  assert.equal(rejected.verificationStatus, "rejected");
-  assert.equal(rejected.rewardVoided, true, "a claim staff found to be false must not keep buying a discount");
-  await assert.rejects(() => reviews.redeemReviewReward(db, { code: claim.reward.code, customerId: "CUS-F", bookingId: "BK-FAKE-USE", actorId: "CUS-F" }), /already been used/);
-
-  // A verified claim keeps its reward.
-  booking(sqlite, "BK-REAL", "CUS-F", "grooming");
-  const good = await reviews.claimPublicReview(db, { bookingId: "BK-REAL", customerId: "CUS-F", platform: "google", actorId: "CUS-F" });
-  const goodId = sqlite.prepare("SELECT id FROM review_public_claims WHERE booking_id='BK-REAL'").get().id;
-  const verified = await reviews.verifyPublicReview(db, { claimId: goodId, actor: OPS, verified: true });
-  assert.equal(verified.verificationStatus, "verified");
-  assert.equal(verified.rewardVoided, false);
-  const redeemed = await reviews.redeemReviewReward(db, { code: good.reward.code, customerId: "CUS-F", bookingId: "BK-FAKE-USE", actorId: "CUS-F" });
-  assert.equal(redeemed.discountApplied, 250);
+test("public-review verification changes audit status only and never creates or voids money",async()=>{
+ const{sqlite,db,reviews}=await reviewWorld();booking(sqlite,"BK-PUB","CUS-P","grooming");await reviews.claimPublicReview(db,{bookingId:"BK-PUB",customerId:"CUS-P",platform:"google",actorId:"CUS-P"});const claimId=sqlite.prepare("SELECT id FROM review_public_claims WHERE booking_id='BK-PUB'").get().id;const rejected=await reviews.verifyPublicReview(db,{claimId,actor:OPS,verified:false});assert.equal(rejected.verificationStatus,"rejected");assert.equal(rejected.rewardVoided,false);assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM review_reward_codes").get().c,0);
 });
 
 test("the review sweep only chases completed bookings of every-service verticals", async () => {
@@ -323,7 +265,7 @@ test("risk sweep flags reward farming from real claim history and never touches 
   // An honest customer: one claim, backed by a real 5-star review.
   booking(sqlite, "BK-HONEST", "CUS-HONEST", "grooming");
   const request = await reviews.requestServiceReview(db, { bookingId: "BK-HONEST", serviceCode: "grooming", customerId: "CUS-HONEST" });
-  await reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-HONEST", stars: 5 });
+  await reviews.submitServiceReview(db, { requestId: request.requestId, customerId: "CUS-HONEST", answers:Object.fromEntries(request.questions.map(q=>[q.id,5])) });
   await reviews.claimPublicReview(db, { bookingId: "BK-HONEST", customerId: "CUS-HONEST", platform: "google", actorId: "CUS-HONEST" });
 
   const sweep = await risk.runRiskAnomalySweep(db, { asOf: NOW });

@@ -7,7 +7,13 @@ import * as nodeModule from "node:module";
 // Two test-only resolve hooks so the REAL route/engine sources run unmodified in node:
 // 1. "cloudflare:workers" resolves to a stub whose env.DB reads the current per-test D1 shim.
 // 2. Extensionless relative imports fall back to .ts (Node's ESM loader vs the bundler).
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
+// This legacy executable route harness intentionally uses localhost preview authority. Production now
+// requires the full preview triple-gate, so declare the test process explicitly rather than relying on
+// hostname alone. The service-discovery fixture is independently sandbox-gated and keeps city/zone/
+// coordinates server-owned while avoiding an external geocoder in this scheduling-focused suite.
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';},get PAWSPACE_PAYMENT_ENV(){return 'sandbox';},get PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE(){return 'on';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -97,6 +103,7 @@ function seedCanonicalPets() {
 
 const routeModule = await import("../app/api/uat-scheduling/route.ts");
 const { schedule } = await import("../backend/src/scheduling.ts");
+const { writeServicePolicy } = await import("../lib/service-policy-domains.ts");
 
 async function post(body) {
   const response = await routeModule.POST(new Request("http://localhost/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
@@ -106,7 +113,7 @@ async function get(query) {
   const response = await routeModule.GET(new Request(`http://localhost/api/uat-scheduling?${query}`));
   return { status: response.status, body: await response.json() };
 }
-const reserve = (overrides) => ({ clientRequestId: overrides.clientRequestId, customerId: "cus_hardening", petIds: ["Bruno"], zoneId: "blr-east", ...overrides });
+const reserve = (overrides) => ({ clientRequestId: overrides.clientRequestId, customerId: "cus_hardening", petIds: ["Bruno"], zoneId: "blr-east", serviceAddress: "42, Indiranagar Double Road, Bengaluru", servicePincode: "560038", ...overrides });
 
 // ---- Engine real-execution (real schedule(), in-memory repository) ----------------------------
 
@@ -140,6 +147,13 @@ test("engine: preferredProviderId is a soft +20 — wins while eligible, falls b
   assert.equal(busy.provider?.id, "p96", "a busy preferred provider is skipped, not forced");
   const evaluation = busy.evaluations.find((e) => e.providerId === "p89");
   assert.equal(evaluation.eligible, false);
+});
+
+test("engine: strict selected-provider mode never silently substitutes a higher-scoring provider", async () => {
+  const providers = [mkProvider("selected", 10), mkProvider("better", 100)];
+  const decision = await schedule(memoryRepo({ providers }), groomingReq(S, E, { preferredProviderId: "selected", preferredProviderMode: "strict" }));
+  assert.equal(decision.provider?.id, "selected");
+  assert.equal(decision.evaluations.find((e) => e.providerId === "better")?.eligible, false);
 });
 
 test("engine: travel buffer blocks back-to-back jobs inside the buffer and allows them outside it", async () => {
@@ -217,6 +231,19 @@ test("route: auto-assign services pick the highest-scoring provider (pet_taxi ->
   const walk = await post(reserve({ clientRequestId: "walk-top", serviceCode: "dog_walking", scheduledStart: walkStart.toISOString(), scheduledEnd: new Date(walkStart.getTime() + 30 * 60_000).toISOString() }));
   assert.equal(walk.status, 200);
   assert.equal(walk.body.data.provider.id, "walk_nisha", "quality 96 beats 94 and 92");
+});
+
+test("route: a governed assignment-policy change alters future runtime behavior without a deploy", async () => {
+  freshDb();
+  await writeServicePolicy(globalThis.__SCHED_DB__, {domain:"provider_assignment_policy",serviceCode:"grooming",cityId:"*",config:{assignmentMode:"ops_select"}}, "founder@pawspace.test", "switch grooming to ops choice");
+  const start = istInstant(6, 10);
+  const result = await post(reserve({ clientRequestId: "groom-policy-ops", serviceCode: "grooming", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 120 * 60_000).toISOString() }));
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.data.status, "awaiting_admin");
+  assert.ok(result.body.data.shortlist.length > 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id='groom-policy-ops' AND status!='cancelled'").get().c, 0);
+  const audit = sqlite.prepare("SELECT reason FROM service_policy_audit WHERE policy_domain='provider_assignment_policy' AND service_code='grooming' ORDER BY created_at DESC LIMIT 1").get();
+  assert.match(String(audit?.reason||""), /switch grooming/i);
 });
 
 test("route: grooming outside the seeded 09:00-19:00 IST roster window is refused", async () => {
@@ -339,7 +366,8 @@ const pageSource = fs.readFileSync("app/team/scheduling/page.tsx", "utf8");
 test("contract: the route gets the DB via cloudflare:workers only and keeps the founder service-scope rule", () => {
   assert.match(routeSource, /await import\("cloudflare:workers"\)/);
   assert.doesNotMatch(routeSource, /globalThis/);
-  assert.match(routeSource, /AUTO_ASSIGN_SERVICES=new Set\(\["grooming","dog_training","pet_taxi","dog_walking"\]\)/);
+  assert.match(routeSource, /resolveAssignmentPolicy/);
+  assert.match(routeSource, /assignmentMode===?"customer_select"|assignmentMode==="customer_select"/);
   assert.match(routeSource, /host_selection_required/);
 });
 
