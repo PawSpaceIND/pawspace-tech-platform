@@ -33,7 +33,7 @@ import{registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-go
 type Db=D1Database;
 
 /** The services that are booked as scheduled occurrences. Food and Relocation are deliberately absent. */
-export const SCHEDULABLE_SERVICES=["grooming","dog_walking","pet_taxi","dog_training","pet_sitting","boarding"] as const;
+export const SCHEDULABLE_SERVICES=["grooming","dog_walking","pet_taxi","dog_training","pet_sitting","boarding","vet_consult"] as const;
 export type SchedulableService=typeof SCHEDULABLE_SERVICES[number];
 
 /**
@@ -87,6 +87,7 @@ export const APPROVED_BOOKING_TIME_BY_SERVICE:Record<SchedulableService,Partial<
   dog_training:{minimumLeadMinutes:24*60,maximumStayDays:1},
   pet_sitting:{minimumLeadMinutes:24*60,maximumStayDays:30},
   boarding:{minimumLeadMinutes:24*60,maximumStayDays:90},
+  vet_consult:{minimumLeadMinutes:120,maximumStayDays:1},
 };
 
 registerServicePolicyDomain<BookingTimePolicy&Record<string,unknown>>({

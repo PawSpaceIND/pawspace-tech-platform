@@ -7,20 +7,22 @@ import{listCustomerSubscriptionWallets}from"./subscription-wallet";
 import{createUnifiedCase,ensureUnifiedCaseTables,type CaseSeverity,type CaseType}from"./unified-case-center";
 import{buildSalesPromptContext}from"./ai-sales-goal-orchestrator";
 import{executeAfterMarginValidation,validateBookingMargin}from"./finance-margin-validator";
+import{calculateVetPayout,digitizeVetPrescriptionDraft,evaluateVetTriage}from"./vet-healthcare";
 
 type Row=Record<string,unknown>;
 export type AiToolChannel="whatsapp"|"chat"|"voice";
 export type AiToolIntent="service_info"|"booking_create"|"booking_status"|"booking_change"|"subscription_wallet"|"coupon"|"support"|"refund_review"|"funeral_memorial"|"relocation"|"human_handoff"|"unknown";
 export type AiToolMode="read"|"mutation"|"approval_gated";
 export type AiToolCode=
- |"service_catalogue.read"|"customer_bookings.read"|"booking_status.read"|"provider_status.read"|"subscription_wallet.read"|"case_status.read"|"approved_knowledge.read"
- |"quote.request"|"schedule.reserve"|"booking.create"|"checkout.payment_order.create"|"booking.reschedule"|"booking.cancel"|"provider.assignment.execute_policy"|"case.create"|"staff_handoff.create"
+ |"service_catalogue.read"|"vet.triage.evaluate"|"customer_bookings.read"|"booking_status.read"|"provider_status.read"|"subscription_wallet.read"|"case_status.read"|"approved_knowledge.read"
+ |"quote.request"|"vet.prescription.digitize"|"finance.vet_payout.calculate"|"schedule.reserve"|"booking.create"|"checkout.payment_order.create"|"booking.reschedule"|"booking.cancel"|"provider.assignment.execute_policy"|"case.create"|"staff_handoff.create"
  |"refund.issue"|"payment.capture"|"payout.release"|"price.override"|"provider.assign"|"campaign.activate"|"communication.send"|"customer.merge";
 export type AiToolDefinition={code:AiToolCode;mode:AiToolMode;canonicalService:string;intents:AiToolIntent[];channels:AiToolChannel[];confirmationRequired:boolean;idempotencyRequired:boolean;staffPermissions:string[];description:string};
 
 const channels:AiToolChannel[]=["whatsapp","chat","voice"];
 const allCustomerIntents:AiToolIntent[]=["service_info","booking_create","booking_status","booking_change","subscription_wallet","coupon","support","refund_review","funeral_memorial","relocation","human_handoff"];
 const registry:AiToolDefinition[]=[
+ {code:"vet.triage.evaluate",mode:"read",canonicalService:"vet-healthcare",intents:["service_info","booking_create","support"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Safety-first Vet triage routing. Never diagnoses or prescribes; emergency red flags bypass booking and require human escalation."},
  {code:"service_catalogue.read",mode:"read",canonicalService:"grooming-governance",intents:["service_info","booking_create"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Read active server-owned service catalogue entries."},
  {code:"customer_bookings.read",mode:"read",canonicalService:"canonical-bookings",intents:["booking_create","booking_status","booking_change","support"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["bookings.manage"],description:"Read bookings owned by the authorized customer."},
  {code:"booking_status.read",mode:"read",canonicalService:"canonical-bookings",intents:["booking_status","booking_change","support"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["bookings.manage"],description:"Read canonical booking status."},
@@ -29,6 +31,8 @@ const registry:AiToolDefinition[]=[
  {code:"case_status.read",mode:"read",canonicalService:"unified-case-center",intents:["support","refund_review","booking_change","funeral_memorial","relocation"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["customers.manage"],description:"Read customer-linked canonical case status."},
  {code:"approved_knowledge.read",mode:"read",canonicalService:"ai-business-configuration",intents:allCustomerIntents,channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Retrieve only approved/current knowledge visible to the caller."},
  {code:"quote.request",mode:"read",canonicalService:"grooming-governance",intents:["service_info","booking_create"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Calculate a quote from server-owned active catalogue data."},
+ {code:"vet.prescription.digitize",mode:"mutation",canonicalService:"vet-healthcare",intents:["support"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["providers.manage"],description:"Create a digital prescription DRAFT from attending Vet notes. It is never official until the human Vet reviews and signs it."},
+ {code:"finance.vet_payout.calculate",mode:"mutation",canonicalService:"vet-healthcare",intents:["support"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["providers.manage"],description:"Calculate and log a Vet visit payout/KPI from governed contract terms. No payment is released and vet GST is locked to zero."},
  {code:"schedule.reserve",mode:"mutation",canonicalService:"uat-scheduling",intents:["booking_create","booking_change"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["scheduling.book"],description:"Reserve capacity through the canonical race-safe scheduler; provider selection remains server-policy authoritative."},
  {code:"booking.create",mode:"mutation",canonicalService:"canonical-bookings",intents:["booking_create"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["bookings.manage","scheduling.book"],description:"Create a canonical booking only from an already assigned scheduling reservation and server-owned commercial data."},
  {code:"checkout.payment_order.create",mode:"mutation",canonicalService:"payment-order",intents:["booking_create"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["scheduling.book"],description:"Create the exact Razorpay payment order for an owned canonical booking. This never captures or marks money paid."},
@@ -75,7 +79,7 @@ const uniqueConflict=(error:unknown)=>error instanceof Error&&/unique constraint
 function tool(code:string){const found=registry.find(item=>item.code===code);if(!found)throw new Error("AI tool is not registered");return found;}
 function cleanArguments(input:Record<string,unknown>){for(const key of Object.keys(input))if(forbiddenAuthoritativeFields.has(key))throw new Error(`Authoritative field ${key} must be resolved server-side`);return input;}
 function hasStaffPermission(actor:AuthenticatedActor,definition:AiToolDefinition){return actor.permissions.includes("*")||definition.staffPermissions.some(permission=>actor.permissions.includes(permission));}
-function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("customers.manage")||actor.permissions.includes("bookings.manage")||actor.permissions.includes("communications.manage");}
+function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("customers.manage")||actor.permissions.includes("bookings.manage")||actor.permissions.includes("communications.manage")||actor.permissions.includes("providers.manage");}
 async function authorizeCustomerScope(db:D1Database,actor:AuthenticatedActor,customerId:string,definition:AiToolDefinition){if(isStaff(actor)){if(definition.staffPermissions.length&&!hasStaffPermission(actor,definition))throw new Response("AI tool permission denied",{status:403});return;}await requireCustomerOwnership(db,actor,customerId);}
 
 export async function ensureAiToolRegistry(db:D1Database){await ensureConversationGovernance(db);await ensureUnifiedCaseTables(db);await db.batch([
@@ -92,6 +96,7 @@ function bookingSummary(row:Row){return{id:row.id,serviceCode:row.service_code,p
 function providerSummary(row:Row){return{bookingId:row.id,bookingStatus:row.status,providerId:row.provider_id??null,providerName:row.provider_name??null,providerStatus:row.provider_status??null,eta:row.provider_eta??row.eta??null,source:"canonical_booking_only"};}
 
 async function executeRead(db:D1Database,definition:AiToolDefinition,customerId:string,args:Record<string,unknown>){
+ if(definition.code==="vet.triage.evaluate")return evaluateVetTriage({symptoms:text(args.symptoms)});
  if(definition.code==="service_catalogue.read")return{serviceCode:"grooming",currency:"INR",catalogue:groomingCatalogue.filter(item=>item.active).map(item=>({code:item.code,name:item.name,offerType:item.offerType,eligiblePetTypes:item.eligiblePetTypes,singlePrice:item.singlePrice,multiPetPrice:item.multiPetPrice??null,version:item.version}))};
  if(definition.code==="quote.request"){
   const packageCode=text(args.packageCode),petCount=Number(args.petCount??1),cityId=text(args.cityId)||"blr",item=groomingCatalogue.find(row=>row.active&&row.code===packageCode);
@@ -129,6 +134,8 @@ async function validateSalesOfferIfPresent(db:D1Database,input:{actor:Authentica
  return validateBookingMargin(db,{bookingId,dispatchItemId,discountBps,freeUpgradeCode,offerPolicyVersion:context.offer.policyVersion,actorId:input.actor.email});
 }
 async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{requestId:string;actor:AuthenticatedActor;threadId:string;customerId:string;idempotencyKey:string;args:Record<string,unknown>;sourceRequest?:Request;canonicalRequest?:Request}){
+ if(definition.code==="vet.prescription.digitize")return digitizeVetPrescriptionDraft(db,{appointmentId:text(input.args.appointmentId),providerId:text(input.args.providerId),sourceType:text(input.args.sourceType) as "handwritten_upload"|"voice_dictation"|"typed_notes",clinicalNotes:text(input.args.clinicalNotes),sourceMediaRef:text(input.args.sourceMediaRef)||null});
+ if(definition.code==="finance.vet_payout.calculate")return calculateVetPayout(db,{appointmentId:text(input.args.appointmentId),providerId:text(input.args.providerId),actorId:input.actor.email});
  if(definition.code==="case.create"){const bookingId=text(input.args.bookingId)||null;if(bookingId)await readBooking(db,input.customerId,bookingId);const spec=caseSpec(definition.code,input.args);return createUnifiedCase(db,{idempotencyKey:`ai-tool:${input.idempotencyKey}`,caseType:spec.caseType,severity:spec.severity,title:spec.title,description:spec.description,customerId:input.customerId,bookingId,sourceType:"ai_tool_request",sourceId:input.requestId,ownerTeam:spec.ownerTeam,actorId:input.actor.email});}
  if(["schedule.reserve","provider.assignment.execute_policy","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel"].includes(definition.code)){
   const sourceRequest=input.sourceRequest??input.canonicalRequest;
@@ -142,13 +149,20 @@ async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{
    if(!assignment||text(assignment.status)!=="assigned"||!text(assignment.selected_provider_id))throw new Response("Scheduling must be assigned before booking",{status:409});
    const reservations=await db.prepare("SELECT provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(scheduleGroupId).all<Row>();
    if(!reservations.results.length||reservations.results.some(row=>text(row.customer_id)!==input.customerId))throw new Response("Reserved scheduling group does not belong to this customer",{status:403});
-   const first=reservations.results[0],serviceCode=text(first.service_code);if(serviceCode!=="grooming")throw new Response("P0 autonomous booking creation currently supports governed Grooming bookings",{status:409});
+   const first=reservations.results[0],serviceCode=text(first.service_code);if(serviceCode!=="grooming"&&serviceCode!=="vet_consult")throw new Response("Autonomous booking creation currently supports governed Grooming and Doorstep Vet bookings",{status:409});
    const customer=await db.prepare("SELECT id,name,primary_phone,secondary_phone,email FROM canonical_customers WHERE id=?").bind(input.customerId).first<Row>();if(!customer)throw new Response("Canonical customer not found",{status:404});
    const petIds=Array.isArray(input.args.petIds)?input.args.petIds.map(text).filter(Boolean):[];if(!petIds.length)throw new Response("At least one canonical pet is required",{status:400});
    const pets=[] as Row[];for(const petId of petIds){const pet=await db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE id=? AND customer_id=?").bind(petId,input.customerId).first<Row>();if(!pet)throw new Response("Canonical pet ownership could not be verified",{status:403});pets.push(pet);}
+   const provider=await db.prepare("SELECT id,name,provider_model FROM provider_capacity_profiles WHERE id=?").bind(text(assignment.selected_provider_id)).first<Row>();if(!provider)throw new Response("Assigned provider profile not found",{status:409});
+   if(serviceCode==="vet_consult"){
+    const triageLevel=text(input.args.vetTriageLevel);if(!["routine","urgent"].includes(triageLevel))throw new Response("A completed non-emergency Vet triage is required before booking",{status:409});
+    const triageSummary=text(input.args.vetTriageSummary);if(!triageSummary)throw new Response("Vet triage summary is required before booking",{status:409});
+    if(pets.length!==1)throw new Response("Doorstep Vet Consultation supports one patient per appointment",{status:409});
+    const payload={idempotencyKey:input.idempotencyKey,scheduleGroupId,customer:{id:input.customerId,name:text(customer.name),primaryPhone:text(customer.primary_phone),secondaryPhone:text(customer.secondary_phone)||undefined,email:text(customer.email)||undefined},pets:pets.map(pet=>({sourceId:text(pet.source_pet_id)||text(pet.id),name:text(pet.name),species:text(pet.species)||"other",breed:text(pet.breed)||undefined,vaccinationStatus:text(pet.vaccination_status)||"not_provided"})),cityId:text(first.city_id),zoneId:text(first.zone_id),serviceCode:"vet_consult",packageCode:"vet_home_visit",packageName:"Doorstep Vet Consultation",scheduledStart:text(first.scheduled_start),scheduledEnd:text(first.scheduled_end),provider:{id:text(provider.id),name:text(provider.name),model:text(provider.provider_model)},totalAmount:599,amountDueNow:599,payment:{method:"upi",mode:"prepaid",status:"created",detail:"AI customer-confirmed governed Vet checkout"},pricing:{discount:0,addOns:[],vetTriageLevel:triageLevel,vetTriageSummary:triageSummary}};
+    return invoke("/api/canonical-bookings",payload);
+   }
    const packageCode=text(input.args.packageCode),item=groomingCatalogue.find(row=>row.active&&row.code===packageCode);if(!item)throw new Response("Active governed Grooming package not found",{status:409});
    const petCount=pets.length,totalAmount=petCount===1?item.singlePrice:(item.multiPetPrice??item.singlePrice)*petCount,paymentMode=text(input.args.paymentMode)||"prepaid";
-   const provider=await db.prepare("SELECT id,name,provider_model FROM provider_capacity_profiles WHERE id=?").bind(text(assignment.selected_provider_id)).first<Row>();if(!provider)throw new Response("Assigned provider profile not found",{status:409});
    const payload={idempotencyKey:input.idempotencyKey,scheduleGroupId,customer:{id:input.customerId,name:text(customer.name),primaryPhone:text(customer.primary_phone),secondaryPhone:text(customer.secondary_phone)||undefined,email:text(customer.email)||undefined},pets:pets.map(pet=>({sourceId:text(pet.source_pet_id)||text(pet.id),name:text(pet.name),species:text(pet.species)||"other",breed:text(pet.breed)||undefined,vaccinationStatus:text(pet.vaccination_status)||"not_provided"})),cityId:text(first.city_id),zoneId:text(first.zone_id),serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:text(first.scheduled_start),scheduledEnd:text(first.scheduled_end),provider:{id:text(provider.id),name:text(provider.name),model:text(provider.provider_model)},totalAmount,amountDueNow:paymentMode==="prepaid"?totalAmount:0,payment:{method:"upi",mode:paymentMode,status:"created",detail:"AI customer-confirmed governed checkout"},pricing:{discount:0,addOns:[]}};
    return invoke("/api/canonical-bookings",payload);
   }
