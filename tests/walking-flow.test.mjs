@@ -54,8 +54,9 @@ test("the flow is a standalone client component: no imports from other flow/chec
   assert.doesNotMatch(bookingClientSource, /globalThis/);
   // standalone styling, not another flow's module css
   assert.match(flowSource, /from "\.\/walking-flow\.module\.css"/);
-  assert.match(cssSource, /#01261F/i);
-  assert.match(cssSource, /#E6B34E/i);
+  assert.match(cssSource, /var\(--ds-primary-500\)/, "Walking uses the shared PawSpace primary design token");
+  assert.match(cssSource, /var\(--ds-accent-500\)/, "Walking uses the shared PawSpace accent design token");
+  assert.doesNotMatch(cssSource, /#01261F|#E6B34E/i, "Walking must not regress to duplicated raw brand colors");
 });
 
 test("the flow respects the scheduler's dog_walking roster hours (06:00-21:00 IST)", () => {
