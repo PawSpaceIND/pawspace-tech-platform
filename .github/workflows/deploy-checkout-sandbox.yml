@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   checkout-sandbox:
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'checkout-sandbox-674' }}
+    if: ${{ github.ref == 'refs/heads/uat/pr674-isolated-deploy-7310-20260911' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'checkout-sandbox-674' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: pawspace-release-preview
