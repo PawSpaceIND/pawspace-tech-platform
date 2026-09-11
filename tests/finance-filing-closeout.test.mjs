@@ -195,11 +195,17 @@ test("Repeated invoice lines get distinct tax rows through line identity", async
 
   const rows = taxLedger(sqlite);
   assert.equal(rows.length, 4, "two lines times two components is four ledger rows, not two");
+  // Component codes are canonical upper case as of [D31-W7]. They used to come back lower here
+  // only because this fixture's classification triggers the derived-split path, while a
+  // classification that spells CGST/SGST out produced upper case - the same tax head reaching
+  // finance_tax_ledger.component under two spellings, which `GROUP BY component` in
+  // lib/gst-returns.ts then filed as two separate heads. The claim of THIS case is line identity
+  // in the dedupe key, which is unchanged.
   assert.deepEqual(rows.map((row) => String(row.source_event_key)), [
-    "booking:BKG-CLOSE-1:invoice:session-1:cgst",
-    "booking:BKG-CLOSE-1:invoice:session-1:sgst",
-    "booking:BKG-CLOSE-1:invoice:session-2:cgst",
-    "booking:BKG-CLOSE-1:invoice:session-2:sgst",
+    "booking:BKG-CLOSE-1:invoice:session-1:CGST",
+    "booking:BKG-CLOSE-1:invoice:session-1:SGST",
+    "booking:BKG-CLOSE-1:invoice:session-2:CGST",
+    "booking:BKG-CLOSE-1:invoice:session-2:SGST",
   ], "the event key carries the line identity and the component");
   assert.equal(rows.reduce((sum, row) => sum + Number(row.amount), 0), 360, "and the four rows add to the invoice tax");
   assert.deepEqual([...new Set(rows.map((row) => String(row.period_code)))], ["2026-08"]);
