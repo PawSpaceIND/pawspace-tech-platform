@@ -1,0 +1,11 @@
+import type{NormalizedIngestRow}from"./data-ingest-normalizer";
+type Db=D1Database;
+export async function ensureIngestPropensityTables(db:Db){await db.batch([
+ db.prepare("CREATE TABLE IF NOT EXISTS crm_ingest_history (lead_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,drop_off_reason TEXT,last_service_date TEXT,historical_status TEXT NOT NULL,import_batch_id TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+ db.prepare("CREATE INDEX IF NOT EXISTS crm_ingest_history_customer_idx ON crm_ingest_history(customer_id,updated_at DESC)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS lead_scores (lead_id TEXT PRIMARY KEY,engagement_score INTEGER NOT NULL,profile_score INTEGER NOT NULL,recency_score INTEGER NOT NULL,value_score INTEGER NOT NULL,total_score INTEGER NOT NULL,grade TEXT NOT NULL,factors_json TEXT NOT NULL,computed_at INTEGER NOT NULL)"),
+]);}
+export function runPropensityModelRefresh(db:Db,rows:NormalizedIngestRow[],batchId:string,now=Date.now()){return db.batch(rows.flatMap(r=>[
+ db.prepare("INSERT INTO crm_ingest_history (lead_id,customer_id,drop_off_reason,last_service_date,historical_status,import_batch_id,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET drop_off_reason=excluded.drop_off_reason,last_service_date=excluded.last_service_date,historical_status=excluded.historical_status,import_batch_id=excluded.import_batch_id,updated_at=excluded.updated_at").bind(r.leadId,r.customerId,r.dropOffReason,r.lastServiceDate,r.historicalStatus,batchId,now),
+ db.prepare("INSERT INTO lead_scores (lead_id,engagement_score,profile_score,recency_score,value_score,total_score,grade,factors_json,computed_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET engagement_score=excluded.engagement_score,profile_score=excluded.profile_score,recency_score=excluded.recency_score,value_score=excluded.value_score,total_score=excluded.total_score,grade=excluded.grade,factors_json=excluded.factors_json,computed_at=excluded.computed_at").bind(r.leadId,r.propensity.engagement,r.propensity.profile,r.propensity.recency,r.propensity.value,r.propensity.total,r.propensity.grade,JSON.stringify({...r.propensity.factors,source:"csv_ingest",dropOffReason:r.dropOffReason,lastServiceDate:r.lastServiceDate}),now)
+ ]));}
