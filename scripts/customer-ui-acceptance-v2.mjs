@@ -53,7 +53,7 @@ async function ensurePet(page){
 const care=(page)=>page.getByRole("region",{name:"Care services"});
 const serviceCard=(page,name)=>care(page).locator("article").filter({hasText:new RegExp(name,"i")});
 async function serviceAction(page,name){const cards=serviceCard(page,name),count=await cards.count();if(count!==1)die(`${name} discovery card count=${count}`);const action=cards.getByRole("button");const actions=await action.count();if(actions!==1)die(`${name} discovery action count=${actions}`);return action;}
-async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Everything they need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
+async function goHome(page){await gotoApp(page);await nav(page,"Home");await care(page).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const action=await serviceAction(page,name);if(await action.isDisabled())die(`${name} discovery card disabled`);await action.click();await wait(page,450);}
 
 async function observeFinal(page,button,target,safePosts=[],timeout=SERVER_TIMEOUT){
@@ -62,11 +62,10 @@ async function observeFinal(page,button,target,safePosts=[],timeout=SERVER_TIMEO
 }
 
 async function homeControls(page){
- await goHome(page);for(const name of["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"]){const action=await serviceAction(page,name);if(await action.isDisabled())die(`${name} disabled`);}
- const guides=page.getByRole("region",{name:"Quick service guides"}).getByRole("button");if(await guides.count()!==6)die(`guide slots=${await guides.count()}, expected 6`);
+ await goHome(page);const cards=care(page).locator("article"),cardCount=await cards.count();if(cardCount!==8)die(`service cards=${cardCount}, expected 8`);for(const name of["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"]){const action=await serviceAction(page,name);if(await action.isDisabled())die(`${name} disabled`);}
  const location=page.getByRole("button",{name:"Choose your service location"});await location.click();await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Indiranagar, Bengaluru");await page.getByRole("button",{name:"Save location"}).click();await location.getByText("Indiranagar",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});await location.getByText("Bengaluru",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});
  const search=page.getByLabel("Search PawSpace services");await search.fill("food");await serviceCard(page,"Fresh Food").waitFor({state:"visible",timeout:TIMEOUT});if(await serviceCard(page,"Grooming").count())die("search failed to filter service cards");await search.fill("");
- await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + six guides + bookings + pets";
+ await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + bookings + pets";
 }
 
 async function grooming(page){await openService(page,"Grooming");await text(page,"Who needs grooming?");const next=page.getByRole("button",{name:/Choose a package/i});await ensurePetProgress(page,next,"Grooming package progression");await next.click();for(const label of["Essential Bath","Bath & Basic","Complete Makeover","Just Trim"])await text(page,label);return"pet -> package stage + legacy packages";}

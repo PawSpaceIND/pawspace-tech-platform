@@ -28,6 +28,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
   if(url.pathname==="/api/control-tower")return "audit.view";
   if(url.pathname==="/api/control-center-operations")return "audit.view";
+  if(url.pathname==="/api/control-runtime-switches")return method==="GET"?"audit.view":"settings.manage";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
   if(url.pathname==="/api/uat-provider-switch")return null;

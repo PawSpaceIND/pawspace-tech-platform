@@ -97,7 +97,8 @@ function transitionWouldDefer(intent:Row,target:PaymentState){
 async function retryCaptureEffects(db:D1Database,eventId:string){
   const outbox=await captureEffectsOutboxForEvent(db,eventId);
   if(!outbox)return null;
-  if(String(outbox.status)==="SUCCEEDED")return{claimed:false,completed:true,status:"SUCCEEDED",reason:undefined};
+  // The executor also repairs a missing historical capture timeline after a succeeded saga.
+  // It does not repeat collections; do not acknowledge recovery before that check.
   return executeRazorpayCapturePostCommit(db,{outboxId:String(outbox.id),workerId:`razorpay-webhook-retry:${crypto.randomUUID()}`});
 }
 
@@ -163,7 +164,10 @@ export async function POST(request:Request){
       const target=targetFor(eventType);const intent=target?await matchedIntent(db,event):null;
       if(intent&&target&&transitionWouldDefer(intent,target)){
         await markInbox(db,accepted.row,"DEFERRED",eventType,`payment_state_${String(intent.state).toLowerCase()}_awaits_prior_transition`);
-        return json({ok:true,environment:gate.environment,deferred:true,state:String(intent.state),target});
+        // The inbox is durable, but no worker replays this deferred transition automatically.
+        // A 2xx would acknowledge the capture and suppress the gateway retry needed after authorization.
+        // Keep the state/amount/signature gates; acknowledge only after processing succeeds.
+        return json({ok:false,environment:gate.environment,deferred:true,code:"payment_state_transition_deferred",state:String(intent.state),target},503);
       }
 
       if(target==="CAPTURED"){

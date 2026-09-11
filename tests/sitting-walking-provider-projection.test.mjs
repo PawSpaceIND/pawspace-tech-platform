@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
-import { makeD1, seedSittingBooking, seedWalkingBooking } from "./helpers/stay-harness.mjs";
+import { makeD1, seedDoorstep, seedSittingBooking, seedWalkingBooking } from "./helpers/stay-harness.mjs";
 
 installWorkersHooks("__SWPROJ_DB__", "__SWPROJ_ENV__");
 globalThis.__SWPROJ_ENV__ = {};
@@ -71,6 +71,21 @@ test("booking-only Sitting provider GET uses the redacted provider projection", 
   assert.equal(row.provider_id,providerId); assert.equal(row.providerId,undefined); assert.equal(row.events[0].actor_id,"provider_or_system");
   assert.equal(row.carePlan.plan.emergencyContact,"9876543210"); assert.equal(row.carePlan.plan.vet,"9999999999"); assert.equal(row.carePlan.plan.homeAccess,"PIN 4455");
   assert.ok(!JSON.stringify(row).includes("ops@pawspace.in")); assert.ok(!JSON.stringify(row).includes("staffNote"));
+});
+
+test("booking-only Sitting provider GET preserves only the acceptance-gated canonical doorstep", async t => {
+  const email="sitter.location@pawspace.test", providerId="sitter_ananya", bookingId="SIT-LOCATION";
+  const { sqlite, db } = await providerWorld(email, providerId); t.after(()=>sqlite.close());
+  await seedSittingBooking(db,sqlite,{bookingId,providerId,status:"assigned"});
+  seedDoorstep(sqlite,{bookingId,customerId:"CUST-SIT-1",providerId,latitude:12.9784,longitude:77.6408});
+  let response=await runWithWorkersDb(db,()=>sittingRoute.GET(providerRequest(`/api/sitting-lifecycle?bookingId=${bookingId}`,email)));
+  assert.equal(response.status,200,await response.clone().text());
+  let row=(await response.json()).data[0];
+  assert.deepEqual(row.serviceLocation,{addressText:"12 MG Road, Bengaluru",latitude:12.9784,longitude:77.6408,source:"customer_booking"});
+  await db.prepare("UPDATE canonical_bookings SET status=? WHERE id=?").bind("reassignment_needed",bookingId).run();
+  response=await runWithWorkersDb(db,()=>sittingRoute.GET(providerRequest(`/api/sitting-lifecycle?bookingId=${bookingId}`,email)));
+  row=(await response.json()).data[0];
+  assert.equal(row.serviceLocation,null,"recovery must revoke exact doorstep visibility again");
 });
 
 test("booking-only Sitting read refuses a different provider before governed care fields are returned", async t => {

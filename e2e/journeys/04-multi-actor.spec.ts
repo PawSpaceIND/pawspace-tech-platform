@@ -2,6 +2,7 @@ import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 const CUSTOMER_EMAIL = "e2e.customer@pawspace.test";
 const PROVIDER_EMAIL = "e2e.provider@pawspace.test";
+const AUTO_GROOMER_EMAIL = "e2e.auto.groomer@pawspace.test";
 const ADMIN_EMAIL = "e2e.admin@pawspace.test";
 const FINANCE_EMAIL = "e2e.finance@pawspace.test";
 const CUSTOMER_ID = "E2E-CUS-UI-001";
@@ -29,7 +30,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
   expect(baseURL).toBeTruthy();
   const origin = baseURL!;
   const customer = await actorApi(origin, CUSTOMER_EMAIL);
-  const provider = await actorApi(origin, PROVIDER_EMAIL);
+  let provider: Awaited<ReturnType<typeof actorApi>> | null = null;
   const admin = await actorApi(origin, ADMIN_EMAIL);
   const finance = await actorApi(origin, FINANCE_EMAIL);
   test.info().annotations.push({ type: "isolation", description: "payment=sandbox; live-approved=false; local Miniflare only" });
@@ -92,7 +93,11 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
       expect(scheduleBody.data.duplicatePrevented).toBe(true);
     }
-    expect(scheduleBody?.data?.provider?.id).toBe(PROVIDER_ID);
+    const assignedProviderId=String(scheduleBody?.data?.provider?.id||"");
+    expect(assignedProviderId).toBeTruthy();
+    const assignedProviderEmail=assignedProviderId===PROVIDER_ID?PROVIDER_EMAIL:assignedProviderId==="groom_arun"?AUTO_GROOMER_EMAIL:"";
+    expect(assignedProviderEmail,`assigned provider ${assignedProviderId} needs a governed local E2E identity`).toBeTruthy();
+    provider=await actorApi(origin,assignedProviderEmail);
 
     const booked = await customer.post("/api/canonical-bookings", {
       data: {
@@ -155,7 +160,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["accept", "on_the_way"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     // ARRIVED is fail-closed against fresh, trusted, server-bound GPS evidence. Use the canonical
@@ -164,7 +169,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     const gps = await provider.post("/api/grooming-route", {
       data: {
         bookingId,
-        providerId: PROVIDER_ID,
+        providerId: assignedProviderId,
         latitude: serviceLatitude,
         longitude: serviceLongitude,
         accuracyMeters: 10,
@@ -179,7 +184,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     for (const action of ["arrived", "start_service"] as const) {
       const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
       const body = await expectOk(response, `provider ${action}`);
-      expect(body?.data?.booking?.provider_id).toBe(PROVIDER_ID);
+      expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
 
     const proof = await provider.post("/api/grooming-lifecycle", {
@@ -225,10 +230,13 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await page.locator("nav").getByRole("button",{name:/account/i}).last().click();await page.getByPlaceholder("10-digit phone number").fill("9800000111");await page.getByRole("button",{name:"Send OTP",exact:true}).click();
     const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await expect(sandbox).toBeVisible();const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];expect(code).toMatch(/^\d{6}$/);await page.getByPlaceholder("6-digit code").fill(code!);
     const name=page.getByPlaceholder("Your name (first time only)");if(await name.isVisible().catch(()=>false))await name.fill("E2E UI Customer");
+    // The customer shell immediately reads the owned account after OTP establishes the browser cookie.
+    // Observe that real browser-owned request instead of starting a duplicate fetch while the shell is hydrating.
+    const ownAccountResponse=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/customer-account"&&response.status()===200);
     await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
-    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not.
-    // Read through the actual browser session, without manually copying or weakening cookies.
-    const ownAccount=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return{status:response.status,body:await response.json()};});expect(ownAccount.status).toBe(200);expect(ownAccount.body.data.customerId).toBe(CUSTOMER_ID);
+    // Chromium sends Secure cookies on trustworthy loopback; APIRequestContext does not. This response
+    // is emitted by the actual customer UI using the cookie the browser received from OTP verification.
+    const ownAccount=await ownAccountResponse,ownAccountBody=await ownAccount.json();expect(ownAccountBody.data.customerId).toBe(CUSTOMER_ID);
     await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
     const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoiceNumber));
     const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(Number(financeItem.gross_amount));expect(summary.body.data.invoice.tax).toBe(Number(financeItem.tax_amount));expect(summary.body.data).not.toHaveProperty("payoutReadiness");
@@ -257,6 +265,6 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(adminUi?.status() ?? 500).toBeLessThan(500);
     await expect(page.locator("body")).toContainText(/booking/i);
   } finally {
-    await Promise.all([customer.dispose(), provider.dispose(), admin.dispose(), finance.dispose()]);
+    await Promise.all([customer.dispose(), provider?.dispose()??Promise.resolve(), admin.dispose(), finance.dispose()]);
   }
 });

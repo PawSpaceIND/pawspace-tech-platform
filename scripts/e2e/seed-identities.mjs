@@ -29,6 +29,7 @@ function locateDb() {
 export const IDENTITIES = {
   customer: { id: "E2E-USR-CUSTOMER", email: "e2e.customer@pawspace.test", role: "customer", name: "E2E Customer" },
   provider: { id: "E2E-USR-PROVIDER", email: "e2e.provider@pawspace.test", role: "service_provider", name: "E2E Provider" },
+  autoGroomer: { id: "E2E-USR-AUTO-GROOMER", email: "e2e.auto.groomer@pawspace.test", role: "service_provider", name: "E2E Auto Groomer" },
   admin:    { id: "E2E-USR-ADMIN", email: "e2e.admin@pawspace.test", role: "admin", name: "E2E Admin" },
   finance:  { id: "E2E-USR-FINANCE", email: "e2e.finance@pawspace.test", role: "finance", name: "E2E Finance" },
 };
@@ -102,6 +103,12 @@ export function seed(dbPath = locateDb()) {
   }));
   out.push(upsert(db, "provider_identity_links", {
     email: IDENTITIES.provider.email, provider_id: PROVIDER_ID, status: "active", verified_at: now, updated_at: now,
+  }));
+  // The real auto-ranker can select the canonical UAT full-time groomer ahead of the commission E2E
+  // provider. Give that real seeded provider a local-only identity so the correlated journey follows
+  // the scheduler's decision instead of forcing a test-specific assignment.
+  out.push(upsert(db, "provider_identity_links", {
+    email: IDENTITIES.autoGroomer.email, provider_id: "groom_arun", status: "active", verified_at: now, updated_at: now,
   }));
   out.push(upsert(db, "provider_capacity_profiles", {
     id: PROVIDER_ID, city_id: "blr", name: "E2E UI Provider", provider_model: "commission",
