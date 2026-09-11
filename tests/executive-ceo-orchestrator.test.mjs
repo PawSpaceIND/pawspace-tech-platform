@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import {decideExecutiveAction} from "../lib/executive/decision-policy.ts";
 
 const ceo=fs.readFileSync("lib/executive/ceo-orchestrator.ts","utf8");
 const policy=fs.readFileSync("lib/executive/decision-policy.ts","utf8");
@@ -13,6 +14,7 @@ test("executive loop is polled by the worker and idempotent per 15-minute slot",
  assert.match(ceo,/EXECUTIVE_CRON="\*\/15 \* \* \* \*"/); assert.match(wrangler,/"\*\/5 \* \* \* \*"/); assert.match(worker,/runExecutiveDecisionLoop/); assert.match(ceo,/slot_key TEXT NOT NULL UNIQUE/);
 });
 test("capacity >= 90 percent throttles outbound sales and dispatcher consumes directive",()=>{
+ assert.deepEqual(decideExecutiveAction({capacityUtilization:0.91,pacingLagFraction:0.5,approvedDiscountBps:500,approvedUpgradeCodes:["upgrade"]}),{mode:"throttle",pressureMultiplier:0,reason:"capacity_at_or_above_90_percent",discountBps:0,upgradeCodes:[],marginValidationRequired:true});
  assert.match(policy,/capacityUtilization>=0\.90/); assert.match(policy,/mode:"throttle"/); assert.match(policy,/pressureMultiplier:0/); assert.match(ceo,/capacityUtilization:cap\.utilization/); assert.match(sales,/executiveMode === "throttle" \? 0/); assert.match(sales,/executive_capacity_throttle/);
 });
 test("pacing lag above 25 percent only authorizes pre-approved target envelope",()=>{
