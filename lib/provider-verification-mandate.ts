@@ -111,6 +111,19 @@ async function ensureVerificationMandateTablesUncached(db: Db) {
    */
   await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
     .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+  /*
+   * WHEN a check passed, not just that it did. lib/payout-beneficiary-verification.ts has always
+   * selected and ordered by this column and it existed nowhere in the schema, so every call to
+   * assertActiveVerifiedPayoutBeneficiary() died on "no such column: verified_at" - which is the
+   * gate app/api/partner-finance/route.ts puts in front of BOTH level-2 money approvals. No partner
+   * payout and no order commission could reach level 2 at all, and the failure surfaced as a server
+   * error rather than a governance refusal. Additive and nullable, like expires_at above: an
+   * existing verified row simply has no recorded moment. [D31-T3]
+   */
+  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN verified_at INTEGER").run()
+    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+  // Backfill what is already knowable: a row sitting at 'verified' was last written when it passed.
+  await db.prepare("UPDATE provider_verifications SET verified_at=updated_at WHERE status='verified' AND verified_at IS NULL").run().catch(() => {});
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run().catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; });
 }
 const verificationMandateTablesReady=new WeakSet<Db>();
@@ -135,8 +148,9 @@ export async function recordVerificationValidity(db: Db, input: { applicationId:
   const status = text(input.status);
   if (!["verified", ...INVALID_VERIFICATION_STATUSES].includes(status)) throw new Error(`Unknown verification status: ${status}`);
   const now = Date.now();
-  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,expires_at,updated_by,created_at,updated_at) VALUES (?,?,'',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,expires_at=excluded.expires_at,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-    .bind(uid("PVER"), text(input.applicationId), type.code, status, JSON.stringify({ note: text(input.note) || null }), input.expiresAt ?? null, input.actorId, now, now).run();
+  const verifiedAt = status === "verified" ? now : null;
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,expires_at,verified_at,updated_by,created_at,updated_at) VALUES (?,?,'',?,?,0,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,expires_at=excluded.expires_at,verified_at=excluded.verified_at,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(uid("PVER"), text(input.applicationId), type.code, status, JSON.stringify({ note: text(input.note) || null }), input.expiresAt ?? null, verifiedAt, input.actorId, now, now).run();
   return { applicationId: text(input.applicationId), verificationType: type.code, status, expiresAt: input.expiresAt ?? null };
 }
 
@@ -304,8 +318,8 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
       return { applicationId, verificationType: type.code, status: standing, automated: Number(decided?.automated) === 1, providerRef: decided?.provider_ref ? text(decided.provider_ref) : null };
   }
   const id = uid("PVER");
-  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-    .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), input.actorId, now, now).run();
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,verified_at,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,verified_at=excluded.verified_at,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), status === "verified" ? now : null, input.actorId, now, now).run();
   await syncProviderPoolEligibility(db, applicationId);
   return { applicationId, verificationType: type.code, status, automated: Boolean(automated), providerRef };
 }
@@ -317,8 +331,8 @@ export async function recordManualVerification(db: Db, input: { applicationId: s
   if (!type) throw new Error("Unknown verification type");
   if (type.automatable) throw new Error("This is an automatable check - run it through IDfy, don't record it manually");
   const now = Date.now();
-  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,updated_by,created_at,updated_at) VALUES (?,?, '',?,?,0,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-    .bind(uid("PVER"), text(input.applicationId), type.code, input.status, JSON.stringify({ manual: true, note: text(input.note) || null }), input.actorId, now, now).run();
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,verified_at,updated_by,created_at,updated_at) VALUES (?,?, '',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,detail_json=excluded.detail_json,verified_at=excluded.verified_at,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(uid("PVER"), text(input.applicationId), type.code, input.status, JSON.stringify({ manual: true, note: text(input.note) || null }), input.status === "verified" ? now : null, input.actorId, now, now).run();
   await syncProviderPoolEligibility(db, text(input.applicationId));
   return { applicationId: text(input.applicationId), verificationType: type.code, status: input.status };
 }

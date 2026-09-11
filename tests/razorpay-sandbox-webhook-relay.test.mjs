@@ -55,4 +55,5 @@ test("staging deploy validates exact relay target provenance and serializes rela
  assert.match(stage,/pawspace-checkout-736-/);assert.doesNotMatch(stage,/pawspace-checkout-674-/);
  assert.match(verify,/PAWSPACE_DEPLOYMENT_ENV:"checkout-sandbox"/);assert.match(verify,/PAWSPACE_RELEASE_SHA:sha/);assert.match(verify,/RAZORPAY_WEBHOOK_SECRET_SANDBOX/);assert.match(verify,/workers\/message/);assert.match(verify,/pulls\/736/);assert.match(verify,/body\.merged!==true/);
  assert.match(workflow,/razorpay_relay_target_origin:/);assert.match(workflow,/razorpay_relay_target_sha:/);assert.match(workflow,/Verify optional Razorpay sandbox relay target/);assert.match(workflow,/verify-razorpay-sandbox-relay-target\.mjs/);
+ assert.match(workflow,/pawspace-checkout-736-34567734292-1\.karthik-fce\.workers\.dev/);assert.match(workflow,/244ee2cdff4a268c569909ae10bb7daafdfe67d6/);
 });

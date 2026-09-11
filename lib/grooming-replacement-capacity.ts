@@ -2,7 +2,19 @@ type Row=Record<string,unknown>;
 /** Re-evaluated inside the assignment transaction using the current profile and authored roster. */
 export function groomingReplacementCapacity(booking:Row,providerId:string,providerModel:string){
  const start=String(booking.scheduled_start),end=String(booking.scheduled_end),group=String(booking.schedule_group_id);
- const local=(value:string)=>new Date(new Date(value).getTime()+330*60000).toISOString();
+ /*
+  * An unreadable window is refused with a named error, not a raw RangeError. `new Date(NaN)
+  * .toISOString()` throws "Invalid time value", which surfaced from inside the assignment
+  * transaction on the provider-recovery path as an unexplained 500 rather than as a refusal
+  * anyone could act on - and this runs when a groomer has already fallen through and a customer
+  * is waiting for a replacement. lib/booking-window-instant.ts states the same rule for the same
+  * reason: a window nobody can read is never evidence, in either direction. [D31-W5]
+  */
+ const local=(value:string)=>{
+  const time=new Date(value).getTime();
+  if(!Number.isFinite(time))throw new Error(`replacement_capacity_unreadable_booking_window:${value}`);
+  return new Date(time+330*60000).toISOString();
+ };
  const date=local(start).slice(0,10),from=local(start).slice(11,16),to=local(end).slice(11,16);
  return {sql:`EXISTS (SELECT 1 FROM provider_capacity_profiles p WHERE p.id=? AND p.provider_model=? AND p.city_id=? AND p.live=1 AND p.status='active'
  AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?)
