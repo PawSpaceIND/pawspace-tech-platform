@@ -1,0 +1,61 @@
+import type { AuthenticatedActor } from "./server-auth";
+import type { AtlasAgentCode, AtlasToolDefinition as AtlasBaseToolDefinition } from "./atlas-tool-contract";
+import { routeHumanEscalation } from "./executive/human-escalation-router";
+import { activeGoalContext, type GoalAutonomyMode } from "./goal-context-engine";
+import { generateCanonicalSalesQuote, createCanonicalSalesPaymentLink } from "./sales-core-tools";
+import { validateBookingMargin } from "./finance-margin-validator";
+
+export type AgentCode=AtlasAgentCode;
+export type AtlasSalesToolCode="sales.quote.generate"|"sales.offer.negotiate"|"sales.payment_link.create";
+export type AtlasToolDefinition=AtlasBaseToolDefinition<AtlasSalesToolCode>;
+export type AtlasToolRequest={agentCode:AgentCode;goalId:string;toolCode:AtlasSalesToolCode;arguments:Record<string,unknown>;actor:AuthenticatedActor;idempotencyKey?:string;env?:Record<string,unknown>};
+
+type Row=Record<string,unknown>;const text=(v:unknown)=>String(v??"").trim();
+const schemas:Record<AtlasSalesToolCode,AtlasToolDefinition>={
+ "sales.quote.generate":{code:"sales.quote.generate",version:"1",executionTarget:"canonical_service",networkPolicy:"none",allowedAgents:["sales","atlas"],riskClass:"read",autonomy:"autonomous",idempotencyRequired:false,requiredPermissions:[],inputSchema:{type:"object",additionalProperties:false,properties:{packageCode:{type:"string"},petCount:{type:"integer",minimum:1},cityId:{type:"string"}},required:["packageCode","petCount","cityId"]}},
+ "sales.offer.negotiate":{code:"sales.offer.negotiate",version:"1",executionTarget:"canonical_service",networkPolicy:"none",allowedAgents:["sales","atlas"],riskClass:"medium",autonomy:"within_envelope",idempotencyRequired:false,requiredPermissions:["scheduling.book"],inputSchema:{type:"object",additionalProperties:false,properties:{bookingId:{type:"string"},dispatchItemId:{type:["string","null"]},discountBps:{type:"integer",minimum:0,maximum:10000},freeUpgradeCode:{type:["string","null"]},offerPolicyVersion:{type:"string"}},required:["bookingId","discountBps","offerPolicyVersion"]}},
+ "sales.payment_link.create":{code:"sales.payment_link.create",version:"1",executionTarget:"canonical_service",networkPolicy:"none",allowedAgents:["sales","atlas"],riskClass:"high",autonomy:"within_envelope",idempotencyRequired:true,requiredPermissions:["scheduling.book"],inputSchema:{type:"object",additionalProperties:false,properties:{bookingId:{type:"string"},customerId:{type:"string"}},required:["bookingId","customerId"]}},
+};
+
+export const atlasSalesToolSchemas=Object.values(schemas);
+
+function permissionAllowed(actor:AuthenticatedActor,required:string[]){return !required.length||actor.permissions.includes("*")||required.some(p=>actor.permissions.includes(p));}
+function validateShape(def:AtlasToolDefinition,args:Record<string,unknown>){
+ const allowed=new Set(Object.keys(def.inputSchema.properties));for(const key of Object.keys(args))if(!allowed.has(key))throw new Error(`Tool argument ${key} is not allowed`);
+ for(const key of def.inputSchema.required)if(args[key]===undefined||args[key]===null||args[key]==="")throw new Error(`Tool argument ${key} is required`);
+ if("amount" in args||"amountPaise" in args||"totalAmount" in args||"paymentStatus" in args)throw new Error("Authoritative monetary fields must be resolved by PawSpace core services");
+}
+async function tableExists(db:D1Database,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first());}
+export async function atlasAiExecutionEnabled(db:D1Database,env:Record<string,unknown>={}){
+ let value=text(env.PAWSPACE_AI_EXECUTIVE_ACTIVE||"false");
+ if(await tableExists(db,"executive_runtime_config")){const row=await db.prepare("SELECT value FROM executive_runtime_config WHERE key='PAWSPACE_AI_EXECUTIVE_ACTIVE'").first<Row>();if(row)value=text(row.value);}
+ return !["0","false","off","disabled",""].includes(value.toLowerCase());
+}
+async function handoff(db:D1Database,input:AtlasToolRequest,reason:string){
+ const routed=await routeHumanEscalation(db,{kind:"ai_runtime_disabled",summary:reason,sourceAgent:input.agentCode,metadata:{goalId:input.goalId,toolCode:input.toolCode,arguments:input.arguments}});
+ return{status:"human_handoff" as const,executed:false,reason,escalationId:routed.escalated?routed.escalationId:null};
+}
+function scoped(row:Row,goal:{serviceCode:string|null;cityId:string|null;zoneId:string|null}){const match=(key:string,value:string|null)=>!value||!text(row[key])||text(row[key])===value;return match("service_code",goal.serviceCode)&&match("city_id",goal.cityId)&&match("zone_id",goal.zoneId);}
+async function discountEnvelope(db:D1Database,context:Awaited<ReturnType<typeof activeGoalContext>>,args:Record<string,unknown>){
+ const bps=Number(args.discountBps||0);const rows=(context.budgets as Row[]).filter(row=>text(row.budget_type)==="discount"&&scoped(row,context.goal));
+ if(bps===0)return null;if(!rows.length)throw new Error("Founder discount envelope is required");
+ const envelope=rows.sort((a,b)=>Number(b.max_discount_bps||0)-Number(a.max_discount_bps||0))[0],max=Number(envelope.max_discount_bps||0);if(bps>max)throw new Error("Requested discount exceeds Founder-authorized envelope");
+ const booking=await db.prepare("SELECT total_amount FROM canonical_bookings WHERE id=?").bind(text(args.bookingId)).first<Row>();if(!booking)throw new Error("Canonical booking not found");
+ const costPaise=Math.floor(Math.round(Number(booking.total_amount)*100)*bps/10000),hard=envelope.hard_limit_paise==null?null:Number(envelope.hard_limit_paise),consumed=Number(envelope.consumed_paise||0),single=envelope.max_single_action_paise==null?null:Number(envelope.max_single_action_paise);
+ if(single!==null&&costPaise>single)throw new Error("Discount exceeds Founder single-action limit");if(hard!==null&&consumed+costPaise>hard)throw new Error("Founder discount budget would be exceeded");return{envelopeId:text(envelope.id),discountCostPaise:costPaise,remainingPaise:hard===null?null:hard-consumed-costPaise};
+}
+function stable(value:unknown):unknown{if(Array.isArray(value))return value.map(stable);if(value&&typeof value==="object"){const row=value as Record<string,unknown>;return Object.fromEntries(Object.keys(row).sort().map(key=>[key,stable(row[key])]))}return value;}
+async function hashRequest(input:AtlasToolRequest){const raw=JSON.stringify(stable({goalId:input.goalId,agentCode:input.agentCode,toolCode:input.toolCode,arguments:input.arguments}));const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));return Array.from(new Uint8Array(digest)).map(v=>v.toString(16).padStart(2,"0")).join("");}
+async function auditStart(db:D1Database,input:AtlasToolRequest,decision:string){await db.prepare("CREATE TABLE IF NOT EXISTS atlas_tool_gateway_audit (id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,agent_code TEXT NOT NULL,tool_code TEXT NOT NULL,request_hash TEXT NOT NULL,idempotency_key TEXT,policy_decision TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,completed_at INTEGER)").run();await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_atlas_gateway_idempotency ON atlas_tool_gateway_audit(idempotency_key) WHERE idempotency_key IS NOT NULL").run();const id=`ATGW-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO atlas_tool_gateway_audit (id,goal_id,agent_code,tool_code,request_hash,idempotency_key,policy_decision,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,input.goalId,input.agentCode,input.toolCode,await hashRequest(input),input.idempotencyKey||null,decision,Date.now()).run();return id;}
+
+export async function executeAtlasTool(db:D1Database,input:AtlasToolRequest){
+ const def=schemas[input.toolCode];if(!def)throw new Error("Atlas tool is not registered");if(!def.allowedAgents.includes(input.agentCode))throw new Response("Agent is not permitted to call this tool",{status:403});if(!permissionAllowed(input.actor,def.requiredPermissions))throw new Response("Atlas tool permission denied",{status:403});validateShape(def,input.arguments);
+ const context=await activeGoalContext(db,{goalId:input.goalId});const mode=context.goal.autonomyMode as GoalAutonomyMode;
+ if(!(await atlasAiExecutionEnabled(db,input.env)))return handoff(db,input,"AI executive is disabled; workflow routed to Human Staff");
+ const requestedCity=text(input.arguments.cityId);if(context.goal.cityId&&requestedCity&&requestedCity!==context.goal.cityId)throw new Response("Tool request is outside the Founder goal city scope",{status:403});
+ if(def.autonomy==="within_envelope"&&mode!=="execute_within_envelope")return handoff(db,input,mode==="approval_required"?"Founder approval is required for this goal":"Goal is in recommendation-only mode");
+ if(def.idempotencyRequired&&!text(input.idempotencyKey))throw new Error("Idempotency key is required for this tool");
+ if(input.toolCode==="sales.quote.generate")return{status:"completed",executed:true,serverAuthoritative:true,result:await generateCanonicalSalesQuote(db,{packageCode:text(input.arguments.packageCode),petCount:Number(input.arguments.petCount),cityId:text(input.arguments.cityId)})};
+ if(input.toolCode==="sales.offer.negotiate"){const budget=await discountEnvelope(db,context,input.arguments);const id=await auditStart(db,input,"validated");const result=await validateBookingMargin(db,{bookingId:text(input.arguments.bookingId),dispatchItemId:text(input.arguments.dispatchItemId)||null,discountBps:Number(input.arguments.discountBps||0),freeUpgradeCode:text(input.arguments.freeUpgradeCode)||null,offerPolicyVersion:text(input.arguments.offerPolicyVersion),actorId:input.actor.email});await db.prepare("UPDATE atlas_tool_gateway_audit SET policy_decision='allowed',result_json=?,completed_at=? WHERE id=?").bind(JSON.stringify({budget,margin:result}),Date.now(),id).run();return{status:"completed",executed:true,serverAuthoritative:true,result:{budget,margin:result}};}
+ const id=await auditStart(db,input,"validated");const customerId=text(input.arguments.customerId),bookingId=text(input.arguments.bookingId);const owned=await db.prepare("SELECT id,service_code,city_id,zone_id FROM canonical_bookings WHERE id=? AND customer_id=?").bind(bookingId,customerId).first<Row>();if(!owned)throw new Response("Authorized canonical booking not found",{status:403});if(context.goal.serviceCode&&text(owned.service_code)!==context.goal.serviceCode)throw new Response("Booking is outside the Founder goal service scope",{status:403});if(context.goal.cityId&&text(owned.city_id)!==context.goal.cityId)throw new Response("Booking is outside the Founder goal city scope",{status:403});if(context.goal.zoneId&&text(owned.zone_id)!==context.goal.zoneId)throw new Response("Booking is outside the Founder goal zone scope",{status:403});const result=await createCanonicalSalesPaymentLink(db,input.env||{}, {bookingId,customerId,actorId:input.actor.email});await db.prepare("UPDATE atlas_tool_gateway_audit SET policy_decision='executed_via_canonical_service',result_json=?,completed_at=? WHERE id=?").bind(JSON.stringify(result),Date.now(),id).run();return{status:"completed",executed:true,serverAuthoritative:true,result};
+}
