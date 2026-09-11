@@ -548,6 +548,9 @@ for (const recovery of ["webhook", "scheduled_retry", "expired_lease"]) test(`ca
   });
   sqlite.prepare("UPDATE payment_intents SET gateway_order_id='order_ADV1',order_request_state='ORDER_CREATED' WHERE id=?").run(intent.id);
   const capture = captureEvent(bookingId, 200000);
+  // Sabotage the CURRENT verified-capture timeline write. This used to be an INSERT OR IGNORE;
+  // captureTimelineStatement now uses a source-verified INSERT, so target the durable boundary rather
+  // than a retired SQL spelling.
   db.onSql("INSERT INTO booking_lifecycle_events", () => { throw new Error("notification event storage unavailable"); });
   const first = await postSigned(capture, { eventId: "evt_capture_first" });
   assert.equal(first.status, 503, "capture is committed but its downstream event needs retry");
