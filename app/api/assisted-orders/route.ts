@@ -1,4 +1,5 @@
 import { groomingCatalogue } from "../../../lib/grooming-governance";
+import { generateCanonicalSalesQuote } from "../../../lib/sales-core-tools";
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
 
 type PetInput={sourceId:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
@@ -54,7 +55,7 @@ export async function POST(request:Request){try{
   const input=await request.json() as Input;if(!input.idempotencyKey||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone||!input.packageCode||!input.scheduledStart||!input.scheduledEnd||!input.pets?.length)return json({error:"Complete customer, pet, package, schedule and request identity are required"},400);
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
-  const {item,total}=priceFor(input.packageCode,input.pets),groupId=`assist-${input.idempotencyKey}`;
+  const {item}=priceFor(input.packageCode,input.pets),quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"}),total=quote.totalAmount,groupId=`assist-${input.idempotencyKey}`;
   const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds:input.pets.map(p=>p.sourceId),serviceCode:"grooming",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
   const schedule=(schedulePayload.data||{}) as Record<string,unknown>,provider=schedule.provider as {id?:string;name?:string;model?:"full_time"|"commission"}|undefined;if(!provider?.id||!provider.name||!provider.model)throw new Response("Canonical scheduler did not return an assigned Grooming provider",{status:409});
   const bookingPayload=await internalPost(request,"/api/canonical-bookings",{idempotencyKey:`assisted:${input.idempotencyKey}`,scheduleGroupId:groupId,customer:input.customer,pets:input.pets,cityId:input.cityId||"blr",zoneId:input.zoneId,serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,provider,totalAmount:total,amountDueNow:0,payment:{method:"payment_link",mode:"pay_after_service",status:"created",detail:"Assisted Orders UAT: payment is not captured; no live money"},pricing:{discount:0,requirements:["staff_assisted_order","consent_evidence","test_only"]}});
