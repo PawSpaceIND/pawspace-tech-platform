@@ -10,7 +10,7 @@ const data=fs.readFileSync("lib/intelligence/atlas-data.ts","utf8");
 const ingest=fs.readFileSync("app/api/admin/tally-ingest/route.ts","utf8");
 const chat=fs.readFileSync("app/api/admin/atlas-chat/route.ts","utf8");
 const worker=fs.readFileSync("worker/index.ts","utf8");
-const vite=fs.readFileSync("vite.config.ts","utf8");
+const wrangler=fs.readFileSync("wrangler.toml","utf8");
 
 test("Atlas financial memory is isolated from live finance ledgers",()=>{
  assert.match(data,/analytics_historical_financials/);
@@ -51,5 +51,5 @@ test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
  assert.match(worker,/handleAtlasWebSocket/);
  assert.match(worker,/runAtlasDailyAnalysis/);
  assert.match(worker,/controller\.cron==="15 2 \* \* \*"/);
- assert.match(vite,/"15 2 \* \* \*"/);
+ assert.match(wrangler,/"15 2 \* \* \*"/);
 });
