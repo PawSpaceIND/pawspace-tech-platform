@@ -246,11 +246,11 @@ test("the same arguments hash to the same value and different arguments do not",
 
 test("a canonical-service rejection is recorded as a failure rather than silently swallowed", async () => {
   const { sqlite, db } = await world();
-  // Canonical mutations require the authenticated source request so the internal route reuses the same
-  // customer/session boundary. A direct registry caller cannot manufacture that authority.
+  // The governed mutation now reaches the canonical route through its server-only actor entrypoint.
+  // A foreign/unknown booking is still rejected by that canonical service, and the failure is audited.
   const prepared = await registry.prepareAiToolExecution(db, { actor: staffActor, toolCode: "booking.reschedule", threadId: "THREAD-1", customerId: "CUS-1", intent: "booking_change", channel: "chat", arguments: { bookingId: "BKG-OTHER", scheduledStart: "2026-12-01T05:00:00.000Z", scheduledEnd: "2026-12-01T06:00:00.000Z" }, idempotencyKey: "reschedule-foreign" });
   assert.equal(prepared.status, "confirmation_required");
-  await assert.rejects(registry.confirmAiToolExecution(db, { actor: staffActor, requestId: prepared.requestId }), /Authenticated source request is required/);
+  await assert.rejects(registry.confirmAiToolExecution(db, { actor: staffActor, requestId: prepared.requestId }), error => error instanceof Response && error.status >= 400 && error.status < 500);
 
   const row = sqlite.prepare("SELECT status,policy_decision FROM ai_tool_execution_requests WHERE id=?").get(prepared.requestId);
   assert.equal(row.status, "failed");

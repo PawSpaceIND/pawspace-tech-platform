@@ -57,6 +57,18 @@ export async function executeGovernedLowRiskTool(db:D1Database,input:{sourceRequ
  return{...confirmed,autonomyClass:"customer_confirmed_safe_mutation",humanReviewRequired:false};
 }
 
+export async function executeGovernedConversationTool(db:D1Database,input:{actor:AuthenticatedActor;toolCode:AiToolCode;threadId:string;customerId:string;intent:AiToolIntent;channel:AiToolChannel;arguments?:Record<string,unknown>;idempotencyKey?:string;customerConfirmed?:boolean}){
+ if(!input.actor.email.endsWith("@system.pawspace")||!input.actor.permissions.includes("communications.manage"))throw new Response("Conversation service actor is not authorized for delegated AI actions",{status:403});
+ const thread=await db.prepare("SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();
+ if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation tool customer/thread mismatch",{status:403});
+ if(text(thread.status)!=="open"||text(thread.assigned_to)&&text(thread.assigned_to)!=="ai-orchestrator")throw new Response("Human-owned or closed conversation cannot execute AI mutations",{status:409});
+ if(!CONFIRMABLE_SAFE_MUTATIONS.has(input.toolCode)&&!LOW_RISK_AUTO_TOOLS.has(input.toolCode))throw new Response("Tool is not delegated to conversation AI",{status:403});
+ // The elevated permissions exist only in this call frame after the thread/customer binding above.
+ // They are not persisted and never include Finance, payout, price override or campaign authority.
+ const delegated:AuthenticatedActor={...input.actor,permissions:Array.from(new Set([...input.actor.permissions,"scheduling.book","bookings.manage"]))};
+ return executeGovernedLowRiskTool(db,{actor:delegated,toolCode:input.toolCode,threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:input.arguments,idempotencyKey:input.idempotencyKey,customerConfirmed:input.customerConfirmed});
+}
+
 export type WhatsAppAutoSendInput={intent:string;outcome:string;humanOwned:boolean;customerConsented:boolean;optedOut:boolean;grounded:boolean;containsHighImpactClaim:boolean;messageType?:string|null};
 const LOW_RISK_WHATSAPP_INTENTS=new Set(["service_info","booking_status","subscription_wallet"]);
 const LOW_RISK_MESSAGE_TYPES=new Set(["booking_confirmation","eta_update","payment_link_reminder","schedule_details","standard_faq"]);

@@ -51,3 +51,17 @@ test("AI-first leads clarify twice before low-confidence human escalation",()=>{
   assert.match(handoff,/status='human_escalated'/);
   assert.match(handoff,/INSERT OR IGNORE INTO crm_tasks/);
 });
+
+test("service-channel mutation delegation is thread/customer scoped and never borrows Finance authority",()=>{
+  const plane=read("lib/ai-first-control-plane.ts");
+  assert.match(plane,/executeGovernedConversationTool/);
+  assert.match(plane,/Conversation tool customer\/thread mismatch/);
+  assert.match(plane,/Human-owned or closed conversation cannot execute AI mutations/);
+  assert.match(plane,/"scheduling.book","bookings.manage"/);
+  assert.doesNotMatch(plane,/delegated[^\n]+finance\.manage/);
+  assert.doesNotMatch(plane,/delegated[^\n]+payments\.manage/);
+});
+
+test("canonical route handlers expose server-only actor entrypoints while preserving normal POST auth",()=>{
+  for(const [path,name] of [["app/api/uat-scheduling/route.ts","executeGovernedSchedulingRequest"],["app/api/canonical-bookings/route.ts","executeCanonicalBookingRequest"],["app/api/payment-order/route.ts","executePaymentOrderRequest"],["app/api/grooming-booking-change/route.ts","executeGroomingBookingChange"]]){const source=read(path);assert.match(source,new RegExp(name));assert.match(source,new RegExp(`export async function POST\\(request:Request\\).*${name}`));}
+});
