@@ -1,0 +1,14 @@
+import{ensureProviderCapacityTables}from"../provider-capacity-governance";
+type Row=Record<string,unknown>;async function tableExists(db:D1Database,name:string){return Boolean(await db.prepare("SELECT 1 ok FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
+const round2=(n:number)=>Math.round((n+Number.EPSILON)*100)/100;
+export type SurgeEvaluation={zoneId:string;serviceCode:string;capacityPct:number;availableUnits:number;totalUnits:number;thresholdPct:number;multiplier:number;surgeApplied:boolean;baseQuote:number;surgedQuote:number;policySource:string};
+export async function evaluateSurgePricing(db:D1Database,input:{zoneId:string;serviceCode:string;scheduledStart:string;scheduledEnd:string;baseQuote:number;thresholdPct?:number;surgeMultiplier?:number}):Promise<SurgeEvaluation>{
+ await ensureProviderCapacityTables(db);
+ await db.prepare("CREATE TABLE IF NOT EXISTS pricing_surge_policies (id TEXT PRIMARY KEY,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,threshold_pct REAL NOT NULL DEFAULT 0.15,surge_multiplier REAL NOT NULL DEFAULT 1.20,active INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL,UNIQUE(zone_id,service_code))").run();
+ const policy=await db.prepare("SELECT threshold_pct,surge_multiplier FROM pricing_surge_policies WHERE zone_id=? AND service_code=? AND active=1").bind(input.zoneId,input.serviceCode).first<Row>();
+ const threshold=Math.max(0,Math.min(1,Number(input.thresholdPct??policy?.threshold_pct??0.15))),multiplier=Math.max(1,Math.min(3,Number(input.surgeMultiplier??policy?.surge_multiplier??1.20)));
+ const providers=await db.prepare("SELECT id,capacity FROM provider_capacity_profiles p WHERE live=1 AND status='active' AND EXISTS (SELECT 1 FROM json_each(p.services_json) WHERE value=?) AND EXISTS (SELECT 1 FROM json_each(p.zones_json) WHERE value=?)").bind(input.serviceCode,input.zoneId).all<Row>();
+ const reservationsAvailable=await tableExists(db,"scheduling_reservations");let total=0,used=0;for(const p of providers.results){const cap=Math.max(0,Number(p.capacity)||0);total+=cap;const row=reservationsAvailable?await db.prepare("SELECT COALESCE(SUM(capacity_units),0) used FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>?").bind(p.id,input.scheduledEnd,input.scheduledStart).first<Row>().catch(()=>null):null;used+=Math.min(cap,Math.max(0,Number(row?.used)||0));}
+ const available=Math.max(0,total-used),pct=total>0?available/total:0,surge=total>0&&pct<0.15&&pct<threshold,base=round2(Number(input.baseQuote)||0);
+ return{zoneId:input.zoneId,serviceCode:input.serviceCode,capacityPct:round2(pct),availableUnits:available,totalUnits:total,thresholdPct:threshold,multiplier,surgeApplied:surge,baseQuote:base,surgedQuote:round2(base*(surge?multiplier:1)),policySource:policy?"pricing_surge_policies":"platform_default"};
+}
