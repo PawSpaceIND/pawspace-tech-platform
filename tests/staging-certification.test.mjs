@@ -320,6 +320,27 @@ test("the gate reads set-cookie from a Headers object as well as a plain record"
 // ---------------------------------------------------------------------------
 // Hosted smoke pack
 // ---------------------------------------------------------------------------
+test("the hosted smoke pack refreshes Founder after later persona sign-ins", async () => {
+  const state = world();
+  let founderLogins = 0;
+  const baseHttp = state.http;
+  state.http = async (method, path, options = {}) => {
+    if (path === "/api/staging-login" && options.body?.email === "founder@pawspace.in") {
+      founderLogins += 1;
+      return { status: 200, headers: { "set-cookie": `pawspace_session=founder-${founderLogins}; Path=/; HttpOnly` } };
+    }
+    if (SMOKE_ROUTES.includes(path) && options.headers?.cookie) {
+      return options.headers.cookie === "pawspace_session=founder-2"
+        ? { status: 200, headers: {} }
+        : { status: 401, headers: {} };
+    }
+    return baseHttp(method, path, options);
+  };
+  const report = await runStagingCertification(state);
+  assert.equal(founderLogins, 2);
+  assert.equal(report.ok, true, JSON.stringify(report.checks.filter(check => !check.ok), null, 2));
+});
+
 test("a route that does not answer for a real staff session fails, and is named", async () => {
   const broken = SMOKE_ROUTES[2];
   const report = await runStagingCertification(world({

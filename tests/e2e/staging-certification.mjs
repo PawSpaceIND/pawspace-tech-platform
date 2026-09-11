@@ -235,6 +235,12 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
   // the role to have a definition, and a tester hitting that gets "access denied" with no way to tell
   // which half is missing.
   const sessions = new Map();
+  const loginStaff = async (identity) => {
+    const response = await http("POST", "/api/staging-login", { body: { action: "login", code: val(env, "ACCESS_CODE"), email: identity.email } });
+    const setCookie = String(response.headers?.["set-cookie"] ?? response.headers?.get?.("set-cookie") ?? "");
+    const cookie = setCookie.split(";")[0];
+    return { response, cookie, ok: response.status >= 200 && response.status < 400 && Boolean(cookie) };
+  };
   for (const identity of REQUIRED_STAFF_IDENTITIES) {
     let seeded = false;
     try {
@@ -248,10 +254,7 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
     }
     if (!seeded) { check(`sign-in: ${identity.role} can sign in at /api/staging-login`, false, "skipped - the staff record is not seeded"); continue; }
     try {
-      const response = await http("POST", "/api/staging-login", { body: { action: "login", code: val(env, "ACCESS_CODE"), email: identity.email } });
-      const setCookie = String(response.headers?.["set-cookie"] ?? response.headers?.get?.("set-cookie") ?? "");
-      const cookie = setCookie.split(";")[0];
-      const ok = response.status >= 200 && response.status < 400 && Boolean(cookie);
+      const { response, cookie, ok } = await loginStaff(identity);
       if (ok) sessions.set(identity.role, cookie);
       check(`sign-in: ${identity.role} can sign in at /api/staging-login`, ok, ok ? "session issued" : `status ${response.status}, no session cookie`);
     } catch (error) {
@@ -306,7 +309,16 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
     `${report.counts.personasCertified}/${report.counts.personasTotal} authenticated`);
 
   // ── hosted route smoke pack ─────────────────────────────────────────────────────────────────
-  const founderCookie = sessions.get("founder");
+  // Refresh Founder immediately before the smoke pack so this proof uses a session minted
+  // for the actor being authorized, independent of any session rotation during persona checks.
+  let founderCookie = sessions.get("founder");
+  try {
+    const founder = REQUIRED_STAFF_IDENTITIES.find(identity => identity.role === "founder");
+    if (founder) {
+      const refreshed = await loginStaff(founder);
+      founderCookie = refreshed.ok ? refreshed.cookie : "";
+    }
+  } catch { founderCookie = ""; }
   if (!founderCookie) {
     unavailable("hosted smoke pack answers for a real staff session", "no founder session could be established");
     unavailable("hosted smoke pack refuses an anonymous caller", "no founder session to compare against");
