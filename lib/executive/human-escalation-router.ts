@@ -4,7 +4,8 @@ export type HumanEscalationKind =
   | "safety_injury"
   | "financial_batch_threshold"
   | "prolonged_gateway_outage"
-  | "provider_capacity_exhausted";
+  | "provider_capacity_exhausted"
+  | "ai_runtime_disabled";
 
 export type HumanEscalationSignal = {
   kind: HumanEscalationKind;
@@ -23,7 +24,8 @@ export function requiresHumanEscalation(signal: HumanEscalationSignal) {
     signal.kind === "safety_injury" ||
     signal.kind === "financial_batch_threshold" ||
     signal.kind === "prolonged_gateway_outage" ||
-    signal.kind === "provider_capacity_exhausted"
+    signal.kind === "provider_capacity_exhausted" ||
+    signal.kind === "ai_runtime_disabled"
   );
 }
 
