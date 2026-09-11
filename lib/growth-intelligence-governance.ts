@@ -25,19 +25,30 @@ const levelOf = (s: number) => (s >= 0.7 ? "high" : s >= 0.4 ? "medium" : "low")
 export async function listChurnRisk(db: Db, input: { limit?: number; at?: number } = {}) {
   const at = input.at ?? Date.now();
   const limit = Math.max(1, Math.min(Number(input.limit) || 100, 500));
-  const rows = await db.prepare("SELECT customer_id cust,COUNT(*) bookings,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed,MAX(CASE WHEN status='completed' THEN scheduled_start END) last_completed,SUM(CASE WHEN status NOT IN ('cancelled','refunded') THEN total_amount ELSE 0 END) value FROM canonical_bookings GROUP BY customer_id").all<Row>().catch(empty);
+  const cutoff90 = new Date(at - 90 * DAY).toISOString();
+  const rows = await db.prepare("SELECT customer_id cust,COUNT(*) bookings,COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) completed,MAX(CASE WHEN status='completed' THEN scheduled_start END) last_completed,COALESCE(SUM(CASE WHEN status NOT IN ('cancelled','refunded') THEN total_amount ELSE 0 END),0) value,COALESCE(SUM(CASE WHEN scheduled_start>=? THEN 1 ELSE 0 END),0) bookings_90d,COALESCE(SUM(CASE WHEN status='cancelled' AND scheduled_start>=? THEN 1 ELSE 0 END),0) cancelled_90d FROM canonical_bookings GROUP BY customer_id").bind(cutoff90,cutoff90).all<Row>().catch(empty);
+  const ratingRows = await db.prepare("SELECT customer_id,COALESCE(SUM(CASE WHEN stars<3 AND created_at>=? THEN 1 ELSE 0 END),0) low_ratings_90d FROM booking_ratings GROUP BY customer_id").bind(at-90*DAY).all<Row>().catch(empty);
+  const lowRatings = new Map(ratingRows.results.map(r => [String(r.customer_id), Number(r.low_ratings_90d ?? 0) || 0]));
   const scored = rows.results.map(r => {
-    const completed = Number(r.completed), last = r.last_completed ? Date.parse(String(r.last_completed)) : NaN;
+    const completed = Number(r.completed ?? 0) || 0, last = r.last_completed ? Date.parse(String(r.last_completed)) : NaN;
     if (!completed || Number.isNaN(last)) return null;
-    const daysSince = Math.floor((at - last) / DAY);
-    if (daysSince < 45) return null; // still active
-    const value = Number(r.value) || 0;
-    const risk = clamp01(daysSince / 120);                 // fully "at risk" by ~4 months idle
-    const priority = round2(clamp01(risk * (0.7 + 0.3 * clamp01(value / 5000)))); // value-weighted for ranking
-    return { customerId: String(r.cust), daysSinceLastService: daysSince, bookings: Number(r.bookings), completedServices: completed, lifetimeValue: round2(value), score: round2(risk), priority, riskLevel: levelOf(risk), reason: `No completed service in ${daysSince} days`, suggestedAction: "winback_offer", recommendationOnly: true };
+    const daysSince = Math.max(0, Math.floor((at - last) / DAY));
+    const recentLowRatings = Math.max(0, lowRatings.get(String(r.cust)) ?? 0);
+    const bookings90 = Math.max(0, Number(r.bookings_90d ?? 0) || 0);
+    const cancelled90 = Math.max(0, Number(r.cancelled_90d ?? 0) || 0);
+    const cancellationFrequency = bookings90 ? clamp01(cancelled90 / bookings90) : 0;
+    const recencyRisk = clamp01(daysSince / 120), ratingRisk = clamp01(recentLowRatings / 2);
+    const risk = clamp01(recencyRisk * 0.55 + ratingRisk * 0.25 + cancellationFrequency * 0.20);
+    if (risk < 0.25) return null;
+    const value = Number(r.value ?? 0) || 0;
+    const priority = round2(clamp01(risk * (0.85 + 0.15 * clamp01(value / 5000))));
+    const signals = [`${daysSince} days since last completed service`];
+    if (recentLowRatings) signals.push(`${recentLowRatings} recent rating(s) below 3 stars`);
+    if (cancellationFrequency) signals.push(`${Math.round(cancellationFrequency*100)}% cancellation frequency (90d)`);
+    return { customerId: String(r.cust), daysSinceLastCompletedService: daysSince, recentLowRatings, cancellationFrequency: round2(cancellationFrequency), bookings: Number(r.bookings ?? 0) || 0, completedServices: completed, lifetimeValue: round2(value), score: round2(risk), priority, riskLevel: levelOf(risk), reason: signals.join("; "), suggestedAction: "winback_offer", recommendationOnly: true };
   }).filter(Boolean) as Array<Record<string, unknown>>;
-  scored.sort((a, b) => (Number(b.priority) - Number(a.priority)) || (Number(b.lifetimeValue) - Number(a.lifetimeValue)));
-  return { method: "recency_value_v1", atRisk: scored.slice(0, limit) };
+  scored.sort((a, b) => (Number(b.priority) - Number(a.priority)) || (Number(b.score) - Number(a.score)));
+  return { method: "service_quality_cancellation_v2", atRisk: scored.slice(0, limit) };
 }
 
 function upcomingBirthdayWithin(dob: string, at: number, days: number): number | null {
