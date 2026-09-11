@@ -8,6 +8,7 @@ import styles from"../team-console.module.css";
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
 
 const WORKSPACES=[
+ ["/team/people/onboarding","Employee onboarding"],
  ["/team/people/time","Attendance & leave"],
  ["/team/people/payroll","Payroll"],
  ["/team/people/incentives","Incentives"],
