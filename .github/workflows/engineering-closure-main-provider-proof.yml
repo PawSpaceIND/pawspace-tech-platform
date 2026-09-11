@@ -25,7 +25,7 @@ jobs:
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
       FORBID_PRODUCTION: 'true'
       WEBHOOK_ID: TaG3ZzXULiDFUS
-      PRODUCT_SHA: 513c6f894345105c472447a1240cf63cae15d529
+      PRODUCT_SHA: 06d779443e435d8cfbfe5d21c4aca7f062aec8a4
       PROOF_CONFIRM: main-provider-proof-674
     steps:
       - name: Checkout disposable proof infrastructure
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Verify current main is exactly merged and certified PR734 source
+      - name: Verify current main is exactly merged and certified PR735 source
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
@@ -47,15 +47,15 @@ jobs:
           if(!/^[0-9a-f]{40}$/.test(expected))throw new Error('Exact current main SHA required');
           const base='https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform';
           const get=async path=>{const r=await fetch(base+path,{headers:{authorization:'Bearer '+process.env.GH_TOKEN,accept:'application/vnd.github+json'},redirect:'error',signal:AbortSignal.timeout(20000)});if(!r.ok)throw new Error(`GitHub verification failed ${r.status} ${path}`);return r.json();};
-          const [main,pr]=await Promise.all([get('/branches/main'),get('/pulls/734')]);
+          const [main,pr]=await Promise.all([get('/branches/main'),get('/pulls/735')]);
           if(main?.commit?.sha!==expected)throw new Error('Protected main moved; refusing stale proof');
-          if(pr?.merged!==true||pr?.merge_commit_sha!==expected||pr?.head?.repo?.full_name!=='PawSpaceIND/pawspace-tech-platform')throw new Error('Expected main is not the merged #734 closure');
+          if(pr?.merged!==true||pr?.merge_commit_sha!==expected||pr?.head?.repo?.full_name!=='PawSpaceIND/pawspace-tech-platform')throw new Error('Expected main is not the merged #735 payment-recovery closure');
           const [mainCommit,headCommit]=await Promise.all([get('/git/commits/'+expected),get('/git/commits/'+pr.head.sha)]);
           if(mainCommit?.tree?.sha!==headCommit?.tree?.sha)throw new Error('Merged main tree differs from certified #734 head tree');
           const runs=(await get('/actions/runs?event=pull_request&head_sha='+pr.head.sha+'&per_page=100')).workflow_runs||[];
           for(const name of ['Release CI','Pre-UAT Staging Protocol','Browser E2E (hardened, preview superuser disabled)','Browser E2E (personas, sandbox locked)']){
             const run=runs.filter(r=>r.name===name).sort((a,b)=>b.id-a.id)[0];
-            if(!run||run.status!=='completed'||run.conclusion!=='success')throw new Error('Certified #734 workflow missing/failed: '+name);
+            if(!run||run.status!=='completed'||run.conclusion!=='success')throw new Error('Certified #735 workflow missing/failed: '+name);
           }
           console.log(JSON.stringify({main:expected,certifiedHead:pr.head.sha,tree:mainCommit.tree.sha,requiredWorkflowGroups:4}));
           NODE
