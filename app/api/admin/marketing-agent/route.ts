@@ -9,6 +9,7 @@ import {
   marketingKeywordMutate,
   marketingSearchTermsAnalyze,
   submitMarketingProposal,
+  listMarketingBudgetEnvelopes,
 } from "../../../../lib/marketing-agent-gateway";
 import type { MarketingAdPlatform } from "../../../../lib/marketing-ad-connectors";
 
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
     const db = await database();
     await ensureMarketingAgentGatewayTables(db);
     const pending = await db.prepare("SELECT id,tool_name,platform,why_text,status,requested_by,requested_at,approved_by,approved_at,executed_at,execution_id FROM pending_approvals WHERE domain='marketing' ORDER BY requested_at DESC LIMIT 100").all();
-    const envelopes = await db.prepare("SELECT id,platform,account_id,resource_id,daily_limit_minor,currency,status,effective_from,effective_to,approved_by,approved_at FROM gce_budget_envelopes WHERE status='active' ORDER BY platform,account_id,resource_id").all();
-    return json({ data: { toolSchemas: MARKETING_TOOL_SCHEMAS, approvalMode: "approval_required", pendingApprovals: pending.results, budgetEnvelopes: envelopes.results, autonomousMutation: false } });
+    const envelopes = await listMarketingBudgetEnvelopes(db);
+    return json({ data: { toolSchemas: MARKETING_TOOL_SCHEMAS, approvalMode: "approval_required", pendingApprovals: pending.results, budgetEnvelopes: envelopes, autonomousMutation: false } });
   } catch (error) { return authError(error, "Unable to load Head of Marketing gateway"); }
 }
 

@@ -21,9 +21,8 @@ const GOOGLE_RUNTIME = {
 };
 const now = () => Date.now();
 
-async function envelope(sqlite, { id, resourceId, limit = 200000 }) {
-  sqlite.prepare("INSERT INTO gce_budget_envelopes (id,platform,account_id,resource_id,daily_limit_minor,currency,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES (?,'google_ads','1234567890',?,?,'INR','active',?,NULL,'founder@pawspace.test',?,?,?)")
-    .run(id, resourceId, limit, now() - 1000, now(), now(), now());
+async function envelope(db, { id, resourceId, limit = 200000 }) {
+  await gateway.upsertMarketingBudgetEnvelope(db, { id, platform: "google_ads", accountId: "1234567890", resourceId, dailyLimitMinor: limit, effectiveFrom: now() - 1000, founderActor: "founder@pawspace.test" });
 }
 
 async function approvedProposal(db, payload, toolName = "marketing.ads.budget.reallocate") {
@@ -63,7 +62,7 @@ test("proposal approval is maker-checker and exact-payload bound", async () => {
   await assert.rejects(() => gateway.founderDecideMarketingProposal(db, { approvalId:proposal.id, decision:"approved", founderActor:"founder@pawspace.test" }), e => e instanceof Response && e.status === 403);
   await gateway.founderDecideMarketingProposal(db, { approvalId:proposal.id, decision:"approved", founderActor:"other-founder@pawspace.test" });
   await gateway.ensureMarketingAgentGatewayTables(db);
-  await envelope(sqlite,{id:"E1",resourceId:"111"}); await envelope(sqlite,{id:"E2",resourceId:"222"});
+  await envelope(db,{id:"E1",resourceId:"111"}); await envelope(db,{id:"E2",resourceId:"222"});
   let calls=0;
   await assert.rejects(() => gateway.marketingBudgetReallocate(db, GOOGLE_RUNTIME, { approvalId:proposal.id, ...payload, shiftMinor:11000, actor:"other-founder@pawspace.test", fetchImpl:async()=>{calls++;return new Response('{}')} }), e => e instanceof Response && e.status === 409);
   assert.equal(calls,0,"tampered payload must fail before provider call");
@@ -72,8 +71,8 @@ test("proposal approval is maker-checker and exact-payload bound", async () => {
 test("over-envelope budget mutation fails before any provider request", async () => {
   const { sqlite, db } = freshDb();
   await gateway.ensureMarketingAgentGatewayTables(db);
-  await envelope(sqlite,{id:"E1",resourceId:"111",limit:200000});
-  await envelope(sqlite,{id:"E2",resourceId:"222",limit:55000});
+  await envelope(db,{id:"E1",resourceId:"111",limit:200000});
+  await envelope(db,{id:"E2",resourceId:"222",limit:55000});
   const payload={platform:"google_ads",accountId:"1234567890",fromResourceId:"111",toResourceId:"222",fromDailyMinor:100000,toDailyMinor:50000,shiftMinor:10000,reason:"Move budget to lower-CPA campaign"};
   const proposal=await approvedProposal(db,payload);
   let calls=0;
@@ -85,7 +84,7 @@ test("over-envelope budget mutation fails before any provider request", async ()
 test("Founder-approved in-envelope reallocation executes once and consumes approval", async () => {
   const { sqlite, db } = freshDb();
   await gateway.ensureMarketingAgentGatewayTables(db);
-  await envelope(sqlite,{id:"E1",resourceId:"111",limit:200000}); await envelope(sqlite,{id:"E2",resourceId:"222",limit:200000});
+  await envelope(db,{id:"E1",resourceId:"111",limit:200000}); await envelope(db,{id:"E2",resourceId:"222",limit:200000});
   const payload={platform:"google_ads",accountId:"1234567890",fromResourceId:"111",toResourceId:"222",fromDailyMinor:100000,toDailyMinor:50000,shiftMinor:10000,reason:"Move budget to lower-CPA campaign"};
   const proposal=await approvedProposal(db,payload);
   const calls=[];
@@ -100,7 +99,7 @@ test("Founder-approved in-envelope reallocation executes once and consumes appro
 test("keyword mutation requires exact approval and active campaign envelope", async () => {
   const { sqlite, db } = freshDb();
   await gateway.ensureMarketingAgentGatewayTables(db);
-  await envelope(sqlite,{id:"EK",resourceId:"100",limit:100000});
+  await envelope(db,{id:"EK",resourceId:"100",limit:100000});
   const payload={platform:"google_ads",accountId:"1234567890",campaignId:"100",adGroupId:"200",criterionId:"",keyword:"free dog wash",operation:"add_negative",matchType:"EXACT",currentDailyMinor:50000,reason:"Exclude irrelevant non-converting query"};
   const proposal=await approvedProposal(db,payload,"marketing.ads.keyword.mutate");
   let request;

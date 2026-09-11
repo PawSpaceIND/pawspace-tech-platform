@@ -1,4 +1,5 @@
 import { listMarketingAdMetrics, mutateMarketingAdResource, type MarketingAdPlatform } from "./marketing-ad-connectors";
+import { ensureGoalContextTables } from "./goal-context-engine";
 
 type Db = D1Database;
 type Runtime = Record<string, unknown>;
@@ -94,12 +95,38 @@ function canonical(value: unknown): unknown {
 const stableJson = (value: unknown) => JSON.stringify(canonical(value));
 
 export async function ensureMarketingAgentGatewayTables(db: Db) {
+  await ensureGoalContextTables(db);
   await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS gce_budget_envelopes (id TEXT PRIMARY KEY,platform TEXT NOT NULL,account_id TEXT NOT NULL,resource_id TEXT,daily_limit_minor INTEGER NOT NULL CHECK(daily_limit_minor>=0),currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'active',effective_from INTEGER NOT NULL,effective_to INTEGER,approved_by TEXT NOT NULL,approved_at INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS gce_budget_envelopes_lookup_idx ON gce_budget_envelopes(platform,account_id,resource_id,status,effective_from,effective_to)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS gce_marketing_budget_bindings (envelope_id TEXT PRIMARY KEY,platform TEXT NOT NULL,account_id TEXT NOT NULL,resource_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,FOREIGN KEY(envelope_id) REFERENCES gce_budget_envelopes(id) ON DELETE CASCADE)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS gce_marketing_budget_bindings_lookup_idx ON gce_marketing_budget_bindings(platform,account_id,resource_id)"),
     db.prepare("CREATE TABLE IF NOT EXISTS pending_approvals (id TEXT PRIMARY KEY,domain TEXT NOT NULL,tool_name TEXT NOT NULL,platform TEXT NOT NULL,why_text TEXT NOT NULL,payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',requested_by TEXT NOT NULL,requested_at INTEGER NOT NULL,approved_by TEXT,approved_at INTEGER,rejected_by TEXT,rejected_at INTEGER,decision_note TEXT,executed_at INTEGER,execution_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS pending_approvals_status_idx ON pending_approvals(domain,status,requested_at)"),
   ]);
+}
+
+export async function upsertMarketingBudgetEnvelope(db: Db, input: { id?: string; platform: MarketingAdPlatform; accountId: string; resourceId?: string; dailyLimitMinor: number; effectiveFrom?: number; effectiveTo?: number | null; founderActor: string }) {
+  await ensureMarketingAgentGatewayTables(db);
+  const now = Date.now();
+  const id = text(input.id) || uid("GBE");
+  const existing = await db.prepare("SELECT budget_type FROM gce_budget_envelopes WHERE id=?").bind(id).first<Row>();
+  if (existing && text(existing.budget_type) !== "marketing_ad_spend") throw new Response("Envelope id belongs to a non-marketing Goal Context budget", { status: 409 });
+  const start = Number(input.effectiveFrom ?? now);
+  const end = input.effectiveTo == null ? null : Number(input.effectiveTo);
+  const limit = int(input.dailyLimitMinor);
+  const founder = text(input.founderActor);
+  await db.batch([
+    db.prepare("INSERT INTO gce_budget_envelopes (id,goal_id,budget_type,currency,period_type,hard_limit_paise,soft_limit_paise,consumed_paise,starts_at,ends_at,status,approved_by,approved_at,created_by,created_at,updated_at) VALUES (?,NULL,'marketing_ad_spend','INR','daily',?,NULL,0,?,?,'active',?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET budget_type='marketing_ad_spend',currency='INR',period_type='daily',hard_limit_paise=excluded.hard_limit_paise,starts_at=excluded.starts_at,ends_at=excluded.ends_at,status='active',approved_by=excluded.approved_by,approved_at=excluded.approved_at,updated_at=excluded.updated_at")
+      .bind(id, limit, start, end, founder, now, founder, now, now),
+    db.prepare("INSERT INTO gce_marketing_budget_bindings (envelope_id,platform,account_id,resource_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(envelope_id) DO UPDATE SET platform=excluded.platform,account_id=excluded.account_id,resource_id=excluded.resource_id,updated_at=excluded.updated_at")
+      .bind(id, input.platform, text(input.accountId), text(input.resourceId) || null, now, now),
+  ]);
+  return { id, platform: input.platform, accountId: text(input.accountId), resourceId: text(input.resourceId) || null, dailyLimitMinor: limit, approvedBy: founder };
+}
+
+export async function listMarketingBudgetEnvelopes(db: Db) {
+  await ensureMarketingAgentGatewayTables(db);
+  const rows = await db.prepare("SELECT e.id,b.platform,b.account_id,b.resource_id,e.hard_limit_paise AS daily_limit_minor,e.currency,e.status,e.starts_at AS effective_from,e.ends_at AS effective_to,e.approved_by,e.approved_at FROM gce_budget_envelopes e JOIN gce_marketing_budget_bindings b ON b.envelope_id=e.id WHERE e.budget_type='marketing_ad_spend' AND e.status='active' ORDER BY b.platform,b.account_id,b.resource_id").all<Row>();
+  return rows.results;
 }
 
 export async function submitMarketingProposal(db: Db, input: { toolName: "marketing.ads.budget.reallocate" | "marketing.ads.keyword.mutate"; platform: MarketingAdPlatform; why: string; payload: Record<string, unknown>; requestedBy: string }) {
@@ -156,10 +183,10 @@ async function failApprovalExecution(db: Db, approvalId: string, detail: string)
 async function assertBudgetEnvelope(db: Db, input: { platform: MarketingAdPlatform; accountId: string; resourceId: string; proposedDailyMinor: number }) {
   await ensureMarketingAgentGatewayTables(db);
   const now = Date.now();
-  const envelope = await db.prepare("SELECT * FROM gce_budget_envelopes WHERE platform=? AND account_id=? AND status='active' AND (resource_id IS NULL OR resource_id=?) AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY CASE WHEN resource_id=? THEN 0 ELSE 1 END,daily_limit_minor ASC LIMIT 1")
+  const envelope = await db.prepare("SELECT e.*,b.platform,b.account_id,b.resource_id,e.hard_limit_paise AS daily_limit_minor FROM gce_budget_envelopes e JOIN gce_marketing_budget_bindings b ON b.envelope_id=e.id WHERE e.budget_type='marketing_ad_spend' AND b.platform=? AND b.account_id=? AND e.status='active' AND e.approved_by IS NOT NULL AND e.approved_at IS NOT NULL AND (b.resource_id IS NULL OR b.resource_id=?) AND e.starts_at<=? AND (e.ends_at IS NULL OR e.ends_at>=?) ORDER BY CASE WHEN b.resource_id=? THEN 0 ELSE 1 END,e.hard_limit_paise ASC LIMIT 1")
     .bind(input.platform, input.accountId, input.resourceId, now, now, input.resourceId).first<Row>();
   if (!envelope) throw new Response("No active Founder-approved budget envelope", { status: 403 });
-  if (int(input.proposedDailyMinor) > int(envelope.daily_limit_minor)) throw new Response("Proposed daily spend exceeds Founder-approved budget envelope", { status: 422 });
+  if (int(input.proposedDailyMinor) > int(envelope.hard_limit_paise)) throw new Response("Proposed daily spend exceeds Founder-approved budget envelope", { status: 422 });
   return envelope;
 }
 

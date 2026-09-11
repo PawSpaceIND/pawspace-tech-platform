@@ -1,6 +1,6 @@
 import { authError, database, resolveActor, securityAudit } from "../../../../../lib/server-auth";
 import { requireFounderRole } from "../../../../../lib/intelligence/atlas-data";
-import { ensureMarketingAgentGatewayTables, founderDecideMarketingProposal, marketingBudgetReallocate, marketingKeywordMutate } from "../../../../../lib/marketing-agent-gateway";
+import { ensureMarketingAgentGatewayTables, founderDecideMarketingProposal, marketingBudgetReallocate, marketingKeywordMutate, upsertMarketingBudgetEnvelope } from "../../../../../lib/marketing-agent-gateway";
 import type { MarketingAdPlatform } from "../../../../../lib/marketing-ad-connectors";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -25,11 +25,9 @@ export async function POST(request:Request){
     if(action==="marketing.budget_envelope.upsert"){
       const platform=text(body.platform),accountId=text(body.accountId),resourceId=text(body.resourceId),dailyLimitMinor=Math.trunc(Number(body.dailyLimitMinor));
       if(!["google_ads","meta_ads"].includes(platform)||!accountId||!Number.isFinite(dailyLimitMinor)||dailyLimitMinor<0)return json({error:"platform, accountId and non-negative dailyLimitMinor are required"},400);
-      const now=Date.now(),id=text(body.id)||`GBE-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-      await db.prepare("INSERT INTO gce_budget_envelopes (id,platform,account_id,resource_id,daily_limit_minor,currency,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,?,?,'INR','active',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET platform=excluded.platform,account_id=excluded.account_id,resource_id=excluded.resource_id,daily_limit_minor=excluded.daily_limit_minor,status='active',effective_from=excluded.effective_from,effective_to=excluded.effective_to,approved_by=excluded.approved_by,approved_at=excluded.approved_at,updated_at=excluded.updated_at")
-        .bind(id,platform,accountId,resourceId||null,dailyLimitMinor,Number(body.effectiveFrom||now),body.effectiveTo==null?null:Number(body.effectiveTo),founder.email,now,now,now).run();
-      await securityAudit(db,founder,"marketing.budget_envelope.upsert","gce_budget_envelope",id,"completed",{platform,accountId,resourceId:resourceId||null,dailyLimitMinor});
-      return json({data:{id,platform,accountId,resourceId:resourceId||null,dailyLimitMinor,approvedBy:founder.email}});
+      const data=await upsertMarketingBudgetEnvelope(db,{id:text(body.id)||undefined,platform:platform as MarketingAdPlatform,accountId,resourceId:resourceId||undefined,dailyLimitMinor,effectiveFrom:body.effectiveFrom==null?undefined:Number(body.effectiveFrom),effectiveTo:body.effectiveTo==null?null:Number(body.effectiveTo),founderActor:founder.email});
+      await securityAudit(db,founder,"marketing.budget_envelope.upsert","gce_budget_envelope",data.id,"completed",{platform,accountId,resourceId:resourceId||null,dailyLimitMinor});
+      return json({data});
     }
     if(action==="marketing.ads.budget.reallocate"){
       const data=await marketingBudgetReallocate(db,await runtime(),{approvalId:text(body.approvalId),platform:body.platform as MarketingAdPlatform,accountId:text(body.accountId),fromResourceId:text(body.fromResourceId),toResourceId:text(body.toResourceId),fromDailyMinor:Number(body.fromDailyMinor),toDailyMinor:Number(body.toDailyMinor),shiftMinor:Number(body.shiftMinor),reason:text(body.reason),actor:founder.email});
