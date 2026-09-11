@@ -11,6 +11,7 @@ import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response
 import {runWhatsAppOutboxDispatcher,syncSubmittedMetaTemplateStatuses} from "../lib/whatsapp-production-runtime";
 import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
 import {runRazorpayCaptureOutboxSweep} from "../lib/razorpay-capture-atomic";
+import {runRazorpayCaptureReconciliationSweep} from "../lib/razorpay-capture-reconciliation";
 import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
@@ -139,7 +140,8 @@ const worker = {
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const supermetrics=result.supermetricsSync as Record<string,unknown>;const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(supermetrics?.status||"")==="partial_failure"||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,supermetrics,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety]=await Promise.allSettled([
+      const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -148,7 +150,7 @@ const worker = {
         whatsappDispatchBlocked?skippedWhatsAppSweep(whatsappDispatchBlocked):processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),
         whatsappDispatchBlocked?skippedWhatsAppSweep(whatsappDispatchBlocked):runWhatsAppOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50}),
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
-        runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
+        razorpayCaptureRecoveryTask,
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
         marketingTask,
@@ -167,7 +169,7 @@ const worker = {
       if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);
       if(whatsappOutbox.status==="rejected")errors.push(`whatsapp outbox: ${whatsappOutbox.reason instanceof Error?whatsappOutbox.reason.message:String(whatsappOutbox.reason)}`);else if(whatsappOutbox.value.failed)errors.push(`whatsapp outbox: ${whatsappOutbox.value.failed} dispatch exception(s)`);
       if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
-      if(razorpayCaptureOutbox.status==="rejected")errors.push(`razorpay capture outbox: ${razorpayCaptureOutbox.reason instanceof Error?razorpayCaptureOutbox.reason.message:String(razorpayCaptureOutbox.reason)}`);else if(razorpayCaptureOutbox.value.failed)errors.push(`razorpay capture outbox: ${razorpayCaptureOutbox.value.failed} recovery exception(s)`);
+      if(razorpayCaptureRecovery.status==="rejected")errors.push(`razorpay capture recovery: ${razorpayCaptureRecovery.reason instanceof Error?razorpayCaptureRecovery.reason.message:String(razorpayCaptureRecovery.reason)}`);else if(razorpayCaptureRecovery.value.failed)errors.push(`razorpay capture recovery: ${razorpayCaptureRecovery.value.failed} provider/effects recovery exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
       if(marketingConnector.status==="rejected")errors.push(`marketing connector: ${marketingConnector.reason instanceof Error?marketingConnector.reason.message:String(marketingConnector.reason)}`);
