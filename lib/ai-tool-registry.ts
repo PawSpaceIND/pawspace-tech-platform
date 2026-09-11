@@ -2,6 +2,8 @@ import{retrieveApprovedKnowledge}from"./ai-business-configuration";
 import{assignConversation,ensureConversationGovernance}from"./conversation-governance";
 import{groomingCatalogue}from"./grooming-governance";
 import{ensureGroomingInvoiceTables}from"./grooming-invoice";
+import{buildSalesPromptContext}from"./ai-sales-goal-orchestrator";
+import{executeAfterMarginValidation,validateBookingMargin}from"./finance-margin-validator";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 import{listCustomerSubscriptionWallets}from"./subscription-wallet";
 import{createUnifiedCase,ensureUnifiedCaseTables,type CaseSeverity,type CaseType}from"./unified-case-center";
@@ -116,13 +118,27 @@ async function executeRead(db:D1Database,definition:AiToolDefinition,customerId:
 function caseSpec(code:AiToolCode,args:Record<string,unknown>):{caseType:CaseType;severity:CaseSeverity;title:string;description:string;ownerTeam:string}{
  return{caseType:(text(args.caseType)||"customer_complaint")as CaseType,severity:(text(args.severity)||"medium")as CaseSeverity,title:text(args.title)||"AI support request",description:text(args.description)||"Customer requested support through AI",ownerTeam:text(args.ownerTeam)||"cx"};
 }
+
+async function validateSalesOfferIfPresent(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;args:Record<string,unknown>}){
+ const bookingId=text(input.args.bookingId),dispatchItemId=text(input.args.dispatchItemId),discountBps=Number(input.args.discountBps||0),freeUpgradeCode=text(input.args.freeUpgradeCode)||null;
+ if(!dispatchItemId){if(discountBps>0||freeUpgradeCode)throw new Error("AI sales discounts or upgrades require an authorized sales dispatch item");return null;}
+ if(!bookingId)throw new Error("Canonical booking is required for an AI sales offer");
+ const dispatch=await db.prepare("SELECT channel FROM ai_sales_dispatch_items WHERE id=? AND customer_id=?").bind(dispatchItemId,input.customerId).first<Row>(),channel=text(dispatch?.channel);
+ if(channel!=="voice"&&channel!=="whatsapp")throw new Error("Sales dispatch channel is invalid");
+ const context=await buildSalesPromptContext(db,{dispatchItemId,customerId:input.customerId,channel});
+ if(!context)throw new Error("Active authorized sales offer was not found");
+ if(discountBps>context.offer.maxDiscountBps)throw new Error("Requested discount exceeds the authorized sales envelope");
+ if(freeUpgradeCode&&!context.offer.freeUpgradeCodes.includes(freeUpgradeCode))throw new Error("Requested upgrade is outside the authorized sales envelope");
+ if(discountBps>0&&freeUpgradeCode)throw new Error("Discounts and free upgrades cannot be combined");
+ return validateBookingMargin(db,{bookingId,dispatchItemId,discountBps,freeUpgradeCode,offerPolicyVersion:context.offer.policyVersion,actorId:input.actor.email});
+}
 async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{requestId:string;actor:AuthenticatedActor;threadId:string;customerId:string;idempotencyKey:string;args:Record<string,unknown>;sourceRequest?:Request}){
  if(definition.code==="case.create"){const bookingId=text(input.args.bookingId)||null;if(bookingId)await readBooking(db,input.customerId,bookingId);const spec=caseSpec(definition.code,input.args);return createUnifiedCase(db,{idempotencyKey:`ai-tool:${input.idempotencyKey}`,caseType:spec.caseType,severity:spec.severity,title:spec.title,description:spec.description,customerId:input.customerId,bookingId,sourceType:"ai_tool_request",sourceId:input.requestId,ownerTeam:spec.ownerTeam,actorId:input.actor.email});}
  if(["schedule.reserve","provider.assignment.execute_policy","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel"].includes(definition.code)){
   const origin=input.sourceRequest?new URL(input.sourceRequest.url).origin:"https://internal.pawspace";
   const headers=input.sourceRequest?new Headers(input.sourceRequest.headers):new Headers();headers.set("content-type","application/json");headers.set("origin",origin);
   const invoke=async(path:string,body:Record<string,unknown>)=>{const request=new Request(new URL(path,origin),{method:"POST",headers,body:JSON.stringify(body)});let response:Response;if(path==="/api/uat-scheduling")response=await(await import("../app/api/uat-scheduling/route")).executeGovernedSchedulingRequest(request,input.actor);else if(path==="/api/canonical-bookings")response=await(await import("../app/api/canonical-bookings/route")).executeCanonicalBookingRequest(request,input.actor);else if(path==="/api/payment-order")response=await(await import("../app/api/payment-order/route")).executePaymentOrderRequest(request,input.actor);else response=await(await import("../app/api/grooming-booking-change/route")).executeGroomingBookingChange(request,input.actor);const payload=await response.json().catch(()=>({error:"Canonical action returned a non-JSON response"})) as Record<string,unknown>;if(!response.ok)throw new Response(JSON.stringify(payload),{status:response.status,headers:{"content-type":"application/json"}});return payload.data??payload;};
-  if(definition.code==="schedule.reserve"||definition.code==="provider.assignment.execute_policy"){const body={...input.args,action:"reserve",customerId:input.customerId,clientRequestId:text(input.args.clientRequestId)||input.idempotencyKey,assignmentStrategy:"auto"};return invoke("/api/uat-scheduling",body);}
+  if(definition.code==="schedule.reserve"||definition.code==="provider.assignment.execute_policy"){const salesValidation=()=>validateSalesOfferIfPresent(db,input);const body={...input.args,action:"reserve",customerId:input.customerId,clientRequestId:text(input.args.clientRequestId)||input.idempotencyKey,assignmentStrategy:"auto"};return executeAfterMarginValidation(salesValidation,()=>invoke("/api/uat-scheduling",body));}
   if(definition.code==="booking.create"){
    const scheduleGroupId=text(input.args.scheduleGroupId);if(!scheduleGroupId)throw new Response("A reserved scheduling group is required before booking",{status:400});
    const assignment=await db.prepare("SELECT selected_provider_id,status FROM scheduling_assignment_decisions WHERE group_id=?").bind(scheduleGroupId).first<Row>();
@@ -139,7 +155,7 @@ async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{
    const payload={idempotencyKey:input.idempotencyKey,scheduleGroupId,customer:{id:input.customerId,name:text(customer.name),primaryPhone:text(customer.primary_phone),secondaryPhone:text(customer.secondary_phone)||undefined,email:text(customer.email)||undefined},pets:pets.map(pet=>({sourceId:text(pet.source_pet_id)||text(pet.id),name:text(pet.name),species:text(pet.species)||"other",breed:text(pet.breed)||undefined,vaccinationStatus:text(pet.vaccination_status)||"not_provided"})),cityId:text(first.city_id),zoneId:text(first.zone_id),serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:text(first.scheduled_start),scheduledEnd:text(first.scheduled_end),provider:{id:text(provider.id),name:text(provider.name),model:text(provider.provider_model)},totalAmount,amountDueNow:paymentMode==="prepaid"?totalAmount:0,payment:{method:"upi",mode:paymentMode,status:"created",detail:"AI customer-confirmed governed checkout"},pricing:{discount:0,addOns:[]}};
    return invoke("/api/canonical-bookings",payload);
   }
-  if(definition.code==="checkout.payment_order.create")return invoke("/api/payment-order",{bookingId:text(input.args.bookingId),customerId:input.customerId});
+  if(definition.code==="checkout.payment_order.create")return executeAfterMarginValidation(()=>validateSalesOfferIfPresent(db,input),()=>invoke("/api/payment-order",{bookingId:text(input.args.bookingId),customerId:input.customerId}));
   if(definition.code==="booking.reschedule")return invoke("/api/grooming-booking-change",{...input.args,action:"reschedule",customerId:input.customerId});
   return invoke("/api/grooming-booking-change",{...input.args,action:"cancel",customerId:input.customerId});
  }

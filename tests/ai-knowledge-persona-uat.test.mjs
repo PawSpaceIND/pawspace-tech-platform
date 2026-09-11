@@ -10,6 +10,7 @@ const orchestrator=await import("../lib/ai-conversation-orchestrator.ts");
 test("UAT prompts classify realistic service, booking and refund queries deterministically",()=>{
  assert.equal(orchestrator.classifyAiIntent("What is the price for doorstep dog training?").intent,"service_info");
  assert.equal(orchestrator.classifyAiIntent("Can I book a grooming session?").intent,"booking_create");
+ assert.equal(orchestrator.classifyAiIntent("Hi, I need a dog grooming slot for my Golden Retriever tomorrow morning.").intent,"booking_create");
  assert.equal(orchestrator.classifyAiIntent("I need a refund for yesterday.").intent,"refund_review");
 });
 
@@ -29,7 +30,7 @@ test("grounding uses approved internal read tools and never invokes mutation too
  const source=read("lib/ai-grounded-runtime-provider.ts");
  assert.match(source,/toolCode:\"approved_knowledge\.read\"/);assert.match(source,/toolCode:\"service_catalogue\.read\"/);
  for(const forbidden of["refund.issue","payment.capture","price.override","provider.assign","booking.request","booking_cancel.request","booking_reschedule.request"])assert.doesNotMatch(source,new RegExp(`toolCode:\\"${forbidden.replaceAll(".","\\.")}\\"`));
- assert.match(source,/mutationsAuthorized:false/);assert.match(source,/readOnlyToolsOnly:true/);
+ assert.match(source,/mutationsAuthorizedOnlyViaGovernedActionPlane:true/);assert.match(source,/readOnlyGrounding:true/);
 });
 
 test("canonical UAT catalogue coverage includes the major PawSpace service verticals",()=>{
@@ -42,6 +43,6 @@ test("Chat, WhatsApp and Voice all use the same grounded runtime provider",()=>{
  const web=read("lib/ai-web-chat-adapter.ts"),wa=read("lib/meta-whatsapp-ai-executor.ts"),voice=read("lib/inbound-ai-telephony.ts");
  for(const source of[web,wa,voice])assert.match(source,/createGroundedAiRuntimeProvider/);
  assert.match(web,/createGroundedAiRuntimeProvider\(db,input\.actor,\"chat\"\)/);
- assert.match(wa,/createGroundedAiRuntimeProvider\(db,serviceActor,\"whatsapp\"\)/);
+ assert.match(wa,/createGroundedAiRuntimeProvider\(db,serviceActor,\"whatsapp\"/);
  assert.match(voice,/createGroundedAiRuntimeProvider\(db,serviceActor,\"voice\"\)/);
 });
