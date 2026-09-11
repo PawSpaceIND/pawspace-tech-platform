@@ -613,6 +613,21 @@ async function recordVoiceRetryExhausted(db:Db,call:Row,now:number){
   return{terminated:true as const,disposition:"voice_retry_exhausted"as const,rootCallId:root,maxAttempts:useCase.maxAttempts};
 }
 
+export async function terminateVoiceRetryLoop(db:Db,input:{callId:string;actorId:string;reason:string;asOf?:number}){
+  await ensureVoiceCallTables(db);
+  const call=await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(input.callId).first<Row>();
+  if(!call)return{terminated:false as const,reason:"voice_call_not_found"};
+  const now=input.asOf??Date.now(),root=text(call.retry_of)||text(call.id),useCase=voiceUseCase(call.use_case);
+  await recordTerminalVoiceDisposition(db,text(call.id),"retry_exhausted",now);
+  await ensureVoiceRetryDispositionSchema(db);
+  let contactId=text(call.customer_id)||null;
+  if(!contactId&&text(call.lead_id)){const lead=await db.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").bind(text(call.lead_id)).first<Row>().catch(()=>null);contactId=text(lead?.customer_id)||null;}
+  const detail=`${text(input.reason)||"Voice retry loop terminated"}; no further automated dial is permitted`;
+  await db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at,disposition,disposition_detail,completed_at) VALUES (?,?,?,?,?,'High','Closed',?,'voice_retry_exhausted',?,?) ON CONFLICT(id) DO UPDATE SET contact_id=COALESCE(excluded.contact_id,crm_tasks.contact_id),status='Closed',priority='High',disposition='voice_retry_exhausted',disposition_detail=excluded.disposition_detail,completed_at=excluded.completed_at")
+    .bind(`VOICE-RETRY-${root}`,contactId,`Voice retry closed: ${useCase?.label||text(call.use_case)||"outbound call"}`,text(input.actorId)||"AI Orchestrator",now,now,detail,now).run();
+  return{terminated:true as const,disposition:"voice_retry_exhausted"as const,rootCallId:root};
+}
+
 export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; actorId: string; actorPermissions: string[]; idempotencyKey?: string; asOf?: number }) {
   await ensureVoiceCallTables(db);
   const original = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(input.callId).first<Row>();

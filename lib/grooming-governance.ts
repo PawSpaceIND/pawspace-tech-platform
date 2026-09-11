@@ -77,6 +77,7 @@ export type GroomingGovernanceInput={
 };
 export type GroomingGovernanceResult={
   packageCode:string;packageName:string;catalogueVersion:string;offerType:GroomingOfferType;petCount:number;totalAmount:number;amountDueNow:number;
+  pricingBreakdown?:{basePrice:number;multiPetDiscount:number;taxableAmount:number;gstRate:number|null;gstAmount:number|null;gstMode:"inclusive"|"exclusive"|"configuration_required";totalAmount:number};
   subscriptionPlan?:{planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
 };
 
