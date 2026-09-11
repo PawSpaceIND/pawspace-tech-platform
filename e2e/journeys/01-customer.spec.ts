@@ -30,7 +30,7 @@ test("the customer can reach the canonical grooming service and see a bookable s
 test("the mobile app surface renders (was a blank screen in the 2026-09-05 audit)", async ({ page }) => {
   const res = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(res?.status()).toBe(200);
-  await page.waitForTimeout(800);
+  await expect(page.getByRole("navigation", { name: "Customer navigation" })).toBeVisible({ timeout: 15_000 });
   const body = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
   expect(body.length, "/mobile-app must not render blank").toBeGreaterThan(150);
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
