@@ -26,5 +26,6 @@ import"./refund-policy-governance";
 import"./revenue-reconciliation-report";
 import"./taxi-marketplace-policy";
 import"./food-commercial-policy";
+import"./special-service-finance-policy";
 
 export{listServicePolicies,resolveServicePolicy,seedServicePolicyDefault,servicePolicyAudit,servicePolicyDomain,servicePolicyDomains,writeServicePolicy}from"./service-policy-governance";
