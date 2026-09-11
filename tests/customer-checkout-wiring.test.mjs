@@ -20,7 +20,7 @@ function world(t) {
   sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT);
     CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT);
     CREATE TABLE payment_intents(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,payment_id TEXT,gateway_order_id TEXT,provider TEXT,environment TEXT,amount_paise INTEGER,currency TEXT);
-    CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT);
+    CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT,detail_json TEXT NOT NULL DEFAULT '{}');
     INSERT INTO canonical_bookings VALUES('B1','C1','confirmed'),('B2','C2','confirmed');
     INSERT INTO booking_payments VALUES('P1','B1','C1','created',499.50,499.50,'INR'),('P2','B2','C2','created',100,100,'INR');
     INSERT INTO payment_intents VALUES('I1','B1','C1','P1','order_fixture','razorpay','sandbox',49950,'INR');`);

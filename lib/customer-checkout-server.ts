@@ -1,3 +1,4 @@
+import { reconcileRazorpayCaptureIntent } from "./razorpay-capture-reconciliation";
 /** Customer-owned sandbox boundary. No capture, refund, ledger or assignment writes live here. */
 type Row = Record<string, unknown>;
 export class CustomerCheckoutError extends Error {
@@ -34,7 +35,7 @@ export async function verifyCustomerCheckoutReceipt(db: D1Database, env: Record<
   if (!/^order_[a-zA-Z0-9_]{1,100}$/.test(receipt.orderId) || !/^pay_[a-zA-Z0-9_]{1,100}$/.test(receipt.paymentId) ||
       !/^[a-fA-F0-9]{64}$/.test(receipt.signature)) throw new CustomerCheckoutError("Invalid payment receipt.", 400);
   // Scope the stored order by BOTH owners and the canonical payment. Never use a client amount.
-  const intent = await db.prepare(`SELECT i.gateway_order_id,i.payment_id,i.amount_paise,i.currency FROM payment_intents i
+  const intent = await db.prepare(`SELECT i.id,i.booking_id,i.gateway_order_id,i.payment_id,i.amount_paise,i.currency,i.environment FROM payment_intents i
     JOIN canonical_bookings b ON b.id=i.booking_id JOIN booking_payments p ON p.id=i.payment_id AND p.booking_id=b.id
     WHERE i.booking_id=? AND i.customer_id=? AND b.customer_id=? AND p.customer_id=?
     AND i.gateway_order_id=? AND i.provider='razorpay' AND i.environment='sandbox'`)
@@ -46,14 +47,23 @@ export async function verifyCustomerCheckoutReceipt(db: D1Database, env: Record<
   const signature = Uint8Array.from(receipt.signature.match(/../g)!, pair => parseInt(pair, 16));
   const verified = await crypto.subtle.verify("HMAC", key, signature, encoder.encode(`${String(intent.gateway_order_id)}|${receipt.paymentId}`));
   if (!verified) throw new CustomerCheckoutError("Payment receipt verification failed. Contact billing support.", 400);
-  // A valid checkout signature can precede capture. Only the existing processed signed event counts.
+  // A valid checkout signature can precede capture. Browser proof never moves money by itself: only
+  // persisted provider evidence counts - either a signed webhook or an authenticated provider API read.
   // Match the exact instalment/order/payment so an earlier split capture cannot confirm a new one.
-  const captured = await db.prepare(`SELECT id FROM payment_gateway_events WHERE booking_id=? AND payment_id=?
+  const capturedEvidence=()=>db.prepare(`SELECT id FROM payment_gateway_events WHERE booking_id=? AND payment_id=?
     AND gateway_order_id=? AND gateway_payment_id=? AND provider='razorpay' AND environment='sandbox'
-    AND signature_verified=1 AND processing_status='processed' AND event_type IN ('payment.captured','order.paid')
+    AND (signature_verified=1 OR (signature_verified=0 AND json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority')='provider_api'))
+    AND processing_status='processed' AND event_type IN ('payment.captured','order.paid')
     AND amount_subunits=? AND currency=? LIMIT 1`)
     .bind(receipt.bookingId, String(intent.payment_id), String(intent.gateway_order_id), receipt.paymentId,
       Number(intent.amount_paise), String(intent.currency)).first<Row>();
+  let captured=await capturedEvidence();
+  if(!captured){
+    // This is a server-to-server read using PawSpace's Razorpay credentials. Failure leaves the receipt
+    // pending; the five-minute scheduled reconciliation is the browser-independent recovery path.
+    await reconcileRazorpayCaptureIntent(db,env,intent,{asOf:Date.now()}).catch(()=>null);
+    captured=await capturedEvidence();
+  }
   return { bookingId: receipt.bookingId, orderId: receipt.orderId, receiptVerified: true,
     status: captured ? "captured" as const : "awaiting_confirmation" as const, environment: "sandbox" as const };
 }
