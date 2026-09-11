@@ -92,6 +92,16 @@ jobs:
           if(!d?.id||!/^[0-9a-f-]{36}$/i.test(d.id)) throw Error('frozen preview D1 binding unavailable');
           console.log(`d1=${d.id}`); console.log('worker=pawspace-release-preview');
           NODE
+      - name: Normalize isolated-proof signing key in memory
+        env:
+          RAW_PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          VALUE="$(printf '%s' "$RAW_PAWSPACE_UAT_SIGNING_KEY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          test -n "$VALUE"
+          test "${#VALUE}" -ge 32
+          echo "::add-mask::$VALUE"
+          { echo 'PAWSPACE_UAT_SIGNING_KEY<<PR736_KEY'; printf '%s\n' "$VALUE"; echo 'PR736_KEY'; } >> "$GITHUB_ENV"
       - name: Provision one isolated immutable checkout Worker and D1
         id: isolated
         working-directory: infra
@@ -106,7 +116,6 @@ jobs:
           RELEASE_PREVIEW_D1_ID: ${{ steps.preview.outputs.d1 }}
           RELEASE_PREVIEW_WORKER_NAME: ${{ steps.preview.outputs.worker }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
@@ -139,7 +148,6 @@ jobs:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ steps.isolated.outputs.origin }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
@@ -150,12 +158,12 @@ jobs:
           node scripts/verify-razorpay-sandbox-relay-target.mjs
           node scripts/stage-config.mjs
       - name: Deploy temporary staging relay lock
+        id: relay_deploy
         working-directory: staging
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
@@ -204,13 +212,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Restore normal staging with relay disabled
-        if: always()
+        if: always() && steps.relay_deploy.outcome == 'success'
         working-directory: staging
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -226,14 +233,19 @@ jobs:
           node --input-type=module -e 'import{writeFileSync}from"node:fs";const n=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","GOOGLE_MAPS_SERVER_API_KEY_UAT"];writeFileSync(process.argv[1],JSON.stringify(Object.fromEntries(n.filter(k=>process.env[k]).map(k=>[k,process.env[k]]))),{mode:0o600})' "$f"
           npx wrangler deploy --message "staging ${{ github.event.inputs.main_sha }} pr736-strict-restored" --secrets-file "$f"
       - name: Delete only the exact isolated PR736 Worker and D1
-        if: always() && steps.isolated.outputs.worker != ''
+        if: always()
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WORKER: ${{ steps.isolated.outputs.worker }}
+          HOSTING_REPORT: ${{ github.workspace }}/evidence/hosting/hosting-report.json
         run: |
           node --input-type=module <<'NODE'
-          const a=process.env.CLOUDFLARE_ACCOUNT_ID,t=process.env.CLOUDFLARE_API_TOKEN,w=process.env.WORKER;
+          import{existsSync,readFileSync}from'node:fs';
+          const a=process.env.CLOUDFLARE_ACCOUNT_ID,t=process.env.CLOUDFLARE_API_TOKEN;
+          let w=String(process.env.WORKER||'').trim();
+          if(!w&&existsSync(process.env.HOSTING_REPORT)){try{w=String(JSON.parse(readFileSync(process.env.HOSTING_REPORT,'utf8')).worker||'').trim()}catch{}}
+          if(!w){console.log(JSON.stringify({cleanup:'no isolated resource was created'}));process.exit(0)}
           if(!/^pawspace-checkout-736-[1-9][0-9]*-[1-9][0-9]*$/.test(w))throw Error('cleanup target refused');
           const call=async(path,init={})=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${a}${path}`,{...init,headers:{authorization:`Bearer ${t}`}});if(r.status===404)return null;const b=await r.json();if(!r.ok||b.success!==true)throw Error(`cleanup failed ${path}`);return b.result};
           let db=null;
