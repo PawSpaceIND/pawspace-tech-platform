@@ -76,14 +76,30 @@ const executes = (src) =>
   STATIC_IMPORT.test(src) || HARNESS.test(src) ||
   ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src));
 
-/* This file is excluded from its own count. It is a meta-test about the suite, so it legitimately
- * executes no product code - and counting itself was the first thing it did, which was a fair
- * demonstration of the problem but not a useful signal. */
-const SELF = "test-suite-executes-code.test.mjs";
+/*
+ * Excluded from the count. These are meta-tests ABOUT the source - reading it is the whole job, not
+ * a substitute for exercising it - so they can never be "converted" and must not consume budget
+ * that exists to pressure product tests. The bar for adding one is high: it has to check something
+ * no executing test can reach, and it has to be able to FAIL.
+ *
+ *   test-suite-executes-code.test.mjs   this file. Counting itself was the first thing it did,
+ *                                       which was a fair demonstration but not a useful signal.
+ *
+ *   schema-column-reference-contract    checks that every column named in a SQL string exists in
+ *   .test.mjs                           the schema that creates its table. A column name inside a
+ *                                       string literal is invisible to the build, to tsc and to
+ *                                       every executing test - three real defects reached main
+ *                                       through exactly that gap. Executing the module is what
+ *                                       CANNOT catch it: the bad line only runs on a rare branch.
+ */
+const META_TESTS = new Set([
+  "test-suite-executes-code.test.mjs",
+  "schema-column-reference-contract.test.mjs",
+]);
 
 function staticTestFiles() {
   return readdirSync(TESTS_DIR)
-    .filter((f) => f.endsWith(".test.mjs") && f !== SELF)
+    .filter((f) => f.endsWith(".test.mjs") && !META_TESTS.has(f))
     .filter((f) => !executes(readFileSync(join(TESTS_DIR, f), "utf8")));
 }
 
