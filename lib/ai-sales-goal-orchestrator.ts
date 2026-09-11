@@ -158,10 +158,13 @@ export async function runAiSalesGoalDispatcher(db: Db, input: { asOf?: number; s
     const runKey = `${target.id}:${Math.floor(asOf / (slotMinutes * 60_000))}`, runId = uid("AISRUN");
     const rate = await historicalRate(db, target), already = await contactsAlreadySelected(db, target.id);
     const remainingBudget = Math.max(0, target.maxContactsPerDay - already);
-    const required = calculateRequiredOutreach({ gap, historicalConversionRate: rate, remainingContactBudget: remainingBudget });
+    const executive = await db.prepare("SELECT mode,pressure_multiplier FROM executive_sales_directives WHERE target_id=? AND expires_at>?").bind(target.id,asOf).first<Row>().catch(()=>null);
+    const executiveMode = text(executive?.mode) || "normal", pressureMultiplier = clamp(Number(executive?.pressure_multiplier || 1), 0, 2);
+    const baseRequired = calculateRequiredOutreach({ gap, historicalConversionRate: rate, remainingContactBudget: remainingBudget });
+    const required = executiveMode === "throttle" ? 0 : Math.min(remainingBudget, Math.ceil(baseRequired * pressureMultiplier));
     const claimed = await db.prepare("INSERT OR IGNORE INTO ai_sales_dispatch_runs (id,run_key,target_id,scheduled_for,gap_before,historical_conversion_rate,required_contacts,status,started_at) VALUES (?,?,?,?,?,?,?,'planning',?)").bind(runId, runKey, target.id, asOf, gap, rate, required, asOf).run();
     if (!Number(claimed.meta?.changes || 0)) { results.push({ targetId: target.id, status: "duplicate_slot" }); continue; }
-    if (!required) { await db.prepare("UPDATE ai_sales_dispatch_runs SET status='blocked',result_json=?,completed_at=? WHERE id=?").bind(JSON.stringify({ reason: "daily_contact_budget_exhausted" }), asOf, runId).run(); results.push({ targetId: target.id, status: "blocked", gap }); continue; }
+    if (!required) { await db.prepare("UPDATE ai_sales_dispatch_runs SET status='blocked',result_json=?,completed_at=? WHERE id=?").bind(JSON.stringify({ reason: executiveMode === "throttle" ? "executive_capacity_throttle" : "daily_contact_budget_exhausted" }), asOf, runId).run(); results.push({ targetId: target.id, status: "blocked", gap }); continue; }
     const serviceCode = target.serviceCode || "";
     const candidates = await db.prepare("SELECT p.*,l.customer_id,c.city_id FROM ai_sales_lead_propensity p JOIN lead_work_items l ON l.id=p.lead_id JOIN canonical_customers c ON c.id=l.customer_id WHERE p.target_type=? AND p.service_code IN (?, '') AND p.expires_at>? AND l.opt_out=0 AND l.converted_booking_id IS NULL AND l.status NOT IN ('closed','merged') AND NOT EXISTS (SELECT 1 FROM ai_sales_dispatch_items i WHERE i.target_id=? AND i.lead_id=p.lead_id) ORDER BY CASE WHEN p.service_code=? THEN 0 ELSE 1 END,p.probability DESC,p.expected_value DESC,p.scored_at DESC LIMIT ?").bind(target.targetType, serviceCode, asOf, target.id, serviceCode, required).all<Row>();
     const pressure = calculateQuotaPressure({ now: asOf, startsAt: target.startsAt, endsAt: target.endsAt, achieved, goal: target.dailyGoal });

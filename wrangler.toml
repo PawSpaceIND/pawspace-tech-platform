@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 PAWSPACE_AI_EXECUTIVE_ACTIVE = "false"
 
 [triggers]
-crons = ["*/5 * * * *", "15 2 * * *"]
+crons = ["*/5 * * * *", "*/15 * * * *", "15 2 * * *"]
 
 [[ratelimits]]
 name = "PUBLIC_CONTACT_RATE_LIMITER"

@@ -29,4 +29,11 @@ else
     "${vinext}" build
 fi
 
+# Wrangler 4.131+ removed legacy_env. vinext 0.0.50 still emits it in the generated
+# artifact; deleting only this obsolete field preserves Wrangler's former default behavior.
+artifact_config="${SITES_PROJECT_ROOT}/dist/server/wrangler.json"
+if [[ -f "${artifact_config}" ]]; then
+  node -e 'const fs=require("fs");const p=process.argv[1];const v=JSON.parse(fs.readFileSync(p,"utf8"));delete v.legacy_env;fs.writeFileSync(p,JSON.stringify(v));' "${artifact_config}"
+fi
+
 "${script_dir}/validate-artifact.sh"

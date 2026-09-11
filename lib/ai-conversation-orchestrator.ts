@@ -29,7 +29,7 @@ const intentRules:Array<{intent:AiConversationIntent;signals:string[];risk?:bool
  {intent:"relocation",signals:["relocation","relocate","move my pet","pet transport documents"]},
  {intent:"booking_change",signals:["reschedule","change booking","cancel booking","change date","change time"]},
  {intent:"booking_status",signals:["booking status","where is my provider","provider status","eta","on the way"]},
- {intent:"booking_create",signals:["book a","make a booking","schedule a","need grooming","need training","need boarding","need sitting"]},
+ {intent:"booking_create",signals:["book a","make a booking","schedule a","need grooming","need a grooming","need a dog grooming","grooming slot","need training","need boarding","need sitting"]},
  {intent:"subscription_wallet",signals:["subscription","wallet","credits","balance","renewal"]},
  {intent:"coupon",signals:["coupon","promo","discount","offer code"]},
  {intent:"support",signals:["complaint","issue","problem","support","help","not happy"]},

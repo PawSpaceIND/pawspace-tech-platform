@@ -15,6 +15,8 @@ test("grounded provider accepts only bounded registered action envelopes",()=>{
  assert.equal(parsed.actions.length,3);
  assert.equal(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:"x",actions:[{toolCode:"payment.capture",arguments:{}}]})),null);
  assert.equal(grounded.parseGroundedActionEnvelope("not json"),null);
+ const fenced=grounded.parseGroundedActionEnvelope("```json\n"+JSON.stringify({reply:"Ready",actions:[{toolCode:"schedule.reserve",arguments:{serviceCode:"grooming",petIds:["PET-1"],serviceAddress:"12 Test Street",servicePincode:"560038",scheduledStart:"2026-09-12T10:00:00+05:30",scheduledEnd:"2026-09-12T12:00:00+05:30"}}]})+"\n```");
+ assert.equal(fenced?.actions[0]?.toolCode,"schedule.reserve");
 });
 
 test("customer confirmation detector is explicit and negative-safe",()=>{
