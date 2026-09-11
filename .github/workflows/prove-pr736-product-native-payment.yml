@@ -1,0 +1,73 @@
+name: PR736 product-native Razorpay payment proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type prove-checkout-736-product-native to run the one exact TEST-only payment proof'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: pr736-product-native-payment-proof
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'prove-checkout-736-product-native' }}
+    name: Exact #736 product-native provider proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pawspace-release-preview
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
+      CHECKOUT_WORKER_NAME: pawspace-checkout-736-34572823659-1
+      CHECKOUT_WORKER_ORIGIN: https://pawspace-checkout-736-34572823659-1.karthik-fce.workers.dev
+      PW_BASE_URL: https://pawspace-checkout-736-34572823659-1.karthik-fce.workers.dev
+    steps:
+      - name: Checkout immutable product-native proof harness
+        uses: actions/checkout@v4
+        with:
+          ref: fefb6194b6f94f61fb27ff07abb94f575e0be6b1
+          path: proof
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: proof/package-lock.json
+      - name: Install locked proof dependencies
+        working-directory: proof
+        run: npm ci
+      - name: Install Chromium for hosted Checkout proof
+        working-directory: proof
+        run: npx playwright install --with-deps chromium
+      - name: Run exact product-native Test Mode payment proof
+        working-directory: proof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: npx playwright test e2e/checkout-provider-webhook-proof-736.spec.ts --project=chromium --retries=0
+      - name: Upload redacted proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr736-product-native-payment-proof-244ee2cdff4a
+          path: |
+            proof/playwright-report/
+            proof/test-results/
+          if-no-files-found: warn
+          retention-days: 14
