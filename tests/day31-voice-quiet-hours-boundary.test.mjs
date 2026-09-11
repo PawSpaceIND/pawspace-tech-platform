@@ -6,7 +6,7 @@
  *
  * Why the boundary specifically: quiet hours are the one gate here with a legal edge to it. TRAI's
  * restriction on commercial voice calls is a clock, and a clock is exactly the kind of rule that is
- * written correctly and implemented off by one. The window is stored as hours (21..8) and evaluated
+ * written correctly and implemented off by one. The window is stored as hours (21..9) and evaluated
  * against an IST-shifted UTC hour, so both ends and the midnight wrap are walked minute by minute
  * rather than sampled at a convenient midday value.
  *
@@ -62,13 +62,14 @@ const quietBlocked = (verdict) => {
 
 test("the quiet-hours window is exact at both ends, in IST", async () => {
   /*
-   * Default policy: quiet 21:00-08:00 IST. 20:59 is the last legal minute of the evening and 08:00
+   * Default policy: quiet 21:00-09:00 IST. 20:59 is the last legal minute of the evening and 09:00
    * the first of the morning. Each side is checked one minute either way, plus the wrap at midnight
    * which a naive `hour >= start && hour < end` gets exactly backwards.
    */
   const seeded = await seedVoice();
   const cases = [
-    ["08:00 - first legal minute", istAt(8), false],
+    ["08:59 - last quiet minute", istAt(8) + 59 * 60_000, true],
+    ["09:00 - first legal minute", istAt(9), false],
     ["09:30 - mid morning", istAt(9) + 30 * 60_000, false],
     ["14:00 - mid afternoon", istAt(14), false],
     ["20:59 - last legal minute", istAt(20) + 59 * 60_000, false],
