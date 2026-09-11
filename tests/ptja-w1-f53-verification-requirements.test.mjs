@@ -106,7 +106,7 @@ test("F53: an operator can now mandate checks for a walker and a taxi driver", a
   const { db } = await world();
   const mandate = await import("../lib/provider-verification-mandate.ts");
   assert.deepEqual(mandate.PROVIDER_CATEGORIES.slice().sort(),
-    ["dog_walker", "groomer", "host", "pet_sitter", "pet_taxi_driver", "trainer"]);
+    ["dog_walker", "groomer", "host", "pet_sitter", "pet_taxi_driver", "trainer", "veterinarian"]);
   assert.equal(mandate.verificationCategoryForVertical("dog_walking"), "dog_walker");
   assert.equal(mandate.verificationCategoryForVertical("pet_taxi"), "pet_taxi_driver");
 

@@ -19,6 +19,7 @@ import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
 import {postCollectionEvent} from "../../../lib/collection-ledger";
 import {cityBookingVerdict} from "../../../lib/city-status-authority";
+import{ensureVetHealthcareTables,VET_SAC_CODE,VET_TAX_PAISE,VET_VISIT_FEE_PAISE}from"../../../lib/vet-healthcare";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -27,13 +28,13 @@ type LifecycleInput={
   // signal the constraint can never fire and a host who cannot give medication is matched anyway.
   // [PTJA-W3-BH]
   pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string;medicationRequired?:boolean}>;cityId:string;zoneId:string;
-  serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
+  serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting"|"vet_consult";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
   provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;
-  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;trainingCategory?:string;healthSafetyNotes?:string;behaviourNotes?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string};
+  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;trainingCategory?:string;healthSafetyNotes?:string;behaviourNotes?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string;vetTriageLevel?:"urgent"|"routine"|"emergency";vetTriageSummary?:string};
 };
 
 type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
-const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
+const services=new Set(["grooming","dog_training","boarding","pet_sitting","vet_consult"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 // Live UNLESS sandbox is explicitly declared. The verify-first exemption - recording a client-asserted
@@ -241,7 +242,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   const couponQuoteId=String(input.pricing.couponQuoteId||"").trim();
   if(couponQuoteId){
     if(input.pricing.referralClaimId)return json({error:"A coupon and referral offer cannot be combined"},409);
-    couponCommercial=await prepareCouponBooking(db,{quoteId:couponQuoteId,bookingId:"pending",customerId:input.customer.id,serviceCode:input.serviceCode,cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponQuoteId}`,now:Date.now()});
+    couponCommercial=await prepareCouponBooking(db,{quoteId:couponQuoteId,bookingId:"pending",customerId:input.customer.id,serviceCode:input.serviceCode as "grooming"|"dog_training"|"boarding"|"pet_sitting",cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponQuoteId}`,now:Date.now()});
   }else if(input.serviceCode==="grooming"&&(Number(input.pricing.discount||0)>0||input.pricing.couponCode))return json({error:"A governed coupon quote is required for a Grooming booking discount"},409);
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
   // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
@@ -324,15 +325,27 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
     sittingCommercial=await governSittingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:sittingCapture.status,reservationCount:reservations.results.length});
     governed={packageCode:sittingCommercial.packageCode,packageName:sittingCommercial.packageName,catalogueVersion:sittingCommercial.catalogueVersion,petCount:sittingCommercial.petCount,totalAmount:sittingCommercial.totalAmount,amountDueNow:sittingCommercial.amountDueNow};
   }
+
+  if(input.serviceCode==="vet_consult"){
+    if(input.pets.length!==1)return json({error:"Doorstep Vet Consultation supports one patient per appointment"},409);
+    const triageLevel=String(input.pricing.vetTriageLevel||"");
+    if(triageLevel==="emergency")return json({error:"Emergency Vet triage cannot be converted into a doorstep booking",code:"vet_emergency_handoff_required"},409);
+    if(!["routine","urgent"].includes(triageLevel)||!String(input.pricing.vetTriageSummary||"").trim())return json({error:"A completed non-emergency Vet triage is required before booking"},409);
+    if(input.packageCode!=="vet_home_visit"||input.packageName!=="Doorstep Vet Consultation")return json({error:"Vet package identity is server-governed"},409);
+    if(input.totalAmount!==VET_VISIT_FEE_PAISE/100||input.amountDueNow!==VET_VISIT_FEE_PAISE/100)return json({error:"Doorstep Vet Consultation is fixed at ₹599 total with 0% GST"},409);
+    if(Number(input.pricing.discount||0)!==0||input.pricing.couponCode||input.pricing.couponQuoteId||input.pricing.referralClaimId)return json({error:"Vet consultation price overrides and discounts are not permitted"},409);
+    governed={packageCode:"vet_home_visit",packageName:"Doorstep Vet Consultation",petCount:1,totalAmount:VET_VISIT_FEE_PAISE/100,amountDueNow:VET_VISIT_FEE_PAISE/100};
+    await ensureVetHealthcareTables(db);
+  }
   let referralCommercial:ReferralBookingPreparation|null=null;
   const referralClaimId=String(input.pricing.referralClaimId||"").trim();
   if(referralClaimId){
     const existingDiscount=Number(trainingCommercial?.discount??input.pricing.discount??0);
-    referralCommercial=await prepareReferralBooking(db,{claimId:referralClaimId,customer:{id:input.customer.id,primaryPhone:input.customer.primaryPhone,email:input.customer.email},serviceCode:input.serviceCode,cityId:input.cityId,baseAmount:governed.totalAmount,baseAmountDueNow:governed.amountDueNow,hasOtherOffer:Boolean(trainingCommercial?.couponCode||input.pricing.couponCode||existingDiscount>0),isSubscription:Boolean(governed.subscriptionPlan||input.pricing.subscription)});
+    referralCommercial=await prepareReferralBooking(db,{claimId:referralClaimId,customer:{id:input.customer.id,primaryPhone:input.customer.primaryPhone,email:input.customer.email},serviceCode:input.serviceCode as "grooming"|"dog_training"|"boarding"|"pet_sitting",cityId:input.cityId,baseAmount:governed.totalAmount,baseAmountDueNow:governed.amountDueNow,hasOtherOffer:Boolean(trainingCommercial?.couponCode||input.pricing.couponCode||existingDiscount>0),isSubscription:Boolean(governed.subscriptionPlan||input.pricing.subscription)});
     governed={...governed,totalAmount:referralCommercial.totalAmount,amountDueNow:referralCommercial.amountDueNow};
   }
   const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null;
-  if(couponCommercial)couponCommercial=await prepareCouponBooking(db,{quoteId:couponCommercial.quoteId,bookingId,customerId:input.customer.id,serviceCode:input.serviceCode,cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponCommercial.quoteId}`,now});
+  if(couponCommercial)couponCommercial=await prepareCouponBooking(db,{quoteId:couponCommercial.quoteId,bookingId,customerId:input.customer.id,serviceCode:input.serviceCode as "grooming"|"dog_training"|"boarding"|"pet_sitting",cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponCommercial.quoteId}`,now});
   // A booking used to mint its own canonical_pets row keyed by the pet NAME, so a pet the customer had
   // already saved got a SECOND, empty row and pet_ids_json pointed at that one. Every reader resolving
   // pets through pet_ids_json — Booking Command Center, canonical-bookings GET, partner job feed,
@@ -469,6 +482,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
     ...resolvedPets.map(pet=>db.prepare(PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,"confirmed","customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
+    ...(input.serviceCode==="vet_consult"?[db.prepare("INSERT INTO vet_appointments (id,booking_id,customer_id,pet_id,provider_id,triage_level,triage_summary,symptom_json,status,scheduled_start,scheduled_end,consultation_fee_paise,service_code,sac_code,tax_paise,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`VET-${bookingId}`,bookingId,input.customer.id,ids[0],input.provider.id,input.pricing.vetTriageLevel,String(input.pricing.vetTriageSummary||""),JSON.stringify({summary:input.pricing.vetTriageSummary}),"booked",input.scheduledStart,input.scheduledEnd,VET_VISIT_FEE_PAISE,"vet_consult",VET_SAC_CODE,VET_TAX_PAISE,now,now)]:[]),
     db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,input.serviceCode,input.scheduledStart,input.scheduledEnd,reservations.results.length,input.provider.model==="commission"?"awaiting_acceptance":"assigned",JSON.stringify({reservations:reservations.results,decision:assignment}),now,now),
     db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,"INR",input.payment.method,paymentModePersisted,paymentStatusPersisted,"uat_sandbox",`${input.idempotencyKey}:payment`,JSON.stringify({detail:input.payment.detail,liveMoney:false,catalogueVersion:governed.catalogueVersion,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,sittingQuoteId:sittingCommercial?.quoteId,sittingPaymentReference:sittingCapture?.reference,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}),now,now),
   ];

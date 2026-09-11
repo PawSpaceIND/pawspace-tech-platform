@@ -49,11 +49,18 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
     const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>()
       .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
     if(!application){
+      const rawProfile=await db.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>().catch(()=>null);
+      let services:string[]=[];try{services=JSON.parse(text(rawProfile?.services_json)||"[]") as string[];}catch{}
+      if(services.includes("vet_consult"))return block(id,"vet_requires_verified_vci_onboarding");
       if(await governedUatSeedFixture(db,id))return allowUnevaluatedFixture(id,"uat_seed_fixture_exemption");
       return block(id,"no_onboarding_verification_record");
     }
 
-    const profile=await db.prepare("SELECT city_id FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>();
+    const profile=await db.prepare("SELECT city_id,services_json,vci_registration_number,vci_verification_status FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>();
+    const vertical=text(application.vertical_key).toLowerCase();
+    if(vertical==="vet_consult"||vertical==="veterinary"){
+      if(!text(profile?.vci_registration_number)||text(profile?.vci_verification_status)!=="verified")return block(id,"vci_registration_not_verified");
+    }
     await seedApprovedVerificationPolicies(db);
     const policy=await resolveProviderVerificationPolicy(db,text(application.vertical_key),text(profile?.city_id)||null);
     if(!policy||policy.config.configured!==true)return block(id,"verification_policy_unavailable",policy?.policyVersion??null);

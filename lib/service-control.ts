@@ -8,11 +8,12 @@ export const pawspaceServices=[
  {code:"food",name:"Pet Food",group:"Commerce"},
  {code:"relocation",name:"Pet Relocation",group:"Special services"},
  {code:"funeral_memorial",name:"Funeral & Memorial",group:"Special services"},
+ {code:"vet_consult",name:"Doorstep Vet Consultation",group:"Healthcare"},
 ] as const;
 export type PawSpaceServiceCode=(typeof pawspaceServices)[number]["code"];
 export type ServiceControl={code:PawSpaceServiceCode;name:string;group:string;enabled:boolean;disabledReason:string|null;updatedBy:string;updatedAt:number};
 type Stored={service_code:string;service_name:string;service_group:string;enabled:number;disabled_reason:string|null;updated_by:string;updated_at:number};
-const schedulingMap:Record<string,PawSpaceServiceCode>={grooming:"grooming",dog_training:"dog_training",boarding:"boarding",pet_sitting:"pet_sitting",pet_taxi:"pet_taxi",dog_walking:"dog_walking"};
+const schedulingMap:Record<string,PawSpaceServiceCode>={grooming:"grooming",dog_training:"dog_training",boarding:"boarding",pet_sitting:"pet_sitting",pet_taxi:"pet_taxi",dog_walking:"dog_walking",vet_consult:"vet_consult"};
 const commercialRequestPaths:Record<string,PawSpaceServiceCode>={"/api/training-commercial":"dog_training","/api/boarding-commercial":"boarding","/api/sitting-commercial":"pet_sitting","/api/taxi-commercial":"pet_taxi","/api/walking-commercial":"dog_walking","/api/food-commercial":"food"};
 export function isPawSpaceServiceCode(value:string):value is PawSpaceServiceCode{return pawspaceServices.some(service=>service.code===value)}
 export async function ensureServiceControlTables(db:D1Database){const now=Date.now();await db.batch([

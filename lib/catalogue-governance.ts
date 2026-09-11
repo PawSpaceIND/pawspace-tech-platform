@@ -13,7 +13,7 @@ type Row = Record<string, unknown>;
 const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
 const text = (v: unknown) => String(v ?? "").trim();
 const empty = () => ({ results: [] as Row[] });
-const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
+const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi", "vet_consult"];
 const EDITABLE = ["name", "description", "base_price", "slot_minutes", "blocking_minutes", "active", "effective_from", "effective_to"];
 
 export async function ensureCatalogueTables(db: Db) {
