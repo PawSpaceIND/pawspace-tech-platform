@@ -24,6 +24,9 @@ const governance = await import("../lib/food-governance.ts");
 const fulfilment = await import("../lib/food-fulfilment-governance.ts");
 const finance = await import("../lib/food-finance-governance.ts");
 const ops = await import("../lib/food-ops-governance.ts");
+const supply = await import("../lib/food-supply-chain.ts");
+const policies = await import("../lib/service-policy-governance.ts");
+const foodPolicy = await import("../lib/food-commercial-policy.ts");
 
 const STAFF = "ops.fulfilment@pawspace.test";
 const OPS_STAFF = "ops.duty@pawspace.test";
@@ -70,9 +73,14 @@ test("Fresh Food closes one canonical customer to fulfilment to Ops to Finance p
   assert.equal(order.status, "uat_reserved");
   assert.equal(Number((await stock(db)).reserved_units), 2);
 
-  // 2. FULFILMENT. Accept, pick a governed lot, pack (stock leaves the shelf here), dispatch, deliver.
+  // 2. SUPPLY + FULFILMENT. Receive a real-costed batch, then pick that exact lot.
+  const supplier = await supply.saveFoodSupplier(db,{name:"Closure Fresh Supplier",contactPhone:"+919000000071",actorId:STAFF});
+  const kitchen = await supply.saveFoodKitchen(db,{name:"Closure Kitchen",zoneId:ZONE,actorId:STAFF});
+  const po = await supply.createFoodPurchaseOrder(db,{supplierId:supplier.supplierId,kitchenId:kitchen.kitchenId,sku:FOOD_SKUS.dogAdult.sku,zoneId:ZONE,quantity:10,unitCost:120,idempotencyKey:"closure-po-1",actorId:STAFF});
+  const received = await supply.receiveFoodPurchaseOrder(db,{purchaseOrderId:po.purchaseOrderId,preparationDate:"2026-09-01",expiryDate:"2026-12-01",actorId:STAFF});
+  const costedLot=`FLOT-${received.batchId}`;
   await fulfil(db, order, "accept_order");
-  await fulfil(db, order, "pick_order", { lotId: LOT });
+  await fulfil(db, order, "pick_order", { lotId: costedLot });
   await fulfil(db, order, "pack_order");
   await fulfil(db, order, "dispatch_order", { dispatchReference: "UATDISP-CLOSURE" });
   const delivered = await fulfil(db, order, "confirm_delivery", { handoverMethod: "customer" });
@@ -81,14 +89,23 @@ test("Fresh Food closes one canonical customer to fulfilment to Ops to Finance p
   assert.equal(delivered.liveMoney, false);
 
   const afterPack = await stock(db);
-  assert.equal(Number(afterPack.available_units), 28);
+  assert.equal(Number(afterPack.available_units), 38, "30 seeded + 10 received - 2 packed");
+  assert.equal(Number((await db.prepare("SELECT quantity_remaining FROM food_stock_batches WHERE id=?").bind(received.batchId).first()).quantity_remaining), 8, "the exact physical batch is consumed too");
   assert.equal(Number(afterPack.reserved_units), 0);
 
-  // 3. FINANCE. Sandbox payment, supplier settlement readiness, reconciliation.
+  // 3. FINANCE. Publish governed UAT tax policy, derive actual-batch COGS, approve supplier settlement, reconcile.
   const paid = await money(db, order, "record_order_payment", { paymentReference: "SBX-CLOSURE-1" });
   assert.equal(paid.amount, order.totalAmount);
-  await money(db, order, "prepare_supplier_settlement", {});
+  await policies.writeServicePolicy(db,{domain:foodPolicy.FOOD_COMMERCIAL_POLICY_DOMAIN,serviceCode:"food",cityId:"blr",config:{taxEnabled:true,taxRatePercent:18,taxMode:"inclusive",supplierSettlementBasis:"actual_batch_cost",settlementDelayDays:0}},FINANCE_STAFF,"Approved Food closure UAT tax policy");
+  const prepared=await money(db, order, "prepare_supplier_settlement", {});
+  assert.equal(prepared.cogsAmount,240);
+  assert.equal(prepared.supplierSettlementAmount,240);
+  assert.equal(prepared.status,"awaiting_finance_approval");
+  const approved=await money(db,order,"approve_supplier_settlement",{});
+  assert.equal(approved.status,"approved");
+  assert.equal(approved.settlement,"not_instructed");
   const reconciled = await money(db, order, "reconcile", {});
+  assert.equal(reconciled.status,"balanced");
   assert.equal(reconciled.deliveryDueTotal, order.totalAmount);
   assert.equal(reconciled.paidTotal, order.totalAmount);
   assert.equal(reconciled.unpaidTotal, 0);
@@ -105,7 +122,7 @@ test("Fresh Food closes one canonical customer to fulfilment to Ops to Finance p
   assert.equal(line.sku, FOOD_SKUS.dogAdult.sku, "the SKU never changed either");
   assert.equal(Number(line.quantity), 2);
 
-  // 5. OPERATIONS sees the same order, with only the un-approved settlement outstanding.
+  // 5. OPERATIONS sees the same order with finance blockers cleared.
   const snapshot = await ops.getFoodOpsSnapshot(db);
   const entry = snapshot.orders.find((row) => row.id === order.orderId);
   assert.equal(entry.status, "delivered");
@@ -323,8 +340,8 @@ test("Fresh Food closure remains UAT-only and does not claim production launch",
     productionCatalogue: "disconnected", productionInventory: "disconnected",
     productionLotTraceability: "disconnected", deliveryPartner: "disconnected", otp: "disconnected",
     objectStorage: "disconnected", malwareScanner: "disconnected", payments: "sandbox_only",
-    refunds: "sandbox_only", cogs: "configuration_required", supplierSettlement: "rule_pending",
-    tax: "configuration_required",
+    refunds: "sandbox_only", cogs: "actual_batch_cost", supplierSettlement: "finance_approval_governed",
+    tax: "policy_configurable",
   });
   for (const value of Object.values(snapshot.readiness.externalDependencies)) {
     assert.notEqual(value, "connected", "no external dependency is ever reported as connected");
