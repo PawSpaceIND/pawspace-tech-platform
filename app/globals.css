@@ -48,6 +48,27 @@
   --ds-text: #1b1231;
   --ds-text-muted: #6f687b;
   --ds-text-faint: #8b818f;
+  --ds-on-primary: #ffffff;
+  --ds-shadow-ink: #000000;
+  --ds-accent-ink: #341604;
+  --ds-mobile-swatch-emerald-1: #01261F;
+  --ds-mobile-swatch-emerald-2: #E6B34E;
+  --ds-mobile-swatch-emerald-3: #f2f7f5;
+  --ds-mobile-swatch-signature-1: #5d22a8;
+  --ds-mobile-swatch-signature-2: #ffb128;
+  --ds-mobile-swatch-signature-3: #f7f5fa;
+  --ds-mobile-swatch-midnight-1: #25103f;
+  --ds-mobile-swatch-midnight-2: #9b6de3;
+  --ds-mobile-swatch-midnight-3: #e8c985;
+  --ds-mobile-swatch-sage-1: #295f4e;
+  --ds-mobile-swatch-sage-2: #7fa58c;
+  --ds-mobile-swatch-sage-3: #f4efe5;
+  --ds-mobile-swatch-rose-1: #7c2946;
+  --ds-mobile-swatch-rose-2: #c98983;
+  --ds-mobile-swatch-rose-3: #f8ece9;
+  --ds-mobile-swatch-ocean-1: #07566b;
+  --ds-mobile-swatch-ocean-2: #35a9b8;
+  --ds-mobile-swatch-ocean-3: #eef8f9;
 
   --ds-space-1: 4px;
   --ds-space-2: 8px;
@@ -79,6 +100,22 @@
 
   --ds-transition: 160ms ease;
 }
+
+/* PawSpace mobile theme palettes — centralized design tokens; selected at runtime by data-theme/data-mode. */
+[data-pawspace-mobile="true"]{--ps-primary:#01261F;--ps-primary-2:#0a4a3c;--ps-accent:#ffb128;--ps-accent-text:#341604;--ps-bg:#f7f5fa;--ps-surface:#fff;--ps-surface-2:#f0e6fa;--ps-text:#211335;--ps-muted:#82768a;--ps-border:#e6dfeb;--ps-success:#13825a;--ps-hero:#01261F;--ps-hero-2:#0a4a3c;--ps-stage-1:#7130c5;--ps-stage-2:#311061;--ps-stage-3:#16072d;--ps-protection:#073b33;}
+[data-pawspace-mobile="true"][data-theme="emerald"]{--ps-primary:#01261F;--ps-primary-2:#0a4a3c;--ps-accent:#E6B34E;--ps-accent-text:#2a1e05;--ps-bg:#f2f7f5;--ps-surface:#ffffff;--ps-surface-2:#e6efeb;--ps-text:#0a231c;--ps-muted:#5c6f68;--ps-border:#d6e4de;--ps-success:#13825a;--ps-hero:#01261F;--ps-hero-2:#0a4a3c;--ps-stage-1:#0a4a3c;--ps-stage-2:#01261F;--ps-stage-3:#00120e;--ps-protection:#01261F}
+[data-pawspace-mobile="true"][data-theme="emerald"][data-mode="dark"]{--ps-primary:#5fc7a8;--ps-primary-2:#2f8c72;--ps-accent:#E6B34E;--ps-hero:#01261F;--ps-hero-2:#0a4a3c;--ps-protection:#0b3b30}
+[data-pawspace-mobile="true"][data-theme="midnight"]{--ps-primary:#7850c6;--ps-primary-2:#a178ed;--ps-accent:#e8c985;--ps-accent-text:#28152f;--ps-bg:#f7f2fb;--ps-surface:#fff;--ps-surface-2:#eee6fa;--ps-text:#24142e;--ps-muted:#796c81;--ps-border:#dfd3e8;--ps-success:#276c57;--ps-hero:#25103f;--ps-hero-2:#6b3eb0;--ps-stage-1:#3d1d62;--ps-stage-2:#1a0b2c;--ps-stage-3:#090410;--ps-protection:#261333}
+[data-pawspace-mobile="true"][data-theme="sage"]{--ps-primary:#295f4e;--ps-primary-2:#648b73;--ps-accent:#d9a34e;--ps-accent-text:#2f2512;--ps-bg:#f4efe5;--ps-surface:#fffdf8;--ps-surface-2:#e4eee7;--ps-text:#17362d;--ps-muted:#66766d;--ps-border:#d8e1da;--ps-success:#23644d;--ps-hero:#295f4e;--ps-hero-2:#73957d;--ps-stage-1:#426f60;--ps-stage-2:#203f36;--ps-stage-3:#10211c;--ps-protection:#183b31}
+[data-pawspace-mobile="true"][data-theme="rose"]{--ps-primary:#7c2946;--ps-primary-2:#b45f74;--ps-accent:#d7a069;--ps-accent-text:#341b1f;--ps-bg:#f8ece9;--ps-surface:#fffaf9;--ps-surface-2:#f4dfe1;--ps-text:#3d1b27;--ps-muted:#846d74;--ps-border:#ead5d8;--ps-success:#3d735d;--ps-hero:#7c2946;--ps-hero-2:#bf7180;--ps-stage-1:#a54e68;--ps-stage-2:#5c2037;--ps-stage-3:#2b101c;--ps-protection:#4c2631}
+[data-pawspace-mobile="true"][data-theme="ocean"]{--ps-primary:#07566b;--ps-primary-2:#258ca0;--ps-accent:#e1ad4f;--ps-accent-text:#19313a;--ps-bg:#eef8f9;--ps-surface:#fbffff;--ps-surface-2:#dff1f3;--ps-text:#123842;--ps-muted:#607a80;--ps-border:#cfe4e7;--ps-success:#19735f;--ps-hero:#07566b;--ps-hero-2:#35a9b8;--ps-stage-1:#16798d;--ps-stage-2:#064a5c;--ps-stage-3:#032a35;--ps-protection:#0d4450}
+[data-pawspace-mobile="true"][data-mode="dark"]{--ps-bg:#120f16;--ps-surface:#1d1922;--ps-surface-2:#29222f;--ps-text:#f5eff9;--ps-muted:#b9aebf;--ps-border:#3a3141;}
+[data-pawspace-mobile="true"][data-theme="signature"][data-mode="dark"]{--ps-primary:#b383f0;--ps-primary-2:#8750cf;--ps-accent:#ffc35b;--ps-hero:#4e158f;--ps-hero-2:#7c3cc5;--ps-protection:#0b4138}
+[data-pawspace-mobile="true"][data-theme="midnight"][data-mode="dark"]{--ps-primary:#b793f0;--ps-primary-2:#8257cd;--ps-accent:#e9cb88;--ps-hero:#25103f;--ps-hero-2:#5f379d;--ps-protection:#25142f}
+[data-pawspace-mobile="true"][data-theme="sage"][data-mode="dark"]{--ps-primary:#91c7a8;--ps-primary-2:#517c67;--ps-accent:#e0b362;--ps-hero:#244e41;--ps-hero-2:#527a65;--ps-protection:#14352d}
+[data-pawspace-mobile="true"][data-theme="rose"][data-mode="dark"]{--ps-primary:#e6a0af;--ps-primary-2:#aa596d;--ps-accent:#e0ad78;--ps-hero:#67223b;--ps-hero-2:#a55168;--ps-protection:#44232d}
+[data-pawspace-mobile="true"][data-theme="ocean"][data-mode="dark"]{--ps-primary:#68cbd6;--ps-primary-2:#20889b;--ps-accent:#e2b660;--ps-hero:#06495b;--ps-hero-2:#238b9d;--ps-protection:#0b3b46}
+/* End PawSpace mobile theme palettes. */
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }

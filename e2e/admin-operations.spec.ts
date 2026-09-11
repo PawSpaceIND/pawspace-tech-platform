@@ -6,7 +6,7 @@ test("admin: booking command center renders governed booking data", async ({ pag
   await expect(page.getByRole("heading", { name: "Booking Command Center" })).toBeVisible();
   await expect(page.locator("body")).toContainText(/One place to control every booking/i);
 
-  const api = await request.get("/api/booking-command-center");
+  const api = await request.get("/api/booking-command-center", { headers: { "oai-authenticated-user-email": "e2e.admin@pawspace.test" } });
   expect(api.ok(), `command center API must succeed (${api.status()})`).toBeTruthy();
   const payload = await api.json();
   expect(Array.isArray(payload?.bookings), "command center must return a booking array").toBeTruthy();
