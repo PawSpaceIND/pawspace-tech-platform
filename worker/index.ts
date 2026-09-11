@@ -34,12 +34,16 @@ import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
 import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
+import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+import * as Sentry from"@sentry/cloudflare";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   FOUNDER_EMAIL?: string;
   AI?: unknown;
+  SENTRY_DSN?: string;
+  PUBLIC_API_RATE_LIMITER?: {limit(input:{key:string}):Promise<{success:boolean}>};
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -64,6 +68,11 @@ interface ScheduledControllerLike {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if((url.pathname==="/api/public-contact"||url.pathname==="/api/ai-voice-uat")&&env.PUBLIC_API_RATE_LIMITER){
+      const ip=request.headers.get("cf-connecting-ip")||"unknown";
+      const limited=await env.PUBLIC_API_RATE_LIMITER.limit({key:`${ip}:${url.pathname}`});
+      if(!limited.success)return secureApiResponse(Response.json({error:"Rate limit exceeded"},{status:429,headers:{"retry-after":"60"}}));
+    }
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
     // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.
@@ -150,7 +159,8 @@ const worker = {
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily]=await Promise.allSettled([
+      const dpdpRetentionTask=controller.cron==="30 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -170,6 +180,7 @@ const worker = {
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         executiveTask,
         atlasDailyTask,
+        dpdpRetentionTask,
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -191,10 +202,14 @@ const worker = {
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
       if(executive.status==="rejected")errors.push(`executive orchestrator: ${executive.reason instanceof Error?executive.reason.message:String(executive.reason)}`);
       if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
+      if(dpdpRetention.status==="rejected")errors.push(`DPDP retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);
       if(templateSyncError)errors.push(templateSyncError);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
 };
 
-export default worker;
+export default Sentry.withSentry((env:Env)=>{
+  const dsn=typeof env.SENTRY_DSN==="string"?env.SENTRY_DSN.trim():"";
+  return dsn?{dsn,tracesSampleRate:0.1}:undefined;
+},worker);
