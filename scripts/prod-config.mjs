@@ -95,6 +95,11 @@ cfg.vars = {
 };
 
 if (String(process.env.PRODUCTION_R2_BUCKET_NAME || "").trim()) cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: String(process.env.PRODUCTION_R2_BUCKET_NAME).trim() }];
+cfg.ratelimits = [
+  { name: "PUBLIC_CONTACT_RATE_LIMITER", namespace_id: "1001", simple: { limit: 100, period: 60 } },
+  { name: "AI_VOICE_RATE_LIMITER", namespace_id: "1002", simple: { limit: 100, period: 60 } },
+];
+cfg.triggers = { ...(cfg.triggers || {}), crons: [...new Set([...(cfg.triggers?.crons || []), "30 20 * * *"])] };
 const forbidden = FORBIDDEN_IN_PRODUCTION.filter((name) => name in cfg.vars);
 if (forbidden.length) {
   console.error(`Refusing to configure the production deploy: forbidden vars present: ${forbidden.join(", ")}`);
