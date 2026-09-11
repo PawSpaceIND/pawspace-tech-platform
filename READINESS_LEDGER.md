@@ -605,6 +605,52 @@ executing anything. And a dangling SQL column reference remains invisible to bui
 
 ---
 
+## Day 31, wave 3 — the deep untested-module sweep (Claude, 2026-09-11)
+
+Third pass. Nine more executing suites (`tests/day31x-*.test.mjs`), 102 assertions, against modules
+with **no test importing them**, worst-risk first. **Four more real defects found and fixed
+(eighteen for the engagement).**
+
+**Coverage:** modules with no importing test 118 → **110**; untested money modules 23 → **22**.
+Executing test files 433 → **442**. Full suite **5434 → 5536**, all passing.
+
+| # | Module | Defect | Status |
+|---|---|---|---|
+| 15 | `tax-pos-resolver.ts` | `componentsForSupply()` returned a GST head's code in whatever case the service's classification was authored in, and fell back to a hardcoded LOWERCASE literal when deriving the other form. Listing CGST+SGST gave `"CGST","SGST"` intra but `"igst"` inter; listing IGST gave `"IGST"` inter but `"cgst","sgst"` intra. Those codes go into `finance_tax_ledger.component`, and `gst-returns.ts`/`gst-accounting.ts` both summarise a return with `GROUP BY component` — SQLite groups TEXT case-sensitively and the column has no COLLATE NOCASE. **Two services taxed identically filed under two different heads, splitting one tax head across two lines of a GST return.** | 🔧 `6772c62` |
+| 16 | `field-productivity.ts` | `monthlyFieldProductivity()` reads `provider_daily_travel_legs` with no ensure and no catch — that table belongs to `provider-daily-travel.ts`. On a database where that module has not run it throws `no such table` and takes the orders and upgrade figures down with it. Nothing calls it yet, so it would have surfaced for whoever wired the first screen. Same shape as defect 3. | 🔧 `d196484` |
+| 17 | `ai-provider-safety.ts` | **The last-mile privacy guard before every external LLM request.** `GOVERNMENT_ID` matched unbroken digits only, so an Aadhaar written `"1234 5678 9012"` — the 4-4-4 form used essentially everywhere in India, and the way a person actually types it — **went to the model provider in clear**, as did `"4111 1111 1111 1111"`. The unbroken form it did catch is the *less* common spelling of both. | 🔧 `0ecaad2` |
+| 18 | `ai-provider-safety.ts` | Same module, distinct bypass: `sanitizeValue()` only ever pattern-checked **strings**, so an identifier serialised as a JSON **number** went straight through. `{"idNumber":123456789012}` reached the provider while `{"idNumber":"123456789012"}` — the identical value — was redacted. The field-name layer caught it only when the key happened to be in `SENSITIVE_KEYS`, and `idNumber` is not. | 🔧 `0ecaad2` |
+
+Defect 18's fix carries a deliberate trade, recorded so nobody "fixes" it back: an epoch-millisecond
+timestamp is 13 digits and is real context, so 13-digit values inside a plausible epoch window are
+left alone. Aadhaar is 12 digits (below the window), card PANs are 14-19 (above it) — both still
+caught. A 13-digit card inside the epoch range is the accepted gap.
+
+**Verified clean under real execution — do not re-test without a specific new reason:**
+
+- **Statutory invoicing** (12 cases): intra/inter never both posted, a continuous correctly-padded serial series, one invoice per source event with no serial burned on replay, nothing written into a locked period, an unconfigured rate refused rather than charged as zero, an invalid supplier GSTIN refused, a series that cannot make a legal 16-character number refused at *definition* time, an issued number that can never be voided and reused, and India's April-March year with its own series per year.
+- **Subscription entitlement refunds** (11 cases): only genuinely unused credits are refundable, a RESERVED session is committed and is not, refunds must be whole credits, a reservation reduces what the next refund may take, no self-approval, replay reserves once, and two concurrent six-credit approvals against a ten-credit cycle leave exactly six — the CAS on the grant row holds.
+- **Gateway-refund → collection-ledger bridge** (8 cases): replays post nothing new, an amount disagreeing with the approved case is refused in both directions and writes nothing, an unknown refund id is named rather than guessed at.
+- **Public abuse gate + organizational scope** (13 cases): the limit is exact, an unattributable caller fails closed, the window rolls over on the millisecond, origins and endpoints keep separate budgets, the origin is stored as a SHA-256 digest. Two hardenings applied (`edea32d`): the abuse-gate table name is now validated as an identifier (it is interpolated, not bound), and the manager role is matched case-insensitively — a null scope means NO restriction, so that predicate decides whether the domain check applies at all.
+- **WhatsApp template verification** (9 cases): ten remote statuses including one Meta has not invented yet, and none produces `approved`; an absent template is a 404 rather than inheriting a sibling's approval; every HTTP error is an error rather than a status; the bearer token travels in a header with `redirect:"error"` set.
+- **Outbound routing policy** (11 cases): every suppression reason is applied to the most attractive possible caller and each one still suppresses — a suppression sitting behind a score threshold would only protect customers nobody wanted to call.
+- **GPS trust policy** (11 cases): freshness and accuracy checked at the exact boundary, a capture time in the FUTURE is stale rather than fresh, an unconfigured policy REJECTS rather than reading as no limit, an unreported accuracy is low-accuracy rather than perfect, haversine returns infinity for an unplaceable point so it can never read as an arrival.
+- **Field productivity** (9 cases, run under `TZ=UTC` and `TZ=Asia/Kolkata`): a groomer nobody set a target for gets real actuals and NO progress percentage; travel distance counts only legs whose route genuinely resolved.
+
+**A pattern worth naming, now seen five times:** every one of the four defects above is a value written
+by one module and read differently by another — a component code cased one way and grouped another,
+a table one module owns and another reads, a value typed as a number where the reader only handles
+strings. Each module in isolation looks right. **That is precisely the class 228 source-text test
+files cannot see**, and it is why the untested-module sweeps keep producing hits.
+
+**Still open and correctly so:** 110 modules have no importing test (22 money-handling — `statutory-tcs`'s
+monthly GSTR-8 computation, `provider-payout-statutory`, `subscription-payment-activation`,
+`razorpay-order-outbox-sweep` and the vertical `-client` modules are next). 228 of 690 test files still
+assert on source text. The CI check for a dangling SQL column reference is still unwritten, and it would
+have caught defects 3 and 16 outright.
+
+---
+
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
 - Real Razorpay, WhatsApp, Exotel, Maps, KYC, MFA — sandboxed by design, need live credentials
