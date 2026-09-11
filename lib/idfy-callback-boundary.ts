@@ -177,8 +177,9 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // stays correct if the constant ever changes.
   const notDecided = TERMINAL_VERIFICATION_STATUSES.map(() => "status<>?").join(" AND ");
   const outcomeIsTerminal = TERMINAL_VERIFICATION_STATUSES.includes(outcome) ? 1 : 0;
-  await db.prepare(`UPDATE provider_verifications SET status=?,detail_json=?,updated_by='idfy_callback',updated_at=? WHERE id=? AND (?=1 OR (${notDecided})) AND status!=?`)
-    .bind(outcome, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), Date.now(), text(row.id), outcomeIsTerminal, ...TERMINAL_VERIFICATION_STATUSES, outcome).run();
+  const decidedAt = Date.now();
+  await db.prepare(`UPDATE provider_verifications SET status=?,detail_json=?,verified_at=?,updated_by='idfy_callback',updated_at=? WHERE id=? AND (?=1 OR (${notDecided})) AND status!=?`)
+    .bind(outcome, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), outcome === "verified" ? decidedAt : null, decidedAt, text(row.id), outcomeIsTerminal, ...TERMINAL_VERIFICATION_STATUSES, outcome).run();
 
   // What actually stands, read back rather than assumed - `row.status` is now known to be stale. This
   // one value is used for the evidence record, the supersession reason and the returned outcome, so a

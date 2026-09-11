@@ -267,10 +267,9 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     return `dashboard keys: ${Object.keys(out || {}).slice(0, 6).join(",")}`;
   });
 
-  /* Also a vacuous pass before: it returned 0 and the probe reported green. The module aggregates
-   * ONLY training_session_earnings joined to completed training_sessions, and the fixture had no
-   * training data at all, so there was nothing to settle and nothing was proven. Seed real earnings
-   * inside the period, then require statements to appear with arithmetic that matches. */
+  /* Contract monthly settlement is deliberately separate from commission payout authority.
+   * Seed dedicated contract-provider earnings so this probe certifies real monthly statements
+   * without reusing commission providers and accidentally creating a double-payout path. */
   await probe("partner-settlement-governance", "statements from real earnings", async () => {
     const m = await import("../lib/partner-settlement-governance.ts");
     await m.ensurePartnerSettlementTables(db);
@@ -280,15 +279,16 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     for (const k of Object.keys(tf)) if (/^ensure/.test(k)) await tf[k](db);
 
     const SETTLING = 10, PER_SESSION = 900;
+    const contractProv = (p) => `E2E-CONTRACT-${String(p).padStart(3, "0")}`;
     for (let p = 1; p <= SETTLING; p++) {
       sqlite.prepare(`INSERT OR REPLACE INTO training_sessions
         (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at)
         VALUES (?,?,?,?,1,?,?,?,'completed',?,?)`)
-        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), `E2E-RES-${p}`, prov(p), iso(NOW), iso(NOW + 3600000), NOW, NOW);
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), `E2E-RES-${p}`, contractProv(p), iso(NOW), iso(NOW + 3600000), NOW, NOW);
       sqlite.prepare(`INSERT OR REPLACE INTO training_session_earnings
         (session_id,programme_id,booking_id,provider_id,city_id,package_code,gross_earning,status,completed_at,calculated_at,updated_at)
         VALUES (?,?,?,?,?,'pkg-std',?,'earned',?,?,?)`)
-        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), prov(p), CITY, PER_SESSION, NOW, NOW, NOW);
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), contractProv(p), CITY, PER_SESSION, NOW, NOW, NOW);
     }
 
     await m.refreshPartnerSettlementStatements(db, "2026-09");

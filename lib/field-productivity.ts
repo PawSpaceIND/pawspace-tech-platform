@@ -1,3 +1,4 @@
+import{ensureProviderDailyTravelTables}from"./provider-daily-travel";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -5,7 +6,16 @@ const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
-export async function ensureFieldProductivityTables(db:Db){await db.batch([
+/*
+ * The travel-leg table belongs to lib/provider-daily-travel.ts, and monthlyFieldProductivity()
+ * reads it unguarded - no ensure, no catch - alongside the two tables created below. On a database
+ * where the travel module has not run, that query throws "no such table" and takes the whole
+ * productivity read with it, including the orders and upgrade figures that were perfectly
+ * readable. Nothing calls these functions yet, so it would have surfaced for whoever wired the
+ * first screen to them. Ensuring the dependency here is the pattern this codebase already uses -
+ * ensureLeadAssignmentTables() calls ensureLeadWorkItemsTable() for the same reason. [D31-W14]
+ */
+export async function ensureFieldProductivityTables(db:Db){await ensureProviderDailyTravelTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS field_provider_targets (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,month_start TEXT NOT NULL,orders_target INTEGER NOT NULL,upgrade_count_target INTEGER NOT NULL,upgrade_value_target REAL NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(provider_id,month_start))"),
  db.prepare("CREATE TABLE IF NOT EXISTS booking_upgrades (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,upgrade_value REAL NOT NULL,reason TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL,UNIQUE(booking_id))"),
 ]);}

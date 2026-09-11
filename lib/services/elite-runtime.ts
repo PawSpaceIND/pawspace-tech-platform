@@ -331,7 +331,13 @@ export async function runEliteScheduledHooks(db: D1Database, input: { asOf?: num
   await ensureEliteRuntimeTables(db);
   const asOf = input.asOf ?? Date.now();
   if (!(await tableExists(db, "subscription_customers"))) return { processed: 0, failed: 0, skipped: true };
-  const customers = await db.prepare("SELECT customer_key,days_since_last_service FROM subscription_customers ORDER BY updated_at DESC LIMIT 100").all<Row>();
+  const since90Days=asOf-90*24*60*60_000;
+  const hasRatings=await tableExists(db,"booking_ratings"),hasBookings=await tableExists(db,"canonical_bookings");
+  const ratingSql=hasRatings?"COALESCE((SELECT CAST(SUM(CASE WHEN br.stars<3 THEN 1 ELSE 0 END) AS REAL)/NULLIF(COUNT(*),0) FROM booking_ratings br WHERE br.customer_id=sc.customer_key AND br.created_at>=?),0)":"0";
+  const cancelSql=hasBookings?"COALESCE((SELECT CAST(SUM(CASE WHEN cb.status='cancelled' THEN 1 ELSE 0 END) AS REAL)/NULLIF(COUNT(*),0) FROM canonical_bookings cb WHERE cb.customer_id=sc.customer_key AND cb.created_at>=?),0)":"0";
+  const completedSql=hasBookings?"COALESCE((SELECT COUNT(*) FROM canonical_bookings cb2 WHERE cb2.customer_id=sc.customer_key AND cb2.status='completed' AND cb2.created_at>=?),0)":"0";
+  const binds=[...(hasRatings?[since90Days]:[]),...(hasBookings?[since90Days,since90Days]:[])];
+  const customers=await db.prepare(`SELECT sc.customer_key,COALESCE(sc.days_since_last_service,0) days_since_last_service,${ratingSql} low_rating_frequency,${cancelSql} cancellation_frequency,${completedSql} completed_bookings_90d FROM subscription_customers sc ORDER BY sc.updated_at DESC LIMIT 100`).bind(...binds).all<Row>();
   let processed = 0;
   let failed = 0;
   for (const customer of customers.results) {
@@ -346,9 +352,9 @@ export async function runEliteScheduledHooks(db: D1Database, input: { asOf?: num
           appSessionsLast30Days: 0,
           appSessionsPrevious30Days: 0,
           averageResponseLatencyHours: 0,
-          cancellationRate90Days: 0,
-          completedBookings90Days: 0,
-          negativeSentimentRate90Days: 0,
+          cancellationRate90Days: Math.max(0,number(customer.cancellation_frequency)),
+          completedBookings90Days: Math.max(0,number(customer.completed_bookings_90d)),
+          negativeSentimentRate90Days: Math.max(0,number(customer.low_rating_frequency)),
           paymentFailureRate90Days: 0,
           supportEscalations90Days: 0,
         },

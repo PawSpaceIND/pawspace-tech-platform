@@ -267,7 +267,7 @@ test("Dog Walking refund ledger is sandbox-only and replay resistant", async () 
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Dog Walking settlement waits for completed and paid walks without inventing payout or tax", async () => {
+test("Dog Walking settlement converges to canonical provider payable with Finance approval", async () => {
   const { db, sqlite, booking } = await walkingWorld({ bookingId: "BKG-WALK-SETTLE", walkCount: 2 });
 
   const early = await refusal(money(db, booking, "prepare_settlement", {}));
@@ -289,23 +289,31 @@ test("Dog Walking settlement waits for completed and paid walks without inventin
 
   await money(db, booking, "record_session_payment", { sessionId: second, paymentReference: "SBX-S-2" });
   const prepared = await money(db, booking, "prepare_settlement", {});
-  assert.equal(prepared.status, "not_ready", "settlement readiness is not approval");
+  assert.equal(prepared.status, "awaiting_finance_approval", "canonical accrual still requires Finance approval");
   assert.equal(prepared.grossPaidValue, booking.perWalkAmount * 2);
-  assert.equal(prepared.payoutRule, "rule_pending");
-  assert.equal(prepared.tax, "configuration_required");
-  assert.equal(prepared.payout, "not_instructed");
+  assert.equal(prepared.payoutRule, "canonical_provider_payable");
+  assert.equal(prepared.tax, "resolved");
+  assert.equal(prepared.payout, "accrued");
+  assert.ok(prepared.payoutAmount > 0, "canonical completion finance supplies the provider payable");
 
   const row = await db.prepare("SELECT * FROM walking_walker_settlement_ledger WHERE booking_id=?").bind(booking.bookingId).first();
   assert.equal(row.provider_id, booking.providerId);
   assert.equal(Number(row.gross_paid_value), booking.perWalkAmount * 2);
-  // Nothing downstream of the gross value is invented: no base payout, no incentive, no penalty, no tax.
-  for (const column of ["base_payout", "travel_allowance", "incentives", "penalties", "payout_amount", "approved_by", "payout_reference"]) {
-    assert.equal(row[column], null, `${column} must stay unset until policy and approval exist`);
-  }
-  assert.equal(row.payout_rule_status, "rule_pending");
-  assert.equal(row.tax_status, "configuration_required");
-  assert.equal(row.approval_status, "not_ready");
-  assert.equal(row.payout_status, "not_instructed");
+  assert.equal(Number(row.base_payout), Number(prepared.payoutAmount));
+  assert.equal(Number(row.payout_amount), Number(prepared.payoutAmount));
+  for (const column of ["travel_allowance", "incentives", "penalties", "approved_by", "payout_reference"]) assert.equal(row[column], null);
+  assert.equal(row.payout_rule_status, "canonical_provider_payable");
+  assert.equal(row.tax_status, "resolved");
+  assert.equal(row.approval_status, "awaiting_finance_approval");
+  assert.equal(row.payout_status, "accrued");
+
+  const tooEarly = await refusal(money(db, booking, "approve_settlement", {}));
+  assert.equal(tooEarly?.status, 409);
+  assert.match(tooEarly.message, /five days/);
+  await db.prepare("UPDATE walking_walker_settlement_ledger SET eligible_at=? WHERE booking_id=?").bind(Date.now()-1, booking.bookingId).run();
+  const approved = await money(db, booking, "approve_settlement", {});
+  assert.equal(approved.status, "ready");
+  assert.equal((await db.prepare("SELECT approved_by FROM walking_walker_settlement_ledger WHERE booking_id=?").bind(booking.bookingId).first()).approved_by, FINANCE_STAFF);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -329,15 +337,21 @@ test("Dog Walking reconciliation exposes paid, unpaid, refund and settlement tru
   const settled = await money(db, booking, "reconcile", {});
   assert.equal(settled.unpaidCompletedTotal, 0);
   assert.equal(settled.paidTotal, booking.perWalkAmount * 2);
-  assert.equal(settled.settlementState, "not_ready");
-  assert.equal(settled.status, "attention_required", "unapproved settlement and unconfigured tax still need attention");
+  assert.equal(settled.settlementState, "awaiting_finance_approval");
+  assert.equal(settled.taxState, "resolved");
+  assert.equal(settled.status, "attention_required", "unapproved provider payable still needs attention");
+  await db.prepare("UPDATE walking_walker_settlement_ledger SET eligible_at=? WHERE booking_id=?").bind(Date.now()-1, booking.bookingId).run();
+  await money(db, booking, "approve_settlement", {});
+  const balanced = await money(db, booking, "reconcile", {});
+  assert.equal(balanced.status, "balanced");
+  assert.equal(balanced.settlementState, "ready");
 
   const stored = await db.prepare("SELECT booking_total,paid_total,unpaid_completed_total,net_paid_total,settlement_amount,detail_json,checked_by FROM walking_finance_reconciliation WHERE id=?").bind(settled.reconciliationId).first();
   assert.equal(Number(stored.booking_total), booking.perWalkAmount * 2);
   assert.equal(Number(stored.paid_total), booking.perWalkAmount * 2);
   assert.equal(Number(stored.unpaid_completed_total), 0);
   assert.equal(Number(stored.net_paid_total), booking.perWalkAmount * 2);
-  assert.equal(stored.settlement_amount, null, "reconciliation reports no payout amount because none exists");
+  assert.ok(Number(stored.settlement_amount)>0, "reconciliation exposes the canonical provider payable");
   assert.equal(stored.checked_by, FINANCE_STAFF);
   assert.equal(JSON.parse(stored.detail_json).sandboxOnly, true);
 });

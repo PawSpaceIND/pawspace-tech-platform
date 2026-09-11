@@ -25,8 +25,8 @@ export default function BookingCommandCenter() {
   const [toast, setToast] = useState("");
   const [actionReason, setActionReason] = useState("Customer service and booking follow-up");
 
-  async function load() {
-    setLoading(true); setError("");
+  async function load(silent = false) {
+    if (!silent) setLoading(true); setError("");
     try {
       const response = await fetch("/api/booking-command-center", { cache: "no-store" });
       const payload = await response.json() as { bookings?: Booking[]; error?: string };
@@ -34,21 +34,14 @@ export default function BookingCommandCenter() {
       setBookings(payload.bookings || []);
       setSelectedId(current => current || payload.bookings?.[0]?.id as string || "");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load bookings"); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => {
-    let active = true;
-    fetch("/api/booking-command-center", { cache: "no-store" })
-      .then(async response => {
-        const payload = await response.json() as { bookings?: Booking[]; error?: string };
-        if (!response.ok) throw new Error(payload.error || "Unable to load bookings");
-        if (!active) return;
-        setBookings(payload.bookings || []);
-        setSelectedId(payload.bookings?.[0]?.id as string || "");
-      })
-      .catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "Unable to load bookings"); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    const events = new EventSource("/api/booking-command-center/stream");
+    const refresh = () => { void load(true); };
+    events.addEventListener("booking", refresh);
+    return () => { events.removeEventListener("booking", refresh); events.close(); };
   }, []);
 
   const visible = useMemo(() => bookings.filter(booking => {
@@ -102,7 +95,7 @@ export default function BookingCommandCenter() {
 
       {!loading && !error && bookings.length > 0 && <section className={styles.commandGrid}>
         <div className={styles.listPanel}>
-          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>Snapshot from shared UAT database · refresh to update</small></header>
+          <header><div><span>COMMAND LIST</span><h2>{visible.length} booking{visible.length === 1 ? "" : "s"}</h2></div><small>Live canonical feed · auto-updates on booking, assignment and payment changes</small></header>
           <div className={styles.listHead}><span>Booking</span><span>Customer & service</span><span>Provider</span><span>Payment</span><span>Risk</span></div>
           <div className={styles.rows}>{visible.map(booking => {
             const petNames = booking.pets.map(pet => pet.name).join(", ") || "Pet not recorded";

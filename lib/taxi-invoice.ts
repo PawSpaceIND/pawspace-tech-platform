@@ -41,7 +41,21 @@ export async function issueTaxiInvoice(db:D1Database,input:{bookingId:string;rea
   await db.prepare("INSERT OR IGNORE INTO taxi_invoice_sequences (city_id,financial_year,next_number,updated_at) VALUES (?,?,0,?)").bind(cityId,financialYear,now).run();
   const sequence=await db.prepare("UPDATE taxi_invoice_sequences SET next_number=next_number+1,updated_at=? WHERE city_id=? AND financial_year=? RETURNING next_number").bind(now,cityId,financialYear).first<{next_number:number}>();
   if(!sequence)throw new Response("Pet Taxi invoice sequence could not be reserved",{status:409});
-  const invoiceNumber=`TXI-${cityCode}-${financialYear}-${String(sequence.next_number).padStart(6,"0")}`,invoiceId=`XINV-${crypto.randomUUID().slice(0,12).toUpperCase()}`,grossAmount=Number(booking.total_amount||0);
+  const invoiceNumber=`TXI-${cityCode}-${financialYear}-${String(sequence.next_number).padStart(6,"0")}`,invoiceId=`XINV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+  /*
+   * gross_amount is the amount the customer was actually CHARGED, which on an exclusive tax
+   * policy is the booking total PLUS the tax, not the total alone. Writing booking.total_amount
+   * here made the two publishable tax modes disagree about their own document: on an exclusive
+   * policy the invoice recorded Rs 1,000 gross against a Rs 1,180 charge, and
+   * lib/service-output-tax.ts - which derives the taxable value as exactly
+   * `bi.gross_amount - bi.tax_amount` - then reported Rs 820 taxable instead of Rs 1,000,
+   * understating the base by the whole tax amount in the statutory close.
+   *
+   * invoiceAmounts() already returns the payable figure as netAmount in both modes (it equals the
+   * total on an inclusive policy), so this is a no-op for the inclusive policies in use today and
+   * corrects the exclusive path Ops can publish at any time. [D31-W1d]
+   */
+  const grossAmount=amounts.netAmount;
   const inserted=await db.prepare("INSERT INTO booking_invoices (id,booking_id,customer_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at,created_at,updated_at) VALUES (?,?,?,?,'issued_uat',?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO NOTHING")
     .bind(invoiceId,input.bookingId,String(booking.customer_id),invoiceNumber,String(booking.currency||"INR"),grossAmount,amounts.taxAmount,amounts.netAmount,now,now,now).run();
   if(Number(inserted.meta.rows_written||0)!==1){

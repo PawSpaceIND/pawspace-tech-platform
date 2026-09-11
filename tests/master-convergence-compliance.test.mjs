@@ -1,0 +1,11 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks();
+const { aiExecutiveActive } = await import("../lib/agents/atlas-ceo-supervisor.ts");
+import fs from"node:fs";
+const root=new URL("..",import.meta.url),read=p=>fs.readFileSync(new URL(p,root),"utf8");
+test("AI executive autonomy is fail-closed by default",()=>{assert.equal(aiExecutiveActive({}),false);assert.equal(aiExecutiveActive({PAWSPACE_AI_EXECUTIVE_ACTIVE:"true"}),true);const supervisor=read("lib/agents/atlas-ceo-supervisor.ts"),wrangler=read("wrangler.toml");assert.match(supervisor,/PAWSPACE_AI_EXECUTIVE_ACTIVE/);assert.match(supervisor,/==="true"/);assert.match(wrangler,/PAWSPACE_AI_EXECUTIVE_ACTIVE = "false"/);});
+test("DPDP retention reuses certified erasure and preserves ledger boundary",()=>{const retention=read("lib/dpdp-retention.ts"),erasure=read("lib/dpdp-erasure.ts"),worker=read("worker/index.ts");assert.match(retention,/setUTCFullYear/);assert.match(retention,/eraseCustomerPersonalData/);assert.match(retention,/canonical_bookings/);assert.match(erasure,/ledger_invariant_changed/);assert.match(worker,/runDpdpRetentionSweep/);});
+test("Cloudflare edge limits protect selected public API boundaries",()=>{const worker=read("worker/index.ts"),wrangler=read("wrangler.toml");for(const path of ["\/api\/public-contact","\/api\/ai-voice-uat"])assert.match(worker,new RegExp(path));assert.match(wrangler,/limit = 100/);assert.match(wrangler,/period = 60/);});
+test("Sentry wraps the global Cloudflare worker without sending default PII",()=>{const worker=read("worker/index.ts");assert.match(worker,/@sentry\/cloudflare/);assert.match(worker,/Sentry\.withSentry/);assert.match(worker,/sendDefaultPii:false/);});
