@@ -260,3 +260,17 @@ test("pending media is visible only through an authenticated row-scoped CRM conv
   assert.ok(visible, "authorized staff transcript must include the canonical pending media message");
   assert.equal(visible.payload.mediaPending, true);
 });
+
+test("canonical message loss during final media commit cannot leave media metadata or mark inbound PROCESSED", async () => {
+  const providerMediaId = "META-MEDIA-ORPHAN-GUARD", eventId = "wamid.MEDIA.ORPHAN.GUARD";
+  const stored = memoryBucket();
+  const { sqlite, db } = await world({ META_WHATSAPP_ACCESS_TOKEN: "uat-media-token-not-a-live-key", PAWSPACE_MEDIA_BUCKET: stored.bucket });
+  const media = installSuccessfulMediaFetch(providerMediaId), rawBody = imageBody({ eventId, providerMediaId });
+  try {
+    db.onSql("INSERT OR IGNORE INTO communication_message_media", () => { sqlite.prepare("DELETE FROM communication_messages WHERE provider_reference=?").run(eventId); });
+    assert.equal((await post(rawBody)).status, 503);
+    assert.equal(count(sqlite, "communication_message_media"), 0, "media metadata must not survive without its canonical message");
+    assert.equal(queueRow(sqlite).status, "RETRY", "gateway event must remain retryable rather than PROCESSED");
+    assert.equal(stored.puts.length, 1, "private object write may have happened but canonical DB state remains uncommitted");
+  } finally { media.restore(); }
+});
