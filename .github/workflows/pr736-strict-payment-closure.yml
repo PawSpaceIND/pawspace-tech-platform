@@ -27,7 +27,7 @@ env:
 
 jobs:
   strict-provider-proof:
-    if: ${{ github.ref == 'refs/heads/uat/pr736-strict-payment-closure-20260911' && github.event.inputs.confirm == 'pr736-strict-close' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'pr736-strict-close' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     concurrency: pawspace-staging-deploy
