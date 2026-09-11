@@ -4,6 +4,11 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
+// Route handlers below intentionally run as the explicitly triple-gated local test preview.
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+delete process.env.PAWSPACE_DEPLOYMENT_ENV;
+
 // ---------------------------------------------------------------------------
 // Verifies scripts/uat-demo-seed.sql: loaded into an EMPTY database, every module's
 // real route handler must return NON-EMPTY data — so no staging page opens blank.

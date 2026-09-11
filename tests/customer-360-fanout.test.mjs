@@ -73,6 +73,10 @@ function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__C360_DB
 const { buildCustomer360 } = await import("../lib/customer-360.ts");
 const customer360Route = await import("../app/api/customer-360/route.ts");
 
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+delete process.env.PAWSPACE_DEPLOYMENT_ENV;
+
 const NOW = Date.now();
 const DAY = 86_400_000;
 // Exact DDL copied verbatim from the owning sources (canonical tables from
@@ -168,6 +172,19 @@ test("real execution: batched rebuild preserves ordering, per-customer limits, f
   const limited = (await buildCustomer360(db, "cus_a"))[0];
   assert.equal(limited.coupons.length, 50, "the old per-query LIMIT 50 is preserved per customer");
   assert.equal(limited.coupons[0].id, "CR0", "newest coupon first, same as the old ORDER BY created_at DESC");
+});
+
+
+
+test("direct customer lookup bypasses the global 500-row list window", async () => {
+  freshDb();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const stmt=sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?,?)");
+  stmt.run("cus_old","blr","Older Customer","+919000009999",NOW-1_000_000,NOW-1_000_000);
+  for(let index=0;index<550;index++)stmt.run(`cus_new_${index}`,"blr",`Recent ${index}`,`+918${String(index).padStart(9,"0")}`,NOW-index,NOW-index);
+  const [record]=await buildCustomer360(globalThis.__C360_DB__,"cus_old");
+  assert.equal(record?.customerId,"cus_old");
+  assert.equal(record?.name,"Older Customer");
 });
 
 // ---- 3. Cold DB: missing section tables still degrade to empty, never crash ---------------------

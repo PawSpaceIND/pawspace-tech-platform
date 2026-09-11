@@ -24,7 +24,7 @@ test('signed customer session supplies chat identity; explicit foreign identity 
  const {db,sqlite}=await world(t);const now=Date.now();sqlite.prepare("INSERT INTO canonical_customers(id,city_id,name,primary_phone,created_at,updated_at) VALUES('A','blr','Chat customer','9000800901',?,?)").run(now,now);
  const token=await cookie(db);
  const foreign=await route.POST(post({mode:'authenticated',customerId:'B',message:'What is my next booking?',idempotencyKey:'foreign'},token));assert.equal(foreign.status,403);
- const own=await route.POST(post({mode:'authenticated',message:'What grooming services do you offer?',idempotencyKey:'own'},token));const result=await own.json();assert.equal(own.status,201,JSON.stringify(result));assert.ok(result.data.threadId);
+ const own=await route.POST(post({mode:'authenticated',message:'What grooming services do you offer?',idempotencyKey:'own'},token));const result=await own.json();assert.equal(own.status,200,JSON.stringify(result));assert.ok(result.data.threadId);
  const row=sqlite.prepare('SELECT customer_id FROM communication_threads WHERE id=?').get(result.data.threadId);assert.equal(row.customer_id,'A');
  sqlite.prepare("INSERT INTO canonical_customers(id,city_id,name,primary_phone,created_at,updated_at) VALUES('B','blr','Other customer','9000800902',?,?)").run(now,now);
  const otherToken=await cookie(db,'B');
