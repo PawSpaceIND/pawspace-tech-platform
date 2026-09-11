@@ -45,6 +45,7 @@ interface Env {
   FOUNDER_EMAIL?: string;
   AI?: unknown;
   SENTRY_DSN?:string;
+  PAWSPACE_UAT_ACCESS_CODE?:string;
   PAWSPACE_DEPLOYMENT_ENV?:string;
   PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
   PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
@@ -73,6 +74,16 @@ interface ScheduledControllerLike {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if(url.pathname==="/__staging/sentry-self-test"){
+      if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});
+      const supplied=request.headers.get("x-pawspace-uat-code")||"";
+      if(!env.PAWSPACE_UAT_ACCESS_CODE||supplied!==env.PAWSPACE_UAT_ACCESS_CODE)return new Response("Forbidden",{status:403});
+      if(!env.SENTRY_DSN)return Response.json({ok:false,error:"sentry_not_configured"},{status:503,headers:{"cache-control":"no-store"}});
+      const eventId=Sentry.captureException(new Error("controlled_staging_sentry_self_test"),{tags:{surface:"staging_self_test"},extra:{piiSafe:true}});
+      const flushed=await Sentry.flush(2_000);
+      return Response.json({ok:flushed,eventId,piiSafe:true},{status:flushed?200:503,headers:{"cache-control":"no-store"}});
+    }
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
     // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.

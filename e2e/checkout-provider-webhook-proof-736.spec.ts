@@ -487,7 +487,7 @@ async function strictFinancialTruth(dbId: string, bookingId: string) {
   );
   const journal = await d1(
     dbId,
-    "SELECT source_type,source_id,account_code,debit,credit,booking_id,customer_id,payment_id FROM finance_journal_entries WHERE source_type='online_payment_captured' AND source_id=? ORDER BY id",
+    "SELECT source_type,source_id,account_code,debit,credit,booking_id,customer_id,payment_id FROM finance_journal_entries WHERE source_type='online_payment_captured' AND payment_id=? ORDER BY id",
     [payment.id],
   );
   const lifecycle = await d1(

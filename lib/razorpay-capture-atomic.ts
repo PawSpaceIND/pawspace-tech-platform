@@ -45,6 +45,16 @@ const captureAuthority=(input:AtomicRazorpayCaptureInput)=>input.authority||"web
 const trustedCaptureSql=(alias="")=>{const p=alias?`${alias}.`:"";return `(${p}signature_verified=1 OR (${p}signature_verified=0 AND json_extract(CASE WHEN json_valid(${p}detail_json) THEN ${p}detail_json ELSE '{}' END,'$.captureAuthority')='provider_api'))`;};
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
+async function assertCaptureCollectionJournal(db: Db, paymentId: string, settlementId: string, expectedAmount: number) {
+  const rows = await db.prepare("SELECT debit,credit FROM finance_journal_entries WHERE source_type='online_payment_captured' AND payment_id=? AND settlement_id=? ORDER BY id").bind(paymentId, settlementId).all<Row>();
+  if (rows.results.length !== 2) throw new Error(`Captured payment journal is incomplete: expected 2 lines, found ${rows.results.length}`);
+  const debit = round2(rows.results.reduce((sum, row) => sum + Number(row.debit || 0), 0));
+  const credit = round2(rows.results.reduce((sum, row) => sum + Number(row.credit || 0), 0));
+  if (Math.abs(debit - credit) > 0.009 || Math.abs(debit - round2(expectedAmount)) > 0.009) {
+    throw new Error(`Captured payment journal is unbalanced: debit ${debit}, credit ${credit}, expected ${round2(expectedAmount)}`);
+  }
+}
+
 function captureKey(input: AtomicRazorpayCaptureInput) {
   return text(input.gatewayPaymentId) || text(input.gatewayOrderId) || input.eventId;
 }
@@ -284,6 +294,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       transactionAt: now,
       actorId: "razorpay_capture_saga",
     });
+    await assertCaptureCollectionJournal(db, paymentId, captureReference, Number(payload.amountPaise || 0) / 100);
     // The notification sweep and booking/admin history consume this canonical event.
     // Timeline truth must come from persisted verified provider evidence; recovery uses the same key.
     const source = await db.prepare(`SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND ${trustedCaptureSql()} AND processing_status='processed'`)

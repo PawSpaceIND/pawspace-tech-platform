@@ -10,6 +10,7 @@ name: Deploy staging
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              SENTRY_DSN                              Sentry project DSN for PII-safe staging telemetry
 #              EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SID, EXOTEL_CALLER_ID,
 #              EXOTEL_VOICE_APP_ID, EXOTEL_WEBHOOK_SECRET
 #              FAST2SMS_API_KEY                         optional; required only for approved SMS/live-OTP staging
@@ -167,6 +168,7 @@ jobs:
           RAZORPAYX_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAYX_WEBHOOK_SECRET_SANDBOX }}
           GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
           PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
@@ -198,7 +200,7 @@ jobs:
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
             const requiredNames = [
-              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
+              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", "SENTRY_DSN",
               "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
               "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
             ];
@@ -245,6 +247,19 @@ jobs:
       # The staff directory is loaded HERE rather than being left to a separate manual workflow, because
       # certification requires the advertised staff identities to be able to sign in and UAT sign-in
       # refuses any email that is not an active app_users row. Idempotent: every seed is INSERT OR IGNORE.
+      - name: Verify PII-safe Sentry delivery with a controlled staging exception
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          BODY="$RUNNER_TEMP/sentry-self-test.json"
+          CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -H "x-pawspace-uat-code: $PAWSPACE_UAT_ACCESS_CODE" "$STAGING_URL/__staging/sentry-self-test")"
+          test "$CODE" = "200"
+          node --input-type=module -e 'import{readFileSync}from"node:fs";const x=JSON.parse(readFileSync(process.argv[1],"utf8"));if(x.ok!==true||x.piiSafe!==true||!/^[0-9a-f]{32}$/i.test(String(x.eventId||"")))throw Error("Sentry controlled exception was not flushed safely")' "$BODY"
+          rm -f "$BODY"
+          echo "Sentry controlled staging exception flushed with PII-safe configuration."
+
       - name: Load the staff directory into the staging D1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
