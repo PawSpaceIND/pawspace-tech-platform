@@ -1,0 +1,76 @@
+name: Certify existing staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type certify-existing-staging'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact SHA currently deployed to pawspace-staging'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-existing-staging-certification
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'certify-existing-staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pawspace-staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Validate exact deployed SHA input
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_SHA" in *[!0-9a-f]* | "") exit 1;; esac
+          test "${#EXPECTED_SHA}" -eq 40
+      - name: Install and build certification tooling
+        run: |
+          npm run install:ci
+          npm run build
+      - name: Resolve current staging rollback reference
+        id: rollback
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          ACTIVE="$(npx wrangler deployments status --json --name pawspace-staging | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);process.stdout.write(String(x.versions?.[0]?.version_id||""))})')"
+          PREVIOUS="$(ACTIVE="$ACTIVE" npx wrangler versions list --json --name pawspace-staging | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const xs=JSON.parse(s),a=process.env.ACTIVE;const p=[...xs].reverse().find(x=>String(x.id)!==a);process.stdout.write(String(p?.id||""))})')"
+          test -n "$PREVIOUS"
+          echo "reference=$PREVIOUS" >> "$GITHUB_OUTPUT"
+      - name: Run repaired 22-check certificate against live staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          ROLLBACK_REFERENCE: ${{ steps.rollback.outputs.reference }}
+          EVIDENCE_PATH: staging-certification-existing.json
+        run: node tests/e2e/staging-certification.mjs
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-certification-existing-${{ inputs.expected_sha }}
+          path: staging-certification-existing.json
+          if-no-files-found: warn
+          retention-days: 14
