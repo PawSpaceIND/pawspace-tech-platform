@@ -8,7 +8,7 @@ type Advance={id:string;amount:number;recoveryMonths:number;monthlyAmount:number
 type LeaveReq={id:string;leaveCode:string;startDate:string;endDate:string;units:number;reason:string;status:string;createdAt:number};
 type Perf={appears:boolean;teamCode:string;ofEmployees:number;rank?:number;netCollectedRevenue?:number;bookingConversions?:number;qualifiedLeads?:number;firstResponseRate?:number|null;meaningfulActions?:number};
 type View={
-  linked:boolean;email?:string;
+  linked:boolean;email?:string;engagement?:"employee"|"contract";
   employee?:{id:string;code:string;name:string;workEmail:string;joinedAt:number};
   compensation?:{structureCode:string;version:number;currency:string;components:Line[];grossMonthly:number;fixedDeductions:number;netMonthly:number}|null;
   payslips?:{list:Payslip[];latest:Payslip|null;latestLines:Line[]};
@@ -69,13 +69,14 @@ export default function MyPortalPage(){
         {msg?<p style={{color:C.gold}}>{msg}</p>:null}
 
         <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginTop:18}}>
-          <div style={stat}><small style={{color:C.dim}}>Net take-home (latest)</small><strong style={{display:"block",fontSize:26,marginTop:6}}>{INR(data.payslips?.latest?.net??data.compensation?.netMonthly)}</strong></div>
+          {data.engagement!=="contract"?<div style={stat}><small style={{color:C.dim}}>Net take-home (latest)</small><strong style={{display:"block",fontSize:26,marginTop:6}}>{INR(data.payslips?.latest?.net??data.compensation?.netMonthly)}</strong></div>:null}
           <div style={stat}><small style={{color:C.dim}}>Approved incentives</small><strong style={{display:"block",fontSize:26,marginTop:6,color:C.gold}}>{INR(data.incentives?.approvedTotal)}</strong></div>
           <div style={stat}><small style={{color:C.dim}}>Sales incentive · canonical</small><strong style={{display:"block",fontSize:26,marginTop:6,color:C.gold}}>{INR(data.salesIncentiveTruth?.total)}</strong><small style={{color:C.dim}}>{data.salesIncentiveTruth?.status??"not generated"}</small></div>
           <div style={stat}><small style={{color:C.dim}}>Advance outstanding</small><strong style={{display:"block",fontSize:26,marginTop:6}}>{INR(data.advances?.outstanding)}</strong></div>
           <div style={stat}><small style={{color:C.dim}}>Peer rank</small><strong style={{display:"block",fontSize:26,marginTop:6,color:C.orange}}>{data.performance?.appears?`#${data.performance.rank} / ${data.performance.ofEmployees}`:"—"}</strong></div>
         </section>
 
+        {data.engagement!=="contract"?<>
         <h2 style={h2}>My salary</h2>
         <div style={card}>
           {data.compensation?<>
@@ -93,12 +94,13 @@ export default function MyPortalPage(){
               <tbody>{data.payslips.list.map(p=><tr key={p.resultId} style={{borderTop:`1px solid ${C.line}`}}><td style={{padding:"6px 8px"}}>{day(p.periodStart)} → {day(p.periodEnd)}</td><td>{p.status}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.gross)}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.deductions)}</td><td style={{textAlign:"right",padding:"6px 8px",fontVariantNumeric:"tabular-nums"}}>{INR(p.net)}</td></tr>)}</tbody></table></div>
           </>:<p style={{margin:0,color:C.dim}}>No payslips generated yet.</p>}
         </div>
+        </>:null}
 
-        <h2 style={h2}>My incentives & advances</h2>
+        <h2 style={h2}>{data.engagement==="contract"?"My incentives":"My incentives & advances"}</h2>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:12}}>
           <div style={card}><b>Incentives</b>{data.incentives?.list.length?<div style={{display:"grid",gap:6,marginTop:8}}>{data.incentives.list.map((r,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:14,borderBottom:`1px solid ${C.line}`,padding:"5px 0"}}><span>{r.scheme} <small style={{color:C.dim}}>{day(r.periodStart)}</small></span><span style={{color:r.status==="approved"?C.gold:C.dim}}>{r.status} · {INR(r.approved||r.calculated)}</span></div>)}</div>:<p style={{color:C.dim,marginBottom:0}}>No incentive results yet.</p>}</div>
           <div style={card}><b>Sales incentive evidence</b>{data.salesIncentiveTruth?<p style={{color:C.dim,fontSize:13}}>Canonical month result: <b style={{color:C.gold}}>{INR(data.salesIncentiveTruth.total)}</b> · {data.salesIncentiveTruth.status} · daily accrual {INR(data.salesIncentiveTruth.dailyAccruedTotal)} · monthly bonus {INR(data.salesIncentiveTruth.monthlyBonus)}{data.salesIncentiveTruth.payrollRunId?` · payroll ${data.salesIncentiveTruth.payrollRunId}`:""}</p>:<p style={{color:C.dim,fontSize:13}}>Monthly canonical sales incentive has not been generated yet.</p>}<b>Daily evidence</b>{data.dailyIncentive?.list.length?<div style={{display:"grid",gap:6,marginTop:8}}>{data.dailyIncentive.list.slice(0,10).map((d,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:14,borderBottom:`1px solid ${C.line}`,padding:"5px 0"}}><span>{d.date} <small style={{color:C.dim}}>{d.baseVertical}{d.blitz?" · BLITZ":""}</small></span><span style={{color:C.gold}}>{INR(d.incentive)}</span></div>)}</div>:<p style={{color:C.dim,marginBottom:0}}>No daily incentive accrued yet (needs a sales base vertical + attributed bookings).</p>}</div>
-          <div style={card}><b>Salary advances</b>{data.advances?.list.length?<div style={{display:"grid",gap:6,marginTop:8}}>{data.advances.list.map(a=><div key={a.id} style={{fontSize:14,borderBottom:`1px solid ${C.line}`,padding:"5px 0"}}>{INR(a.amount)} over {a.recoveryMonths} mo · <span style={{color:C.dim}}>{a.status}</span><div style={{color:C.dim}}>recovered {INR(a.recovered)} · outstanding {INR(a.outstanding)}</div></div>)}</div>:<p style={{color:C.dim,marginBottom:0}}>No advances.</p>}</div>
+          {data.engagement!=="contract"?<div style={card}><b>Salary advances</b>{data.advances?.list.length?<div style={{display:"grid",gap:6,marginTop:8}}>{data.advances.list.map(a=><div key={a.id} style={{fontSize:14,borderBottom:`1px solid ${C.line}`,padding:"5px 0"}}>{INR(a.amount)} over {a.recoveryMonths} mo · <span style={{color:C.dim}}>{a.status}</span><div style={{color:C.dim}}>recovered {INR(a.recovered)} · outstanding {INR(a.outstanding)}</div></div>)}</div>:<p style={{color:C.dim,marginBottom:0}}>No advances.</p>}</div>:null}
         </div>
 
         <h2 style={h2}>My performance</h2>
@@ -134,7 +136,7 @@ export default function MyPortalPage(){
           :<p style={{margin:0,color:C.dim}}>No attendance recorded yet. Use Check in / Check out above.</p>}
         </div>
 
-        <footer style={{marginTop:30,color:C.dim,fontSize:12}}>You are viewing your own record only. Salary and incentive figures are drawn from governed payroll runs and approved incentive schemes. Leave requests follow maker/checker — your manager approves. Sandbox / UAT — not production payments.</footer>
+        <footer style={{marginTop:30,color:C.dim,fontSize:12}}>You are viewing your own record only. {data.engagement==="contract"?"Contract earnings stay in the Partner workspace; this People view covers attendance, leave and governed incentives.":"Salary and incentive figures are drawn from governed payroll runs and approved incentive schemes."} Leave requests follow maker/checker — your manager approves. Sandbox / UAT — not production payments.</footer>
       </>:null}
     </div>
   </main>;

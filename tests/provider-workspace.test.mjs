@@ -9,8 +9,9 @@ test("provider workspace is own-record-only and splits contract vs commission su
   assert.match(ws, /export async function resolveProviderForActor/);
   assert.match(ws, /provider_identity_links WHERE email=\? AND status='active'/);
   assert.match(ws, /this booking is not assigned to you|is not assigned to you/i);
-  assert.match(ws, /features\.payslip\?\{netPayout/);                 // contract sees earnings
-  assert.match(ws, /Commission providers see only their booking dashboard/); // commission does not
+  assert.match(ws, /contractEarnings/);                                  // contract earnings are governed provider earnings
+  assert.match(ws, /commissionEarnings/);                                // commission statement is provider-visible
+  assert.match(ws, /commissionStatementVisible/);
 });
 
 test("proof submission mirrors to a customer-visible update and is config-driven per service", () => {
