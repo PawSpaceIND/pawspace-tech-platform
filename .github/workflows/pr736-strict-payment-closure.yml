@@ -92,16 +92,25 @@ jobs:
           if(!d?.id||!/^[0-9a-f-]{36}$/i.test(d.id)) throw Error('frozen preview D1 binding unavailable');
           console.log(`d1=${d.id}`); console.log('worker=pawspace-release-preview');
           NODE
-      - name: Normalize isolated-proof signing key in memory
+      - name: Normalize strict-proof sandbox credentials in memory
         env:
+          RAW_PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           RAW_PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          RAW_PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAW_RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAW_RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAW_RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          RAW_GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
         run: |
           set -euo pipefail
-          VALUE="$(printf '%s' "$RAW_PAWSPACE_UAT_SIGNING_KEY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          test -n "$VALUE"
-          test "${#VALUE}" -ge 32
-          echo "::add-mask::$VALUE"
-          { echo 'PAWSPACE_UAT_SIGNING_KEY<<PR736_KEY'; printf '%s\n' "$VALUE"; echo 'PR736_KEY'; } >> "$GITHUB_ENV"
+          for NAME in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT RAZORPAY_KEY_ID_SANDBOX RAZORPAY_KEY_SECRET_SANDBOX RAZORPAY_WEBHOOK_SECRET_SANDBOX GOOGLE_MAPS_SERVER_API_KEY_UAT; do
+            RAW_NAME="RAW_${NAME}"
+            RAW_VALUE="${!RAW_NAME:-}"
+            VALUE="$(printf '%s' "$RAW_VALUE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            test -n "$VALUE"
+            echo "::add-mask::$VALUE"
+            { echo "${NAME}<<PR736_SECRET"; printf '%s\n' "$VALUE"; echo 'PR736_SECRET'; } >> "$GITHUB_ENV"
+          done
       - name: Provision one isolated immutable checkout Worker and D1
         id: isolated
         working-directory: infra
@@ -115,12 +124,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ steps.preview.outputs.d1 }}
           RELEASE_PREVIEW_WORKER_NAME: ${{ steps.preview.outputs.worker }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
-          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
         run: |
           set -euo pipefail
           node --experimental-strip-types scripts/deploy-checkout-sandbox.mjs
@@ -135,7 +138,6 @@ jobs:
           EXPECTED_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
           CANDIDATE_DIR: ${{ github.workspace }}/candidate
           CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/evidence/hosting
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: node --experimental-strip-types scripts/verify-checkout-hosted-browser.mjs
       - name: Install and build exact current main staging artifact
         working-directory: staging
@@ -147,8 +149,6 @@ jobs:
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ steps.isolated.outputs.origin }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -163,12 +163,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
-          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
         run: |
           set -euo pipefail
           f="$RUNNER_TEMP/pr736-staging-secrets.json"; trap 'rm -f "$f"' EXIT
@@ -181,9 +175,6 @@ jobs:
           CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           GITHUB_TOKEN: ${{ github.token }}
           PW_BASE_URL: https://example.invalid
         run: npx playwright test e2e/checkout-provider-webhook-proof-736.spec.ts --project=chromium --retries=0 --output=${{ github.workspace }}/test-results/precheck
@@ -194,9 +185,6 @@ jobs:
           CHECKOUT_CANDIDATE_SHA: 244ee2cdff4a268c569909ae10bb7daafdfe67d6
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           GITHUB_TOKEN: ${{ github.token }}
           PW_BASE_URL: https://example.invalid
         run: npx playwright test e2e/checkout-provider-webhook-proof-736.spec.ts --project=chromium --retries=0 --output=${{ github.workspace }}/test-results/final
@@ -217,14 +205,8 @@ jobs:
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
-          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
         run: |
           set -euo pipefail
           unset PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA || true
