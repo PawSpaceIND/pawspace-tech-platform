@@ -1,7 +1,7 @@
 type Db=D1Database; type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"");
 async function exists(db:Db,table:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(table).first());}
-async function count(db:Db,table:string,where="",binds:unknown[]=[]){if(!await exists(db,table))return null;return Number((await db.prepare(`SELECT COUNT(*) count FROM ${table}${where?` WHERE ${where}`:""}`).bind(...binds).first<Row>())?.count||0)}
+async function count(db:Db,table:string,where="",binds:unknown[]=[]){if(!await exists(db,table))return null;try{return Number((await db.prepare(`SELECT COUNT(*) count FROM ${table}${where?` WHERE ${where}`:""}`).bind(...binds).first<Row>())?.count||0)}catch(error){if(/no such column/i.test(error instanceof Error?error.message:String(error)))return null;throw error}}
 async function recent(db:Db,table:string,columns:string,order:string,limit=8){if(!await exists(db,table))return[];const sql="SELECT "+columns+" FROM "+table+" ORDER BY "+order+" DESC LIMIT ?";return(await db.prepare(sql).bind(limit).all<Row>()).results}
 const card=(label:string,value:number|null,detail:string,source:string)=>({label,value,detail,source,connected:value!==null});
 export type ControlOpsMode="approvals"|"master"|"inventory"|"quality"|"security"|"health"|"audit";

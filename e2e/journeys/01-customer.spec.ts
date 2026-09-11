@@ -8,17 +8,20 @@ const AS_CUSTOMER = { "oai-authenticated-user-email": "e2e.customer@pawspace.tes
 test.use({ extraHTTPHeaders: AS_CUSTOMER });
 
 test("the storefront renders real content, not a blank or error page", async ({ page }) => {
+  await page.setExtraHTTPHeaders({});
   const res = await page.goto("/", { waitUntil: "domcontentloaded" });
   expect(res?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: /Grooming that comes home/i })).toBeVisible();
+  await expect(page.getByText(/Bengaluru/i).filter({ visible: true }).first()).toBeVisible();
   const body = await page.locator("body").innerText();
   expect(body.replace(/\s+/g, " ").trim().length, "storefront must render substantive content").toBeGreaterThan(200);
   expect(body).not.toMatch(/Application error|Something went wrong|Unhandled Runtime Error/i);
-  await expect(page.getByText(/Bengaluru/i).filter({ visible: true }).first()).toBeVisible();
 });
 
 test("the customer can reach the canonical grooming service and see a bookable surface", async ({ page }) => {
   const response = await page.goto("/services/grooming", { waitUntil: "domcontentloaded" });
   expect(response?.status(), "canonical grooming route must resolve").toBe(200);
+  await expect(page.locator("body")).toContainText(/groom|package|price|₹|book/i);
   const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
   expect(body).toMatch(/groom|package|price|₹|book/i);
@@ -27,7 +30,7 @@ test("the customer can reach the canonical grooming service and see a bookable s
 test("the mobile app surface renders (was a blank screen in the 2026-09-05 audit)", async ({ page }) => {
   const res = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(res?.status()).toBe(200);
-  await page.waitForTimeout(800);
+  await expect(page.getByRole("navigation", { name: "Customer navigation" })).toBeVisible({ timeout: 15_000 });
   const body = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
   expect(body.length, "/mobile-app must not render blank").toBeGreaterThan(150);
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);

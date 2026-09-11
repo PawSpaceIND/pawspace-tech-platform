@@ -150,7 +150,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
         <i>✓</i>
         <small>CANONICAL BOOKING · {booking.bookingId}</small>
         <h3>{pet?.name ?? "Your dog"}&apos;s walks are booked.</h3>
-        <p style={{ margin: "4px 0 0", fontSize: 14 }}>{`${booking.packageName} · ${booking.sessions.length} walk${booking.sessions.length === 1 ? "" : "s"} · ${booking.perWalkAmount===null?"Per-walk price unavailable":`${money(booking.perWalkAmount)} after each completed walk`} · ${money(booking.amountDueNow)} due today · ${money(booking.totalAmount)} total`}</p>
+        <p className={styles.bookingSummary}>{`${booking.packageName} · ${booking.sessions.length} walk${booking.sessions.length === 1 ? "" : "s"} · ${booking.perWalkAmount===null?"Per-walk price unavailable":`${money(booking.perWalkAmount)} after each completed walk`} · ${money(booking.amountDueNow)} due today · ${money(booking.totalAmount)} total`}</p>
       </article>
       <span className={styles.label}>Your walker</span>
       <article className={styles.walker}>
@@ -166,7 +166,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
           <span key={session.id}><i>{session.occurrenceNumber}</i>{windowLabel(session.scheduledStart, session.scheduledEnd)}<em>{session.status}</em></span>
         ))}
       </div>
-      <p style={{ fontSize: 12, color: "#b8c6c0", marginTop: 12 }}>Sandbox / UAT — no live money. Each walk is billed only after it is completed and verified.</p>
+      <p className={styles.uatNote}>Sandbox / UAT — no live money. Each walk is billed only after it is completed and verified.</p>
     </div>
   );
 
@@ -287,7 +287,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
             </select>
           </label>
           <p className={styles.note}>Instructions are saved with your booking. Access approval and handover still require verification.</p>
-          <fieldset disabled={busy} style={{border:0,padding:0,margin:0,minWidth:0}}><legend className={styles.label}>Service address</legend><AddressPicker onZoneResolved={setServiceLocation}/></fieldset>
+          <fieldset disabled={busy} className={styles.addressFieldset}><legend className={styles.label}>Service address</legend><AddressPicker onZoneResolved={setServiceLocation}/></fieldset>
           <p className={styles.note}>Pay-after-service: nothing is charged now. Each walk is billed at the server-quoted per-walk price only after it is completed. Your walker is auto-assigned from the canonical roster with full-calendar conflict checks.</p>
           {error && <p className={styles.alert} role="alert">{error}</p>}
           <button className={styles.primary} disabled={busy || !quote || !serviceLocation?.zone.serviceAvailable} onClick={() => void confirm()}>

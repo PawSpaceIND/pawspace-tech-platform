@@ -103,7 +103,7 @@ export async function assertBoardingHostCapabilityComplete(db:Db,providerId:stri
 
 export type BoardingMatchInput={
   providerId:string;cityId:string;zoneId:string;species:string[];petCount:number;
-  medicationRequired:boolean;customerId?:string|null;at?:number;
+  medicationRequired:boolean;customerId?:string|null;at?:number;scheduledStart?:string;scheduledEnd?:string;
 };
 
 /**
@@ -137,7 +137,10 @@ export async function assertBoardingHostMatches(db:Db,input:BoardingMatchInput){
 
   // 3. AVAILABLE capacity, not declared capacity: what is already staying counts against it.
   const at=input.at??Date.now();
-  const occupied=await db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined')").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
+  const start=text(input.scheduledStart),end=text(input.scheduledEnd);
+  const occupied=(start&&end)
+    ? await db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined') AND check_in_at<? AND check_out_at>?").bind(providerId,end,start).all<Row>().catch(()=>({results:[] as Row[]}))
+    : await db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined')").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
   void at;
   const used=occupied.results.reduce((sum,stay)=>sum+Number(stay.pet_count||0),0);
   const capacity=Number(row!.max_guest_pets||0);

@@ -2,6 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PW_PORT || 4173);
 const baseURL = process.env.PW_BASE_URL || `http://localhost:${port}`;
+const uatServiceDate = process.env.PW_UAT_SERVICE_DATE || new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+process.env.PW_UAT_SERVICE_DATE ??= uatServiceDate;
+process.env.PAWSPACE_UAT_SERVICE_CLOCK ??= "on";
+process.env.PAWSPACE_UAT_EXECUTION_NOW_MS ??= String(Date.parse(`${uatServiceDate}T08:30:00.000Z`));
+process.env.PW_STAFF_UAT_ACCESS_CODE ??= "pawspace-e2e-access-only";
 
 export default defineConfig({
   testDir: ".",
