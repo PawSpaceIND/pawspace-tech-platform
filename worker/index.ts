@@ -35,6 +35,7 @@ import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
 import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
@@ -158,9 +159,10 @@ const worker = {
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
+      const executiveTask=controller.cron==="*/5 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention"}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,atlasDaily,dpdpRetention]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -178,6 +180,7 @@ const worker = {
         runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
         runExotelStaleCallReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:10}),
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
+        executiveTask,
         atlasDailyTask,
         dpdpRetentionTask,
       ]);
@@ -199,6 +202,7 @@ const worker = {
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
       if(exotelVoiceReconciliation.status==="rejected")errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.reason instanceof Error?exotelVoiceReconciliation.reason.message:String(exotelVoiceReconciliation.reason)}`);else if(exotelVoiceReconciliation.value.failed)errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.value.failed} call(s) failed authoritative refresh`);
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
+      if(executive.status==="rejected")errors.push(`executive decision loop: ${executive.reason instanceof Error?executive.reason.message:String(executive.reason)}`);
       if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
       if(dpdpRetention.status==="rejected")errors.push(`DPDP retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);else if(dpdpRetention.value.failed)errors.push(`DPDP retention: ${dpdpRetention.value.failed} erasure exception(s)`);
       if(templateSyncError)errors.push(templateSyncError);
