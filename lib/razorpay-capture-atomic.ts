@@ -108,9 +108,10 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   }
 
   const prior = await db.prepare(`SELECT id,event_id FROM payment_gateway_events
-    WHERE payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
+    WHERE provider='razorpay' AND environment=? AND payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
+      AND ${trustedCaptureSql()} AND amount_subunits=? AND currency=?
       AND ((?<>'' AND gateway_payment_id=?) OR (?<>'' AND gateway_order_id=?))
-    LIMIT 1`).bind(input.paymentId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
+    LIMIT 1`).bind(input.environment, input.paymentId, input.amountPaise, input.currency, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
   const now = Date.now();
   const effectsOutboxId = `FO-CAP-${crypto.randomUUID()}`;
   const effectsDedupe = `razorpay-capture-effects:${captureKey(input)}`;
