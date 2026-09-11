@@ -186,7 +186,7 @@ test("existing sandbox verifier is read-only and exact-worker pinned",()=>{
 
 test("existing sandbox workflow is manual protected-main and browser step receives no provider credentials",()=>{
  const workflow=readFileSync(new URL("../.github/workflows/verify-existing-checkout-sandbox.yml",import.meta.url),"utf8");
- assert.match(workflow,/workflow_dispatch:/);
+ assert.match(workflow,/workflow_dispatch:/);assert.match(workflow,/verify-checkout-sandbox-736/);assert.match(workflow,/pulls\/736/);assert.match(workflow,/merged/);assert.doesNotMatch(workflow,/verify-checkout-sandbox-674|pulls\/674/);
  assert.doesNotMatch(workflow,/^  (push|pull_request|schedule):/m);
  assert.match(workflow,/github.ref == 'refs\/heads\/main'/);
  assert.match(workflow,/environment: pawspace-release-preview/);

@@ -13,7 +13,7 @@ const UAT_ACCESS_ENV = "PAWSPACE_" + "UAT_ACCESS_CODE";
 const accessCode = String(process.env[UAT_ACCESS_ENV] || "");
 const report = { candidateSha: sha, worker, hosted: false, customerUiVerified: false, capture: "NOT_RUN", providerWebhookDelivery: "NOT_RUN", checks: {} };
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Existing sandbox check failed: ${name}`); };
-if (!/^[0-9a-f]{40}$/.test(sha) || !/^pawspace-checkout-674-[0-9]+-[0-9]+$/.test(worker)) throw new Error("Exact candidate SHA and run-derived Worker name are required");
+if (!/^[0-9a-f]{40}$/.test(sha) || !/^pawspace-checkout-736-[0-9]+-[0-9]+$/.test(worker)) throw new Error("Exact candidate SHA and run-derived Worker name are required");
 if (!/^[a-f0-9]{32}$/i.test(account) || !token || accessCode.trim() !== accessCode || accessCode.length < 32) throw new Error("Protected Cloudflare and UAT credentials are required");
 const cfBase = `https://api.cloudflare.com/client/v4/accounts/${account}`;
 const cf = async (path, options = {}) => {
@@ -35,10 +35,10 @@ const appEventually = async (origin, path, predicate, options = {}) => {
   return last;
 };
 try {
-  const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/674`, { headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000) });
-  if (!prResponse.ok) throw new Error("Unable to revalidate PR674");
+  const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/736`, { headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000) });
+  if (!prResponse.ok) throw new Error("Unable to revalidate PR736");
   const pr = await prResponse.json();
-  check("currentPrHead", pr.state === "open" && pr.head?.sha === sha && pr.head?.ref === "fix/customer-sandbox-checkout-wiring-20260909" && pr.head?.repo?.full_name === CHECKOUT_REPOSITORY);
+  check("currentPrHead", pr.state === "closed" && pr.merged === true && pr.head?.sha === sha && pr.head?.ref === "test/razorpay-recon-untrusted-evidence-20260911" && pr.head?.repo?.full_name === CHECKOUT_REPOSITORY);
   const subdomain = await cf("/workers/subdomain");
   const origin = `https://${worker}.${subdomain.subdomain}.workers.dev`;
   report.origin = origin;

@@ -3,7 +3,7 @@ type FetchLike=(input:string|URL|Request,init?:RequestInit)=>Promise<Response>;
 
 const text=(value:unknown)=>String(value??"").trim();
 const sha=/^[0-9a-f]{40}$/;
-const checkoutHost=/^pawspace-checkout-674-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}\.[a-z0-9-]+\.workers\.dev$/i;
+const checkoutHost=/^pawspace-checkout-736-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}\.[a-z0-9-]+\.workers\.dev$/i;
 
 export type RazorpaySandboxRelayConfig=
  |{enabled:false}
@@ -17,7 +17,7 @@ export function resolveRazorpaySandboxRelay(env:Env):RazorpaySandboxRelayConfig{
  if(text(env.PAWSPACE_DEPLOYMENT_ENV)!=="staging"||text(env.PAWSPACE_PAYMENT_ENV)!=="sandbox"||text(env.PAWSPACE_PAYMENT_LIVE_APPROVED)==="true")throw new Error("Razorpay sandbox relay is permitted only on sandbox-locked staging");
  if(!sha.test(candidateSha))throw new Error("Razorpay sandbox relay requires an exact lowercase candidate SHA");
  let url:URL;try{url=new URL(targetOrigin)}catch{throw new Error("Razorpay sandbox relay target origin is invalid")}
- if(url.protocol!=="https:"||url.username||url.password||url.port||url.search||url.hash||!checkoutHost.test(url.hostname)||!['','/'].includes(url.pathname))throw new Error("Razorpay sandbox relay target must be an exact isolated PR674 workers.dev origin");
+ if(url.protocol!=="https:"||url.username||url.password||url.port||url.search||url.hash||!checkoutHost.test(url.hostname)||!['','/'].includes(url.pathname))throw new Error("Razorpay sandbox relay target must be an exact isolated certified-checkout workers.dev origin");
  return{enabled:true,targetOrigin:`https://${url.hostname}`,candidateSha};
 }
 

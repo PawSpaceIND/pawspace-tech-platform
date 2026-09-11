@@ -98,7 +98,7 @@ test("Dog Walking Gate 5 builds one canonical Operations exception queue", async
   assert.deepEqual(snapshot.readiness.externalDependencies, {
     productionGps: "disconnected", objectStorage: "disconnected", malwareScanner: "disconnected",
     whatsappPush: "queued_only", payments: "sandbox_only", refunds: "sandbox_only",
-    tax: "configuration_required", walkerPayout: "rule_pending",
+    tax: "canonical_completion_resolved", walkerPayout: "canonical_provider_payable",
   });
 
   // A clean booking is NOT flagged: the queue is an exception queue, not a list of everything.
