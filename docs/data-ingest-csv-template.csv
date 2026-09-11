@@ -1,0 +1,2 @@
+customer_id,customer_name,primary_phone,secondary_phone,email,area,city,source,pet_name,pet_species,pet_breed,service,drop_off_reason,last_service_date,historical_status
+,Example Customer,9876543210,,customer@example.com,Indiranagar,Bengaluru,founder_csv_import,Milo,dog,Golden Retriever,pet-grooming,price too high,2026-08-01,follow_up
