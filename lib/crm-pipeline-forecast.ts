@@ -60,7 +60,19 @@ async function stagePolicy(db: Db, stage: OpportunityStage) {
 async function historicalStageProbability(db: Db, stage: OpportunityStage) {
   const prior = Number((await stagePolicy(db, stage))?.base_probability ?? DEFAULT_PROBABILITY[stage]);
   if (stage === "won" || stage === "lost") return prior;
-  const history = await db.prepare("SELECT COUNT(DISTINCT h.opportunity_id) samples,SUM(CASE WHEN o.status='won' THEN 1 ELSE 0 END) wins FROM crm_opportunity_stage_history h JOIN crm_opportunities o ON o.id=h.opportunity_id WHERE h.to_stage=? AND o.status IN ('won','lost')")
+  /*
+   * Both figures must count OPPORTUNITIES, not stage-history rows. samples was already distinct;
+   * wins was summed across the raw join, so an opportunity that entered this stage more than once
+   * contributed one sample and several wins - and deals genuinely do go backwards
+   * (negotiation -> proposal -> negotiation is an ordinary week), each pass writing another row.
+   *
+   * Measured: one won deal that passed through negotiation three times produced a stage
+   * probability of 0.909 against 0.727 for the identical deal that passed through once, and the
+   * weighted forecast came out ABOVE the unweighted pipeline it weights - which no
+   * probability-weighted number can be. This is the figure the business plans hiring and spend
+   * against, and nothing about the output looked unusual. [D31-W6]
+   */
+  const history = await db.prepare("SELECT COUNT(DISTINCT h.opportunity_id) samples,COUNT(DISTINCT CASE WHEN o.status='won' THEN h.opportunity_id END) wins FROM crm_opportunity_stage_history h JOIN crm_opportunities o ON o.id=h.opportunity_id WHERE h.to_stage=? AND o.status IN ('won','lost')")
     .bind(stage).first<Row>();
   const samples = Number(history?.samples ?? 0), wins = Number(history?.wins ?? 0);
   // Bayesian shrinkage prevents one early win/loss from swinging a stage from 10% to 100%.

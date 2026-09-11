@@ -38,7 +38,17 @@ export async function syncTrainingCommissionPayoutMilestones(db:D1Database,asOf=
   }
   const totalSessions=Number(p.total_sessions||0);
   if(!Number.isInteger(totalSessions)||totalSessions<=0)continue;
-  const completed=await db.prepare("SELECT sequence_no,COALESCE(completed_at,updated_at) completed_at FROM training_sessions WHERE programme_id=? AND status='completed' ORDER BY sequence_no").bind(String(p.programme_id)).all<Row>();
+  /*
+   * Ordered by WHEN each session was completed, not by its number in the plan. A milestone is
+   * reached at the Nth completion, and `reachedAt` below indexes straight into this list to start
+   * the five-day hold from it. Ordering by sequence_no made those two different things whenever a
+   * programme ran out of order - a rescheduled session 3 finished after 4 and 5 - and it picked an
+   * EARLIER completion, so the hold was already expired on the day the milestone was actually
+   * reached and the commission became approvable immediately. The five-day window is the whole
+   * point of the rule: it is the time in which a customer complaint can still stop the money.
+   * [D31-T4]
+   */
+  const completed=await db.prepare("SELECT sequence_no,COALESCE(completed_at,updated_at) completed_at FROM training_sessions WHERE programme_id=? AND status='completed' ORDER BY COALESCE(completed_at,updated_at),sequence_no").bind(String(p.programme_id)).all<Row>();
   const count=completed.results.length,halfThreshold=Math.ceil(totalSessions/2);
   const packageCommission=commissionAmount(Number(p.total_amount||0),mode,value);
   const firstAmount=money(packageCommission/2),finalAmount=money(packageCommission-firstAmount);

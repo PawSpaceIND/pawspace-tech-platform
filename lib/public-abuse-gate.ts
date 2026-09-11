@@ -19,8 +19,21 @@ export const PUBLIC_RATE_LIMIT=5;
 
 const clean=(value:unknown,max:number)=>String(value??"").replace(/[\u0000-\u001F\u007F]/g," ").replace(/\s+/g," ").trim().slice(0,max);
 
+/*
+ * The table name is a SQL IDENTIFIER, so it is interpolated rather than bound - there is no other
+ * way to name a table in SQLite. Every caller today passes a literal, so nothing is reachable from
+ * a request; the guard is here because this is a security module and the cost of the next caller
+ * threading a request-derived value through is total. Identifiers are restricted to the shape a
+ * table name can actually have. [D31-W10]
+ */
+const TABLE_NAME=/^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+function assertTableName(table:string){
+ if(!TABLE_NAME.test(table))throw new Error("public_abuse_table_name_invalid");
+ return table;
+}
+
 export async function ensurePublicAbuseTable(db:Db,table:string){
- await db.prepare(`CREATE TABLE IF NOT EXISTS ${table} (fingerprint TEXT PRIMARY KEY, window_started_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`).run();
+ await db.prepare(`CREATE TABLE IF NOT EXISTS ${assertTableName(table)} (fingerprint TEXT PRIMARY KEY, window_started_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`).run();
 }
 
 /** The caller's origin, hashed. Null when it cannot be established. */
@@ -37,12 +50,13 @@ export async function publicFingerprint(request:Request){
  */
 export async function withinPublicRateLimit(db:Db,request:Request,input:{table:string;now:number;limit?:number;windowMs?:number}){
  const limit=input.limit??PUBLIC_RATE_LIMIT,windowMs=input.windowMs??PUBLIC_RATE_WINDOW_MS;
+ const table=assertTableName(input.table);
  const fingerprint=await publicFingerprint(request);
  if(!fingerprint)return false;
- await ensurePublicAbuseTable(db,input.table);
+ await ensurePublicAbuseTable(db,table);
  const cutoff=input.now-windowMs;
- await db.prepare(`INSERT OR IGNORE INTO ${input.table} (fingerprint,window_started_at,attempts,updated_at) VALUES (?,?,0,?)`).bind(fingerprint,input.now,input.now).run();
- await db.prepare(`UPDATE ${input.table} SET attempts=CASE WHEN window_started_at<? THEN 1 ELSE attempts+1 END,window_started_at=CASE WHEN window_started_at<? THEN ? ELSE window_started_at END,updated_at=? WHERE fingerprint=?`).bind(cutoff,cutoff,input.now,input.now,fingerprint).run();
- const state=await db.prepare(`SELECT attempts FROM ${input.table} WHERE fingerprint=?`).bind(fingerprint).first<{attempts:number}>();
+ await db.prepare(`INSERT OR IGNORE INTO ${table} (fingerprint,window_started_at,attempts,updated_at) VALUES (?,?,0,?)`).bind(fingerprint,input.now,input.now).run();
+ await db.prepare(`UPDATE ${table} SET attempts=CASE WHEN window_started_at<? THEN 1 ELSE attempts+1 END,window_started_at=CASE WHEN window_started_at<? THEN ? ELSE window_started_at END,updated_at=? WHERE fingerprint=?`).bind(cutoff,cutoff,input.now,input.now,fingerprint).run();
+ const state=await db.prepare(`SELECT attempts FROM ${table} WHERE fingerprint=?`).bind(fingerprint).first<{attempts:number}>();
  return Boolean(state)&&Number(state?.attempts)<=limit;
 }
