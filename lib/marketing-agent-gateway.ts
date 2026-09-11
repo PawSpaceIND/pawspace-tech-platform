@@ -20,7 +20,8 @@ export const MARKETING_TOOL_SCHEMAS = {
     properties: {
       from: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
       to: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
-      platform: { enum: ["google_ads", "meta_ads"] },
+      platform: { const: "google_ads" },
+      accountId: { type: "string", minLength: 1 },
       campaignId: { type: "string", minLength: 1 },
     },
   },
@@ -39,12 +40,15 @@ export const MARKETING_TOOL_SCHEMAS = {
   "marketing.ads.budget.reallocate": {
     type: "object",
     additionalProperties: false,
-    required: ["approvalId", "platform", "fromResourceId", "toResourceId", "shiftMinor", "reason"],
+    required: ["approvalId", "platform", "accountId", "fromResourceId", "toResourceId", "fromDailyMinor", "toDailyMinor", "shiftMinor", "reason"],
     properties: {
       approvalId: { type: "string", minLength: 1 },
       platform: { enum: ["google_ads", "meta_ads"] },
+      accountId: { type: "string", minLength: 1 },
       fromResourceId: { type: "string", minLength: 1 },
       toResourceId: { type: "string", minLength: 1 },
+      fromDailyMinor: { type: "integer", minimum: 1 },
+      toDailyMinor: { type: "integer", minimum: 1 },
       shiftMinor: { type: "integer", minimum: 1 },
       reason: { type: "string", minLength: 10, maxLength: 1000 },
     },
@@ -52,27 +56,29 @@ export const MARKETING_TOOL_SCHEMAS = {
   "marketing.ads.keyword.mutate": {
     type: "object",
     additionalProperties: false,
-    required: ["approvalId", "platform", "campaignId", "keyword", "operation", "reason"],
+    required: ["approvalId", "platform", "accountId", "campaignId", "adGroupId", "keyword", "operation", "currentDailyMinor", "reason"],
     properties: {
       approvalId: { type: "string", minLength: 1 },
       platform: { enum: ["google_ads", "meta_ads"] },
       campaignId: { type: "string", minLength: 1 },
+      adGroupId: { type: "string", minLength: 1 },
+      criterionId: { type: "string", minLength: 1 },
       keyword: { type: "string", minLength: 1, maxLength: 200 },
       operation: { enum: ["add_negative", "pause", "enable"] },
-      amountMinor: { type: "integer", minimum: 1 },
+      matchType: { enum: ["EXACT", "PHRASE", "BROAD"], default: "EXACT" },
+      currentDailyMinor: { type: "integer", minimum: 1 },
       reason: { type: "string", minLength: 10, maxLength: 1000 },
     },
   },
   "marketing.proposal.submit": {
     type: "object",
     additionalProperties: false,
-    required: ["toolName", "platform", "why", "payload", "requestedBy"],
+    required: ["toolName", "platform", "why", "payload"],
     properties: {
       toolName: { enum: ["marketing.ads.budget.reallocate", "marketing.ads.keyword.mutate"] },
       platform: { enum: ["google_ads", "meta_ads"] },
       why: { type: "string", minLength: 20, maxLength: 4000 },
       payload: { type: "object" },
-      requestedBy: { type: "string", minLength: 3 },
     },
   },
 } as const;
@@ -80,7 +86,12 @@ export const MARKETING_TOOL_SCHEMAS = {
 const text = (v: unknown) => String(v ?? "").trim();
 const int = (v: unknown) => Math.max(0, Math.trunc(Number(v) || 0));
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
-const stableJson = (value: unknown) => JSON.stringify(value, Object.keys((value && typeof value === "object" ? value : {}) as object).sort());
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => [k, canonical(v)]));
+  return value;
+}
+const stableJson = (value: unknown) => JSON.stringify(canonical(value));
 
 export async function ensureMarketingAgentGatewayTables(db: Db) {
   await db.batch([
@@ -97,8 +108,8 @@ export async function submitMarketingProposal(db: Db, input: { toolName: "market
   const now = Date.now();
   const payloadJson = stableJson(input.payload);
   const payloadHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payloadJson)).then(buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join(""));
-  await db.prepare("INSERT INTO pending_approvals (id,domain,tool_name,platform,why_text,payload_json,payload_hash,status,requested_by,requested_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?)")
-    .bind(id, "marketing", input.toolName, input.platform, text(input.why), payloadJson, payloadHash, text(input.requestedBy), now, now, now, now).run();
+  await db.prepare("INSERT INTO pending_approvals (id,domain,tool_name,platform,why_text,payload_json,payload_hash,status,requested_by,requested_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?)")
+    .bind(id, "marketing", input.toolName, input.platform, text(input.why), payloadJson, payloadHash, text(input.requestedBy), now, now, now).run();
   return { id, status: "pending" as const, payloadHash };
 }
 
@@ -130,6 +141,18 @@ async function assertApprovedPayload(db: Db, approvalId: string, expectedTool: s
   return row;
 }
 
+async function claimApproval(db: Db, approvalId: string) {
+  const claim = await db.prepare("UPDATE pending_approvals SET status='executing',updated_at=? WHERE id=? AND status='approved' AND executed_at IS NULL").bind(Date.now(), approvalId).run();
+  if (Number(claim.meta?.changes || 0) !== 1) throw new Response("Approval is already being executed or was consumed", { status: 409 });
+}
+async function finishApproval(db: Db, approvalId: string, executionId: string) {
+  const now = Date.now();
+  await db.prepare("UPDATE pending_approvals SET status='executed',executed_at=?,execution_id=?,updated_at=? WHERE id=? AND status='executing'").bind(now, executionId, now, approvalId).run();
+}
+async function failApprovalExecution(db: Db, approvalId: string, detail: string) {
+  await db.prepare("UPDATE pending_approvals SET status='execution_failed',decision_note=COALESCE(decision_note,'') || ?,updated_at=? WHERE id=? AND status='executing'").bind(` | execution_failed:${detail.slice(0,180)}`, Date.now(), approvalId).run();
+}
+
 async function assertBudgetEnvelope(db: Db, input: { platform: MarketingAdPlatform; accountId: string; resourceId: string; proposedDailyMinor: number }) {
   await ensureMarketingAgentGatewayTables(db);
   const now = Date.now();
@@ -159,21 +182,52 @@ export async function marketingSearchTermsAnalyze(db: Db, input: { from: string;
 export async function marketingBudgetReallocate(db: Db, runtime: Runtime, input: { approvalId: string; platform: MarketingAdPlatform; accountId: string; fromResourceId: string; toResourceId: string; fromDailyMinor: number; toDailyMinor: number; shiftMinor: number; reason: string; actor: string; fetchImpl?: Fetcher }) {
   const payload = { platform: input.platform, accountId: input.accountId, fromResourceId: input.fromResourceId, toResourceId: input.toResourceId, fromDailyMinor: int(input.fromDailyMinor), toDailyMinor: int(input.toDailyMinor), shiftMinor: int(input.shiftMinor), reason: text(input.reason) };
   const approval = await assertApprovedPayload(db, input.approvalId, "marketing.ads.budget.reallocate", payload);
-  const nextFrom = Math.max(0, payload.fromDailyMinor - payload.shiftMinor), nextTo = payload.toDailyMinor + payload.shiftMinor;
+  if (payload.shiftMinor >= payload.fromDailyMinor) throw new Response("Budget shift must leave a positive source daily budget", { status: 422 });
+  const nextFrom = payload.fromDailyMinor - payload.shiftMinor, nextTo = payload.toDailyMinor + payload.shiftMinor;
+  await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.fromResourceId, proposedDailyMinor: nextFrom });
   await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.toResourceId, proposedDailyMinor: nextTo });
-  await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.fromResourceId, amountMinor: nextFrom, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
-  const result = await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.toResourceId, amountMinor: nextTo, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
-  const now = Date.now();
-  await db.prepare("UPDATE pending_approvals SET status='executed',executed_at=?,execution_id=?,updated_at=? WHERE id=? AND status='approved'").bind(now, text((result as Row).id) || uid("MAE"), now, input.approvalId).run();
-  return { approvalId: input.approvalId, approvedBy: text(approval.approved_by), fromDailyMinor: nextFrom, toDailyMinor: nextTo, result };
+  await claimApproval(db, input.approvalId);
+  try {
+    const fromResult = await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.fromResourceId, amountMinor: nextFrom, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
+    const result = await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.toResourceId, amountMinor: nextTo, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
+    const executionId = text((result as Row).id) || uid("MAE");
+    await finishApproval(db, input.approvalId, executionId);
+    return { approvalId: input.approvalId, approvedBy: text(approval.approved_by), fromDailyMinor: nextFrom, toDailyMinor: nextTo, fromResult, result };
+  } catch (error) {
+    await failApprovalExecution(db, input.approvalId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
-export async function marketingKeywordMutate(db: Db, runtime: Runtime, input: { approvalId: string; platform: MarketingAdPlatform; accountId: string; campaignId: string; keyword: string; operation: "add_negative" | "pause" | "enable"; amountMinor?: number; reason: string; actor: string; fetchImpl?: Fetcher }) {
-  const payload = { platform: input.platform, accountId: input.accountId, campaignId: input.campaignId, keyword: text(input.keyword), operation: input.operation, amountMinor: int(input.amountMinor), reason: text(input.reason) };
+export async function marketingKeywordMutate(db: Db, runtime: Runtime, input: { approvalId: string; platform: MarketingAdPlatform; accountId: string; campaignId: string; adGroupId: string; criterionId?: string; keyword: string; operation: "add_negative" | "pause" | "enable"; matchType?: "EXACT" | "PHRASE" | "BROAD"; currentDailyMinor: number; reason: string; actor: string; fetchImpl?: Fetcher }) {
+  const payload = { platform: input.platform, accountId: input.accountId, campaignId: input.campaignId, adGroupId: input.adGroupId, criterionId: text(input.criterionId), keyword: text(input.keyword), operation: input.operation, matchType: input.matchType || "EXACT", currentDailyMinor: int(input.currentDailyMinor), reason: text(input.reason) };
   await assertApprovedPayload(db, input.approvalId, "marketing.ads.keyword.mutate", payload);
-  if (input.amountMinor) await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.campaignId, proposedDailyMinor: int(input.amountMinor) });
+  await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.campaignId, proposedDailyMinor: payload.currentDailyMinor });
   if (input.platform !== "google_ads") throw new Response("Keyword mutation is only supported for Google Ads", { status: 422 });
-  const now = Date.now();
-  await db.prepare("UPDATE pending_approvals SET status='executed',executed_at=?,execution_id=?,updated_at=? WHERE id=? AND status='approved'").bind(now, uid("MAK"), now, input.approvalId).run();
-  return { approvalId: input.approvalId, campaignId: input.campaignId, keyword: input.keyword, operation: input.operation, providerMutationRequired: true };
+  const customerId = text(runtime.GOOGLE_ADS_CUSTOMER_ID).replace(/[^0-9]/g, "");
+  const developerToken = text(runtime.GOOGLE_ADS_DEVELOPER_TOKEN), accessToken = text(runtime.GOOGLE_ADS_OAUTH_ACCESS_TOKEN);
+  const loginCustomerId = text(runtime.GOOGLE_ADS_LOGIN_CUSTOMER_ID).replace(/[^0-9]/g, "") || customerId;
+  const version = /^v\d+(?:\.\d+)?$/.test(text(runtime.GOOGLE_ADS_API_VERSION)) ? text(runtime.GOOGLE_ADS_API_VERSION) : "v25";
+  if (!customerId || !developerToken || !accessToken) throw new Error("Google Ads connector is not configured");
+  if (!payload.keyword || !payload.adGroupId) throw new Response("Keyword and adGroupId are required", { status: 400 });
+  if (payload.operation !== "add_negative" && !payload.criterionId) throw new Response("criterionId is required to pause or enable a keyword", { status: 400 });
+  const headers: Record<string,string> = { "content-type": "application/json", authorization: `Bearer ${accessToken}`, "developer-token": developerToken };
+  if (loginCustomerId) headers["login-customer-id"] = loginCustomerId;
+  const resourceName = `customers/${customerId}/adGroupCriteria/${payload.adGroupId}~${payload.criterionId}`;
+  const operation = payload.operation === "add_negative"
+    ? { create: { adGroup: `customers/${customerId}/adGroups/${payload.adGroupId}`, negative: true, keyword: { text: payload.keyword, matchType: payload.matchType } } }
+    : { update: { resourceName, status: payload.operation === "pause" ? "PAUSED" : "ENABLED" }, updateMask: "status" };
+  await claimApproval(db, input.approvalId);
+  try {
+    const response = await (input.fetchImpl || fetch)(`https://googleads.googleapis.com/${version}/customers/${customerId}/adGroupCriteria:mutate`, { method: "POST", headers, body: JSON.stringify({ operations: [operation] }) });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`Google Ads keyword mutation failed (${response.status}): ${raw.slice(0,300)}`);
+    let parsed: Record<string,unknown> = {}; try { parsed = raw ? JSON.parse(raw) : {}; } catch {}
+    const executionId = text(response.headers.get("request-id")) || text(parsed.requestId) || uid("MAK");
+    await finishApproval(db, input.approvalId, executionId);
+    return { approvalId: input.approvalId, campaignId: input.campaignId, adGroupId: input.adGroupId, keyword: payload.keyword, operation: input.operation, status: "completed", externalMutation: true, providerRequestId: executionId };
+  } catch (error) {
+    await failApprovalExecution(db, input.approvalId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
