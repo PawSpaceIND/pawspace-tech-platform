@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { centralConsentAllows } from "../lib/communication-governance.ts";
 const read=(path)=>fs.readFileSync(path,"utf8");
+test("central governance module is executable",()=>assert.equal(typeof centralConsentAllows,"function"));
 test("Phase 1 outbound throughput and governance contracts stay wired",()=>{
  const sweep=read("lib/outbound-sweep.ts"),scheduler=read("lib/diamond-crm-scheduler.ts"),engine=read("lib/communication-engine.ts"),governance=read("lib/communication-governance.ts");
  assert.match(sweep,/Math\.min\(2000,input\.batchSize\|\|1500\)/);
