@@ -24,8 +24,17 @@ const normaliseCity = (value: unknown) => {
   return code;
 };
 
+/*
+ * A null scope means NO domain restriction (see requireManagerDomain), so whether an actor is
+ * recognised as manager-scoped decides whether the restriction applies at all. Matching roleCode
+ * with a case-sensitive === made that hinge on the exact spelling stored in app_users.role_code:
+ * a row seeded as "Manager" would silently skip the domain check entirely. Only "manager" exists
+ * in the catalogue today, so this is hardening rather than a live hole - but it is the same shape
+ * as the AI kill switch that was engaged and did nothing, and a security control that quietly
+ * stops applying is the worst kind. [D31-W10]
+ */
 export function isManagerScopedActor(actor: AuthenticatedActor) {
-  return actor.roleCode === "manager" && !actor.developmentPreview && !actor.permissions.includes("*");
+  return text(actor.roleCode).toLowerCase() === "manager" && !actor.developmentPreview && !actor.permissions.includes("*");
 }
 
 export async function resolveManagerOrganizationalScope(db: Db, actor: AuthenticatedActor): Promise<OrganizationalScope | null> {
