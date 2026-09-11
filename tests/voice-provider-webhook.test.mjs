@@ -530,20 +530,31 @@ test("a whitespace-only credential is not reported as configured anywhere", asyn
 });
 
 test("final failed Exotel retry writes one terminal CRM disposition so automated dialing cannot loop", async () => {
-  const { sqlite, db, env } = await fresh();
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_UAT_AUTORUN: "true", PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true" });
   const root = await dial(db, env, "retry-terminal-root");
   const rootBody = eventBody(root.callId, { CallStatus: "no-answer" });
   const rootFailure = await gov.recordVoiceProviderEvent(db, env, { rawBody: rootBody, headers: await signedHeaders(rootBody) });
   assert.equal(rootFailure.accepted, true);
   assert.equal(state(sqlite, root.callId), "no_answer");
 
-  const retry = await gov.retryVoiceCall(db, env, {
-    callId: root.callId,
-    actorId: "operator@pawspace.in",
-    actorPermissions: FOUNDER_PERMISSIONS,
+  // Phase 1 correctly makes the ordinary retry hit the global recipient-frequency cap. To exercise a
+  // real carrier callback on the final retry, use the dedicated controlled-UAT path rather than
+  // weakening that production cap or sending a fake provider event to an undialled call.
+  const retry = await gov.requestControlledCarrierUatCall(db, env, {
+    idempotencyKey: "voice-carrier-uat:retry-terminal-1",
+    useCase: "booking_confirmation",
+    phone: ALLOWLISTED_PHONE,
+    cityId: "blr",
+    customerId: "CON-V1",
+    leadId: "LEAD-V1",
+    bookingId: "BKG-V1",
+    retryOf: root.callId,
+    retryAttempt: 1,
     asOf: DAYTIME,
   });
+  assert.equal(retry.retryOf, root.callId);
   assert.equal(retry.retryAttempt, 1);
+  assert.equal(retry.dialled, true);
   const retryBody = eventBody(retry.callId, { CallStatus: "busy" });
   const finalFailure = await gov.recordVoiceProviderEvent(db, env, { rawBody: retryBody, headers: await signedHeaders(retryBody) });
   assert.equal(finalFailure.accepted, true);

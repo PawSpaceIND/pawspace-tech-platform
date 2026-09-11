@@ -308,8 +308,12 @@ async function linkExistingCustomers(db: Db, phone: { e164: string; key: string 
 
 async function suppressCustomerCommunication(db: Db, customerIds: string[], actorId: string, asOf: number) {
   for (const customerId of customerIds) {
-    await db.prepare("INSERT INTO communication_preferences (customer_id,sms,email,whatsapp,push,marketing,service_updates,quiet_start,quiet_end,updated_by,updated_at) VALUES (?,0,0,0,0,0,0,'00:00','23:59',?,?) ON CONFLICT(customer_id) DO UPDATE SET sms=0,email=0,whatsapp=0,push=0,marketing=0,service_updates=0,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-      .bind(customerId, actorId, asOf).run();
+    // communication_preferences is owned by lib/communication-engine.ts: (customer_id,service_updates,
+    // marketing,preferred_channel,timezone,source,updated_at). It has never had sms/email/whatsapp/
+    // push/quiet_start/quiet_end/updated_by, and `source` is NOT NULL - so writing those columns threw
+    // `no such column: sms` after the global_blocklist row was written and before the voice opt-out was.
+    await db.prepare("INSERT INTO communication_preferences (customer_id,service_updates,marketing,preferred_channel,timezone,source,updated_at) VALUES (?,0,0,NULL,'Asia/Kolkata','global_blocklist',?) ON CONFLICT(customer_id) DO UPDATE SET service_updates=0,marketing=0,source='global_blocklist',updated_at=excluded.updated_at")
+      .bind(customerId, asOf).run();
     if (await tableExists(db, "customer_contact_preferences")) {
       await db.prepare("UPDATE customer_contact_preferences SET marketing_consent=0,service_consent=0,whatsapp_consent=0,sms_consent=0,email_consent=0,opt_out=1,source='global_blocklist',updated_by=?,updated_at=? WHERE customer_id=?")
         .bind(actorId, asOf, customerId).run();

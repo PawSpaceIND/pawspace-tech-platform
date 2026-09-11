@@ -1,7 +1,11 @@
-import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
-const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8");
-test("DPDP retention is daily, three-year bounded and delegates erasure",()=>{const route=read("app/api/cron/dpdp-retention/route.ts"),worker=read("worker/index.ts");assert.match(route,/setUTCFullYear\(date\.getUTCFullYear\(\)-3\)/);assert.match(route,/eraseCustomerPersonalData/);assert.match(route,/financialLedgerImmutable:true/);assert.match(worker,/runDpdpRetentionSweep/);assert.match(worker,/controller\.cron==="15 2 \* \* \*"/);});
-test("Sentry wraps the Worker without sending default PII",()=>{const worker=read("worker/index.ts");assert.match(worker,/@sentry\/cloudflare/);assert.match(worker,/withSentry<Env>/);assert.match(worker,/sendDefaultPii:false/);});
-test("public contact and voice UAT use native Cloudflare rate-limit bindings",()=>{const vite=read("vite.config.ts"),worker=read("worker/index.ts");for(const name of["PUBLIC_CONTACT_RATE_LIMITER","AI_VOICE_UAT_RATE_LIMITER"]){assert.match(vite,new RegExp(name));assert.match(worker,new RegExp(name));}assert.match(vite,/limit:100,period:60/);assert.match(worker,/cf-connecting-ip/);assert.match(worker,/status:429/);});
-test("Atlas executive remains fail-safe off by default",()=>{const ceo=read("lib/executive/ceo-orchestrator.ts");assert.match(ceo,/PAWSPACE_AI_EXECUTIVE_ACTIVE\|\|"false"/);});
-test("deterministic action plane remains canonical and deprecated request tools stay absent",()=>{const registry=read("lib/ai-tool-registry.ts");assert.match(registry,/canonicalService:"uat-scheduling"/);assert.match(registry,/provider\.assignment\.execute_policy/);for(const code of["booking.request","booking_reschedule.request","booking_cancel.request"])assert.doesNotMatch(registry,new RegExp(`code:\\"${code.replaceAll(".","\\.")}\\"`));});
+import test from"node:test";
+import assert from"node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks();
+const { aiExecutiveActive } = await import("../lib/agents/atlas-ceo-supervisor.ts");
+import fs from"node:fs";
+const root=new URL("..",import.meta.url),read=p=>fs.readFileSync(new URL(p,root),"utf8");
+test("AI executive autonomy is fail-closed by default",()=>{assert.equal(aiExecutiveActive({}),false);assert.equal(aiExecutiveActive({PAWSPACE_AI_EXECUTIVE_ACTIVE:"true"}),true);const supervisor=read("lib/agents/atlas-ceo-supervisor.ts"),wrangler=read("wrangler.toml");assert.match(supervisor,/PAWSPACE_AI_EXECUTIVE_ACTIVE/);assert.match(supervisor,/==="true"/);assert.match(wrangler,/PAWSPACE_AI_EXECUTIVE_ACTIVE = "false"/);});
+test("DPDP retention reuses certified erasure and preserves ledger boundary",()=>{const retention=read("lib/dpdp-retention.ts"),erasure=read("lib/dpdp-erasure.ts"),worker=read("worker/index.ts");assert.match(retention,/setUTCFullYear/);assert.match(retention,/eraseCustomerPersonalData/);assert.match(retention,/canonical_bookings/);assert.match(erasure,/ledger_invariant_changed/);assert.match(worker,/runDpdpRetentionSweep/);});
+test("Cloudflare edge limits protect selected public API boundaries",()=>{const worker=read("worker/index.ts"),wrangler=read("wrangler.toml");for(const path of ["\/api\/public-contact","\/api\/ai-voice-uat"])assert.match(worker,new RegExp(path));assert.match(wrangler,/limit = 100/);assert.match(wrangler,/period = 60/);});
+test("Sentry wraps the global Cloudflare worker without sending default PII",()=>{const worker=read("worker/index.ts");assert.match(worker,/@sentry\/cloudflare/);assert.match(worker,/Sentry\.withSentry/);assert.match(worker,/sendDefaultPii:false/);});

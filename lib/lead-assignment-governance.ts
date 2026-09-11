@@ -94,8 +94,19 @@ export async function checkRnrAutoReassignment(db:Db,input:{leadId:string;actorI
     if(Number(recentRnr?.count||0)<threshold)return{triggered:false,reason:"outside_assignment_window",rnrCount:Number(rnrCount?.count||0),threshold};
   }
   const currentOwner=text(lead.owner);
+  // The retry identity must be unique per ROTATION, not per (lead, owner) pair. Keying it on the
+  // owner alone silently breaks the rule the moment ownership cycles back to a rep who already held
+  // this lead - which on a real 2-3 person telesales desk happens after only 2-3 rotations. The
+  // spent key made reassignLead() return the earlier rotation as a governed duplicate: the lead
+  // stayed stranded on the rep who had just failed on it 3 more times, while the caller was handed
+  // triggered:true and the OTHER rep's email as newOwner, so Ops and the audit trail both recorded
+  // an owner the database did not have. The current assignment id is distinct for every rotation
+  // and stable for the life of one assignment, so a repeat call inside the same assignment is still
+  // the documented safe no-op. [D31-T1]
+  const rotationRow=await db.prepare("SELECT id FROM lead_assignments WHERE lead_id=? AND status='current'").bind(input.leadId).first<Row>();
+  const rotationKey=text(rotationRow?.id)||`${currentOwner}:${assignedAt}`;
   try{
-    const reassignment=await reassignLead(db,{leadId:input.leadId,idempotencyKey:`rnr-auto-reassign:${input.leadId}:${currentOwner}`,reason:`Automatic reassignment - ${threshold} RNR outcomes within ${windowHours} hours of assignment (previous owner: ${currentOwner||"unassigned"})`,actorId:input.actorId,excludeEmployeeEmail:currentOwner||null,asOf:now});
+    const reassignment=await reassignLead(db,{leadId:input.leadId,idempotencyKey:`rnr-auto-reassign:${input.leadId}:${rotationKey}`,reason:`Automatic reassignment - ${threshold} RNR outcomes within ${windowHours} hours of assignment (previous owner: ${currentOwner||"unassigned"})`,actorId:input.actorId,excludeEmployeeEmail:currentOwner||null,asOf:now});
     return{triggered:true,rnrCount:Number(rnrCount?.count||0),threshold,previousOwner:currentOwner,newOwner:(reassignment.assignment as Row)?.employee_email??null,duplicatePrevented:Boolean((reassignment as{duplicatePrevented?:boolean}).duplicatePrevented)};
   }catch(error){
     return{triggered:false,reason:"reassignment_failed",error:error instanceof Error?error.message:String(error),escalateToManager:true};

@@ -1,11 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks();
+const { resolveCapacityConflict } = await import("../lib/agents/atlas-ceo-supervisor.ts");
 import fs from "node:fs";
 
 const root = new URL("..", import.meta.url);
 const read = p => fs.readFileSync(new URL(p, root), "utf8");
 
 test("Atlas capacity conflict hardcodes the >90% Grooming halt and pivot", () => {
+  assert.equal(resolveCapacityConflict({utilization:0.91,cityId:"blr",zoneId:"z1",serviceCode:"grooming"}).length,2);
+  assert.equal(resolveCapacityConflict({utilization:0.90,cityId:"blr",zoneId:"z1",serviceCode:"grooming"}).length,0);
   const atlas = read("lib/agents/atlas-ceo-supervisor.ts");
   assert.match(atlas, /input\.utilization <= 0\.90/);
   assert.match(atlas, /action: "halt_outbound_promotion"/);

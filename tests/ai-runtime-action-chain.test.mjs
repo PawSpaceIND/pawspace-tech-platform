@@ -15,6 +15,8 @@ test("grounded provider accepts only bounded registered action envelopes",()=>{
  assert.equal(parsed.actions.length,3);
  assert.equal(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:"x",actions:[{toolCode:"payment.capture",arguments:{}}]})),null);
  assert.equal(grounded.parseGroundedActionEnvelope("not json"),null);
+ const fenced=grounded.parseGroundedActionEnvelope("```json\n"+JSON.stringify({reply:"Ready",actions:[{toolCode:"schedule.reserve",arguments:{serviceCode:"grooming",petIds:["PET-1"],serviceAddress:"12 Test Street",servicePincode:"560038",scheduledStart:"2026-09-12T10:00:00+05:30",scheduledEnd:"2026-09-12T12:00:00+05:30"}}]})+"\n```");
+ assert.equal(fenced?.actions[0]?.toolCode,"schedule.reserve");
 });
 
 test("customer confirmation detector is explicit and negative-safe",()=>{
@@ -37,7 +39,7 @@ test("WhatsApp-governed AI action plan executes reserve -> booking -> Razorpay o
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
  const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
  globalThis.fetch=async(url,init)=>{
-  assert.match(String(url),/api\.razorpay\.com\/v1\/orders/);
+  assert.match(String(url),/^https:\/\/api\.razorpay\.com\/v1\/orders$/);
   const body=JSON.parse(String(init?.body||"{}"));
   return Response.json({id:"order_AI_CHAIN",entity:"order",amount:body.amount,amount_paid:0,amount_due:body.amount,currency:body.currency,receipt:body.receipt,status:"created"});
  };

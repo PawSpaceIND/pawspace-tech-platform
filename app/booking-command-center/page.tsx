@@ -36,20 +36,7 @@ export default function BookingCommandCenter() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load bookings"); }
     finally { if (!silent) setLoading(false); }
   }
-  useEffect(() => {
-    let active = true;
-    fetch("/api/booking-command-center", { cache: "no-store" })
-      .then(async response => {
-        const payload = await response.json() as { bookings?: Booking[]; error?: string };
-        if (!response.ok) throw new Error(payload.error || "Unable to load bookings");
-        if (!active) return;
-        setBookings(payload.bookings || []);
-        setSelectedId(payload.bookings?.[0]?.id as string || "");
-      })
-      .catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "Unable to load bookings"); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => {
     const events = new EventSource("/api/booking-command-center/stream");
     const refresh = () => { void load(true); };

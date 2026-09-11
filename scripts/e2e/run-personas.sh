@@ -16,6 +16,7 @@ export PAWSPACE_LOCAL_PREVIEW="on"
 export PAWSPACE_VOICE_TRANSPORT="local_simulator_non_production"
 export PAWSPACE_SCHEDULING_ENV="uat"
 export PAWSPACE_MEDIA_ENV="uat"
+export PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="on"
 
 # The persistent Sitting journey books ahead, then proves provider execution in the same browser case.
 # Advance only the server-owned clock into that care window. service-execution-clock.ts independently

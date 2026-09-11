@@ -23,6 +23,11 @@ test("hosting plan separates run attempts and carries only explicit secret bindi
  const one=checkoutSandboxPlan(base()),two=checkoutSandboxPlan({...base(),GITHUB_RUN_ATTEMPT:"2"});
  assert.equal(one.worker,"pawspace-checkout-736-123456789-1");assert.notEqual(one.worker,two.worker);assert.equal(Object.keys(one.secrets).length,7);
 });
+test("temporary strict PR736 proof branch is the only non-main provisioning exception",()=>{
+ const strict=checkoutSandboxPlan({...base(),GITHUB_REF:"refs/heads/uat/pr736-strict-payment-closure-20260911"});
+ assert.equal(strict.worker,"pawspace-checkout-736-123456789-1");
+ for(const ref of ["refs/heads/uat/other-proof","refs/heads/feature/pr736","refs/heads/uat/checkout-provider-proof-736-product-native-20260911"])assert.throws(()=>checkoutSandboxPlan({...base(),GITHUB_REF:ref}));
+});
 for(const [key,value] of [["GITHUB_REPOSITORY","foreign/repo"],["GITHUB_REF","refs/heads/feature"],["GITHUB_EVENT_NAME","pull_request"],["CONFIRM","release-preview"],["EXPECTED_SHA","main"],["EXPECTED_SHA",sha.toUpperCase()],["GITHUB_RUN_ID","1;false"],["GITHUB_RUN_ATTEMPT","0"],["PAWSPACE_PAYMENT_ENV","live"],["FORBID_PRODUCTION","false"],["PAWSPACE_PAYMENT_LIVE_APPROVED","true"],["RAZORPAY_KEY_ID_SANDBOX","rzp_live_abcd"],["RAZORPAY_KEY_ID_SANDBOX","rzp_test_placeholder"]]){
  test(`hosting refuses invalid ${key}=${value}`,()=>assert.throws(()=>checkoutSandboxPlan({...base(),[key]:value})));
 }
@@ -58,12 +63,12 @@ test("checkout identity requires the exact merged certified head and same reposi
  assert.doesNotThrow(()=>assertCheckoutCandidate(pr,sha));
  for(const bad of [{...pr,state:"open"},{...pr,merged:false},{...pr,head:{...pr.head,sha:"b".repeat(40)}},{...pr,head:{...pr.head,ref:"main"}},{...pr,head:{...pr.head,repo:{full_name:"foreign/repo"}}}])assert.throws(()=>assertCheckoutCandidate(bad,sha));
 });
-test("workflow is manual protected-main only and exposes secrets only after candidate build",()=>{
+test("retired PR736 provisioning workflow is manual protected-main and cannot create resources",()=>{
  const s=readFileSync(new URL("../.github/workflows/deploy-checkout-sandbox.yml",import.meta.url),"utf8");
  assert.match(s,/workflow_dispatch:/);assert.doesNotMatch(s,/^  (push|pull_request|schedule):/m);
- assert.match(s,/github.ref == 'refs\/heads\/main'/);assert.match(s,/environment: pawspace-release-preview/);
- assert.match(s,/cancel-in-progress: false/);assert.ok(s.indexOf('RAZORPAY_KEY_SECRET_SANDBOX:')>s.indexOf('run: npm run build'));assert.ok(s.indexOf('GOOGLE_MAPS_SERVER_API_KEY_UAT:')>s.indexOf('run: npm run build'));
- assert.doesNotMatch(s,/continue-on-error: true|contents: write|--prod|deploy-release-preview.yml/);
+ assert.match(s,/github.ref == 'refs\/heads\/main'/);assert.match(s,/acknowledge-pr736-proof-closed/);assert.match(s,/34580345040/);assert.match(s,/PR #750/);
+ assert.match(s,/cancel-in-progress: true/);
+ assert.doesNotMatch(s,/environment:|RAZORPAY_|CLOUDFLARE_|GOOGLE_MAPS_|PAWSPACE_UAT_|deploy-checkout-sandbox\.mjs|wrangler|Create-only isolated root|npx playwright install|contents: write/);
 });
 
 // Provider transport is replaced only in this test child. No Cloudflare or Razorpay calls occur.
@@ -148,12 +153,10 @@ test("inventory reader has a bounded completion requirement even for unique repe
  let calls=0;await assert.rejects(()=>readCheckoutDatabaseInventory(async page=>{calls++;return{result:[{uuid:`90000000-0000-4000-8000-${String(page).padStart(12,"0")}`,name:`db-${page}`}]};}),/bounded page limit/);assert.equal(calls,100);
 });
 
-test("hosted UI workflow uses actual UAT authentication and keeps provider secrets out of the browser step",()=>{
+test("retired provisioning workflow contains no hosted-browser mutation path; browser verifier remains independently hardened",()=>{
  const workflow=readFileSync(new URL("../.github/workflows/deploy-checkout-sandbox.yml",import.meta.url),"utf8");
  const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
- const step=workflow.split("- name: Verify authenticated customer UI")[1].split("- name: Retain")[0];
- assert.match(step,/PAWSPACE_UAT_ACCESS_CODE/);assert.doesNotMatch(step,/RAZORPAY_|CLOUDFLARE_|SIGNING_KEY/);
- assert.ok(workflow.indexOf("npx playwright install")<workflow.indexOf("Create-only isolated root"));
+ assert.doesNotMatch(workflow,/Verify authenticated customer UI|PAWSPACE_UAT_ACCESS_CODE|RAZORPAY_|CLOUDFLARE_|SIGNING_KEY/);
  assert.match(browser,/context.request.post\(origin\+"\/api\/staging-login"/);
  assert.match(browser,/pawspace-prototype-converged/);assert.match(browser,/viewports.some\(row=>!row.pass\)/);
  assert.match(browser,/expect\.poll\(\(\)=>img\.evaluate\(n=>n\.complete&&n\.naturalWidth>0\),\{timeout:20_000\}\)\.toBe\(true\)/,"hosted artwork readiness must keep the full-load assertion and use the verifier’s bounded 20s timeout");

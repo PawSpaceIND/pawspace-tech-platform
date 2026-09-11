@@ -10,9 +10,10 @@ const required = (env: Env, key: string) => {
   return value;
 };
 export function checkoutSandboxPlan(env: Env) {
-  if (env.GITHUB_REPOSITORY !== CHECKOUT_REPOSITORY || env.GITHUB_REF !== "refs/heads/main" ||
+  const allowedRef = env.GITHUB_REF === "refs/heads/main" || env.GITHUB_REF === "refs/heads/uat/pr736-strict-payment-closure-20260911";
+  if (env.GITHUB_REPOSITORY !== CHECKOUT_REPOSITORY || !allowedRef ||
       env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.CONFIRM !== "checkout-sandbox-736") {
-    throw new Error("Checkout hosting requires a confirmed manual run from protected main");
+    throw new Error("Checkout hosting requires a confirmed manual run from protected main or the exact temporary PR736 strict-proof branch");
   }
   const sha = required(env, "EXPECTED_SHA");
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("An exact lowercase product SHA is required");

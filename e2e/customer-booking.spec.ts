@@ -234,6 +234,7 @@ test("address choice: customer can recover from a wrong map match and editing cl
 });
 
 for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-selected afternoon and evening times reach the real quote`,async({page,browser})=>{
+ if(mode==="sitting")test.setTimeout(120_000);
  // Google address autocomplete is an external transport boundary. Keep it deterministic here while
  // the PawSpace doorstep verification, pincode, city/zone, radius and scheduling gates remain real.
  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});

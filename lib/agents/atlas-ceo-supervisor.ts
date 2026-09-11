@@ -17,6 +17,8 @@ export type AtlasManagerInstruction = {
 
 export type AtlasWorkerRouter = (instruction: AtlasManagerInstruction) => Promise<unknown>;
 
+export function aiExecutiveActive(env:Record<string,unknown>={}){return String(env.PAWSPACE_AI_EXECUTIVE_ACTIVE??"").trim().toLowerCase()==="true";}
+
 export async function ensureAtlasSupervisorTables(db: Db) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS atlas_manager_directives (id TEXT PRIMARY KEY,manager TEXT NOT NULL,action TEXT NOT NULL,city_id TEXT,zone_id TEXT,service_code TEXT,reason TEXT NOT NULL,payload_json TEXT NOT NULL DEFAULT '{}',status TEXT NOT NULL DEFAULT 'issued',created_at INTEGER NOT NULL)"),
@@ -41,19 +43,19 @@ export function resolveCapacityConflict(input: { utilization: number; cityId: st
   ];
 }
 
-export async function runAtlasCeoSupervisor(db: Db, input: { asOf?: number; route: AtlasWorkerRouter; capacitySignals?: Array<{ utilization: number; cityId: string; zoneId: string; serviceCode: string }>; exceptionSignals?: HumanEscalationSignal[] }) {
+export async function runAtlasCeoSupervisor(db: Db, input: { asOf?: number; route: AtlasWorkerRouter; env?:Record<string,unknown>; capacitySignals?: Array<{ utilization: number; cityId: string; zoneId: string; serviceCode: string }>; exceptionSignals?: HumanEscalationSignal[] }) {
   await ensureAiSalesGoalTables(db);
   await ensureAtlasSupervisorTables(db);
-  const asOf = input.asOf ?? Date.now();
+  const asOf = input.asOf ?? Date.now(),executiveActive=aiExecutiveActive(input.env);
   const targets = await db.prepare("SELECT id,target_type,service_code,city_id,daily_goal,achieved_count,starts_at,ends_at,status FROM ai_sales_targets WHERE status IN ('approved','active') AND starts_at<=? AND ends_at>? ORDER BY ends_at").bind(asOf, asOf).all<Row>();
   const directives: unknown[] = [];
   for (const row of targets.results) {
     const goal = Math.max(1, Number(row.daily_goal || 1)), actual = Number(row.achieved_count || 0), elapsed = Math.max(0, Math.min(1, (asOf - Number(row.starts_at)) / Math.max(1, Number(row.ends_at) - Number(row.starts_at))));
     const expected = goal * elapsed, lagRatio = expected > 0 ? Math.max(0, (expected - actual) / expected) : 0;
-    if (lagRatio > 0.25) directives.push(await issue(db, { manager: "sales", action: "recover_target_pacing", cityId: text(row.city_id) || null, serviceCode: text(row.service_code) || null, reason: "target_pacing_lag_above_25_percent", payload: { targetId: row.id, targetType: row.target_type, goal, actual, expected, lagRatio } }, input.route));
+    if (executiveActive && lagRatio > 0.25) directives.push(await issue(db, { manager: "sales", action: "recover_target_pacing", cityId: text(row.city_id) || null, serviceCode: text(row.service_code) || null, reason: "target_pacing_lag_above_25_percent", payload: { targetId: row.id, targetType: row.target_type, goal, actual, expected, lagRatio } }, input.route));
   }
-  for (const signal of input.capacitySignals || []) for (const instruction of resolveCapacityConflict(signal)) directives.push(await issue(db, instruction, input.route));
+  if(executiveActive)for (const signal of input.capacitySignals || []) for (const instruction of resolveCapacityConflict(signal)) directives.push(await issue(db, instruction, input.route));
   const escalations = [];
   for (const signal of input.exceptionSignals || []) { const routed = await routeHumanEscalation(db, signal); if (routed.escalated) escalations.push(routed); }
-  return { evaluatedTargets: targets.results.length, directives, escalations, lineLevelExecution: false, canonicalExecutionOnly: true };
+  return { evaluatedTargets: targets.results.length, directives, escalations, executiveActive, executiveDefault:false, lineLevelExecution: false, canonicalExecutionOnly: true };
 }

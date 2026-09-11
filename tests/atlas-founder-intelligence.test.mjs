@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks();
+const { compileFinancialQuery } = await import("../lib/intelligence/financial-query-agent.ts");
 import fs from "node:fs";
 
 const query=fs.readFileSync("lib/intelligence/financial-query-agent.ts","utf8");
@@ -7,7 +10,7 @@ const data=fs.readFileSync("lib/intelligence/atlas-data.ts","utf8");
 const ingest=fs.readFileSync("app/api/admin/tally-ingest/route.ts","utf8");
 const chat=fs.readFileSync("app/api/admin/atlas-chat/route.ts","utf8");
 const worker=fs.readFileSync("worker/index.ts","utf8");
-const vite=fs.readFileSync("vite.config.ts","utf8");
+const wrangler=fs.readFileSync("wrangler.toml","utf8");
 
 test("Atlas financial memory is isolated from live finance ledgers",()=>{
  assert.match(data,/analytics_historical_financials/);
@@ -16,6 +19,7 @@ test("Atlas financial memory is isolated from live finance ledgers",()=>{
 });
 
 test("Atlas text-to-SQL compiles only whitelisted SELECT analytics queries",()=>{
+ const compiled=compileFinancialQuery({metrics:["revenue"],dimensions:["period_month"],filters:[],limit:25});assert.match(compiled.sql,/^SELECT/);assert.match(compiled.sql,/analytics_historical_financials/);
  assert.match(query,/Allowed table is analytics_historical_financials/);
  assert.match(query,/Never output SQL/);
  assert.match(query,/^export function compileFinancialQuery/m);
@@ -47,5 +51,5 @@ test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
  assert.match(worker,/handleAtlasWebSocket/);
  assert.match(worker,/runAtlasDailyAnalysis/);
  assert.match(worker,/controller\.cron==="15 2 \* \* \*"/);
- assert.match(vite,/"15 2 \* \* \*"/);
+ assert.match(wrangler,/"15 2 \* \* \*"/);
 });
