@@ -20,6 +20,9 @@ installWorkersHooks("__FOOD_G3_DB__", "__FOOD_G3_ENV__");
 
 const fulfilment = await import("../lib/food-fulfilment-governance.ts");
 const finance = await import("../lib/food-finance-governance.ts");
+const supply = await import("../lib/food-supply-chain.ts");
+const policy = await import("../lib/service-policy-governance.ts");
+const foodPolicy = await import("../lib/food-commercial-policy.ts");
 
 const STAFF = "ops.fulfilment@pawspace.test";
 const FINANCE_STAFF = "finance.checker@pawspace.test";
@@ -365,43 +368,53 @@ test("Fresh Food refund ledger is sandbox-only and replay resistant", async () =
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Fresh Food supplier settlement invents no COGS, supplier amount or tax", async () => {
+test("Fresh Food settlement fails closed when the picked lot has no canonical purchase-cost provenance", async () => {
   const { db, order } = await foodWorld();
-
   const early = await refusal(money(db, order, "prepare_supplier_settlement", {}));
   assert.equal(early?.status, 409);
-  assert.match(early.message, /only after canonical UAT Food delivery/);
-
   await deliver(db, order);
-  const unpaid = await refusal(money(db, order, "prepare_supplier_settlement", {}));
-  assert.equal(unpaid?.status, 409);
-  assert.match(unpaid.message, /must be sandbox-paid before supplier settlement readiness/);
-  assert.equal(
-    Number((await db.prepare("SELECT COUNT(*) AS n FROM food_supplier_settlement_ledger WHERE order_id=?").bind(order.orderId).first()).n),
-    0,
-    "a refused settlement writes no ledger row",
-  );
-
   await money(db, order, "record_order_payment", { paymentReference: "SBX-S-1" });
-  const prepared = await money(db, order, "prepare_supplier_settlement", {});
-  assert.equal(prepared.status, "not_ready", "settlement readiness is not approval");
-  assert.equal(prepared.grossPaidValue, order.totalAmount);
-  assert.equal(prepared.cogs, "configuration_required");
-  assert.equal(prepared.supplierSettlementPolicy, "rule_pending");
-  assert.equal(prepared.tax, "configuration_required");
-  assert.equal(prepared.settlement, "not_instructed");
+  const blocked = await refusal(money(db, order, "prepare_supplier_settlement", {}));
+  assert.equal(blocked?.status, 409);
+  assert.match(blocked.message, /picked-lot provenance from a received purchase-order batch/);
+  assert.equal(Number((await db.prepare("SELECT COUNT(*) n FROM food_supplier_settlement_ledger WHERE order_id=?").bind(order.orderId).first()).n), 0);
+});
 
-  const row = await db.prepare("SELECT * FROM food_supplier_settlement_ledger WHERE order_id=?").bind(order.orderId).first();
-  assert.equal(Number(row.gross_paid_value), order.totalAmount);
-  assert.equal(row.cogs_status, "configuration_required");
-  assert.equal(row.supplier_settlement_policy, "rule_pending");
-  assert.equal(row.tax_status, "configuration_required");
-  assert.equal(row.approval_status, "not_ready");
-  assert.equal(row.settlement_status, "not_instructed");
-  // The only figure recorded is money that actually moved in the sandbox; nothing downstream is guessed.
-  assert.equal(row.cogs_amount ?? null, null);
-  assert.equal(row.supplier_settlement_amount ?? null, null);
-  assert.equal(row.approved_by ?? null, null);
+// ---------------------------------------------------------------------------------------------
+test("Fresh Food derives COGS and supplier payable from the actual received batch, applies governed tax, approves and reconciles", async () => {
+  const { db, order } = await foodWorld();
+  const supplier = await supply.saveFoodSupplier(db,{name:"Gate 3 Fresh Supplier",contactPhone:"+919000000051",actorId:STAFF});
+  const kitchen = await supply.saveFoodKitchen(db,{name:"Gate 3 Kitchen",zoneId:ZONE,actorId:STAFF});
+  const po = await supply.createFoodPurchaseOrder(db,{supplierId:supplier.supplierId,kitchenId:kitchen.kitchenId,sku:FOOD_SKUS.dogAdult.sku,zoneId:ZONE,quantity:10,unitCost:120,idempotencyKey:"g3-po-cogs",actorId:STAFF});
+  const received = await supply.receiveFoodPurchaseOrder(db,{purchaseOrderId:po.purchaseOrderId,preparationDate:"2026-09-01",expiryDate:"2026-12-01",actorId:STAFF});
+  const lotId=`FLOT-${received.batchId}`;
+  await fulfil(db, order, "accept_order");
+  await fulfil(db, order, "pick_order", { lotId });
+  await fulfil(db, order, "pack_order");
+  await fulfil(db, order, "dispatch_order", { dispatchReference: "UATDISP-COSTED" });
+  await fulfil(db, order, "confirm_delivery", { handoverMethod: "customer" });
+  await money(db, order, "record_order_payment", { paymentReference: "SBX-COSTED-1" });
+  const strict = await money(db, order, "prepare_supplier_settlement", {});
+  assert.equal(strict.cogs, "resolved");
+  assert.equal(strict.cogsAmount, 120 * Number(order.quantity || 1));
+  assert.equal(strict.supplierSettlementAmount, strict.cogsAmount);
+  assert.equal(strict.tax, "configuration_required");
+  assert.equal(strict.status, "not_ready");
+  await policy.writeServicePolicy(db,{domain:foodPolicy.FOOD_COMMERCIAL_POLICY_DOMAIN,serviceCode:"food",cityId:"blr",config:{taxEnabled:true,taxRatePercent:18,taxMode:"inclusive",supplierSettlementBasis:"actual_batch_cost",settlementDelayDays:0}},FINANCE_STAFF,"CA-approved UAT tax configuration");
+  const prepared = await money(db, order, "prepare_supplier_settlement", {});
+  assert.equal(prepared.status, "awaiting_finance_approval");
+  assert.equal(prepared.tax, "resolved");
+  assert.ok(prepared.taxAmount > 0);
+  assert.equal(prepared.supplierId, supplier.supplierId);
+  assert.equal(prepared.supplyChainBatchId, received.batchId);
+  const approved = await money(db, order, "approve_supplier_settlement", {});
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.settlement, "not_instructed", "Finance approval never pretends live supplier money moved");
+  const reconciled = await money(db, order, "reconcile", {});
+  assert.equal(reconciled.status, "balanced");
+  assert.equal(reconciled.cogsState, "resolved");
+  assert.equal(reconciled.taxState, "resolved");
+  assert.equal(reconciled.supplierSettlementState, "approved");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -421,13 +434,14 @@ test("Fresh Food reconciliation exposes due, paid, refund, net, COGS and tax tru
   assert.equal(unpaid.supplierSettlementState, "attention_required", "a delivered order with no settlement needs attention");
 
   await money(db, order, "record_order_payment", { paymentReference: "SBX-RC-1" });
-  await money(db, order, "prepare_supplier_settlement", {});
+  const missingCost = await refusal(money(db, order, "prepare_supplier_settlement", {}));
+  assert.equal(missingCost?.status, 409);
   const settled = await money(db, order, "reconcile", {});
   assert.equal(settled.paidTotal, order.totalAmount);
   assert.equal(settled.unpaidTotal, 0);
   assert.equal(settled.netPaidTotal, order.totalAmount);
-  assert.equal(settled.supplierSettlementState, "not_ready");
-  assert.equal(settled.status, "attention_required", "unconfigured COGS and tax still need attention");
+  assert.equal(settled.supplierSettlementState, "attention_required");
+  assert.equal(settled.status, "attention_required", "missing batch COGS must remain visible");
 
   const stored = await db.prepare("SELECT order_total,delivery_due_total,paid_total,unpaid_total,net_paid_total,supplier_settlement_amount,detail_json,checked_by FROM food_finance_reconciliation WHERE order_id=? ORDER BY created_at DESC LIMIT 1").bind(order.orderId).first();
   assert.equal(Number(stored.order_total), order.totalAmount);
