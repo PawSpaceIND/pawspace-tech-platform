@@ -25,6 +25,7 @@ period = 60
 
 [ai]
 binding = "AI"
+remote = false
 
 [[vectorize]]
 binding = "ATLAS_VECTORIZE"
