@@ -42,7 +42,7 @@ async function database(){const {env}=await import("cloudflare:workers");return 
 // (lib/razorpay-client.ts, lib/payment-webhook-gate.ts), so unsetting still takes live money off.
 async function liveModePayments(){const {env}=await import("cloudflare:workers");return !sandboxCapabilitiesUnlocked(env as unknown as Record<string,unknown>);}
 // Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
-// "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
+// "created" and only verified provider evidence may mark it captured: a signed Razorpay webhook or the guarded server-to-server reconciliation path. Sandbox/UAT unchanged.
 //
 // It FAILS CLOSED on the method. It used to demote only when the mode was one of two spellings, then
 // only when the method was on an ONLINE_METHODS allowlist — either way a client-supplied string decided

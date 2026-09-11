@@ -56,9 +56,9 @@ async function pendingSubscription(db:Db,bookingId:string){
  * Exactly once: the read-check short-circuits a replay after success (nothing to do), and every write in
  * the batch is guarded `WHERE status='pending_payment'`, so even a concurrent second capture cannot
  * reserve the sessions twice. If the batch throws, the caller sees it and the transition stays available
- * for the next verified capture / webhook redelivery to complete — money is never granted, never twice.
+ * for the next verified provider capture / webhook redelivery or reconciliation pass to complete — money is never granted, never twice.
  */
-export async function activateSubscriptionOnCapture(db:Db,input:{bookingId:string;eventId?:string;at?:number}):Promise<{outcome:"activated"|"already_active"|"none";subscriptionId?:string;sessionsReserved?:number}>{
+export async function activateSubscriptionOnCapture(db:Db,input:{bookingId:string;eventId?:string;at?:number;actorId?:string}):Promise<{outcome:"activated"|"already_active"|"none";subscriptionId?:string;sessionsReserved?:number}>{
  const bookingId=String(input.bookingId||"").trim();
  if(!bookingId)return{outcome:"none"};
  const subscription=await pendingSubscription(db,bookingId);
@@ -70,7 +70,7 @@ export async function activateSubscriptionOnCapture(db:Db,input:{bookingId:strin
  const results=await db.batch([
   db.prepare("UPDATE customer_grooming_subscriptions SET status='active',sessions_reserved=?,updated_at=? WHERE id=? AND status=?").bind(reserve,now,subscriptionId,PENDING_PAYMENT_STATUS),
   db.prepare("UPDATE booking_subscription_usage SET status='reserved',sessions_reserved=?,updated_at=? WHERE booking_id=? AND plan_code=? AND status=?").bind(reserve,now,bookingId,subscriptionId,PENDING_PAYMENT_STATUS),
-  db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_activated","subscription",subscriptionId,"razorpay_webhook",JSON.stringify({sessionsReserved:reserve,eventId:input.eventId??null,verified:true}),now),
+  db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_activated","subscription",subscriptionId,input.actorId||"razorpay_webhook",JSON.stringify({sessionsReserved:reserve,eventId:input.eventId??null,verified:true}),now),
  ]);
  if(!Number(results?.[0]?.meta?.changes||0))return{outcome:"already_active",subscriptionId};
  return{outcome:"activated",subscriptionId,sessionsReserved:reserve};
