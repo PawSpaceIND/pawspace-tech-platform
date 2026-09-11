@@ -52,14 +52,16 @@
     "@capacitor/geolocation": "^8.2.2",
     "@capacitor/ios": "^8.5.1",
     "@capacitor/push-notifications": "^8.1.2",
+    "@sentry/cloudflare": "^10.74.0",
     "drizzle-orm": "0.45.2",
     "next": "16.3.4",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "read-excel-file": "^9.3.10",
     "recharts": "3.10.1"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/vite-plugin": "^1.54.7",
     "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -76,7 +78,7 @@
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "^4.131.0"
   },
   "type": "module",
   "displayName": "PawSpace Grooming"

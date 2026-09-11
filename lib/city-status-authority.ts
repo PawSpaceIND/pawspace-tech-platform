@@ -148,7 +148,8 @@ export async function cityBookingVerdict(db:Db,input:{cityId:string;serviceCode?
   const cityId=text(input.cityId).toLowerCase();
   const policy=await resolveCityStatusPolicy(db,cityId,input.serviceCode,input.at);
   const config=policy.config;
-  const{seedDefaultCityLaunchConfigs}=await import("./city-governance");
+  // @ts-expect-error Vite query suffix intentionally keeps this lazy dependency in its own Worker chunk.
+  const{seedDefaultCityLaunchConfigs}=await import("./city-governance.ts?city-status-seed");
   await seedDefaultCityLaunchConfigs(db);
   const row=await db.prepare("SELECT status FROM city_launch_configs WHERE city_code=?").bind(cityId).first<Row>();
   const status=text(row?.status);

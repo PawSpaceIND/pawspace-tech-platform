@@ -99,7 +99,7 @@ export async function ensureVoiceCallTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,purpose TEXT NOT NULL DEFAULT 'unknown',reserved_at INTEGER NOT NULL,released_at INTEGER)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL,disposition TEXT,disposition_detail TEXT,completed_at INTEGER)"),
   ]);
 }
 
@@ -587,6 +587,32 @@ export async function requestControlledCarrierUatCall(db: Db, env: Env, input: O
  * retry_of. Retrying without re-checking consent, opt-out and quiet hours would let one approved dial
  * license a second one hours later, after the customer opted out or after quiet hours began.
  */
+async function ensureVoiceRetryDispositionSchema(db:Db){
+  await db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL,disposition TEXT,disposition_detail TEXT,completed_at INTEGER)").run();
+  const info=await db.prepare("PRAGMA table_info(crm_tasks)").all<Row>();
+  const columns=new Set(info.results.map(row=>text(row.name)));
+  if(!columns.has("disposition"))await db.prepare("ALTER TABLE crm_tasks ADD COLUMN disposition TEXT").run();
+  if(!columns.has("disposition_detail"))await db.prepare("ALTER TABLE crm_tasks ADD COLUMN disposition_detail TEXT").run();
+  if(!columns.has("completed_at"))await db.prepare("ALTER TABLE crm_tasks ADD COLUMN completed_at INTEGER").run();
+}
+
+async function recordVoiceRetryExhausted(db:Db,call:Row,now:number){
+  const useCase=voiceUseCase(call.use_case);
+  if(!useCase)return null;
+  const retryAttempt=Math.max(0,Number(call.retry_attempt||0));
+  if(retryAttempt<useCase.maxAttempts-1)return null;
+  await ensureVoiceRetryDispositionSchema(db);
+  let contactId=text(call.customer_id)||null;
+  if(!contactId&&text(call.lead_id)){
+    const lead=await db.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").bind(text(call.lead_id)).first<Row>().catch(()=>null);
+    contactId=text(lead?.customer_id)||null;
+  }
+  const root=text(call.retry_of)||text(call.id),detail=`${useCase.code} reached hard retry limit ${useCase.maxAttempts}; no further automated dial is permitted`;
+  await db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at,disposition,disposition_detail,completed_at) VALUES (?,?,?,?,?,'Normal','Closed',?,'voice_retry_exhausted',?,?) ON CONFLICT(id) DO UPDATE SET contact_id=COALESCE(excluded.contact_id,crm_tasks.contact_id),status='Closed',disposition='voice_retry_exhausted',disposition_detail=excluded.disposition_detail,completed_at=excluded.completed_at")
+    .bind(`VOICE-RETRY-${root}`,contactId,`Voice retry closed: ${useCase.label}`,"AI Orchestrator",now,now,detail,now).run();
+  return{terminated:true as const,disposition:"voice_retry_exhausted"as const,rootCallId:root,maxAttempts:useCase.maxAttempts};
+}
+
 export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; actorId: string; actorPermissions: string[]; idempotencyKey?: string; asOf?: number }) {
   await ensureVoiceCallTables(db);
   const original = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(input.callId).first<Row>();
@@ -598,7 +624,10 @@ export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; 
   const attempts = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE retry_of=?").bind(root).first<Row>();
   const attempt = Number(attempts?.n || 0) + 1;
   if (useCase && attempt >= useCase.maxAttempts) {
-    await recordTerminalVoiceDisposition(db, text(original.id), "retry_exhausted", input.asOf ?? Date.now());
+    const terminal=await db.prepare("SELECT * FROM voice_call_orders WHERE id=? OR retry_of=? ORDER BY retry_attempt DESC,requested_at DESC LIMIT 1").bind(root,root).first<Row>()||original;
+    const terminalAt=input.asOf??Date.now();
+    await recordTerminalVoiceDisposition(db,text(original.id),"retry_exhausted",terminalAt);
+    await recordVoiceRetryExhausted(db,terminal,terminalAt);
     throw new Error(`${useCase.code} allows ${useCase.maxAttempts} attempt(s); no retry remains`);
   }
   return requestOutboundVoiceCall(db, env, {
@@ -751,7 +780,7 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
 
   const callId = text(event.callRef);
   if (!callId) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event carries no call reference", eventId: eventKey };
-  const call = await db.prepare("SELECT id,state,recording_allowed FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
+  const call = await db.prepare("SELECT id,state,recording_allowed,use_case,customer_id,lead_id,retry_of,retry_attempt FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
   if (!call) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event references an unknown call", eventId: eventKey };
 
   // A recording reference is only stored when recording was approved for this call. An unapproved
@@ -779,7 +808,8 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
     const applied = await applyTransition(db, { callId, to: target, reason: `Provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: curated, asOf: now });
     if (["no_answer", "busy", "provider_error", "provider_unavailable"].includes(target)) await recordTerminalVoiceDisposition(db, callId, event.kind, now);
     await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, eventKey).run();
-    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, eventKind: event.kind, eventId: eventKey };
+    const retryTermination=["no_answer","busy","provider_error"].includes(target)?await recordVoiceRetryExhausted(db,call,now):null;
+    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, retryTermination, eventKind: event.kind, eventId: eventKey };
   } catch (error) {
     // Genuinely unreachable from here - a terminal outcome the provider is trying to overwrite, or an
     // ambiguous gap. The event stays recorded and unapplied rather than forcing an impossible history,

@@ -14,12 +14,15 @@ test("AI Gate 3 registers required read-only canonical tools",()=>{
  assert.match(registry,/retrieveApprovedKnowledge/);
 });
 
-test("AI Gate 3 registers governed transactional orchestration without money execution",()=>{
- for(const code of["quote.request","booking.request","booking_reschedule.request","booking_cancel.request","case.create","staff_handoff.create"])assert.match(registry,new RegExp(code.replace(".","\\.")));
+test("AI Gate 3 registers canonical P0 operational mutations without money capture",()=>{
+ for(const code of["quote.request","schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy","case.create","staff_handoff.create"])assert.match(registry,new RegExp(code.replaceAll(".","\\.")));
+ for(const deprecated of["booking.request","booking_reschedule.request","booking_cancel.request"])assert.doesNotMatch(registry,new RegExp(`code:\"${deprecated.replaceAll(".","\\.")}\"`));
+ assert.match(registry,/\/api\/uat-scheduling/);
+ assert.match(registry,/\/api\/canonical-bookings/);
+ assert.match(registry,/\/api\/payment-order/);
+ assert.match(registry,/\/api\/grooming-booking-change/);
  assert.match(registry,/createUnifiedCase/);
  assert.match(registry,/assignConversation/);
- assert.match(registry,/does not assign a provider or capture money/);
- assert.match(registry,/no refund is issued/);
 });
 
 test("AI Gate 3 permissions are scoped by intent channel customer and role",()=>{

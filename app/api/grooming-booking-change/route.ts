@@ -1,6 +1,6 @@
 import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governance";
 import{groomingChangePreview}from"../../../lib/grooming-change-preview";
-import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement}from"../../../lib/server-auth";
+import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement,type AuthenticatedActor}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{bridgeLifecycleCommunications}from"../../../lib/lifecycle-communications";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
@@ -45,12 +45,12 @@ export async function GET(request:Request){try{
  return json({data:await groomingChangePreview(db,booking,work,payment)});
 }catch(error){return authError(error,"Unable to preview Grooming booking changes");}}
 
-export async function POST(request:Request){
+export async function executeGroomingBookingChange(request:Request,actorOverride?:AuthenticatedActor){
   try{
     const input=await request.json() as Input;
     if(!input.bookingId||!input.customerId||!input.action)return json({error:"Booking, customer and action are required"},400);
     const db=await database();await ensureTables(db);
-    const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
+    const actor=actorOverride??await resolveActor(request);requirePermission(actor,"scheduling.book");
     const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();
     if(!booking)return json({error:"Grooming booking not found"},404);
     if(String(booking.customer_id)!==input.customerId)return json({error:"This customer does not own the booking"},403);
@@ -250,3 +250,5 @@ export async function POST(request:Request){
     return json({data:{bookingId:input.bookingId,status:nextBookingStatus,workOrderStatus:nextWorkStatus,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
   }catch(error){return authError(error,"Unable to change Grooming booking");}
 }
+
+export async function POST(request:Request){return executeGroomingBookingChange(request);}
