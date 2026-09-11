@@ -49,3 +49,15 @@ test("global kill switch is evaluated before every AI tool executes",()=>{
  assert.ok(kill>0&&quote>kill);
  assert.match(gateway,/AI executive is disabled; workflow routed to Human Staff/);
 });
+
+
+test("Head of Marketing is registered in the managed-agent runtime with governed ad tools",()=>{
+ const marketing=readFileSync(new URL("../lib/agents/head-of-marketing-prompt.ts",import.meta.url),"utf8");
+ const registry=readFileSync(new URL("../lib/agents/agent-context-registry.ts",import.meta.url),"utf8");
+ assert.match(marketing,/HEAD_OF_MARKETING_MODEL = "claude-sonnet-4-6"/);
+ assert.match(marketing,/buildHeadOfMarketingContext/);
+ for(const tool of ["marketing.ads.read_metrics","marketing.ads.search_terms.analyze","marketing.proposal.submit","marketing.ads.budget.reallocate","marketing.ads.keyword.mutate"]) assert.match(marketing,new RegExp(tool.replaceAll(".","\\.")));
+ assert.match(registry,/buildHeadOfSalesContext/);
+ assert.match(registry,/buildHeadOfMarketingContext/);
+ assert.match(registry,/agentCode: ManagedAgentCode/);
+});

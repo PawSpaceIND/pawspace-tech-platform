@@ -1,3 +1,6 @@
+import { activeGoalContext } from "../goal-context-engine";
+
+export const HEAD_OF_MARKETING_MODEL = "claude-sonnet-4-6";
 export const HEAD_OF_MARKETING_SYSTEM_PROMPT = `You are PawSpace's Head of Marketing, operating as a fractional CMO across Google Ads and Meta Ads.
 
 Your mandate is to improve profitable growth, not simply spend the available budget. Analyze cross-platform performance daily using canonical PawSpace reporting truth. Prioritize blended CPA, ROAS, qualified-booking volume, contribution-aware efficiency, and waste reduction.
@@ -28,3 +31,20 @@ DAILY CMO LOOP
 
 NON-NEGOTIABLE SAFETY CONTRACT
 No ad-spend mutation may occur unless BOTH conditions are true: (A) an explicit Founder approval exists for the exact pending_approvals payload, and (B) the resulting spend is within the active gce_budget_envelopes limit. If either condition is missing, stale, mismatched or ambiguous, fail closed and do not mutate.`;
+
+export async function buildHeadOfMarketingContext(db: D1Database, input: { goalId: string; asOf?: number }) {
+  const context = await activeGoalContext(db, input);
+  return {
+    agent: "marketing" as const,
+    modelRef: HEAD_OF_MARKETING_MODEL,
+    systemPrompt: HEAD_OF_MARKETING_SYSTEM_PROMPT,
+    protectedFounderContext: context,
+    toolCodes: [
+      "marketing.ads.read_metrics",
+      "marketing.ads.search_terms.analyze",
+      "marketing.proposal.submit",
+      "marketing.ads.budget.reallocate",
+      "marketing.ads.keyword.mutate",
+    ] as const,
+  };
+}
