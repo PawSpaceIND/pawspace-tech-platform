@@ -27,13 +27,14 @@ export async function planPublicLeadIdentity(db:Db,input:{proposedCustomerId:str
  return{customerId,newCanonicalCustomer:unique.length===0,identityReview:false,candidateCustomerIds:unique,serviceContactAllowed};
 }
 
-export function publicLeadIdentityStatements(db:Db,input:{plan:PublicLeadIdentityPlan;contactId:string;leadId:string;name:string;phone:string;email:string|null;cityId:string;owner:string;service:string;whatsappConsent:boolean;now:number}){
+export function publicLeadIdentityStatements(db:Db,input:{plan:PublicLeadIdentityPlan;contactId:string;leadId:string;name:string;phone:string;email:string|null;cityId:string;owner:string;service:string;whatsappConsent:boolean;now:number;routingMode?:"human"|"ai_first"}){
  const statements:D1PreparedStatement[]=[];
  if(input.plan.identityReview){statements.push(db.prepare("INSERT INTO public_contact_identity_reviews (id,contact_id,lead_id,phone_last4,candidate_customer_ids_json,status,reason,created_at) VALUES (?,?,?,?,?,'open','phone_matches_multiple_canonical_customers',?)").bind(`PCIR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.contactId,input.leadId,phoneKey(input.phone).slice(-4),JSON.stringify(input.plan.candidateCustomerIds),input.now));return{statements,outboundStatus:"identity_review" as const};}
  if(input.plan.newCanonicalCustomer)statements.push(db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,?,'public_contact','{}',?,?)").bind(input.plan.customerId,input.cityId,input.name,input.phone,input.email,input.now,input.now));
  // A submitted service enquiry explicitly asks PawSpace to respond about this requirement. It is not
  // marketing consent and it never grants WhatsApp. Existing opt-outs/preferences are never overwritten.
  statements.push(db.prepare("INSERT OR IGNORE INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,0,1,0,0,0,0,'public_contact','public-contact',?)").bind(input.plan.customerId,input.now));
+ if(input.routingMode==="ai_first")return{statements,outboundStatus:"ai_owned" as const};
  const queueStatus=input.plan.serviceContactAllowed?"queued":"suppressed";
  statements.push(db.prepare("INSERT INTO outbound_routing_queue (id,source_key,customer_id,lead_id,source_type,lane,priority_score,high_intent,lifecycle_code,target_offer,next_best_service,expected_revenue,ltv,callback_at,status,context_json,created_at,updated_at) VALUES (?,?,?,?,?,'human',100,1,'requested_callback',?,NULL,NULL,0,?,?,?, ?,?) ON CONFLICT(source_key) DO NOTHING").bind(`ORQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,`public-contact:${input.leadId}:first-response`,input.plan.customerId,input.leadId,"public_contact",`New ${input.service} enquiry`,input.now,queueStatus,JSON.stringify({leadOwner:input.owner,service:input.service,origin:"public_contact",marketing:false,whatsappConsent:input.whatsappConsent}),input.now,input.now));
  return{statements,outboundStatus:queueStatus as "queued"|"suppressed"};
