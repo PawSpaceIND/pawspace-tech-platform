@@ -8,12 +8,14 @@ const AS_CUSTOMER = { "oai-authenticated-user-email": "e2e.customer@pawspace.tes
 test.use({ extraHTTPHeaders: AS_CUSTOMER });
 
 test("the storefront renders real content, not a blank or error page", async ({ page }) => {
+  await page.setExtraHTTPHeaders({});
   const res = await page.goto("/", { waitUntil: "domcontentloaded" });
   expect(res?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: /Grooming that comes home/i })).toBeVisible();
+  await expect(page.getByText(/Bengaluru/i).filter({ visible: true }).first()).toBeVisible();
   const body = await page.locator("body").innerText();
   expect(body.replace(/\s+/g, " ").trim().length, "storefront must render substantive content").toBeGreaterThan(200);
   expect(body).not.toMatch(/Application error|Something went wrong|Unhandled Runtime Error/i);
-  await expect(page.getByText(/Bengaluru/i).filter({ visible: true }).first()).toBeVisible();
 });
 
 test("the customer can reach the canonical grooming service and see a bookable surface", async ({ page }) => {

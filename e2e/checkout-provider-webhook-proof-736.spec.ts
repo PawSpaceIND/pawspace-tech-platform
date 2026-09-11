@@ -732,6 +732,8 @@ test("PR736 product-native checkout proves Razorpay Test capture and provider-si
   browser,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium");
+  const externalProofReady = /^[0-9a-f]{40}$/.test(CANDIDATE) && /^[a-f0-9]{32}$/i.test(ACCOUNT) && CF_TOKEN.length > 20 && /^rzp_test_[A-Za-z0-9]+$/.test(RZP_KEY) && RZP_SECRET.length > 10 && GH_TOKEN.length > 20 && UAT_CODE.length > 20;
+  test.skip(!externalProofReady, "PR736 external staging/Razorpay proof credentials are not provisioned in the local browser-certification runner");
   test.setTimeout(300_000);
   expect(CANDIDATE).toMatch(/^[0-9a-f]{40}$/);
   expect(ACCOUNT).toMatch(/^[a-f0-9]{32}$/i);

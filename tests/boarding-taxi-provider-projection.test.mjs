@@ -5,6 +5,7 @@ import { projectBoardingProviderStay } from "../lib/boarding-provider-projection
 import { projectTaxiProviderBooking } from "../lib/taxi-provider-projection.ts";
 
 const boardingRoute = readFileSync(new URL("../app/api/boarding-stays/route.ts", import.meta.url), "utf8");
+const boardingClient = readFileSync(new URL("../lib/boarding-stay-client.ts", import.meta.url), "utf8");
 const taxiRoute = readFileSync(new URL("../app/api/taxi-lifecycle/route.ts", import.meta.url), "utf8");
 
 test("boarding-stays imports provider projection", () => {
@@ -22,9 +23,20 @@ test("boarding projection strips emergency/vet free text and staff actor", () =>
     status: "in_progress",
     host_provider_id: "host_1",
     customer_id: "c1",
+    city_id: "blr",
+    zone_id: "blr-east",
+    package_code: "boarding-4h",
     package_name: "Overnight",
+    provider_name: "Maya & Rohan",
     check_in_at: "2026-09-10T10:00:00Z",
     check_out_at: "2026-09-11T10:00:00Z",
+    billed_units: 1,
+    pet_count: 2,
+    updated_at: 99,
+    care_plan_status: "ready",
+    check_in_status: "pending",
+    check_out_status: "pending",
+    extension_status: "none",
     total_amount: 1500,
     carePlan: {
       status: "ready",
@@ -36,9 +48,21 @@ test("boarding projection strips emergency/vet free text and staff actor", () =>
   });
   const s = JSON.stringify(out);
   assert.equal(out.events[0].actorId, "provider_or_system");
+  assert.equal(out.petCount, 2);
+  assert.equal(out.checkInStatus, "pending");
+  assert.equal(out.updatedAt, 99);
   assert.equal(out.carePlan.plan.hasEmergencyContact, true);
   assert.ok(!s.includes("9000000000"));
   assert.ok(!s.includes("ops@pawspace.in"));
+});
+
+
+test("boarding Host client handles provider-safe camelCase lifecycle projection", () => {
+  assert.match(boardingClient, /row\.event_type\?\?row\.eventType/);
+  assert.match(boardingClient, /row\.actor_id\?\?row\.actorId/);
+  assert.match(boardingClient, /row\.created_at\?\?row\.createdAt/);
+  assert.match(boardingClient, /row\.check_in_status\?\?row\.checkInStatus/);
+  assert.match(boardingClient, /row\.requested_end\?\?row\.requestedEnd/);
 });
 
 test("taxi projection strips staff actor and contact-shaped detail", () => {

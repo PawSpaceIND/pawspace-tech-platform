@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-const phone = process.env.PW_CUSTOMER_PHONE || "9000000911";
+const phone = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
+const stayRunJitter = Number(String(Date.now()).slice(-1));
+const boardingCustomerPhone = `8${String(Date.now()+943).slice(-9)}`;
+const sittingCustomerPhone = `7${String(Date.now()+944).slice(-9)}`;
 
 async function sandboxLogin(page: import("@playwright/test").Page, loginPhone=phone) {
   await page.goto("/mobile-app");
@@ -92,6 +95,8 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await expect(page.getByText(/Essential Bath|Bath & Basic|Complete Makeover|Just Trim/i).first()).toBeVisible();
 
   await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
+  // External Maps transport is deterministic in browser E2E; PawSpace coverage, pincode, zone and booking gates remain real.
+  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-grooming-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
   await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
   await page.getByLabel("Pincode",{exact:true}).fill("560038");
   await page.getByRole("button",{name:"Verify map",exact:true}).click();
@@ -238,10 +243,10 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  // Google address autocomplete is an external transport boundary. Keep it deterministic here while
  // the PawSpace doorstep verification, pincode, city/zone, radius and scheduling gates remain real.
  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
- await sandboxLogin(page,mode==="boarding"?"9000000943":"9000000944");await ensureCustomerPet(page);await page.goto(`/${mode}`);
+ await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);await ensureCustomerPet(page);await page.goto(`/${mode}`);
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
- const offset=5+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
+ const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Verify map",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
