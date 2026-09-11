@@ -17,6 +17,9 @@ const PROVIDER_EMAILS:Record<string,string>={
   groom_sanjay:GROOM_SANJAY_EMAIL,
 };
 
+type AdminGroomingView={data?:{booking?:{id?:string;status?:string};invoice?:{status?:string;invoiceNumber?:string;total?:number;tax?:number};taxReadiness?:{taxRuleStatus?:string};payoutReadiness?:{status?:string;payoutAmount?:number}}};
+type CustomerAccountView={data?:{customerId?:string}};
+
 async function actorApi(baseURL: string, email: string) {
   return playwrightRequest.newContext({
     baseURL,
@@ -215,21 +218,22 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(completedBody?.data?.booking?.status).toBe("completed");
     expect(completedBody?.data?.booking?.work_order_status).toBe("completed");
 
-    let adminBody:any=null;
     await expect.poll(async()=>{
       const adminView=await admin.get(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(bookingId)}`);
       if(!adminView.ok())return false;
-      adminBody=JSON.parse(await adminView.text());
-      return adminBody?.data?.booking?.status==="completed"&&adminBody?.data?.invoice?.status==="issued";
+      const body=JSON.parse(await adminView.text()) as AdminGroomingView;
+      return body.data?.booking?.status==="completed"&&body.data?.invoice?.status==="issued";
     },{timeout:15000}).toBe(true);
-    expect(adminBody?.data?.booking?.id).toBe(bookingId);
-    expect(adminBody?.data?.booking?.status).toBe("completed");
-    expect(adminBody?.data?.invoice?.status).toBe("issued");
-    expect(adminBody?.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
-    expect(adminBody?.data?.payoutReadiness?.status).toBe("accrued");
+    const adminBody=await expectOk(await admin.get(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(bookingId)}`),"admin completed transaction view") as AdminGroomingView;
+    expect(adminBody.data?.booking?.id).toBe(bookingId);
+    expect(adminBody.data?.booking?.status).toBe("completed");
+    expect(adminBody.data?.invoice?.status).toBe("issued");
+    expect(adminBody.data?.invoice?.invoiceNumber).toBeTruthy();
+    expect(adminBody.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
+    expect(adminBody.data?.payoutReadiness?.status).toBe("accrued");
     const assignedModel=String(scheduleBody?.data?.provider?.model||"");
-    if(assignedModel==="commission")expect(Number(adminBody?.data?.payoutReadiness?.payoutAmount)).toBeGreaterThan(0);
-    else expect(Number(adminBody?.data?.payoutReadiness?.payoutAmount)).toBeGreaterThanOrEqual(0);
+    if(assignedModel==="commission")expect(Number(adminBody.data?.payoutReadiness?.payoutAmount)).toBeGreaterThan(0);
+    else expect(Number(adminBody.data?.payoutReadiness?.payoutAmount)).toBeGreaterThanOrEqual(0);
 
     // Completion only returns 200 after service-completion-finance proves the journal balances.
     // Verify the separately authorized Finance surface also observes the captured/invoiced transaction,
@@ -251,12 +255,11 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await page.getByRole("button",{name:"Verify & continue",exact:true}).click();await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
     // Verify the actual browser-owned customer cookie, but do not depend on the shell emitting one
     // particular hydration request at a specific moment (mobile Chromium can coalesce that fetch).
-    let ownAccountBody:any=null;
     await expect.poll(async()=>page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return response.ok?await response.json():null;}),{timeout:15000}).toMatchObject({data:{customerId:CUSTOMER_ID}});
-    ownAccountBody=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return response.ok?await response.json():null;});
-    expect(ownAccountBody.data.customerId).toBe(CUSTOMER_ID);
+    const ownAccountBody=await page.evaluate(async()=>{const response=await fetch("/api/customer-account",{cache:"no-store"});return response.ok?await response.json():null;}) as CustomerAccountView|null;
+    expect(ownAccountBody?.data?.customerId).toBe(CUSTOMER_ID);
     await page.goto(`/grooming/manage?bookingId=${encodeURIComponent(bookingId)}`);
-    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data.invoice.invoiceNumber));
+    const care=page.getByRole("region",{name:"Completed care summary",exact:true});await expect(care).toContainText("Persona E2E completed safely");await expect(care.getByRole("listitem")).toHaveText(["coat","nails","ears"]);await expect(care).toContainText(String(adminBody.data?.invoice?.invoiceNumber));
     const summary=await page.evaluate(async id=>{const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store"});return{status:response.status,body:await response.json()};},bookingId);expect(summary.status).toBe(200);expect(summary.body.data.invoice.total).toBe(Number(financeItem.gross_amount));expect(summary.body.data.invoice.tax).toBe(Number(financeItem.tax_amount));expect(summary.body.data).not.toHaveProperty("payoutReadiness");
     await page.reload();await expect(care).toContainText("Persona E2E completed safely");await page.screenshot({path:test.info().outputPath(`customer-completed-care-${assignmentMode}.png`),fullPage:true});
     await page.goto("/mobile-app");
