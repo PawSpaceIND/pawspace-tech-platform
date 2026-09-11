@@ -58,10 +58,11 @@ jobs:
           for (const required of ['payment.authorized','payment.captured','payment.failed','order.paid']) {
             if (!events.includes(required)) throw new Error(`Required event missing before update: ${required}`);
           }
+          const eventMap = Object.fromEntries(events.map(event => [event, true]));
           const response = await fetch(api, {
             method: 'PUT',
             headers: { authorization: auth, 'content-type': 'application/json' },
-            body: JSON.stringify({ url: newUrl, events, secret: webhookSecret }),
+            body: JSON.stringify({ url: newUrl, events: eventMap, secret: webhookSecret }),
             redirect: 'error',
             signal: AbortSignal.timeout(15000),
           });
