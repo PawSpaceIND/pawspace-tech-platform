@@ -143,8 +143,10 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   assert.match(badMilestone.message, /Unknown relocation milestone/);
 
   await act(db, created.id, "complete_milestone", { milestoneCode: "transport_booked", note: "AI 121 booked" });
+  await act(db, created.id, "complete_milestone", { milestoneCode: "origin_handover", note: "Pet handed to transport partner" });
   const inTransit = await act(db, created.id, "complete_milestone", { milestoneCode: "in_transit" });
   assert.equal(inTransit.status, "in_transit");
+  await act(db, created.id, "complete_milestone", { milestoneCode: "destination_handover", note: "Pet handed to owner at destination" });
   const delivered = await act(db, created.id, "complete_milestone", { milestoneCode: "delivery_confirmed", note: "Handed to owner in Berlin" });
   assert.equal(delivered.status, "delivered");
 
@@ -152,7 +154,18 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   assert.equal(board.transport_booked, "complete");
   assert.equal(board.in_transit, "complete");
   assert.equal(board.delivery_confirmed, "complete");
-  assert.equal(board.origin_handover, "pending", "only the milestones actually completed are marked complete");
+  assert.equal(board.origin_handover, "complete");
+  assert.equal(board.destination_handover, "complete");
+  assert.equal(delivered.settlement.approval_status, "awaiting_finance_approval");
+  assert.equal(Number(delivered.settlement.vendor_cost), 90_000);
+  assert.equal(delivered.settlement.tax_status, "disabled_by_policy");
+  const journal = await db.prepare("SELECT SUM(debit) debit,SUM(credit) credit FROM finance_journal_entries WHERE source_id=?").bind(created.id).first();
+  assert.equal(Number(journal.debit), 120_000);
+  assert.equal(Number(journal.credit), 120_000);
+  const approved = await governance.mutateRelocationCase(db,{caseId:created.id,action:"approve_vendor_settlement",actorId:FINANCE});
+  assert.equal(approved.settlement.approval_status,"approved");
+  const reconciled = await governance.mutateRelocationCase(db,{caseId:created.id,action:"reconcile_finance",actorId:FINANCE});
+  assert.equal(reconciled.reconciliation.status,"balanced");
 
   // 8. EVERY step left an audit trail against the SAME case.
   const eventTypes = delivered.events.map((row) => row.event_type);
@@ -229,13 +242,31 @@ test("Relocation validates its inputs and its lifecycle preconditions", async ()
 });
 
 // ---------------------------------------------------------------------------------------------
+test("Relocation refuses skipped handovers and over-refunds", async () => {
+  const { db } = await reloWorld();
+  const c = await newCase(db);
+  await act(db,c.id,"qualify",{agentId:AGENT});
+  await verifyAllDocuments(db,c.id);
+  await act(db,c.id,"issue_quote",{amount:50000,vendorCost:35000});
+  await act(db,c.id,"accept_quote");
+  await act(db,c.id,"record_payment",{paymentReference:"UAT-RELO-GUARD"});
+  await act(db,c.id,"assign_vendor",{vendorId:"VENDOR-GUARD"});
+  await act(db,c.id,"complete_milestone",{milestoneCode:"transport_booked"});
+  const skipped=await refusal(act(db,c.id,"complete_milestone",{milestoneCode:"in_transit"}));
+  assert.equal(skipped?.status,409); assert.match(skipped.message,/Origin handover/);
+  const over=await refusal(act(db,c.id,"request_refund",{refundAmount:50001,reason:"Customer request"}));
+  assert.equal(over?.status,409); assert.match(over.message,/cannot exceed remaining collected/);
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Relocation preserves production boundaries for vendor APIs, regulations, documents and money", async () => {
   const { db } = await reloWorld();
 
   // The readiness contract is explicit about what is NOT connected.
   assert.deepEqual(governance.relocationReadiness, {
     externalVendorApi: false, liveRegulationFeed: false, liveMoney: false,
-    productionDocumentStorage: false, manualOperationsTrackable: true,
+    productionDocumentStorage: false, manualOperationsTrackable: true, canonicalFinance:true,
+    refundCeiling:true, orderedMilestones:true, vendorSettlementApproval:true, taxPolicyConfigurable:true,
   });
 
   const created = await newCase(db);
