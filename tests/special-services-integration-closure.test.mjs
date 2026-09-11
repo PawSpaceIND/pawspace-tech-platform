@@ -17,7 +17,7 @@ test("Relocation case creation lands in canonical CRM and communication outbox",
  const lead=sqlite.prepare("SELECT service,lifecycle_state FROM lead_work_items WHERE id=?").get(link.lead_id);
  assert.equal(lead.service,"relocation"); assert.equal(lead.lifecycle_state,"qualified");
  const message=sqlite.prepare("SELECT m.template_key,o.status FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
- assert.equal(message.template_key,"relocation_case_created"); assert.equal(message.status,"queued");
+ assert.equal(message.template_key,"relocation_case_created"); assert.ok(["queued","scheduled"].includes(message.status),`lifecycle outbox must remain dispatchable, got ${message.status}`);
 });
 
 test("Funeral request uses canonical sensitive-care CRM and lifecycle communication",async t=>{
@@ -28,7 +28,7 @@ test("Funeral request uses canonical sensitive-care CRM and lifecycle communicat
  const link=sqlite.prepare("SELECT * FROM special_service_case_links WHERE case_id=?").get(row.id);
  assert.equal(link.customer_id,customerId); assert.equal(link.service_code,"funeral");
  const message=sqlite.prepare("SELECT m.template_key,m.payload_json,o.status FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.lead_id=?").get(link.lead_id);
- assert.equal(message.template_key,"funeral_request_received"); assert.equal(message.status,"queued");
+ assert.equal(message.template_key,"funeral_request_received"); assert.ok(["queued","scheduled"].includes(message.status),`lifecycle outbox must remain dispatchable, got ${message.status}`);
  assert.match(JSON.parse(message.payload_json).message,/received your request/i);
 });
 

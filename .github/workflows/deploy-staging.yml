@@ -10,6 +10,7 @@ name: Deploy staging
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              SENTRY_DSN                              Sentry project DSN for PII-safe staging telemetry
 #              EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SID, EXOTEL_CALLER_ID,
 #              EXOTEL_VOICE_APP_ID, EXOTEL_WEBHOOK_SECRET
 #              FAST2SMS_API_KEY                         optional; required only for approved SMS/live-OTP staging
@@ -251,6 +252,24 @@ jobs:
       # The staff directory is loaded HERE rather than being left to a separate manual workflow, because
       # certification requires the advertised staff identities to be able to sign in and UAT sign-in
       # refuses any email that is not an active app_users row. Idempotent: every seed is INSERT OR IGNORE.
+      - name: Verify PII-safe Sentry delivery with a controlled staging exception
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENTRY_DSN" ]; then
+            echo "Sentry DSN not configured; optional staging self-test skipped."
+            exit 0
+          fi
+          BODY="$RUNNER_TEMP/sentry-self-test.json"
+          CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -H "x-pawspace-uat-code: $PAWSPACE_UAT_ACCESS_CODE" "$STAGING_URL/__staging/sentry-self-test")"
+          test "$CODE" = "200"
+          node --input-type=module -e 'import{readFileSync}from"node:fs";const x=JSON.parse(readFileSync(process.argv[1],"utf8"));if(x.ok!==true||x.piiSafe!==true||!/^[0-9a-f]{32}$/i.test(String(x.eventId||"")))throw Error("Sentry controlled exception was not flushed safely")' "$BODY"
+          rm -f "$BODY"
+          echo "Sentry controlled staging exception flushed with PII-safe configuration."
+
       - name: Load the staff directory into the staging D1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
