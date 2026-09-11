@@ -8,13 +8,8 @@ async function expectRecoveredEmptyState(page: import("@playwright/test").Page) 
 }
 
 async function bypassVinextDevOverlayPointerInterception(page: import("@playwright/test").Page) {
-  await page.addStyleTag({
-    content: `
-      #__vinext_dev_error_overlay_root,
-      #__vinext_dev_error_overlay_root * {
-        pointer-events: none !important;
-      }
-    `,
+  await page.locator("#__vinext_dev_error_overlay_root").evaluateAll(nodes => {
+    for (const node of nodes) node.remove();
   });
 }
 
