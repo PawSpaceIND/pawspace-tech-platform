@@ -6,15 +6,19 @@ const scheduler = await readFile(new URL("../lib/background-scheduler.ts", impor
 
 test("Revenue recognition is wired into the live booking lifecycle via a cold-DB-safe sweep", () => {
   assert.match(integration, /export async function runRevenueRecognitionSweep/);
-  // subscriptions: pack price from the source booking, recognised up to sessions_consumed
-  assert.match(integration, /FROM customer_grooming_subscriptions s JOIN canonical_bookings b ON b\.id=s\.source_booking_id/);
-  assert.match(integration, /recognizeSubscriptionUsage\(db, \{ sourceId: String\(s\.id\), sessionsConsumed: Number\(s\.consumed\)/);
+  // subscriptions: collection uses payment time; consumption uses each actual usage completion time.
+  assert.match(integration, /p\.updated_at paid_at/);
+  assert.match(integration, /booking_subscription_usage WHERE plan_code=\? AND status='consumed'/);
+  assert.match(integration, /usageAt=new Date\(Number\(usage\.updated_at/);
+  assert.match(integration, /recognizeSubscriptionUsage\(db,\{sourceId:String\(s\.id\),sessionsConsumed:cumulative,at:usageAt/);
   // advance bookings: prepaid+captured, excluding subscription purchase + subscription-credit redemptions
   assert.match(integration, /p\.mode='prepaid' AND p\.status='captured'/);
   assert.match(integration, /b\.id NOT IN \(SELECT source_booking_id FROM customer_grooming_subscriptions\)/);
   assert.match(integration, /b\.id NOT IN \(SELECT booking_id FROM booking_subscription_usage\)/);
-  // recognise advance only when the booking is completed (service utilised)
+  // advance cash is dated to capture, revenue only to actual canonical completion/update time.
+  assert.match(integration, /collectedAt=new Date\(Number\(b\.paid_at/);
   assert.match(integration, /if \(String\(b\.status\) === "completed"\)/);
+  assert.match(integration, /completedAt=new Date\(Number\(b\.updated_at/);
   assert.match(integration, /recognizeAdvanceBooking/);
   // cold-DB safe: every read tolerates missing tables
   assert.match(integration, /\.catch\(empty\)/);

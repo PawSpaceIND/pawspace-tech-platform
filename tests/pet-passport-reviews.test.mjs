@@ -37,27 +37,30 @@ test("Review configuration (Control): per-service questions, cadence, channels, 
   assert.match(reviewCfg, /DEFAULT_DOUBLE_REVIEW_DISCOUNT = 400/);
   assert.match(reviewCfg, /"every_service", "every_n_sessions"/);
   assert.match(reviewCfg, /"notification", "whatsapp", "email"/);
-  // question count clamped to the number of designed questions
-  assert.match(reviewCfg, /Math\.max\(1, Math\.min\(Number\(input\.questionCount\)/);
+  // every completed service uses exactly the five governed PawSpace feedback questions
+  assert.match(reviewCfg, /const questionCount = 5;/);
+  assert.match(reviewCfg, /\.slice\(0,5\)/);
   // maker/checker: author cannot approve own config
   assert.match(reviewCfg, /the author cannot approve their own review config/);
   assert.match(cfgRoute, /requirePermission\(actor,"marketing\.manage"\)/);
 });
 
-test("Service reviews: cadence-aware requests, 5-star links, public-review rewards Rs.250/Rs.400", () => {
+test("Service reviews: cadence-aware five-question feedback, score-independent reward, optional public review", () => {
   assert.match(serviceReview, /export async function requestServiceReview/);
   assert.match(serviceReview, /export async function submitServiceReview/);
   assert.match(serviceReview, /export async function claimPublicReview/);
   assert.match(serviceReview, /export async function redeemReviewReward/);
   // cadence: every N sessions only fires on the interval boundary
   assert.match(serviceReview, /if \(done <= 0 \|\| done % n !== 0\) return \{ requested: false, reason: "cadence_not_reached"/);
-  // 5-star surfaces the public review links
-  assert.match(serviceReview, /if \(stars === 5\)/);
-  assert.match(serviceReview, /googleReviewLink: config\?\.googleReviewLink/);
-  // one review per order per platform, rewards escalate on the 2nd platform
+  // PawSpace feedback always carries five scored questions and earns the configured internal reward.
+  assert.match(serviceReview, /Please rate all five feedback questions from 1 to 5/);
+  assert.match(serviceReview, /feedbackReward:\{code:rewardCode,kind:rewardKind,discount:rewardValue/);
+  assert.match(serviceReview, /publicReviewPrompt:\{eligible:true,destination/);
+  // Public-review claims are tracked for audit only; they do not mint rewards.
   assert.match(serviceReview, /UNIQUE\(booking_id,platform\)/);
-  assert.match(serviceReview, /const scope = isSecond \? "grooming" : "any"/);
-  // grooming-only guard on the double-review reward
+  assert.match(serviceReview, /reward:null/);
+  assert.doesNotMatch(serviceReview, /isSecond \? "grooming" : "any"/);
+  // Legacy scoped rewards remain fail-closed if such a row already exists.
   assert.match(serviceReview, /This reward is valid on grooming only/);
   // self-declared tracking + staff verification
   assert.match(serviceReview, /'self_declared'/);
