@@ -55,7 +55,7 @@ function postServiceMappingStatements(db:Db,input:{id:string;bookingId:string;pa
 
 /**
  * Creates the provider-shareable UAT request used for pay-after-service. This is deliberately not a
- * capture operation: only a signature-verified gateway event may move booking_payments to captured.
+ * capture operation: a public webhook must be signature-verified; authenticated server-to-server provider reconciliation may also confirm an exact capture.
  */
 export async function createPostServicePaymentRequest(db:Db,env:Record<string,unknown>,input:{bookingId:string;providerId:string;actorId:string}){
  await ensurePaymentReconciliationTables(db);

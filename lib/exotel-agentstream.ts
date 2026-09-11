@@ -1,5 +1,5 @@
-import { aiProviderConnection, requestAiDraft } from "./ai-provider-adapter";
 import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from "./ai-conversation-orchestrator";
+import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
 import type { AuthenticatedActor } from "./server-auth";
@@ -52,6 +52,7 @@ type Session = {
   sampleRate: number;
   language: string;
   segmentIndex: number;
+  salesDispatchItemId: string | null;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -133,26 +134,6 @@ async function responseBytes(result: unknown): Promise<Uint8Array> {
   throw new Error("TTS model returned no audio bytes");
 }
 
-async function runtimeProvider(): Promise<AiResponseProvider> {
-  const connection = await aiProviderConnection();
-  const systemPrompt = "Reply as PawSpace's voice assistant. Keep the answer short enough to speak naturally, use only the supplied canonical context, never invent availability, pricing, discounts, payment/refund outcomes or completed actions, and allow the existing handoff policy to take over for risky or unsupported requests.";
-  return {
-    status: connection.connected ? "connected" : "not_connected",
-    provider: connection.providerRef || "not_connected",
-    modelRef: connection.modelRef,
-    deadlineMs: connection.timeoutMs,
-    async generate(input: AiProviderInput) {
-      const result = await requestAiDraft({
-        systemPrompt,
-        userPrompt: JSON.stringify({ channel: "voice", customerMessage: input.inputText, intent: input.intent, canonicalContext: input.context }),
-        maxTokens: 280,
-      });
-      if (!result.connected) return { text: "", provider: connection.providerRef || "not_connected", modelRef: connection.modelRef, latencyMs: 0, unsupported: true };
-      return { text: result.text, provider: result.providerRef, modelRef: result.modelRef, latencyMs: result.latencyMs, referencedCustomerIds: [input.customerId], highImpactAction: false };
-    },
-  };
-}
-
 async function openThread(db: D1Database, customerId: string) {
   const existing = await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
   if (existing) return text(existing.id);
@@ -184,7 +165,9 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
     env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=?").bind(aiCallId, aiCallId, now, text(order.id), providerCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), aiCallId, "agentstream_started", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16" }), now),
   ]);
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0 };
+  const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
+  let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0, salesDispatchItemId };
 }
 
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
@@ -270,7 +253,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) return;
     const llmStarted = Date.now();
-    providerPromise ||= runtimeProvider();
+    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId});
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
