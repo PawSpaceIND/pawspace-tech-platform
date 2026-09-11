@@ -23,6 +23,11 @@ test("hosting plan separates run attempts and carries only explicit secret bindi
  const one=checkoutSandboxPlan(base()),two=checkoutSandboxPlan({...base(),GITHUB_RUN_ATTEMPT:"2"});
  assert.equal(one.worker,"pawspace-checkout-736-123456789-1");assert.notEqual(one.worker,two.worker);assert.equal(Object.keys(one.secrets).length,7);
 });
+test("temporary strict PR736 proof branch is the only non-main provisioning exception",()=>{
+ const strict=checkoutSandboxPlan({...base(),GITHUB_REF:"refs/heads/uat/pr736-strict-payment-closure-20260911"});
+ assert.equal(strict.worker,"pawspace-checkout-736-123456789-1");
+ for(const ref of ["refs/heads/uat/other-proof","refs/heads/feature/pr736","refs/heads/uat/checkout-provider-proof-736-product-native-20260911"])assert.throws(()=>checkoutSandboxPlan({...base(),GITHUB_REF:ref}));
+});
 for(const [key,value] of [["GITHUB_REPOSITORY","foreign/repo"],["GITHUB_REF","refs/heads/feature"],["GITHUB_EVENT_NAME","pull_request"],["CONFIRM","release-preview"],["EXPECTED_SHA","main"],["EXPECTED_SHA",sha.toUpperCase()],["GITHUB_RUN_ID","1;false"],["GITHUB_RUN_ATTEMPT","0"],["PAWSPACE_PAYMENT_ENV","live"],["FORBID_PRODUCTION","false"],["PAWSPACE_PAYMENT_LIVE_APPROVED","true"],["RAZORPAY_KEY_ID_SANDBOX","rzp_live_abcd"],["RAZORPAY_KEY_ID_SANDBOX","rzp_test_placeholder"]]){
  test(`hosting refuses invalid ${key}=${value}`,()=>assert.throws(()=>checkoutSandboxPlan({...base(),[key]:value})));
 }
