@@ -1,3 +1,4 @@
+import { centralConsentAllows, reserveCommunicationFrequency } from "./communication-governance";
 import { ensureCommunicationTables } from "./communication-engine";
 
 type Db = D1Database;
@@ -92,6 +93,10 @@ export async function dispatchEmailOutbox(db: Db, env: Record<string, unknown>, 
     const customer = await db.prepare("SELECT email,name FROM canonical_customers WHERE id=?").bind(row.customer_id).first<Row>().catch(() => null);
     const recipient = lower(customer?.email);
     if (!recipient) { await db.prepare("UPDATE communication_outbox SET status='dead_letter',last_error='recipient_email_missing',updated_at=? WHERE message_id=?").bind(asOf, row.id).run(); continue; }
+    if(!await centralConsentAllows(db,text(row.customer_id),"email")){await db.prepare("UPDATE communication_outbox SET status='suppressed',last_error='global_opt_out',locked_at=NULL,updated_at=? WHERE message_id=?").bind(asOf,row.id).run();continue;}
+    const claim=await db.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=?,updated_at=? WHERE message_id=? AND status IN ('queued','retry_pending','scheduled') AND next_attempt_at<=?").bind(asOf,asOf,row.id,asOf).run();if(!Number(claim.meta?.changes||0))continue;
+    if(!await centralConsentAllows(db,text(row.customer_id),"email")){await db.prepare("UPDATE communication_outbox SET status='suppressed',last_error='global_opt_out',locked_at=NULL,updated_at=? WHERE message_id=?").bind(asOf,row.id).run();continue;}
+    const frequency=await reserveCommunicationFrequency(db,{customerId:text(row.customer_id),channel:"email",messageId:text(row.id),asOf});if(!frequency.allowed)continue;
     let payload: Record<string, unknown> = {}; try { payload = JSON.parse(text(row.payload_json) || "{}"); } catch {}
     const subject = text(payload.subject) || text(row.template_key).replace(/_/g, " ");
     const body = text(payload.text || payload.body || payload.message);

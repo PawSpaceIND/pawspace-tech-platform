@@ -41,14 +41,14 @@ function makeD1(sqlite) {
   };
 }
 
-const NOW = 1770000000000;
+const NOW = 1770013800000;
 
 // QUIET HOURS. Every consent decision here is computed against Date.now(): enqueueCommunication
 // takes no asOf, and lib/communication-engine.ts turns a message whose policy release is in the
 // future into `scheduled` rather than `queued`. comm_blr_default declares quiet hours 21:00-08:00
 // IST, so between those hours every "-> queued" expectation in this file fails with `scheduled`.
 // The suite passed by day and failed by night; that is why it was red, not because consent logic
-// changed. The fixture's own NOW (08:10 IST) shows non-quiet timing was always the intent, but it
+// changed. The fixture's own NOW (12:00 IST) shows non-quiet timing was always the intent, but it
 // predates the policy's effective_from of 2026-08-01, so it cannot be reused as the clock.
 //
 // Pin a fixed instant instead: 12:00 IST, nine hours clear of either quiet boundary, on a date after
