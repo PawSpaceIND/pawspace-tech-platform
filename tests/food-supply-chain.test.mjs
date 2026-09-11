@@ -51,7 +51,8 @@ function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FSC_DB_
 
 const route = await import("../app/api/food-supply-chain/route.ts");
 const { saveFoodSupplier, saveFoodKitchen, createFoodPurchaseOrder, receiveFoodPurchaseOrder, recordFoodWastage, sweepExpiredFoodBatches, setFoodReorderPolicy, foodSupplyChainSnapshot } = await import("../lib/food-supply-chain.ts");
-const { createFoodQuote } = await import("../lib/food-governance.ts");
+const { createFoodQuote, createFoodOrder } = await import("../lib/food-governance.ts");
+const { mutateFoodFulfilment } = await import("../lib/food-fulfilment-governance.ts");
 
 async function parseBody(response) {
   const text = await response.text();
@@ -294,4 +295,27 @@ test("contract: the supply chain module never writes a customer money table", ()
   for (const table of ["booking_payments", "canonical_bookings", "food_order_payments", "food_refund_ledger", "pawspace_wallet_ledger"]) {
     assert.ok(!new RegExp(`(INSERT INTO|UPDATE|DELETE FROM)\\s+${table}`).test(source), `procurement must never write ${table}`);
   }
+});
+
+test("real execution: packing a PO-linked lot consumes that exact physical batch once and never below zero", async () => {
+  freshDb();
+  const db = globalThis.__FSC_DB__;
+  const { po } = await seedSupplierAndPo(db, { quantity: 3 });
+  const received = await receiveFoodPurchaseOrder(db, { purchaseOrderId: po.purchaseOrderId, preparationDate: "2026-09-01", expiryDate: "2026-12-01", actorId: "ops:uat" });
+  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 2, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: "customer-supply", petIds: ["pet-dog-supply"] });
+  const order = await createFoodOrder(db, { idempotencyKey: "batch-pack-order-1", quoteId: quote.quoteId, customerId: "customer-supply", cityId: "blr", zoneId: "blr-east", actorId: "customer-supply" });
+  const input = (action, extra={}) => ({ orderId: order.orderId, action, actorId: "ops:uat", idempotencyKey: `batch-pack:${action}`, ...extra });
+  await mutateFoodFulfilment(db, input("accept_order"));
+  await mutateFoodFulfilment(db, input("pick_order", { lotId: `FLOT-${received.batchId}` }));
+  const packed = await mutateFoodFulfilment(db, input("pack_order"));
+  assert.equal(packed.supplyChainBatchId, received.batchId);
+  assert.equal(sqlite.prepare("SELECT quantity_remaining FROM food_stock_batches WHERE id=?").get(received.batchId).quantity_remaining, 1);
+  const replay = await mutateFoodFulfilment(db, input("pack_order"));
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(sqlite.prepare("SELECT quantity_remaining FROM food_stock_batches WHERE id=?").get(received.batchId).quantity_remaining, 1, "pack replay cannot consume batch twice");
+  sqlite.prepare("UPDATE food_order_fulfilment SET status='picked' WHERE order_id=?").run(order.orderId);
+  sqlite.prepare("UPDATE food_inventory_reservations SET status='reserved' WHERE order_id=?").run(order.orderId);
+  const rejected = await mutateFoodFulfilment(db, { ...input("pack_order"), idempotencyKey: "batch-pack-second-attempt" }).catch(e => e);
+  assert.equal(rejected instanceof Response && rejected.status === 409, true, "insufficient batch remainder blocks pack");
+  assert.equal(sqlite.prepare("SELECT quantity_remaining FROM food_stock_batches WHERE id=?").get(received.batchId).quantity_remaining, 1);
 });
