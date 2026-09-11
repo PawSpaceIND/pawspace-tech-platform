@@ -98,6 +98,7 @@ export async function ensureVoiceCallTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,purpose TEXT NOT NULL DEFAULT 'unknown',reserved_at INTEGER NOT NULL,released_at INTEGER)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL)"),
   ]);
 }
 
@@ -364,6 +365,21 @@ async function releaseDialSlot(db: Db, callId: string, now: number) {
   await db.prepare("UPDATE voice_call_dial_reservations SET released_at=? WHERE call_id=? AND released_at IS NULL").bind(now, callId).run();
 }
 
+async function recordTerminalVoiceDisposition(db: Db, callId: string, disposition: string, now: number) {
+  const call = await db.prepare("SELECT lead_id,customer_id,use_case FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
+  if (!call) return;
+  await releaseDialSlot(db, callId, now);
+  const value = `voice_terminal:${text(disposition).replace(/\s+/g, "_").toLowerCase().slice(0, 80)}`;
+  const leadId = text(call.lead_id);
+  if (leadId) {
+    await db.prepare("UPDATE lead_work_items SET last_outcome=?,updated_at=? WHERE id=?").bind(value, now, leadId).run().catch(() => undefined);
+    return;
+  }
+  const customerId = text(call.customer_id);
+  if (customerId) await db.prepare("INSERT OR IGNORE INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,'Voice automation',NULL,'Normal','Completed',?)")
+    .bind(`VOICE-DISP-${callId}`, customerId, `Voice ${text(call.use_case) || "call"}: ${value}`, now).run();
+}
+
 /**
  * Consent and opt-out, re-read immediately before the provider is contacted.
  *
@@ -521,6 +537,7 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
     // allowance for the day.
     await releaseDialSlot(db, id, now);
     await applyTransition(db, { callId: id, to: unavailable ? "provider_unavailable" : "provider_error", reason: String((error as Error).message).slice(0, 200), actor: input.actorId, asOf: now });
+    await recordTerminalVoiceDisposition(db, id, unavailable ? "provider_unavailable" : "provider_error", now);
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
     return { duplicatePrevented: false, dialled: false, blockedBy: null, blockedDetail: String((error as Error).message).slice(0, 200), policyChecks: policy.checks, ...summarise(row!) };
   }
@@ -603,7 +620,9 @@ export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; 
   const attempt = Number(attempts?.n || 0) + 1;
   if (useCase && attempt >= useCase.maxAttempts) {
     const terminal=await db.prepare("SELECT * FROM voice_call_orders WHERE id=? OR retry_of=? ORDER BY retry_attempt DESC,requested_at DESC LIMIT 1").bind(root,root).first<Row>()||original;
-    await recordVoiceRetryExhausted(db,terminal,input.asOf??Date.now());
+    const terminalAt=input.asOf??Date.now();
+    await recordTerminalVoiceDisposition(db,text(original.id),"retry_exhausted",terminalAt);
+    await recordVoiceRetryExhausted(db,terminal,terminalAt);
     throw new Error(`${useCase.code} allows ${useCase.maxAttempts} attempt(s); no retry remains`);
   }
   return requestOutboundVoiceCall(db, env, {
@@ -782,6 +801,7 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
       await applyTransition(db, { callId, to: bridge, reason: `Inferred ${bridge} from provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: { ...curated, inferred: true }, asOf: now });
     }
     const applied = await applyTransition(db, { callId, to: target, reason: `Provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: curated, asOf: now });
+    if (["no_answer", "busy", "provider_error", "provider_unavailable"].includes(target)) await recordTerminalVoiceDisposition(db, callId, event.kind, now);
     await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, eventKey).run();
     const retryTermination=["no_answer","busy","provider_error"].includes(target)?await recordVoiceRetryExhausted(db,call,now):null;
     return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, retryTermination, eventKind: event.kind, eventId: eventKey };
