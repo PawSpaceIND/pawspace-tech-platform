@@ -6,8 +6,10 @@ installWorkersHooks("__SPECIAL_DB__","__SPECIAL_ENV__");
 const relocation=await import("../lib/relocation-governance.ts");
 const funeral=await import("../lib/funeral-memorial-governance.ts");
 const manual=await import("../lib/funeral-manual-order.ts");
+const DAYTIME_IST=Date.parse("2026-09-11T08:30:00.000Z"); // 14:00 Asia/Kolkata
 
-test("Relocation case creation lands in canonical CRM and communication outbox",async()=>{
+test("Relocation case creation lands in canonical CRM and communication outbox",async t=>{
+ t.mock.method(Date,"now",()=>DAYTIME_IST);
  const sqlite=freshSqlite(),db=makeD1(sqlite),customerId="CUST-RELO-LINK";
  const row=await relocation.createRelocationCase(db,{customerId,petName:"Milo",breed:"Indie",ageYears:4,sizeClass:"medium",travelMode:"air",originCountry:"India",originCity:"Bengaluru",destinationCountry:"UAE",destinationCity:"Dubai",targetTravelDate:new Date(Date.now()+30*86400000).toISOString(),crateRequirement:"assessment_required"},"agent@pawspace.test");
  const link=sqlite.prepare("SELECT * FROM special_service_case_links WHERE case_id=?").get(row.id);
@@ -18,7 +20,8 @@ test("Relocation case creation lands in canonical CRM and communication outbox",
  assert.equal(message.template_key,"relocation_case_created"); assert.ok(["queued","scheduled"].includes(message.status),`lifecycle outbox must remain dispatchable, got ${message.status}`);
 });
 
-test("Funeral request uses canonical sensitive-care CRM and lifecycle communication",async()=>{
+test("Funeral request uses canonical sensitive-care CRM and lifecycle communication",async t=>{
+ t.mock.method(Date,"now",()=>DAYTIME_IST);
  const sqlite=freshSqlite(),db=makeD1(sqlite),customerId="CUST-FUN-LINK";
  await funeral.saveFuneralServiceConfig(db,{serviceType:"cremation",enabled:true,baseAmount:6500,cashAllowed:false},"ops@pawspace.test");
  const row=await funeral.createFuneralCase(db,{customerId,petName:"Bruno",petSpecies:"dog",pickupAddress:"HSR Layout",serviceType:"cremation",memorialOption:"none"},"care@pawspace.test");
