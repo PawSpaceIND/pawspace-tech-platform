@@ -1,15 +1,15 @@
 name: Deploy isolated checkout sandbox
 
-# Separate resources for held PR674; NEVER repoints the frozen beta, shared staging or production.
+# Separate resources for the certified #736 payment tree; NEVER repoints frozen preview, shared staging or production.
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type checkout-sandbox-674 to provision a separate TEST-only root app'
+        description: 'Type checkout-sandbox-736 to provision a separate TEST-only root app'
         required: true
         default: ''
       expected_sha:
-        description: 'Exact current PR674 head; no branch names or older candidate substitutions'
+        description: 'Exact certified #736 head; no branch names or older candidate substitutions'
         required: true
         default: ''
 permissions:
@@ -17,11 +17,11 @@ permissions:
   pull-requests: read
   actions: read
 concurrency:
-  group: pawspace-checkout-sandbox-674
+  group: pawspace-checkout-sandbox-736
   cancel-in-progress: false
 jobs:
   checkout-sandbox:
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'checkout-sandbox-674' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'checkout-sandbox-736' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: pawspace-release-preview
@@ -52,14 +52,14 @@ jobs:
             const r = await fetch(base+path,{headers:{authorization:'Bearer '+process.env.GH_TOKEN},redirect:'error',signal:AbortSignal.timeout(20000)});
             if(!r.ok) throw Error('GitHub candidate verification failed'); return r.json();
           };
-          const pr = await get('/pulls/674');
-          if(pr.state!=='open'||pr.head.sha!==sha||pr.head.ref!=='fix/customer-sandbox-checkout-wiring-20260909'||pr.head.repo.full_name!=='PawSpaceIND/pawspace-tech-platform') throw Error('PR674 moved or candidate ownership mismatches');
+          const pr = await get('/pulls/736');
+          if(pr.state!=='closed'||pr.merged!==true||pr.head.sha!==sha||pr.head.ref!=='test/razorpay-recon-untrusted-evidence-20260911'||pr.head.repo.full_name!=='PawSpaceIND/pawspace-tech-platform') throw Error('Certified PR736 candidate ownership or merged state mismatches');
           const runs = (await get('/actions/runs?event=pull_request&head_sha='+sha+'&per_page=100')).workflow_runs;
           for(const name of ['Release CI','Pre-UAT Staging Protocol','Browser E2E (hardened, preview superuser disabled)','Browser E2E (personas, sandbox locked)']) {
             const run=runs.filter(r=>r.name===name).sort((a,b)=>b.id-a.id)[0];
             if(!run||run.status!=='completed'||run.conclusion!=='success') throw Error('Candidate certification incomplete: '+name);
           }
-          console.log('Exact PR674 candidate and four required workflow groups verified. This is not a payment capture claim.');
+          console.log('Exact merged PR736 candidate and four required workflow groups verified. This is not a payment capture claim.');
           NODE
       - name: Checkout immutable product candidate
         uses: actions/checkout@v4
