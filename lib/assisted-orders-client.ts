@@ -1,4 +1,4 @@
-export type AssistedOrderPet={sourceId:string;name:string;species:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
+export type AssistedOrderPet={sourceId:string;canonicalId?:string;name:string;species:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
 export type AssistedOrderCustomer={id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string;pets:AssistedOrderPet[]};
 export type AssistedOrderPackage={code:string;name:string;eligiblePetTypes:Array<"dog"|"cat"|"other">;singlePrice:number;multiPetPrice:number;version:string};
 export type AssistedOrderConfig={environment:"UAT";testOnly:true;liveMoney:false;serviceCode:"grooming";customers:AssistedOrderCustomer[];packages:AssistedOrderPackage[]};

@@ -58,10 +58,9 @@ test("a guarded read wrapped in chunkedIn does not pay its table guard once per 
 
   const result = await assertWithinBudget(
     harness,
-    // Eight guarded lookups. Memoised, their guards cost 8 reads for the whole request; charged per
-    // chunk they cost 8 x 63 = 504 on their own, which measured 1,012 subrequests in total and put
-    // the screen back over the ceiling the chunking was introduced to get it under.
-    { max: chunks * 8 + 60, label: "buildUnitEconomics over 5,000 bookings" },
+    // Nine guarded lookups, including redeemed feedback rewards. Memoised guards stay one read per
+    // table rather than one guard per chunk, keeping the large-booking report bounded.
+    { max: chunks * 9 + 60, label: "buildUnitEconomics over 5,000 bookings" },
     () => buildUnitEconomics(harness.db, {}),
   );
 

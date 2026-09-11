@@ -341,7 +341,7 @@ test("full chain: walking-flow booking path -> walking_sessions -> partner job f
   assert.equal(reconciliation.completedDueTotal, 698);
   assert.equal(reconciliation.paidTotal, 698);
   assert.equal(reconciliation.unpaidCompletedTotal, 0);
-  assert.equal(reconciliation.taxState, "configuration_required", "tax stays configuration_required in UAT");
+  assert.equal(reconciliation.taxState, "configuration_required", "Walking tax remains configuration_required until its own settlement convergence is closed");
 });
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ const defaults=[
   {id:"sit_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.7,qualityScore:89,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
   {id:"taxi_rahul",cityId:"blr",name:"Rahul K.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
   {id:"taxi_meera",cityId:"blr",name:"Meera S.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
-  {id:"taxi_imran",cityId:"blr",name:"Imran A.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.9,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
+  {id:"taxi_imran",cityId:"blr",name:"Imran A.",model:"full_time",services:[],zones:["blr-east"],rating:4.9,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
   {id:"walk_nisha",cityId:"blr",name:"Nisha P.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
   {id:"walk_kiran",cityId:"blr",name:"Kiran M.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
   {id:"walk_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:5.0,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},

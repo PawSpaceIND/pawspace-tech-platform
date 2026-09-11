@@ -32,13 +32,15 @@ export const REDEEM_RUPEE_PER_POINT=0.5;
 
 /** Funding value already applied to this booking, split by instrument. */
 export async function creditBreakdownAppliedToBooking(db:Db,bookingId:string){
- const [wallet,points]=await Promise.all([
+ const [wallet,points,reviewReward]=await Promise.all([
   db.prepare("SELECT COALESCE(SUM(applied_value),0) total FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_type='booking' AND source_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"pawspace_wallet_ledger")),
   db.prepare("SELECT COALESCE(SUM(-points),0) points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id=?").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"paw_points_ledger")),
+  db.prepare("SELECT COALESCE(SUM(COALESCE(applied_amount,discount_amount)),0) total FROM review_reward_codes WHERE status='redeemed' AND redeemed_booking_id=? AND discount_amount>0").bind(bookingId).first<Row>().catch(error=>missingLedgerOnly(error,"review_reward_codes")),
  ]);
  const walletApplied=round2(Math.max(0,Number(wallet?.total||0)));
  const pawPointsApplied=round2(Math.max(0,Number(points?.points||0))*REDEEM_RUPEE_PER_POINT);
- return{walletApplied,pawPointsApplied,totalApplied:round2(walletApplied+pawPointsApplied)};
+ const reviewRewardApplied=round2(Math.max(0,Number(reviewReward?.total||0)));
+ return{walletApplied,pawPointsApplied,reviewRewardApplied,totalApplied:round2(walletApplied+pawPointsApplied+reviewRewardApplied)};
 }
 
 /** Rupee value of the credit already applied to this booking, from every instrument. */
