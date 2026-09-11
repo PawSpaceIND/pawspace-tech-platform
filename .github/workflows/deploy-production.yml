@@ -87,6 +87,7 @@ jobs:
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
           META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
           META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: node scripts/assert-production-readiness.mjs
 
   deploy:
@@ -216,6 +217,7 @@ jobs:
           FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET }}
           PAWSPACE_PAYMENT_PILOT_BOOKING_IDS: ${{ secrets.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
@@ -230,7 +232,7 @@ jobs:
               "PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64", "PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64",
               "META_WHATSAPP_ACCESS_TOKEN", "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN",
               "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
-              "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET"
+              "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET", "SENTRY_DSN"
             ];
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
             if (Object.values(values).some(value => !value)) throw new Error("a required production provider, communication or identity secret is missing");
