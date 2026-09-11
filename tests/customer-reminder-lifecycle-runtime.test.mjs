@@ -47,7 +47,7 @@ function makeD1(sqlite) {
 }
 
 const DAY = 86_400_000;
-const NOW = 1770000000000;
+const NOW = 1770013800000;
 
 // QUIET HOURS. This suite computes its expectations against NOW, but enqueueCommunication takes no
 // asOf and reads Date.now() itself, and lib/communication-engine.ts turns a message whose policy
