@@ -16,6 +16,10 @@ const localBindingConfig = {
   compatibility_flags: ["nodejs_compat"],
   vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" },
   triggers:{crons:["*/5 * * * *","*/15 * * * *","15 2 * * *"]},
+  ratelimits:[
+    {name:"PUBLIC_CONTACT_RATE_LIMITER",namespace_id:"91011",simple:{limit:100,period:60 as const}},
+    {name:"AI_VOICE_UAT_RATE_LIMITER",namespace_id:"91012",simple:{limit:100,period:60 as const}},
+  ],
   d1_databases: d1
     ? [
         {

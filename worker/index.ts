@@ -1,5 +1,6 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
+import{withSentry}from"@sentry/cloudflare";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import{authorizePlatformSessionRequest}from"../lib/session-api-gateway";
@@ -34,12 +35,18 @@ import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
 import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
+import{runDpdpRetentionSweep}from"../app/api/cron/dpdp-retention/route";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   FOUNDER_EMAIL?: string;
   AI?: unknown;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
+  PAWSPACE_LOCAL_PREVIEW?: string;
+  PUBLIC_CONTACT_RATE_LIMITER?: {limit(input:{key:string}):Promise<{success:boolean}>};
+  AI_VOICE_UAT_RATE_LIMITER?: {limit(input:{key:string}):Promise<{success:boolean}>};
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -61,9 +68,18 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
+async function publicApiRateLimit(request:Request,env:Env,url:URL){
+  const limiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_UAT_RATE_LIMITER:null;
+  if(!limiter)return (url.pathname==="/api/public-contact"||url.pathname==="/api/ai-voice-uat")&&env.PAWSPACE_LOCAL_PREVIEW!=="on"?new Response("Rate limiter unavailable",{status:503}):null;
+  const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()||"unknown";
+  const result=await limiter.limit({key:`${url.pathname}:${ip}`});
+  return result.success?null:new Response("Too many requests",{status:429,headers:{"retry-after":"60"}});
+}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const rateLimitResponse=await publicApiRateLimit(request,env,url);if(rateLimitResponse)return secureApiResponse(rateLimitResponse);
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
     // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.
@@ -150,7 +166,8 @@ const worker = {
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily]=await Promise.allSettled([
+      const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:scheduled-worker"}):Promise.resolve({status:"not_due",failed:0});
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -170,6 +187,7 @@ const worker = {
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         executiveTask,
         atlasDailyTask,
+        dpdpRetentionTask,
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -191,10 +209,11 @@ const worker = {
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
       if(executive.status==="rejected")errors.push(`executive orchestrator: ${executive.reason instanceof Error?executive.reason.message:String(executive.reason)}`);
       if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
+      if(dpdpRetention.status==="rejected")errors.push(`dpdp retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);else if(Number(dpdpRetention.value.failed||0)>0)errors.push(`dpdp retention: ${dpdpRetention.value.failed} erasure exception(s)`);
       if(templateSyncError)errors.push(templateSyncError);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
 };
 
-export default worker;
+export default withSentry<Env>(env=>{const dsn=String(env.SENTRY_DSN||"").trim();if(!dsn)return undefined;return{dsn,environment:String(env.SENTRY_ENVIRONMENT||"production"),sendDefaultPii:false,tracesSampleRate:0.05};},worker);
