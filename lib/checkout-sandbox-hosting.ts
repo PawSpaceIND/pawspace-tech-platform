@@ -1,7 +1,8 @@
-/** Exact-candidate hosting policy for the separate PR674 sandbox. No network or secret logging. */
+/** Exact-candidate hosting policy for the separate certified checkout sandbox. No network or secret logging. */
 type Env = Record<string, string | undefined>;
 export const CHECKOUT_REPOSITORY = "PawSpaceIND/pawspace-tech-platform";
-export const CHECKOUT_BRANCH = "fix/customer-sandbox-checkout-wiring-20260909";
+export const CHECKOUT_BRANCH = "test/razorpay-recon-untrusted-evidence-20260911";
+export const CHECKOUT_CERTIFICATION_PR = 736;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const required = (env: Env, key: string) => {
   const value = String(env[key] ?? "").trim();
@@ -10,14 +11,14 @@ const required = (env: Env, key: string) => {
 };
 export function checkoutSandboxPlan(env: Env) {
   if (env.GITHUB_REPOSITORY !== CHECKOUT_REPOSITORY || env.GITHUB_REF !== "refs/heads/main" ||
-      env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.CONFIRM !== "checkout-sandbox-674") {
+      env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.CONFIRM !== "checkout-sandbox-736") {
     throw new Error("Checkout hosting requires a confirmed manual run from protected main");
   }
   const sha = required(env, "EXPECTED_SHA");
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("An exact lowercase product SHA is required");
   const runId = required(env, "GITHUB_RUN_ID"), attempt = required(env, "GITHUB_RUN_ATTEMPT");
   if (!/^[1-9][0-9]{0,19}$/.test(runId) || !/^[1-9][0-9]{0,5}$/.test(attempt)) throw new Error("Invalid run identity");
-  const worker = `pawspace-checkout-674-${runId}-${attempt}`;
+  const worker = `pawspace-checkout-736-${runId}-${attempt}`;
   const previewId = required(env, "RELEASE_PREVIEW_D1_ID").toLowerCase();
   if (!uuid.test(previewId)) throw new Error("Invalid frozen-preview database reference");
   // Production/shared-staging UUIDs are discovered from Cloudflare, not opaque legacy secrets.
@@ -70,9 +71,9 @@ export function checkoutSandboxConfig(artifact: Record<string, unknown>, plan: R
     },
   };
 }
-export function assertCheckoutCandidate(pr: { head?: { sha?: string; ref?: string; repo?: { full_name?: string } }; state?: string }, sha: string) {
-  if (pr.state !== "open" || pr.head?.sha !== sha || pr.head.ref !== CHECKOUT_BRANCH || pr.head.repo?.full_name !== CHECKOUT_REPOSITORY) {
-    throw new Error("PR674 moved or does not identify the approved same-repository candidate");
+export function assertCheckoutCandidate(pr: { head?: { sha?: string; ref?: string; repo?: { full_name?: string } }; state?: string; merged?: boolean }, sha: string) {
+  if (pr.state !== "closed" || pr.merged !== true || pr.head?.sha !== sha || pr.head.ref !== CHECKOUT_BRANCH || pr.head.repo?.full_name !== CHECKOUT_REPOSITORY) {
+    throw new Error("Certified checkout PR does not identify the approved merged same-repository candidate");
   }
 }
 
