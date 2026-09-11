@@ -22,27 +22,36 @@ const empty = () => ({ results: [] as Row[] });
 
 export async function runRevenueRecognitionSweep(db: Db, input: { asOf?: number } = {}) {
   await ensureRevenueRecognitionTables(db);
-  const at = new Date(input.asOf ?? Date.now()).toISOString().slice(0, 10);
   let subscriptionsOpened = 0, subscriptionSessionsRecognized = 0, advancesOpened = 0, advancesRecognized = 0;
 
   // 1) Prepaid grooming subscriptions: pack price comes from the source booking; sessions from the plan.
-  const subs = await db.prepare("SELECT s.id id,s.customer_id customer_id,s.total_sessions total,s.sessions_consumed consumed,b.total_amount amount FROM customer_grooming_subscriptions s JOIN canonical_bookings b ON b.id=s.source_booking_id JOIN booking_payments p ON p.booking_id=s.source_booking_id WHERE p.status='captured' AND b.total_amount>0").all<Row>().catch(empty);
+  const subs = await db.prepare("SELECT s.id id,s.customer_id customer_id,s.total_sessions total,s.sessions_consumed consumed,b.total_amount amount,p.updated_at paid_at FROM customer_grooming_subscriptions s JOIN canonical_bookings b ON b.id=s.source_booking_id JOIN booking_payments p ON p.booking_id=s.source_booking_id WHERE p.status='captured' AND b.total_amount>0").all<Row>().catch(empty);
   for (const s of subs.results) {
-    const opened = await recordDeferredRevenue(db, { sourceType: "subscription", sourceId: String(s.id), customerId: String(s.customer_id), serviceCode: "grooming", totalAmount: Number(s.amount), totalUnits: Number(s.total), collectedToBank: true, at, actorId: SYS }).catch(() => null);
+    const collectedAt=new Date(Number(s.paid_at||input.asOf||Date.now())).toISOString().slice(0,10);
+    const opened = await recordDeferredRevenue(db, { sourceType: "subscription", sourceId: String(s.id), customerId: String(s.customer_id), serviceCode: "grooming", totalAmount: Number(s.amount), totalUnits: Number(s.total), collectedToBank: true, at:collectedAt, actorId: SYS }).catch(() => null);
     if (opened && !opened.alreadyRecorded) subscriptionsOpened++;
     if (Number(s.consumed) > 0) {
-      const rec = await recognizeSubscriptionUsage(db, { sourceId: String(s.id), sessionsConsumed: Number(s.consumed), at, actorId: SYS }).catch(() => null) as Row | null;
-      if (rec && rec.recognized !== false && !rec.alreadyRecognized) subscriptionSessionsRecognized++;
+      // Recognise each consumed booking on its actual consumption/completion date, not the day this sweep happens.
+      const usages=await db.prepare("SELECT sessions_consumed,updated_at FROM booking_subscription_usage WHERE plan_code=? AND status='consumed' AND sessions_consumed>0 ORDER BY updated_at,id").bind(String(s.id)).all<Row>().catch(empty);
+      let cumulative=0;
+      for(const usage of usages.results){
+        cumulative+=Number(usage.sessions_consumed||0);
+        const usageAt=new Date(Number(usage.updated_at||input.asOf||Date.now())).toISOString().slice(0,10);
+        const rec=await recognizeSubscriptionUsage(db,{sourceId:String(s.id),sessionsConsumed:cumulative,at:usageAt,actorId:SYS}).catch(()=>null) as Row|null;
+        if(rec&&rec.recognized!==false&&!rec.alreadyRecognized)subscriptionSessionsRecognized++;
+      }
     }
   }
 
   // 2) Advance bookings: prepaid+captured, excluding subscription purchases and subscription-credit redemptions.
-  const advance = await db.prepare("SELECT b.id id,b.customer_id customer_id,b.service_code svc,b.total_amount amount,b.status status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE p.mode='prepaid' AND p.status='captured' AND b.total_amount>0 AND b.id NOT IN (SELECT source_booking_id FROM customer_grooming_subscriptions) AND b.id NOT IN (SELECT booking_id FROM booking_subscription_usage)").all<Row>().catch(empty);
+  const advance = await db.prepare("SELECT b.id id,b.customer_id customer_id,b.service_code svc,b.total_amount amount,b.status status,b.updated_at updated_at,p.updated_at paid_at FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE p.mode='prepaid' AND p.status='captured' AND b.total_amount>0 AND b.id NOT IN (SELECT source_booking_id FROM customer_grooming_subscriptions) AND b.id NOT IN (SELECT booking_id FROM booking_subscription_usage)").all<Row>().catch(empty);
   for (const b of advance.results) {
-    const opened = await recordDeferredRevenue(db, { sourceType: "advance_booking", sourceId: String(b.id), customerId: String(b.customer_id), serviceCode: String(b.svc), totalAmount: Number(b.amount), collectedToBank: true, at, actorId: SYS }).catch(() => null);
+    const collectedAt=new Date(Number(b.paid_at||input.asOf||Date.now())).toISOString().slice(0,10);
+    const opened = await recordDeferredRevenue(db, { sourceType: "advance_booking", sourceId: String(b.id), customerId: String(b.customer_id), serviceCode: String(b.svc), totalAmount: Number(b.amount), collectedToBank: true, at:collectedAt, actorId: SYS }).catch(() => null);
     if (opened && !opened.alreadyRecorded) advancesOpened++;
     if (String(b.status) === "completed") {
-      const rec = await recognizeAdvanceBooking(db, { sourceId: String(b.id), at, actorId: SYS }).catch(() => null) as Row | null;
+      const completedAt=new Date(Number(b.updated_at||input.asOf||Date.now())).toISOString().slice(0,10);
+      const rec = await recognizeAdvanceBooking(db, { sourceId: String(b.id), at:completedAt, actorId: SYS }).catch(() => null) as Row | null;
       if (rec && rec.recognized !== false) advancesRecognized++;
     }
   }

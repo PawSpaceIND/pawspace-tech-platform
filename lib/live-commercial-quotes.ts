@@ -2,6 +2,7 @@ import{createBoardingQuote,listBoardingPackages,type BoardingPaymentMode}from"./
 import{createSittingQuote,listSittingPackages,type SittingPaymentMode}from"./sitting-governance";
 import{resolveLivePrice}from"./live-pricing-resolver";
 import{splitPaymentPlan}from"./stay-split-payments";
+import{resolveProviderServiceRate}from"./provider-service-pricing";
 
 function requiredLocationScope(input:{cityId?:string;zoneId?:string}){
   const cityId=String(input.cityId||"").trim().toLowerCase(),zoneId=String(input.zoneId||"").trim().toLowerCase();
@@ -66,29 +67,32 @@ export async function listLiveSittingPackages(db:D1Database,scope:CataloguePrice
   }));
 }
 
-export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:BoardingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
+export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:BoardingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string;providerId?:string}){
   const scope=requiredLocationScope(input),quote=await createBoardingQuote(db,{...input,...scope});
   const live=await resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,cityId:scope.cityId,zoneId:scope.zoneId});
-  if(live.source==="fallback_default")return quote;
-  const totalAmount=live.price*quote.petCount*quote.stayUnits;
+  const provider=await resolveProviderServiceRate(db,{providerId:input.providerId,serviceCode:"boarding",packageCode:quote.packageCode,cityId:scope.cityId,zoneId:scope.zoneId,floorPrice:live.price,at:quote.scheduledStart});
+  if(live.source==="fallback_default"&&!provider.providerRate)return quote;
+  const finalPrice=provider.price,totalAmount=finalPrice*quote.petCount*quote.stayUnits;
   const amountDueNow=quote.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:quote.scheduledStart}).dueNow:totalAmount;
   // The priced UNIT is written back beside the priced total, so governBoardingBooking records a
   // decomposition that adds up to what was charged rather than the stale catalogue figure. [PTJA-W1-F15]
-  await db.prepare("UPDATE boarding_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,live.price,quote.quoteId).run();
-  return{...quote,basePricePerPet:live.price,totalAmount,amountDueNow};
+  await db.prepare("UPDATE boarding_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,finalPrice,quote.quoteId).run();
+  return{...quote,basePricePerPet:finalPrice,totalAmount,amountDueNow,priceSource:provider.source,providerId:input.providerId||null};
 }
 
-export async function createLiveSittingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:SittingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
+export async function createLiveSittingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:SittingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string;providerId?:string}){
   const scope=requiredLocationScope(input),quote=await createSittingQuote(db,{...input,...scope});
   const [base,extra]=await Promise.all([
     resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,cityId:scope.cityId,zoneId:scope.zoneId}),
     resolveLivePrice(db,{packageCode:`${quote.packageCode}__extra_pet`,fallbackPrice:quote.extraPetPrice,scheduledStart:quote.scheduledStart,cityId:scope.cityId,zoneId:scope.zoneId}),
   ]);
-  if(base.source==="fallback_default"&&extra.source==="fallback_default")return quote;
-  const unitAmount=base.price+Math.max(0,quote.petCount-1)*extra.price,totalAmount=unitAmount*quote.billableUnits;
+  const sittingHours=(new Date(quote.scheduledEnd).getTime()-new Date(quote.scheduledStart).getTime())/3_600_000,sittingRateKey=quote.mode==="overnight"?"sitting-24h":sittingHours<=4?"sitting-4h":"sitting-12h";
+  const provider=await resolveProviderServiceRate(db,{providerId:input.providerId,serviceCode:"pet_sitting",packageCode:sittingRateKey,cityId:scope.cityId,zoneId:scope.zoneId,floorPrice:base.price,at:quote.scheduledStart});
+  if(base.source==="fallback_default"&&extra.source==="fallback_default"&&!provider.providerRate)return quote;
+  const finalBase=provider.price,unitAmount=finalBase+Math.max(0,quote.petCount-1)*extra.price,totalAmount=unitAmount*quote.billableUnits;
   const amountDueNow=quote.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:quote.scheduledStart}).dueNow:totalAmount;
   // Both priced units, for the same reason. Whichever half resolved from Pricing Control is the one
   // that produced the total, and the other is the catalogue value this quote actually used. [PTJA-W1-F15]
-  await db.prepare("UPDATE sitting_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=?,priced_extra_pet_price=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,base.price,extra.price,quote.quoteId).run();
-  return{...quote,basePricePerPet:base.price,extraPetPrice:extra.price,totalAmount,amountDueNow};
+  await db.prepare("UPDATE sitting_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=?,priced_extra_pet_price=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,finalBase,extra.price,quote.quoteId).run();
+  return{...quote,basePricePerPet:finalBase,extraPetPrice:extra.price,totalAmount,amountDueNow,priceSource:provider.source,providerId:input.providerId||null};
 }
