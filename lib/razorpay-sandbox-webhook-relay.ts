@@ -1,5 +1,6 @@
 type Env=Record<string,unknown>;
 type FetchLike=(input:string|URL|Request,init?:RequestInit)=>Promise<Response>;
+type ServiceBinding={fetch:FetchLike};
 
 const text=(value:unknown)=>String(value??"").trim();
 const sha=/^[0-9a-f]{40}$/;
@@ -23,7 +24,9 @@ export function resolveRazorpaySandboxRelay(env:Env):RazorpaySandboxRelayConfig{
 
 export async function forwardVerifiedRazorpaySandboxWebhook(env:Env,input:{rawBody:string;signature:string;eventId:string;contentType?:string;fetchImpl?:FetchLike}){
  const config=resolveRazorpaySandboxRelay(env);if(!config.enabled)return{enabled:false as const,delivered:false as const};
- const fetchImpl=input.fetchImpl??fetch;
+ const service=env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_SERVICE as ServiceBinding|undefined;
+ const fetchImpl=input.fetchImpl??(service&&typeof service.fetch==="function"?service.fetch.bind(service):undefined);
+ if(!fetchImpl)return{enabled:true as const,delivered:false as const,status:0,targetSha:config.candidateSha,reason:"relay_service_binding_missing"};
  try{
   const response=await fetchImpl(`${config.targetOrigin}/api/razorpay-webhook`,{
    method:"POST",headers:{"content-type":input.contentType||"application/json","x-razorpay-signature":input.signature,"x-razorpay-event-id":input.eventId,"x-pawspace-relay-candidate-sha":config.candidateSha},
