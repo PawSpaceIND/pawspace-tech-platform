@@ -15,7 +15,7 @@ test("/api/inquiries is bound and exposes exactly ten governed inquiry categorie
  assert.equal(payload.ok,true);
  assert.equal(payload.data.serviceCategories.length,10);
  assert.deepEqual(payload.data.serviceCategories.map(item=>item.code),[
-  "grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","food","relocation","funeral_memorial","veterinary",
+  "grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","food","relocation","funeral_memorial","vet_consult",
  ]);
 });
 
