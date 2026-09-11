@@ -143,6 +143,23 @@ test("real execution: with every secret supplied, only NON-SECRET config is writ
   }
 });
 
+test("real execution: Razorpay sandbox relay binds only the exact certified checkout Worker service", () => {
+  const origin = "https://pawspace-checkout-736-34572823659-1.karthik-fce.workers.dev";
+  const sha = "a".repeat(40);
+  const result = runStageConfig({ ...GOOD, PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: origin, PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: sha });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.config.services, [{ binding: "PAWSPACE_RAZORPAY_SANDBOX_RELAY_SERVICE", service: "pawspace-checkout-736-34572823659-1" }]);
+  assert.equal(result.config.vars.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN, origin);
+  assert.equal(result.config.vars.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA, sha);
+  assert.ok(!String(result.config.compatibility_flags || []).includes("global_fetch_strictly_public"), "staging should not gain broad public Worker-to-Worker fetch authority");
+});
+
+test("real execution: staging carries no inherited service binding when Razorpay relay is disabled", () => {
+  const result = runStageConfig(GOOD, {});
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(!("services" in result.config));
+});
+
 test("real execution: no credential appears in the deploy output", () => {
   const result = runStageConfig(GOOD);
   const output = `${result.stdout}${result.stderr || ""}`;
