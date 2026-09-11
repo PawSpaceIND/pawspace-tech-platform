@@ -171,7 +171,9 @@ test("the upload carries the click id and the amount - and no customer PII", asy
     assert.doesNotMatch(serialized, new RegExp(CUSTOMER_NAME), "a customer name must never leave with a conversion");
     assert.doesNotMatch(call.url, /uat-fixture-token/, "the access token must not be in the URL, where it would be logged");
   }
-  const googleCall = provider.calls.find((call) => call.url.includes("datamanager.googleapis.com"));
+  const googleCall = provider.calls.find((call) => {
+    try { return new URL(call.url).hostname === "datamanager.googleapis.com"; } catch { return false; }
+  });
   assert.equal(googleCall.body.events[0].adIdentifiers.gclid, GCLID, "the click id is what makes the conversion attributable");
   assert.equal(googleCall.body.events[0].conversionValue, 1499);
 });
@@ -191,7 +193,9 @@ test("a sandbox environment never records a real conversion at an ad platform", 
   for (const row of result.results) {
     assert.equal(row.externalMutation, false, `${row.platform} must not mutate an ad account from sandbox`);
   }
-  const googleCall = provider.calls.find((call) => call.url.includes("datamanager.googleapis.com"));
+  const googleCall = provider.calls.find((call) => {
+    try { return new URL(call.url).hostname === "datamanager.googleapis.com"; } catch { return false; }
+  });
   if (googleCall) assert.equal(googleCall.body.validateOnly, true, "any sandbox Google call must be validate-only");
 });
 

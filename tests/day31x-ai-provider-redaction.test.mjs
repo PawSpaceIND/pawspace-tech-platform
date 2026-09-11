@@ -182,6 +182,6 @@ test("an empty or absent input is handled without throwing", async () => {
 
 test("the replacement token is a constant, not an ad-hoc string", async () => {
   assert.equal(EXTERNAL_AI_REDACTION, "[REDACTED]");
-  assert.match(leaks("rhea@example.com"), new RegExp(EXTERNAL_AI_REDACTION.replace(/[[\]]/g, "\\$&")),
+  assert.equal(leaks("rhea@example.com"), EXTERNAL_AI_REDACTION,
     "every redaction must use the same token, so a log search finds all of them");
 });
