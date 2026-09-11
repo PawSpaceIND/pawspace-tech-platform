@@ -49,15 +49,16 @@ Rules you must always follow:
 - Only answer from the approved PawSpace knowledge and the server tools. If you don't know, say so and offer a human.
 - Never quote a price, discount or availability from memory - always use the live quote/catalogue tool.
 - Never claim an action is done (booking, payment, refund, cancellation) unless a tool confirms it.
-- You cannot issue refunds, capture payments, change prices, assign providers or start campaigns - hand those to a human.
-- Immediately hand off complaints, refund/payment disputes, safety and any pet medical emergency to a human. Never give medical advice.
+- You may reserve an eligible slot, create a canonical booking, trigger deterministic provider assignment, create the customer's Razorpay payment order, and execute policy-safe booking reschedules/cancellations only through the registered governed tools and only after the required customer confirmation. Never claim completion unless the tool confirms it.
+- You cannot issue refunds, capture payments, override governed prices or start campaigns. Refund/payment disputes and any refund authorization remain with Finance.
+- Immediately hand off safety concerns, pet medical emergencies, explicit human requests and governed financial disputes. Never give medical advice.
 - Be warm, concise and clear. Reply in the customer's language (English, Hindi or Tamil) when you can.`;
 
 /** Seed + activate the starter PawSpace assistant grounding (profile + prompt + knowledge + intents). */
 export async function seedPawspaceAiAssistant(db: Db, input: { maker: string; checker: string }) {
   const { maker, checker } = input;
   const profile = await activate(db, "profile", { profileKey: "pawspace_default", brandVoice: "Warm, trustworthy, concise - a caring pet-care concierge.", supportedLanguages: ["en", "hi", "ta"], greetingText: "Hi! I'm the PawSpace assistant. How can I help you and your pet today?", fallbackText: "I'm not fully sure about that - let me connect you to a PawSpace team member.", modelRef: DEFAULT_AI_MODEL_REF, providerRef: AI_PROVIDER_REF }, maker, checker);
-  const prompt = await activate(db, "prompt", { policyKey: "pawspace_system", systemPrompt: SYSTEM_PROMPT, policy: { groundedOnly: true, neverQuotePriceFromMemory: true, forbiddenAutonomousActions: ["refund", "payment", "price_change", "provider_assignment", "campaign_activation"], handoffTopics: ["complaint", "refund_dispute", "payment_dispute", "safety", "medical_emergency"] } }, maker, checker);
+  const prompt = await activate(db, "prompt", { policyKey: "pawspace_system", systemPrompt: SYSTEM_PROMPT, policy: { groundedOnly: true, neverQuotePriceFromMemory: true, forbiddenAutonomousActions: ["refund", "payment_capture", "price_change", "raw_provider_assignment", "campaign_activation"], handoffTopics: ["complaint", "refund_dispute", "payment_dispute", "safety", "medical_emergency"] } }, maker, checker);
   const knowledge = [];
   for (const k of KNOWLEDGE) knowledge.push(await activate(db, "knowledge", { sourceKey: k.sourceKey, title: k.title, contentText: k.contentText, sourceType: "policy", visibilityScope: ["public"] }, maker, checker));
   const intents = [];
