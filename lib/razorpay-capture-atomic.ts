@@ -97,14 +97,15 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   const scheduleKind=staySchedule?"stay":taxiSchedule?"taxi":null;
   if (!payment) throw new Error("Atomic capture could not resolve canonical payment state");
 
-  // A capture we have ALREADY collected is a replay, whatever amount the repeat notification
-  // carries - its amount was validated when it was first accepted, and both expectations below move
-  // as instalments are collected. Resolving that first keeps a legitimate retry of an earlier
-  // instalment from being rejected as a mismatch once a later one has shifted the expectation.
+  // A capture we have ALREADY collected is a replay only when the prior evidence is trusted and
+  // matches this exact environment, amount, currency and gateway identity. The stage expectation can
+  // legitimately move after an instalment is collected, so trusted replay resolution still happens
+  // before validating the current due-now amount.
   const prior = await db.prepare(`SELECT id,event_id FROM payment_gateway_events
-    WHERE payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
+    WHERE provider='razorpay' AND environment=? AND payment_id=? AND event_type IN ${CAPTURE_TYPES} AND processing_status='processed'
+      AND ${trustedCaptureSql()} AND amount_subunits=? AND currency=?
       AND ((?<>'' AND gateway_payment_id=?) OR (?<>'' AND gateway_order_id=?))
-    LIMIT 1`).bind(input.paymentId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
+    LIMIT 1`).bind(input.environment, input.paymentId, input.amountPaise, input.currency, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)).first<Row>();
 
   if (intent) {
     if (text(intent.booking_id) !== input.bookingId || text(intent.payment_id) !== input.paymentId) throw new Error("Payment intent does not own the capture booking/payment");
@@ -131,6 +132,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     if (expectedPaise !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the linked payment expectation", expectedPaise, input.amountPaise);
     if (text(payment.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the linked payment");
   }
+
 
   const now = Date.now();
   const effectsOutboxId = `FO-CAP-${crypto.randomUUID()}`;

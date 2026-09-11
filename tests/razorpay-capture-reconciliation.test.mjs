@@ -85,6 +85,37 @@ test("provider API capture reconciliation closes a missing-webhook capture witho
   }
 });
 
+test("untrusted processed capture-like rows cannot suppress an authoritative provider reconciliation", async () => {
+  const h = world();
+  const { ensurePaymentReconciliationTables } = await import("../lib/grooming-payment-reconciliation.ts");
+  await ensurePaymentReconciliationTables(h.db);
+  const now = Date.now();
+  h.sqlite.prepare(`INSERT INTO payment_gateway_events
+    (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,failure_reason,detail_json,received_at,processed_at)
+    VALUES ('EV-UNTRUSTED','manual','sandbox','evt_untrusted_capture','payment.captured','BOOK-RECON','PAY-RECON','order_reconcile_1','pay_reconcile_1',NULL,100,'INR',0,'untrusted-hash','processed',NULL,'{}',?,?)`).run(now, now);
+  const originalFetch = globalThis.fetch;
+  let providerReads = 0;
+  globalThis.fetch = async () => {
+    providerReads += 1;
+    return new Response(JSON.stringify({ items: [{
+      id: "pay_reconcile_1", order_id: "order_reconcile_1", status: "captured", captured: true,
+      amount: 100, currency: "INR", notes: { booking_id: "BOOK-RECON", payment_id: "PAY-RECON" },
+    }] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const sweep = await captureReconciliation.runRazorpayCaptureReconciliationSweep(h.db, ENV, { asOf: Date.now(), graceMs: 30_000 });
+    assert.equal(providerReads, 1);
+    assert.equal(sweep.captured, 1, "the untrusted row must not be mistaken for collected money");
+    assert.equal(sweep.failed, 0);
+    assert.equal(h.row("SELECT state FROM payment_intents WHERE id='PI-RECON'")?.state, "CAPTURED");
+    assert.equal(h.row("SELECT status FROM booking_payments WHERE id='PAY-RECON'")?.status, "captured");
+    const trusted = h.row("SELECT signature_verified,detail_json FROM payment_gateway_events WHERE provider='razorpay' AND event_id='provider-api:capture:pay_reconcile_1'");
+    assert.equal(Number(trusted?.signature_verified), 0);
+    assert.equal(JSON.parse(String(trusted?.detail_json)).captureAuthority, "provider_api");
+    assert.equal(h.scalar("SELECT COUNT(*) value FROM journal_transactions WHERE source_type='razorpay_capture'"), 1);
+  } finally { globalThis.fetch = originalFetch; h.close(); }
+});
+
 test("capture reconciliation remains fail-closed for unapproved live payments", async () => {
   const h = world();
   const originalFetch = globalThis.fetch;
