@@ -13,6 +13,7 @@
  */
 
 import{ensureFoodGovernanceTables}from"./food-governance";
+import{ensureFoodFulfilmentTables}from"./food-fulfilment-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -86,6 +87,8 @@ export async function receiveFoodPurchaseOrder(db:Db,input:{purchaseOrderId:stri
  const batchId=uid("FBAT"),quantity=Number(po.quantity);
  await db.prepare("INSERT INTO food_stock_batches (id,purchase_order_id,supplier_id,kitchen_id,sku,zone_id,quantity_received,quantity_remaining,unit_cost,preparation_date,expiry_date,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'available',?,?)").bind(batchId,po.id,po.supplier_id,po.kitchen_id??null,po.sku,po.zone_id,quantity,quantity,Number(po.unit_cost),preparationDate,expiryDate,now,now).run();
  await db.prepare("INSERT INTO food_inventory_uat (sku,zone_id,available_units,reserved_units,status,updated_at) VALUES (?,?,?,0,'uat_seed',?) ON CONFLICT(sku,zone_id) DO UPDATE SET available_units=available_units+?,updated_at=?").bind(po.sku,po.zone_id,quantity,now,quantity,now).run();
+ await ensureFoodFulfilmentTables(db);
+ await db.prepare("INSERT OR IGNORE INTO food_uat_lots (id,sku,zone_id,lot_label,expiry_date,status,production_lot_verified,supply_chain_batch_id,supplier_id,unit_cost,created_at,updated_at) VALUES (?,?,?,?,?,'uat_available',0,?,?,?, ?,?)").bind(`FLOT-${batchId}`,po.sku,po.zone_id,`Received batch ${batchId}`,expiryDate,batchId,po.supplier_id,Number(po.unit_cost),now,now).run();
  return{purchaseOrderId:String(po.id),batchId,sku:String(po.sku),zoneId:String(po.zone_id),quantityReceived:quantity,preparationDate,expiryDate,status:"received",duplicatePrevented:false};
 }
 
