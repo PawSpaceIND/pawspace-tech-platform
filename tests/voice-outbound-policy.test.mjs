@@ -202,19 +202,20 @@ test("a city with no policy of its own gets the conservative default, not free r
 test("the frequency cap counts real dials only, and blocks the one over the line", async () => {
   const { sqlite, db, env } = await fresh();
   await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
-  // booking_confirmation allows 2 attempts; the city policy allows 5, so 2 is the binding cap.
+  // Global outbound governance allows one real voice dial per canonical identity in any rolling 14-day window.
   const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "cap-1" }));
   const second = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "cap-2" }));
   assert.equal(first.dialled, true);
-  assert.equal(second.dialled, true);
+  assert.equal(second.dialled, false);
+  assert.equal(second.state, "blocked_frequency_cap");
   const third = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "cap-3" }));
   assertRefused(sqlite, third, "blocked_frequency_cap", "frequency_cap");
-  assert.match(third.blockedDetail, /2\/2 in 24h/);
+  assert.match(third.blockedDetail, /1\/1 in 14d|limit 1 in 14 days/);
   // A refused call never reached the recipient, so it must not consume the allowance. Proven by counting
   // what the gate actually counted.
-  assert.equal(order(sqlite, third.callId).frequency_attempts_24h, 2, "the blocked attempts are not counted");
+  assert.equal(order(sqlite, third.callId).frequency_attempts_24h, 1, "the blocked attempts are not counted");
   // And the cap is a window, not a lifetime ban.
-  const later = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "cap-4", asOf: DAYTIME + 25 * 3600_000 }));
+  const later = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "cap-4", asOf: DAYTIME + 15 * 24 * 3600_000 }));
   assert.equal(later.dialled, true, "the window rolls");
 });
 
@@ -292,18 +293,11 @@ test("a retry re-proves the whole gate, is correlated, and is bounded", async ()
   const retry = await gov.retryVoiceCall(db, env, { callId: first.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME });
   assert.equal(retry.retryOf, first.callId, "correlated to the original");
   assert.equal(retry.retryAttempt, 1);
-  assert.equal(retry.dialled, true);
+  assert.equal(retry.dialled, false);
+  assert.equal(retry.state, "blocked_frequency_cap");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_policy_decisions WHERE call_id=?").get(retry.callId).c, 10, "the retry re-ran every check");
 
-  // booking_confirmation allows 2 attempts total, so a second retry has none left.
-  await gov.transitionVoiceCall(db, { callId: retry.callId, to: "busy", reason: "provider", actor: "test", asOf: DAYTIME });
-  await assert.rejects(() => gov.retryVoiceCall(db, env, { callId: retry.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME }), /no retry remains/);
-  const terminal=sqlite.prepare("SELECT contact_id,status,disposition,disposition_detail,completed_at FROM crm_tasks WHERE id=?").get(`VOICE-RETRY-${first.callId}`);
-  assert.equal(terminal.contact_id,"CON-V1");
-  assert.equal(terminal.status,"Closed");
-  assert.equal(terminal.disposition,"voice_retry_exhausted");
-  assert.match(terminal.disposition_detail,/hard retry limit 2/);
-  assert.ok(terminal.completed_at>0,"terminal retry disposition is timestamped");
+  // The first real dial consumes the 14-day identity allowance, so retries remain policy-blocked until the window expires.
 });
 
 test("a policy refusal is never retryable - the decision would just be re-made", async () => {
@@ -355,10 +349,10 @@ test("a call that asks for a human gets a real case in the queue Ops works", asy
 });
 
 test("a speech-stack failure mid-call can still reach a human", async () => {
-  const { sqlite, db, env } = await fresh();
-  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
   for (const kind of ["stt", "tts"]) {
-    const call = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `speech-${kind}`, asOf: DAYTIME + (kind === "tts" ? 1 : 0) }));
+    const { sqlite, db, env } = await fresh();
+    await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+    const call = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `speech-${kind}`, asOf: DAYTIME }));
     await gov.transitionVoiceCall(db, { callId: call.callId, to: "connected", reason: "answered", actor: "test", asOf: DAYTIME });
     await gov.recordVoiceSpeechFailure(db, { callId: call.callId, kind, reason: `${kind} provider timed out`, actorId: "bot@pawspace.in", asOf: DAYTIME });
     const row = order(sqlite, call.callId);
@@ -475,18 +469,17 @@ test("a dry-run policy preview creates nothing and dials nothing", async () => {
 test("concurrent requests for the same recipient cannot exceed the frequency cap", async () => {
   const { sqlite, db, env } = await fresh();
   await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
-  // booking_confirmation allows 2 attempts in 24h. Five requests fired without awaiting each other all
-  // read the same advisory count, so only the atomic dial-slot claim can bound them.
+  // Five requests fired without awaiting each other all read the same advisory count; the atomic slot must enforce one voice dial per 14 days.
   const results = await Promise.all(Array.from({ length: 5 }, (_, index) =>
     gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `race-${index}` }))));
   const dialled = results.filter(result => result.dialled);
-  assert.equal(dialled.length, 2, `exactly the cap was dialled, got ${dialled.length}`);
+  assert.equal(dialled.length, 1, `exactly the cap was dialled, got ${dialled.length}`);
   const refused = results.filter(result => !result.dialled);
-  assert.equal(refused.length, 3);
+  assert.equal(refused.length, 4);
   assert.ok(refused.every(result => result.state === "blocked_frequency_cap"), refused.map(r => r.state).join(","));
   // Proved against the database, not the return values.
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 2);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_dial_reservations WHERE released_at IS NULL").get().c, 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_dial_reservations WHERE released_at IS NULL").get().c, 1);
 });
 
 test("a dial the provider refused gives the recipient's allowance back", async () => {
@@ -495,11 +488,9 @@ test("a dial the provider refused gives the recipient's allowance back", async (
   const failed = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-1", simulatedOutcome: "failed" }));
   assert.equal(failed.state, "provider_unavailable");
   assert.equal(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(failed.callId).released_at != null, true);
-  // The failed attempt never reached the recipient, so both real attempts are still available.
-  for (const key of ["release-2", "release-3"]) {
-    assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: key }))).dialled, true, key);
-  }
-  assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-4" }))).state, "blocked_frequency_cap");
+  // The failed provider attempt releases the slot, so exactly one subsequent real dial remains available.
+  assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-2" }))).dialled, true, "release-2");
+  assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-3" }))).state, "blocked_frequency_cap");
 });
 
 test("concurrent requests with one idempotency key produce one call, not a raw SQL error", async () => {
@@ -596,7 +587,8 @@ test("one canonical E.164 number is stored, dialled and reused by every retry", 
   // A retry must dial exactly what the original dialled, not the stored audit key.
   await gov.transitionVoiceCall(db, { callId: first.callId, to: "no_answer", reason: "provider", actor: "test", asOf: DAYTIME });
   const retry = await gov.retryVoiceCall(db, env, { callId: first.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME });
-  assert.equal(retry.dialled, true);
+  assert.equal(retry.dialled, false);
+  assert.equal(retry.state, "blocked_frequency_cap");
   assert.equal(order(sqlite, retry.callId).dial_number, "+919876543210");
 
   await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "canon-bad", phone: "98765x43210" })), /dialable number/);
@@ -683,10 +675,10 @@ test("the weekly marketing cap is enforced atomically, not just read", async () 
   assert.equal(dialled.length, 1, `the weekly marketing cap of 1 bound the fan-out, got ${dialled.length}`);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 1);
   assert.ok(results.filter(r => !r.dialled).every(r => r.state === "blocked_frequency_cap"), results.map(r => r.state).join(","));
-  // A transactional call to the same number is not marketing, so the weekly marketing window does not
-  // bind it - the cap is per-purpose, not a blanket lock on the recipient.
+  // The global 14-day voice cap is channel-wide, so a transactional call to the same identity is also blocked.
   const transactional = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "weekly-txn" }));
-  assert.equal(transactional.dialled, true);
+  assert.equal(transactional.dialled, false);
+  assert.equal(transactional.state, "blocked_frequency_cap");
 });
 
 test("different status callbacks on one call are all applied; only identical ones deduplicate", async () => {
@@ -725,7 +717,8 @@ test("controlled carrier UAT bypasses only historical recipient frequency while 
   const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "bounded-normal-1" }));
   const second = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "bounded-normal-2" }));
   assert.equal(first.dialled, true);
-  assert.equal(second.dialled, true);
+  assert.equal(second.dialled, false);
+  assert.equal(second.state, "blocked_frequency_cap");
 
   const spoofed = await gov.requestOutboundVoiceCall(db, env, callInput({
     idempotencyKey: "voice-carrier-uat:spoofed-public-call",
@@ -751,7 +744,7 @@ test("controlled carrier UAT bypasses only historical recipient frequency while 
 
   const replay = await gov.requestControlledCarrierUatCall(db, env, controlledInput);
   assert.equal(replay.duplicatePrevented, true, "the same controlled idempotency key cannot create a second external retry");
-  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().n, 3, "two ordinary dials plus exactly one controlled dial");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().n, 2, "one ordinary dial plus exactly one controlled dial");
 });
 
 test("controlled carrier UAT helper fails closed outside approvals, allowlist and dedicated key", async () => {
@@ -777,4 +770,16 @@ test("controlled carrier UAT helper fails closed outside approvals, allowlist an
     () => gov.requestControlledCarrierUatCall(db, env, { ...controlledInput, idempotencyKey: "not-dedicated" }),
     /dedicated voice-carrier-uat idempotency key/,
   );
+});
+
+test("max retry exhaustion writes a CRM disposition and releases the recipient dial lock", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "retry-exhausted", useCase: "feedback_request" }));
+  await gov.transitionVoiceCall(db, { callId: first.callId, to: "ringing", reason: "provider", actor: "test", asOf: DAYTIME });
+  await gov.transitionVoiceCall(db, { callId: first.callId, to: "no_answer", reason: "provider", actor: "test", asOf: DAYTIME });
+  assert.equal(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(first.callId).released_at, null);
+  await assert.rejects(() => gov.retryVoiceCall(db, env, { callId: first.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME }), /no retry remains/);
+  assert.ok(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(first.callId).released_at);
+  assert.equal(sqlite.prepare("SELECT last_outcome FROM lead_work_items WHERE id='LEAD-V1'").get().last_outcome, "voice_terminal:retry_exhausted");
 });

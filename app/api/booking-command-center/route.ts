@@ -58,7 +58,7 @@ async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveMana
     ]);
     bookings.push({...row,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
   }
-  return{source:"canonical UAT database live stream",bookings,organizationalScope:scope??"global"};
+  return{source:"canonical UAT database snapshot + live stream",bookings,organizationalScope:scope??"global"};
 }
 
 async function bookingStatusFingerprint(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){

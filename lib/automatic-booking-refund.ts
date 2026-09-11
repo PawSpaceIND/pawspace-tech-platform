@@ -121,9 +121,27 @@ export async function runAutomaticBookingRefundSweep(
         FROM booking_refund_cases
         WHERE booking_id=? AND id<>? AND status IN ('approved','processing','processed','completed')`)
         .bind(bookingId, refundCaseId).first<Row>();
+      /*
+       * What has ALREADY gone back to this customer, taking the larger of the two records of it.
+       *
+       * The guard used to count only other booking_refund_cases, and rec.refunded_amount was
+       * SELECTed a few lines above and never read. A refund issued straight from the Razorpay
+       * dashboard - which a support agent genuinely does - produces a refund.processed webhook
+       * that moves refunded_amount but opens no refund case at all. This sweep runs unattended and
+       * initiates real refunds on a policy flag, so against a Rs 4,000 capture already refunded
+       * Rs 3,000 outside the case system it saw "no other cases", approved the full Rs 4,000, and
+       * sent Rs 7,000 back on a Rs 4,000 booking with no human involved.
+       *
+       * max() rather than a sum, because the two are usually the SAME refund seen from two sides:
+       * a processed case that the gateway already reflects must count once, or a legitimate
+       * remaining refund would be blocked. Whichever ledger has seen more is the safe figure.
+       * [D31-W1c]
+       */
       const requested = money(row.refund_amount), alreadyCommitted = money(prior?.total);
-      if (alreadyCommitted + requested > captured + 0.009) {
-        throw new Error(`refund would exceed captured funds (${alreadyCommitted}+${requested}>${captured})`);
+      const gatewayRefunded = money(row.refunded_amount);
+      const alreadyRefunded = Math.max(alreadyCommitted, gatewayRefunded);
+      if (alreadyRefunded + requested > captured + 0.009) {
+        throw new Error(`refund would exceed captured funds (already ${alreadyRefunded} [cases ${alreadyCommitted}, gateway ${gatewayRefunded}] + ${requested} > captured ${captured})`);
       }
 
       const status = text(row.refund_status);

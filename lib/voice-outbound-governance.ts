@@ -24,6 +24,7 @@
 import { chunkedIn } from "./d1-chunked-in";
 import { createUnifiedCase } from "./unified-case-center";
 import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationPurpose } from "./communication-engine";
+import { centralConsentAllows, recordGlobalOptOut } from "./communication-governance";
 import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
 import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_CALL_STATES, VOICE_RETRYABLE_STATES, VOICE_TERMINAL_STATES, type VoiceCallState } from "./voice-call-state";
 import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
@@ -98,6 +99,7 @@ export async function ensureVoiceCallTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,purpose TEXT NOT NULL DEFAULT 'unknown',reserved_at INTEGER NOT NULL,released_at INTEGER)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS crm_tasks (id TEXT PRIMARY KEY,contact_id TEXT,title TEXT NOT NULL,owner TEXT NOT NULL,due_at INTEGER,priority TEXT DEFAULT 'Normal',status TEXT DEFAULT 'Open',created_at INTEGER NOT NULL,disposition TEXT,disposition_detail TEXT,completed_at INTEGER)"),
   ]);
 }
 
@@ -166,6 +168,8 @@ export async function recordVoiceOptOut(db: Db, input: { phone: string; source: 
   const phoneKey = normalisedDialKey(input.phone);
   if (!phoneKey) throw new Error("A real phone number is required to record a voice opt-out");
   const now = input.asOf ?? Date.now();
+  const customer=await db.prepare("SELECT id FROM canonical_customers WHERE replace(replace(replace(replace(replace(primary_phone,' ',''),'+',''),'-',''),'(',''),')','') LIKE ? OR replace(replace(replace(replace(replace(secondary_phone,' ',''),'+',''),'-',''),'(',''),')','') LIKE ? LIMIT 1").bind(`%${phoneKey.slice(-10)}`,`%${phoneKey.slice(-10)}`).first<Row>().catch(()=>null);
+  if(customer?.id)await recordGlobalOptOut(db,{customerId:text(customer.id),source:text(input.source)||"voice_call",actorId:input.actorId,asOf:now});
   await db.batch([
     db.prepare("INSERT INTO voice_call_opt_outs (phone_key,source,reason,recorded_by,recorded_at) VALUES (?,?,?,?,?) ON CONFLICT(phone_key) DO UPDATE SET source=excluded.source,reason=excluded.reason,recorded_by=excluded.recorded_by,recorded_at=excluded.recorded_at")
       .bind(phoneKey, text(input.source) || "voice_call", text(input.reason) || null, input.actorId, now),
@@ -228,7 +232,7 @@ async function quietHoursPolicy(db: Db, cityId: string) {
   // applies rather than "no restriction".
   return row
     ? { quietStart: Number(row.quiet_start_hour), quietEnd: Number(row.quiet_end_hour), promotionalCap7d: Number(row.promotional_cap_7d), maxAttempts: Number(row.max_attempts), source: "city_policy" }
-    : { quietStart: 21, quietEnd: 8, promotionalCap7d: 1, maxAttempts: 1, source: "conservative_default" };
+    : { quietStart: 21, quietEnd: 9, promotionalCap7d: 1, maxAttempts: 1, source: "conservative_default" };
 }
 
 /**
@@ -291,17 +295,17 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
 
   // Only calls that actually dialled count towards the cap. A call the gate refused never reached the
   // recipient, so counting it would let one blocked attempt suppress a legitimate later one.
-  const attempts = phoneKey ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 86_400_000).first<Row>() : null;
+  const attempts = phoneKey ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 14 * 86_400_000).first<Row>() : null;
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
-  const dailyCap = Math.min(useCase?.maxAttempts ?? 1, policy.maxAttempts);
+  const dailyCap = 1;
   const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
   const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
   add("frequency_cap", capOk, "blocked_frequency_cap",
     frequencyCapIsolated
-      ? `Controlled carrier UAT one-shot is isolated from historical recipient frequency (${attempts24h} prior dial(s) in 24h); normal caps remain unchanged`
-      : capOk ? `${attempts24h} of ${dailyCap} attempts used in the last 24h`
-        : `Frequency cap reached (${attempts24h}/${dailyCap} in 24h${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
+      ? `Controlled carrier UAT one-shot is isolated from historical recipient frequency (${attempts24h} prior dial(s) in 14d); normal caps remain unchanged`
+      : capOk ? `${attempts24h} of ${dailyCap} calls used in the last 14 days`
+        : `Frequency cap reached (${attempts24h}/${dailyCap} in 14d${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
 
   const provider = selectTelephonyProvider(env);
   const providerOk = provider.status === "connected" || provider.status === "simulated";
@@ -325,7 +329,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
-    dailyCap, capWindowStart: now - 86_400_000,
+    dailyCap, capWindowStart: now - 14 * 86_400_000,
     frequencyCapIsolated,
     marketingCap: useCase?.purpose === "marketing" ? policy.promotionalCap7d : null,
     marketingWindowStart: now - 7 * 86_400_000,
@@ -362,6 +366,21 @@ async function claimDialSlot(db: Db, input: { callId: string; phoneKey: string; 
 
 async function releaseDialSlot(db: Db, callId: string, now: number) {
   await db.prepare("UPDATE voice_call_dial_reservations SET released_at=? WHERE call_id=? AND released_at IS NULL").bind(now, callId).run();
+}
+
+async function recordTerminalVoiceDisposition(db: Db, callId: string, disposition: string, now: number) {
+  const call = await db.prepare("SELECT lead_id,customer_id,use_case FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
+  if (!call) return;
+  await releaseDialSlot(db, callId, now);
+  const value = `voice_terminal:${text(disposition).replace(/\s+/g, "_").toLowerCase().slice(0, 80)}`;
+  const leadId = text(call.lead_id);
+  if (leadId) {
+    await db.prepare("UPDATE lead_work_items SET last_outcome=?,updated_at=? WHERE id=?").bind(value, now, leadId).run().catch(() => undefined);
+    return;
+  }
+  const customerId = text(call.customer_id);
+  if (customerId) await db.prepare("INSERT OR IGNORE INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,'Voice automation',NULL,'Normal','Completed',?)")
+    .bind(`VOICE-DISP-${callId}`, customerId, `Voice ${text(call.use_case) || "call"}: ${value}`, now).run();
 }
 
 /**
@@ -489,6 +508,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
   // 1. Consent and opt-out re-read. The gate's decision is a snapshot; a customer can withdraw in the
   //    gap before the dial, and a refusal recorded seconds ago must win over a slightly older approval.
   const still = await consentStillHolds(db, phoneKey, text(input.leadId));
+  const customerId=text(input.customerId);
+  if(customerId && !await centralConsentAllows(db,customerId,"voice")){await applyTransition(db,{callId:id,to:"blocked_opt_out",reason:"Global communication opt-out is active",actor:input.actorId,detail:{centralConsent:true},asOf:now});const row=await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();return{duplicatePrevented:false,dialled:false,blockedBy:"global_opt_out",blockedDetail:"Global communication opt-out is active",policyChecks:policy.checks,...summarise(row!)}}
   if (!still.ok) {
     await applyTransition(db, { callId: id, to: still.state!, reason: still.reason!, actor: input.actorId, detail: { revalidatedBeforeDial: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
@@ -496,8 +517,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
   }
   // 2. The frequency cap, claimed atomically. The count the gate read is advisory - it produces a good
   //    audit message - but this single statement is what actually bounds concurrent dials.
-  if (!policy.frequencyCapIsolated && !(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: policy.dailyCap, windowStart: policy.capWindowStart, now, marketingCap: policy.marketingCap, marketingWindowStart: policy.marketingWindowStart }))) {
-    const reason = `Frequency cap for this recipient was reached by a concurrent request (limit ${policy.dailyCap} in 24h)`;
+  if (!policy.frequencyCapIsolated && !(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: 1, windowStart: now-14*86_400_000, now, marketingCap: null, marketingWindowStart: now-14*86_400_000 }))) {
+    const reason = `Frequency cap for this recipient was reached by a concurrent request (limit 1 in 14 days)`;
     await applyTransition(db, { callId: id, to: "blocked_frequency_cap", reason, actor: input.actorId, detail: { concurrentClaim: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
     return { duplicatePrevented: false, dialled: false, blockedBy: "frequency_cap", blockedDetail: reason, policyChecks: policy.checks, ...summarise(row!) };
@@ -521,6 +542,7 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
     // allowance for the day.
     await releaseDialSlot(db, id, now);
     await applyTransition(db, { callId: id, to: unavailable ? "provider_unavailable" : "provider_error", reason: String((error as Error).message).slice(0, 200), actor: input.actorId, asOf: now });
+    await recordTerminalVoiceDisposition(db, id, unavailable ? "provider_unavailable" : "provider_error", now);
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
     return { duplicatePrevented: false, dialled: false, blockedBy: null, blockedDetail: String((error as Error).message).slice(0, 200), policyChecks: policy.checks, ...summarise(row!) };
   }
@@ -603,7 +625,9 @@ export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; 
   const attempt = Number(attempts?.n || 0) + 1;
   if (useCase && attempt >= useCase.maxAttempts) {
     const terminal=await db.prepare("SELECT * FROM voice_call_orders WHERE id=? OR retry_of=? ORDER BY retry_attempt DESC,requested_at DESC LIMIT 1").bind(root,root).first<Row>()||original;
-    await recordVoiceRetryExhausted(db,terminal,input.asOf??Date.now());
+    const terminalAt=input.asOf??Date.now();
+    await recordTerminalVoiceDisposition(db,text(original.id),"retry_exhausted",terminalAt);
+    await recordVoiceRetryExhausted(db,terminal,terminalAt);
     throw new Error(`${useCase.code} allows ${useCase.maxAttempts} attempt(s); no retry remains`);
   }
   return requestOutboundVoiceCall(db, env, {
@@ -782,6 +806,7 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
       await applyTransition(db, { callId, to: bridge, reason: `Inferred ${bridge} from provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: { ...curated, inferred: true }, asOf: now });
     }
     const applied = await applyTransition(db, { callId, to: target, reason: `Provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: curated, asOf: now });
+    if (["no_answer", "busy", "provider_error", "provider_unavailable"].includes(target)) await recordTerminalVoiceDisposition(db, callId, event.kind, now);
     await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, eventKey).run();
     const retryTermination=["no_answer","busy","provider_error"].includes(target)?await recordVoiceRetryExhausted(db,call,now):null;
     return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, retryTermination, eventKind: event.kind, eventId: eventKey };

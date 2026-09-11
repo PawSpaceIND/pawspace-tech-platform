@@ -35,7 +35,7 @@ export default function PartnerOnboardingUatPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [form, setForm] = useState({ verticalKey: "grooming", countryCode: "IN", regionCode: "KA", cityCode: "BLR", localeCode: "en", displayName: "", businessName: "", bio: "" });
+  const [form, setForm] = useState({ verticalKey: "grooming", countryCode: "IN", regionCode: "KA", cityCode: "BLR", localeCode: "en", displayName: "", businessName: "", bio: "", providerModel: "commission", workEmail: "" });
   const [docType, setDocType] = useState("government_id");
   const [bioBusy, setBioBusy] = useState(false);
   const [bioError, setBioError] = useState("");
@@ -277,6 +277,15 @@ export default function PartnerOnboardingUatPage() {
               <label className={styles.field}><span>Business name</span>
                 <input value={form.businessName} onChange={e => setForm({ ...form, businessName: e.target.value })} />
               </label>
+              <label className={styles.field}><span>Engagement model</span>
+                <select value={form.providerModel} onChange={e => setForm({ ...form, providerModel: e.target.value })}>
+                  <option value="commission">Commission based</option>
+                  <option value="full_time">Full-time contract partner</option>
+                </select>
+              </label>
+              {form.providerModel === "full_time" ? <label className={styles.field}><span>Work email for People access</span>
+                <input type="email" value={form.workEmail} onChange={e => setForm({ ...form, workEmail: e.target.value })} placeholder="name@pawspace.in" />
+              </label> : null}
               <label className={styles.field}><span>Your bio</span>
                 <textarea rows={4} style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid var(--ps-border)", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} placeholder="A short, friendly line about you - or draft one with AI below and edit it." />
               </label>
@@ -285,7 +294,7 @@ export default function PartnerOnboardingUatPage() {
               </button>
               {bioError ? <p className={styles.errorBox} role="alert" style={{ marginTop: 10 }}>{bioError}</p> : null}
               <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>AI can suggest a starting point, but it&apos;s only ever a draft - review and edit it before saving, and it&apos;s never shown to customers until you save your profile yourself.</p>
-              <button className={styles.btn} disabled={busy || !form.displayName || !form.businessName} onClick={() => void post({ action: "save_profile", applicationId: appId, payload: { displayName: form.displayName, businessName: form.businessName, bio: form.bio, services: [text(app?.vertical_key)], serviceAreas: [text(app?.city_code)], languages: [text(app?.locale_code) || "en"], businessDetails: {}, packageDetails: [], facilityDetails: {}, references: [] } })}>
+              <button className={styles.btn} disabled={busy || !form.displayName || !form.businessName || (form.providerModel === "full_time" && !form.workEmail.trim())} onClick={() => void post({ action: "save_profile", applicationId: appId, payload: { displayName: form.displayName, businessName: form.businessName, bio: form.bio, services: [text(app?.vertical_key)], serviceAreas: [text(app?.city_code)], languages: [text(app?.locale_code) || "en"], businessDetails: { providerModel: form.providerModel, workEmail: form.providerModel === "full_time" ? form.workEmail.trim() : null }, packageDetails: [], facilityDetails: {}, references: [] } })}>
                 Save profile
               </button>
               <p>Home or facility photos stay private by default. Saving your profile alone doesn&apos;t start bringing you bookings yet.</p>

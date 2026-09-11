@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks();
+const { CONFIRMABLE_SAFE_MUTATIONS, NEVER_AUTONOMOUS_TOOLS } = await import("../lib/ai-first-control-plane.ts");
 import fs from "node:fs";
 
 const read=(p)=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8");
 
 test("P0 AI mutations are canonical tools, not Ops case requests",()=>{
+  assert.equal(CONFIRMABLE_SAFE_MUTATIONS.has("schedule.reserve"),true);
+  assert.equal(NEVER_AUTONOMOUS_TOOLS.has("refund.issue"),true);
   const registry=read("lib/ai-tool-registry.ts");
   for(const tool of ["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"])
     assert.match(registry,new RegExp(tool.replaceAll(".","\\.")));

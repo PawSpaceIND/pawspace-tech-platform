@@ -1,4 +1,5 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
+import * as Sentry from "@sentry/cloudflare";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
@@ -31,14 +32,22 @@ import{secureApiResponse}from"../lib/api-security-headers";
 import{requestForAuthorization}from"../lib/trusted-workspace-identity";
 import{drainGatewayInboundQueue,purgeExpiredInboundPayloads}from"../lib/gateway-inbound-queue";
 import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
+import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
+import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
-import * as Sentry from"@sentry/cloudflare";
+
+interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   FOUNDER_EMAIL?: string;
   AI?: unknown;
+  SENTRY_DSN?:string;
+  PAWSPACE_DEPLOYMENT_ENV?:string;
+  PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
+  PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
+  AI_VOICE_RATE_LIMITER?:RateLimitBinding;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -46,9 +55,6 @@ interface Env {
       };
     };
   };
-  PUBLIC_CONTACT_RATE_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
-  AI_VOICE_RATE_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
-  SENTRY_DSN?:string;
   [key:string]:unknown;
 }
 
@@ -63,12 +69,9 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
-async function nativePublicRateLimit(request:Request,env:Env,url:URL){const binding=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;if(!binding)return null;const ip=String(request.headers.get("cf-connecting-ip")||"").trim();if(!ip)return new Response("Request origin could not be verified",{status:429});const result=await binding.limit({key:`${url.pathname}:${ip}`});return result.success?null:new Response("Rate limit exceeded",{status:429,headers:{"retry-after":"60"}});}
-function financialMutationPath(request:Request,url:URL){return !["GET","HEAD","OPTIONS"].includes(request.method.toUpperCase())&&/(payment|refund|payout|finance|settlement|razorpay)/i.test(url.pathname);}
-
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);const limited=await nativePublicRateLimit(request,env,url);if(limited)return limited;
+    const url = new URL(request.url);
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
     // its own carrier authentication and no unrelated finance DDL runs before that identity is checked.
@@ -78,8 +81,11 @@ const worker = {
     // authenticates with the short-lived HMAC in lib/voice-ai-self-test and is UAT-only/allow-list-only.
     if(url.pathname==="/voice/ai-self-test/negotiate")return handleAiVoiceSelfTestNegotiate(request,env as unknown as Record<string,unknown>);
     if(url.pathname==="/voice/ai-self-test")return handleAiVoiceSelfTestStream(request,env as unknown as Record<string,unknown>);
+    if(url.pathname==="/api/admin/atlas-chat"&&(request.headers.get("upgrade")||"").toLowerCase()==="websocket")return handleAtlasWebSocket(request);
 
     if (url.pathname.startsWith("/api/")) {
+      const edgeLimiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;
+      if(edgeLimiter){const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()||"unknown";const decision=await edgeLimiter.limit({key:`${url.pathname}:${ip}`});if(!decision.success)return secureApiResponse(Response.json({error:"Too many requests"},{status:429,headers:{"retry-after":"60","cache-control":"no-store"}}));}
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
@@ -121,7 +127,7 @@ const worker = {
       }, allowedWidths);
     }
 
-    try{const response=await handler.fetch(request,env,ctx);if(response.status>=400&&financialMutationPath(request,url))Sentry.captureMessage("Financial mutation failed",{level:response.status>=500?"error":"warning",tags:{method:request.method,path:url.pathname,status:String(response.status)}});return response;}catch(error){Sentry.captureException(error,{tags:{method:request.method,path:url.pathname}});throw error;}
+    return handler.fetch(request, env, ctx);
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
@@ -152,7 +158,9 @@ const worker = {
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,dpdpRetention]=await Promise.allSettled([
+      const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
+      const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention"}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,atlasDaily,dpdpRetention]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -170,7 +178,8 @@ const worker = {
         runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
         runExotelStaleCallReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:10}),
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
-        runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,limit:100}),
+        atlasDailyTask,
+        dpdpRetentionTask,
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -190,11 +199,12 @@ const worker = {
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
       if(exotelVoiceReconciliation.status==="rejected")errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.reason instanceof Error?exotelVoiceReconciliation.reason.message:String(exotelVoiceReconciliation.reason)}`);else if(exotelVoiceReconciliation.value.failed)errors.push(`exotel voice reconciliation: ${exotelVoiceReconciliation.value.failed} call(s) failed authoritative refresh`);
       if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
-      if(dpdpRetention.status==="rejected")errors.push(`dpdp retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);
+      if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
+      if(dpdpRetention.status==="rejected")errors.push(`DPDP retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);else if(dpdpRetention.value.failed)errors.push(`DPDP retention: ${dpdpRetention.value.failed} erasure exception(s)`);
       if(templateSyncError)errors.push(templateSyncError);
-      if(errors.length){const error=new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);Sentry.captureException(error,{tags:{component:"scheduled-worker"}});throw error;}
+      if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
 };
 
-export default Sentry.withSentry((env:Env)=>env.SENTRY_DSN?{dsn:env.SENTRY_DSN,environment:String(env.PAWSPACE_DEPLOYMENT_ENV||"unknown"),sendDefaultPii:false,tracesSampleRate:0}:undefined,worker);
+export default Sentry.withSentry((env:Env)=>({dsn:env.SENTRY_DSN||undefined,environment:env.PAWSPACE_DEPLOYMENT_ENV||"unknown",tracesSampleRate:0.05,sendDefaultPii:false}),worker);

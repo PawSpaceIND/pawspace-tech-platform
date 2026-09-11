@@ -10,7 +10,7 @@ export default function SittingCustomerPanel({bookingId,children,initialCarePlan
  const readVersion=useRef(0);
  const saveIntent=useRef({payload:'',key:''});
  const load=useCallback(()=>{const version=++readVersion.current;return loadSittingCustomerView(bookingId).then(value=>{if(version!==readVersion.current)return;setData(value);setPlan(value.carePlanStatus?value.carePlan:initialCarePlan||{});}).catch(problem=>{if(version!==readVersion.current)return;setData(null);setError(problem instanceof Error?problem.message:'Unable to load your sitting booking.');}).finally(()=>{if(version===readVersion.current)setLoading(false);});},[bookingId,initialCarePlan]);
- useEffect(()=>{const guard=readVersion;void load();return()=>{guard.current++;};},[load]);
+ useEffect(()=>{void load();},[load]);
  const refresh=()=>{setLoading(true);setError('');void load();};
  const save=async()=>{setBusy(true);setError('');setMessage('');const payload=JSON.stringify({bookingId,plan});if(saveIntent.current.payload!==payload)saveIntent.current={payload,key:`sitting-plan:${crypto.randomUUID()}`};try{await saveSittingCustomerPlan(bookingId,plan,saveIntent.current.key);setMessage('Care instructions saved.');await load();}catch(problem){setError(problem instanceof Error?problem.message:'Care instructions were not confirmed.');}finally{setBusy(false);}};
  const cancel=async()=>{setBusy(true);setError('');setMessage('');try{const id=await requestCustomerSittingCancellation(bookingId,reason);setMessage(`Cancellation request ${id} recorded for policy review. Your booking is unchanged until a decision is recorded.`);}catch(problem){setError(problem instanceof Error?problem.message:'Cancellation request was not confirmed.');}finally{setBusy(false);}};

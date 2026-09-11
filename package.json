@@ -21,7 +21,7 @@
     "test:dispute-arbitration-audit": "node --import tsx scripts/run-dispute-arbitration-audit.test.ts",
     "test:tax-compliance-audit": "node --import tsx scripts/run-tax-compliance-audit.test.ts",
     "test:notifications-outbox": "PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/notifications-outbox-closure.test.mjs tests/communication-outbox-hardening.test.mjs tests/interakt-whatsapp.test.mjs tests/meta-whatsapp-uat-dispatch.test.mjs",
-    "test:schema-governance": "PAWSPACE_PAYMENT_ENV=sandbox FORBID_PRODUCTION=true NODE_ENV=test APP_ENV=staging node --experimental-strip-types --test --test-concurrency=1 tests/schema-creation-source-contract.test.mjs tests/schema-governance-runtime.test.mjs tests/schema-migration-idempotency.test.mjs tests/schema-query-plan.test.mjs",
+    "test:schema-governance": "PAWSPACE_PAYMENT_ENV=sandbox FORBID_PRODUCTION=true NODE_ENV=test APP_ENV=staging node --experimental-strip-types --test --test-concurrency=1 tests/schema-creation-source-contract.test.mjs tests/schema-governance-runtime.test.mjs tests/schema-migration-idempotency.test.mjs tests/schema-query-plan.test.mjs tests/schema-column-reference-contract.test.mjs",
     "test:provider-compliance-audit": "PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/provider-compliance-audit.test.mjs tests/lane2-core-integration-boundaries.test.mjs tests/provider-lifecycle-hardening.test.mjs",
     "test:service-discovery-capacity-closure": "PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false FORBID_PRODUCTION=true NODE_ENV=test APP_ENV=staging node --experimental-strip-types scripts/run-capacity-closure.test.ts",
     "test:e2e": "bash scripts/e2e/run-hardened.sh",
@@ -57,10 +57,11 @@
     "next": "16.3.4",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "read-excel-file": "^9.3.10",
     "recharts": "3.10.1"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/vite-plugin": "^1.54.7",
     "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -77,7 +78,7 @@
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",
-    "wrangler": "4.131.0"
+    "wrangler": "^4.131.0"
   },
   "type": "module",
   "displayName": "PawSpace Grooming"

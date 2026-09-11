@@ -1,20 +1,24 @@
 import{eraseCustomerPersonalData}from"./dpdp-erasure";
 
-type Row=Record<string,unknown>;type Db=D1Database;
-const text=(v:unknown)=>String(v??"").trim();
-async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
-async function columns(db:Db,name:string){if(!await tableExists(db,name))return new Set<string>();const r=await db.prepare(`PRAGMA table_info(${name})`).all<Row>();return new Set(r.results.map(x=>text(x.name)));}
-async function digest(v:string){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v));return Array.from(new Uint8Array(b),x=>x.toString(16).padStart(2,"0")).join("");}
-export async function ensureDpdpRetentionTables(db:Db){await db.prepare("CREATE TABLE IF NOT EXISTS dpdp_retention_runs (run_date TEXT PRIMARY KEY,status TEXT NOT NULL,cutoff_at INTEGER NOT NULL,scanned INTEGER NOT NULL DEFAULT 0,erased INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,completed_at INTEGER,updated_at INTEGER NOT NULL)").run();}
-export async function runDpdpRetentionSweep(db:Db,input:{asOf?:number;limit?:number}={}){
- const asOf=input.asOf??Date.now(),limit=Math.min(500,Math.max(1,input.limit??100)),d=new Date(asOf);d.setUTCFullYear(d.getUTCFullYear()-3);const cutoff=d.getTime(),runDate=new Date(asOf).toISOString().slice(0,10);
- await ensureDpdpRetentionTables(db);const prior=await db.prepare("SELECT status FROM dpdp_retention_runs WHERE run_date=?").bind(runDate).first<Row>();if(text(prior?.status)==="COMPLETED")return{runDate,status:"COMPLETED",duplicatePrevented:true,scanned:0,erased:0,failed:0};
- for(const name of["crm_contacts","canonical_customers","canonical_bookings","communication_messages"])if(!await tableExists(db,name))throw new Error(`DPDP retention requires ${name}`);
- const crm=await columns(db,"crm_contacts"),contactId=crm.has("customer_id")?"COALESCE(NULLIF(c.customer_id,''),c.id)":"c.id",contactActivity=crm.has("updated_at")&&crm.has("created_at")?"COALESCE(c.updated_at,c.created_at,0)":crm.has("updated_at")?"COALESCE(c.updated_at,0)":crm.has("created_at")?"COALESCE(c.created_at,0)":"0";
- const sql=`SELECT ${contactId} customer_id FROM crm_contacts c JOIN canonical_customers cc ON cc.id=${contactId} WHERE COALESCE(cc.source,'')!='dpdp_erased' AND ${contactActivity}<? AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.customer_id=${contactId} AND COALESCE(b.updated_at,b.created_at,0)>=?) AND NOT EXISTS (SELECT 1 FROM communication_messages m WHERE m.customer_id=${contactId} AND COALESCE(m.updated_at,m.created_at,0)>=?) ORDER BY ${contactActivity} ASC LIMIT ?`;
- const candidates=await db.prepare(sql).bind(cutoff,cutoff,cutoff,limit).all<Row>();let erased=0,failed=0;const failures:string[]=[];
- await db.prepare("INSERT INTO dpdp_retention_runs (run_date,status,cutoff_at,scanned,erased,failed,created_at,updated_at) VALUES (?,'RUNNING',?,0,0,0,?,?) ON CONFLICT(run_date) DO UPDATE SET status='RUNNING',cutoff_at=excluded.cutoff_at,updated_at=excluded.updated_at").bind(runDate,cutoff,asOf,asOf).run();
- for(const row of candidates.results){const customerId=text(row.customer_id);try{const key=`retention:${runDate}:${(await digest(customerId)).slice(0,24)}`;await eraseCustomerPersonalData(db,{customerId,idempotencyKey:key,requestedBy:"dpdp-retention@system.pawspace",reason:"Automated three-year inactivity retention expiry",now:asOf});erased++;}catch(error){failed++;failures.push(error instanceof Error?error.message.slice(0,160):"retention_erasure_failed");}}
- const status=failed?"PARTIAL":"COMPLETED";await db.prepare("UPDATE dpdp_retention_runs SET status=?,scanned=?,erased=?,failed=?,detail_json=?,completed_at=?,updated_at=? WHERE run_date=?").bind(status,candidates.results.length,erased,failed,JSON.stringify({failureClasses:failures}),asOf,asOf,runDate).run();
- if(failed)throw new Error(`DPDP retention partial failure: ${failed} of ${candidates.results.length} erasures failed`);return{runDate,status,duplicatePrevented:false,scanned:candidates.results.length,erased,failed,cutoff};
+type Db=D1Database;
+type Row=Record<string,unknown>;
+const DEFAULT_BATCH=100;
+const MAX_BATCH=500;
+const text=(value:unknown)=>String(value??"").trim();
+
+async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type=\'table\' AND name=?").bind(name).first<Row>());}
+
+export async function runDpdpRetentionSweep(db:Db,input:{asOf?:number;requestedBy?:string;limit?:number}={}){
+ const asOf=input.asOf??Date.now(),cutoffDate=new Date(asOf);cutoffDate.setUTCFullYear(cutoffDate.getUTCFullYear()-3);const cutoff=cutoffDate.getTime(),requestedBy=text(input.requestedBy)||"system:dpdp-retention",limit=Math.min(MAX_BATCH,Math.max(1,Math.floor(input.limit??DEFAULT_BATCH)));
+ if(!await tableExists(db,"crm_contacts")||!await tableExists(db,"canonical_customers"))return{status:"not_ready",cutoff,processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true};
+ const hasBookings=await tableExists(db,"canonical_bookings"),hasMessages=await tableExists(db,"communication_messages");
+ const bookingJoin=hasBookings?" LEFT JOIN canonical_bookings b ON b.customer_id=c.id":"",messageJoin=hasMessages?" LEFT JOIN communication_messages m ON m.customer_id=c.id":"";
+ const bookingMax=hasBookings?"COALESCE(MAX(b.updated_at),0)":"0",messageMax=hasMessages?"COALESCE(MAX(COALESCE(m.updated_at,m.created_at)),0)":"0";
+ const sql=`SELECT c.id customer_id,c.updated_at crm_updated_at,${bookingMax} booking_updated_at,${messageMax} communication_updated_at FROM crm_contacts c JOIN canonical_customers cc ON cc.id=c.id${bookingJoin}${messageJoin} WHERE c.updated_at<? GROUP BY c.id,c.updated_at HAVING ${bookingMax}<? AND ${messageMax}<? ORDER BY c.updated_at ASC LIMIT ?`;
+ const rows=await db.prepare(sql).bind(cutoff,cutoff,cutoff,limit).all<Row>();
+ let erased=0,failed=0;const results:Array<Record<string,unknown>>=[];
+ for(const row of rows.results){const customerId=text(row.customer_id);if(!customerId)continue;try{const result=await eraseCustomerPersonalData(db,{customerId,idempotencyKey:`dpdp-retention:${customerId}:${cutoff}`,requestedBy,reason:"automated_retention_inactive_over_3_years",now:asOf});erased++;results.push({customerIdHash:result.customerIdHash,status:result.status,ledgerPreserved:result.ledgerPreserved,duplicatePrevented:result.duplicatePrevented});}catch(error){failed++;results.push({customerIdHash:null,status:"FAILED",error:error instanceof Error?error.message:String(error)});}}
+ const countSql=`SELECT COUNT(*) remaining FROM (SELECT c.id FROM crm_contacts c JOIN canonical_customers cc ON cc.id=c.id${bookingJoin}${messageJoin} WHERE c.updated_at<? GROUP BY c.id,c.updated_at HAVING ${bookingMax}<? AND ${messageMax}<?)`;
+ const remainingRow=await db.prepare(countSql).bind(cutoff,cutoff,cutoff).first<Row>();
+ return{status:failed?"partial_failure":"completed",cutoff,retentionYears:3,processed:rows.results.length,erased,failed,remaining:Number(remainingRow?.remaining||0),ledgerPreserved:failed===0,results};
 }

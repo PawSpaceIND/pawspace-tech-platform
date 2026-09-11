@@ -84,11 +84,22 @@ export function componentsForSupply(components:TaxComponent[],supplyType:SupplyT
  const total=Math.round(gst.reduce((sum,c)=>sum+Number(c.rate||0),0)*1000000)/1000000;
  if(!Number.isFinite(total)||total<0)throw new Error("configuration_required:tax_component_rate");
  if(total===0)return other;
- if(supplyType==="inter"){
-  const existingIgst=gst.find(c=>text(c.code).toLowerCase()==="igst");
-  return[{code:existingIgst?.code||"igst",rate:total},...other];
- }
+ /*
+  * GST head codes are emitted in canonical UPPER case, whatever the classification spelled.
+  *
+  * These codes are written straight into finance_tax_ledger.component, and both
+  * lib/gst-returns.ts and lib/gst-accounting.ts summarise a return with `GROUP BY component`.
+  * SQLite groups TEXT case-sensitively and the column carries no COLLATE NOCASE, so a mixture
+  * splits one tax head into two lines of a GST return.
+  *
+  * The mixture arose from the classification's own authoring, not from anything the caller
+  * controls: a service listing CGST+SGST produced "CGST","SGST" intra but a derived lowercase
+  * "igst" inter, while a service listing IGST produced "IGST" inter but a derived lowercase
+  * "cgst","sgst" intra. Two services taxed identically therefore filed under differently-cased
+  * heads. Non-GST components keep the code they were configured with. [D31-W7]
+  */
+ if(supplyType==="inter")return[{code:"IGST",rate:total},...other];
  const cgstRows=gst.filter(c=>text(c.code).toLowerCase()==="cgst"),sgstRows=gst.filter(c=>["sgst","utgst"].includes(text(c.code).toLowerCase())),cgst=cgstRows.reduce((s,c)=>s+Number(c.rate||0),0),sgst=sgstRows.reduce((s,c)=>s+Number(c.rate||0),0);
- if(cgst>0&&sgst>0&&Math.abs(cgst+sgst-total)<0.000001)return[{code:cgstRows[0]?.code||"cgst",rate:cgst},{code:sgstRows[0]?.code||"sgst",rate:sgst},...other];
- return[{code:"cgst",rate:total/2},{code:"sgst",rate:total/2},...other];
+ if(cgst>0&&sgst>0&&Math.abs(cgst+sgst-total)<0.000001)return[{code:text(cgstRows[0]?.code).toUpperCase()||"CGST",rate:cgst},{code:text(sgstRows[0]?.code).toUpperCase()||"SGST",rate:sgst},...other];
+ return[{code:"CGST",rate:total/2},{code:"SGST",rate:total/2},...other];
 }

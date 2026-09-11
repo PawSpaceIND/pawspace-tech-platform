@@ -20,8 +20,9 @@ test("AI grounding seed: governed lifecycle, real PawSpace knowledge, price-free
   assert.match(seed, /quote a price/i);
   assert.match(seed, /Never quote a price, discount or availability from memory/);
   // guardrails baked into the system prompt
-  assert.match(seed, /cannot issue refunds, capture payments, change prices, assign providers or start campaigns/);
-  assert.match(seed, /hand off complaints, refund\/payment disputes, safety and any pet medical emergency/i);
+  assert.match(seed, /cannot issue refunds, capture payments, override governed prices or start campaigns/);
+  assert.match(seed, /trigger deterministic provider assignment/);
+  assert.match(seed, /Immediately hand off safety concerns, pet medical emergencies, explicit human requests and governed financial disputes/i);
   // multilingual + a model named in ONE place
   assert.match(seed, /supportedLanguages: \["en", "hi", "ta"\]/);
   // This used to pin the literal "claude-sonnet-4-6" here while lib/ai-provider-adapter.ts held its own
