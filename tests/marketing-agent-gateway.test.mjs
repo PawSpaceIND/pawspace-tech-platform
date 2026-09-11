@@ -36,7 +36,10 @@ test("Head of Marketing exposes five governed tool schemas", () => {
   const names = Object.keys(gateway.MARKETING_TOOL_SCHEMAS).sort();
   assert.deepEqual(names, ["marketing.ads.budget.reallocate","marketing.ads.keyword.mutate","marketing.ads.read_metrics","marketing.ads.search_terms.analyze","marketing.proposal.submit"].sort());
   assert.ok(gateway.MARKETING_TOOL_SCHEMAS["marketing.ads.budget.reallocate"].required.includes("approvalId"));
+  assert.deepEqual(gateway.MARKETING_TOOL_SCHEMAS["marketing.ads.read_metrics"].properties.platform.enum, ["google_ads", "meta_ads"]);
   assert.ok(gateway.MARKETING_TOOL_SCHEMAS["marketing.ads.keyword.mutate"].required.includes("approvalId"));
+  assert.equal(gateway.MARKETING_TOOL_SCHEMAS["marketing.ads.keyword.mutate"].properties.platform.const, "google_ads");
+  assert.equal(gateway.MARKETING_TOOL_SCHEMAS["marketing.ads.keyword.mutate"].properties.accountId.type, "string");
 });
 
 test("read_metrics returns ROAS CPA CPC and search-term analysis identifies waste", async () => {

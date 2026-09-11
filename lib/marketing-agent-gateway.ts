@@ -20,8 +20,7 @@ export const MARKETING_TOOL_SCHEMAS = {
     properties: {
       from: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
       to: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
-      platform: { const: "google_ads" },
-      accountId: { type: "string", minLength: 1 },
+      platform: { enum: ["google_ads", "meta_ads"] },
       campaignId: { type: "string", minLength: 1 },
     },
   },
@@ -59,7 +58,8 @@ export const MARKETING_TOOL_SCHEMAS = {
     required: ["approvalId", "platform", "accountId", "campaignId", "adGroupId", "keyword", "operation", "currentDailyMinor", "reason"],
     properties: {
       approvalId: { type: "string", minLength: 1 },
-      platform: { enum: ["google_ads", "meta_ads"] },
+      platform: { const: "google_ads" },
+      accountId: { type: "string", minLength: 1 },
       campaignId: { type: "string", minLength: 1 },
       adGroupId: { type: "string", minLength: 1 },
       criterionId: { type: "string", minLength: 1 },
