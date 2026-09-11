@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from "nod
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, activeCheckoutVersion, readCheckoutDatabaseInventory, resolveCheckoutDatabaseGuards, CHECKOUT_REPOSITORY } from "../lib/checkout-sandbox-hosting.ts";
+import { checkoutSandboxPlan, checkoutSandboxConfig, assertCheckoutCandidate, activeCheckoutVersion, readCheckoutDatabaseInventory, resolveCheckoutDatabaseGuards, CHECKOUT_REPOSITORY, CHECKOUT_CERTIFICATION_PR } from "../lib/checkout-sandbox-hosting.ts";
 
 const candidate = resolve(process.env.CANDIDATE_DIR || "candidate");
 const evidence = resolve(process.env.CHECKOUT_EVIDENCE_DIR || "checkout-sandbox-evidence");
@@ -37,10 +37,10 @@ const appEventually = async (origin, path, predicate, options = {}) => {
 };
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Hosted check failed: ${name}`); };
 try {
-  const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/674`, {
+  const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/${CHECKOUT_CERTIFICATION_PR}`, {
     headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000),
   });
-  if (!prResponse.ok) throw new Error("Unable to revalidate PR674 immediately before provisioning");
+  if (!prResponse.ok) throw new Error("Unable to revalidate certified checkout PR immediately before provisioning");
   assertCheckoutCandidate(await prResponse.json(), plan.sha);
   const actual = spawnSync("git", ["-C", candidate, "rev-parse", "HEAD"], { encoding: "utf8" });
   if (actual.status !== 0 || actual.stdout.trim() !== plan.sha) throw new Error("Candidate checkout SHA mismatch");
