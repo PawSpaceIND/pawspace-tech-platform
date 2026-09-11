@@ -1,6 +1,7 @@
 import{ensureCustomerAccountTables}from"./customer-account";
 import{ensureCustomer360Tables}from"./customer-360";
 import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,type WhatsAppUatProvider}from"./whatsapp-uat-adapter";
+import{ensureAiSalesGoalTables}from"./ai-sales-goal-orchestrator";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -34,6 +35,9 @@ export async function ensureWhatsAppAiLeadTables(db:D1Database){
   db.prepare("INSERT OR IGNORE INTO whatsapp_uat_templates (template_key,status,category,approved_language,updated_by,updated_at) VALUES (?,'pending_approval','utility','en','system',?)").bind(WHATSAPP_AI_LEAD_TEMPLATE,Date.now()),
  ]);
 }
+
+/** Binds an inbound WhatsApp thread to the server-created sales dispatch, never to message text. */
+export async function salesDispatchItemForWhatsAppThread(db:D1Database,input:{threadId:string;customerId:string}){await ensureWhatsAppAiLeadTables(db);await ensureAiSalesGoalTables(db);const trigger=await db.prepare("SELECT detail_json FROM whatsapp_ai_lead_triggers WHERE thread_id=? AND customer_id=? ORDER BY updated_at DESC LIMIT 1").bind(input.threadId,input.customerId).first<Row>();try{const id=text((JSON.parse(text(trigger?.detail_json)||"{}")as Row).aiSalesDispatchItemId);if(id)return id;}catch{}const item=await db.prepare("SELECT id FROM ai_sales_dispatch_items WHERE customer_id=? AND channel='whatsapp' AND status='queued' ORDER BY updated_at DESC LIMIT 1").bind(input.customerId).first<Row>();return text(item?.id)||null;}
 
 async function triggerResult(db:D1Database,id:string,duplicatePrevented:boolean){
  const row=await db.prepare("SELECT id,lead_id,contact_id,customer_id,thread_id,message_id,status,reason,template_key,detail_json,created_at,updated_at FROM whatsapp_ai_lead_triggers WHERE id=?").bind(id).first<Row>();
