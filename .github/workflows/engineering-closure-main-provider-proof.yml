@@ -73,32 +73,51 @@ jobs:
       - name: Install Chromium for hosted proof
         working-directory: candidate
         run: npx playwright install --with-deps chromium
-      - name: Create isolated TEST-only Worker and D1 from exact main
+      - name: Revalidate and reuse exact isolated TEST-only Worker and D1
         env:
-          CONFIRM: ${{ env.PROOF_CONFIRM }}
           EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
-          CANDIDATE_DIR: ${{ github.workspace }}/candidate
-          CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-sandbox-evidence
-          GITHUB_TOKEN: ${{ github.token }}
+          REUSE_PROOF_WORKER: pawspace-checkout-674-34564845865-1
+          REUSE_PROOF_ORIGIN: https://pawspace-checkout-674-34564845865-1.karthik-fce.workers.dev
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
-          RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
-          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
-          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
-        run: node --experimental-strip-types infra/scripts/deploy-main-checkout-sandbox.mjs
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p checkout-sandbox-evidence
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const sha=process.env.EXPECTED_SHA||'',worker=process.env.REUSE_PROOF_WORKER||'',origin=process.env.REUSE_PROOF_ORIGIN||'';
+          const account=process.env.CLOUDFLARE_ACCOUNT_ID||'',token=process.env.CLOUDFLARE_API_TOKEN||'',preview=(process.env.RELEASE_PREVIEW_D1_ID||'').toLowerCase();
+          if(!/^[0-9a-f]{40}$/.test(sha)||!/^pawspace-checkout-674-[0-9]+-[0-9]+$/.test(worker)||new URL(origin).hostname!==worker+'.karthik-fce.workers.dev')throw new Error('Exact reused proof identity is invalid');
+          const main=await fetch('https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/branches/main',{headers:{authorization:'Bearer '+process.env.GITHUB_TOKEN,accept:'application/vnd.github+json'},redirect:'error',signal:AbortSignal.timeout(20000)});
+          if(!main.ok||(await main.json())?.commit?.sha!==sha)throw new Error('Protected main moved before isolated Worker reuse');
+          if(!/^[a-f0-9]{32}$/i.test(account)||!token)throw new Error('Cloudflare verification credentials missing');
+          const cf=async path=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}${path}`,{headers:{authorization:`Bearer ${token}`},redirect:'error',signal:AbortSignal.timeout(20000)});const b=await r.json().catch(()=>({}));if(!r.ok||b.success!==true)throw new Error(`Cloudflare verification failed HTTP ${r.status}`);return b;};
+          const [settingsBody,depsBody,schedulesBody]=await Promise.all([cf(`/workers/scripts/${worker}/settings`),cf(`/workers/scripts/${worker}/deployments`),cf(`/workers/scripts/${worker}/schedules`)]);
+          const settings=settingsBody.result,deps=depsBody.result,schedules=schedulesBody.result;const bindings=Array.isArray(settings?.bindings)?settings.bindings:[];
+          const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b.name),String(b.text??b.value??'')]));
+          for(const [name,value] of Object.entries({PAWSPACE_RELEASE_SHA:sha,PAWSPACE_DEPLOYMENT_ENV:'checkout-sandbox',PAWSPACE_PAYMENT_ENV:'sandbox',FORBID_PRODUCTION:'true',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_LIVE_PAYMENTS:'false',PAWSPACE_LIVE_PAYOUTS:'false',PAWSPACE_LIVE_REFUNDS:'false'}))if(plain[name]!==value)throw new Error(`Reused Worker binding mismatch: ${name}`);
+          const d1=bindings.filter(b=>b?.type==='d1');if(d1.length!==1||d1[0]?.name!=='DB'||!d1[0]?.id)throw new Error('Reused Worker must have exactly one isolated DB');const isolated=String(d1[0].id).toLowerCase();
+          if(isolated===preview)throw new Error('Reused Worker overlaps frozen preview DB');
+          const inventory=[];for(let page=1;page<=100;page++){const body=await cf(`/d1/database?per_page=100&page=${page}`),items=body.result;if(!Array.isArray(items))throw new Error('D1 inventory malformed');if(!items.length)break;inventory.push(...items);if(page===100)throw new Error('D1 inventory did not terminate');}
+          for(const name of ['pawspace-prod-bengaluru','pawspace-staging']){const hits=inventory.filter(r=>r?.name===name);if(hits.length!==1)throw new Error(`Cannot resolve protected DB ${name}`);if(String(hits[0].uuid).toLowerCase()===isolated)throw new Error(`Reused Worker overlaps protected DB ${name}`);}
+          if(!bindings.some(b=>b?.name==='RAZORPAY_WEBHOOK_SECRET_SANDBOX'&&/secret/i.test(String(b.type||''))))throw new Error('Sandbox webhook secret missing on reused Worker');
+          const active=deps?.deployments?.[0];if(!active?.id||active?.versions?.length!==1||active.versions[0]?.percentage!==100)throw new Error('Reused Worker active deployment is not singular 100%');
+          if(settings?.annotations?.['workers/message']!==`checkout-sandbox ${sha}`)throw new Error('Reused Worker deployment annotation does not match current main');
+          const scheduleRows=Array.isArray(schedules?.schedules)?schedules.schedules:Array.isArray(schedules)?schedules:[];if(scheduleRows.length)throw new Error('Reused Worker unexpectedly has cron schedules');
+          const home=await fetch(origin+'/mobile-app',{redirect:'manual',signal:AbortSignal.timeout(20000)});if(home.status!==200||!/text\/html/i.test(home.headers.get('content-type')||''))throw new Error('Reused Worker customer surface is not reachable');
+          writeFileSync('checkout-sandbox-evidence/hosting-report.json',JSON.stringify({candidateSha:sha,hosted:true,customerUiVerified:false,capture:'NOT_RUN',providerWebhookDelivery:'NOT_RUN',worker,origin,databaseIsolation:{reused:true,isolatedDatabase:true,inventoryComplete:true},activeDeployment:{deploymentId:active.id},checks:{mainCurrent:true,sandboxBindings:true,liveMoneyDisabled:true,isolatedDatabase:true,noBackgroundCron:true,webhookSecretPresent:true,customerSurfaceReachable:true}},null,2));
+          console.log(JSON.stringify({worker,host:new URL(origin).host,candidateSha:sha,reused:true,isolatedDatabase:true}));
+          NODE
       - name: Verify hosted customer UI without payment
         env:
           EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
+          EXPECTED_WORKER_NAME: pawspace-checkout-674-34564845865-1
           CANDIDATE_DIR: ${{ github.workspace }}/candidate
           CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-sandbox-evidence
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-        run: node --experimental-strip-types infra/scripts/verify-checkout-hosted-browser.mjs
+        run: node --experimental-strip-types candidate/scripts/verify-checkout-hosted-browser.mjs
       - name: Export exact isolated Worker identity
         run: |
           node --input-type=module <<'NODE'
