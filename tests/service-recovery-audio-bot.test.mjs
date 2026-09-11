@@ -94,34 +94,24 @@ test("a governed recovery intent dials once and duplicate scheduler sweeps do no
   assert.equal(jobs(sqlite).length,1,"source message idempotency stages one recovery job");
 });
 
-test("two no-answer outcomes are the hard loop ceiling; the third action is human escalation", async () => {
+test("one no-answer outcome reaches the global voice cap and escalates to human follow-up", async () => {
   const { sqlite, db, env } = await fresh();
   await addRecoveryMessage(db,{id:"MSG-NO",templateKey:"provider_no_show_warning"});
   await bot.runServiceRecoveryAudioBotSweep(db,{asOf:DAYTIME,env});
-  let call = calls(sqlite)[0];
+  const call = calls(sqlite)[0];
   await voice.transitionVoiceCall(db,{callId:call.id,to:"no_answer",reason:"simulated no answer",actor:"provider:test",asOf:DAYTIME+30_000});
   await bot.runServiceRecoveryAudioBotSweep(db,{asOf:DAYTIME+60_000,env});
-  let [job] = jobs(sqlite);
-  assert.equal(job.status,"retry_pending");
-  assert.equal(attempts(sqlite)[0].disposition,"rnr");
 
-  const retryAt = Number(job.next_attempt_at)+1;
-  const retried = await bot.runServiceRecoveryAudioBotSweep(db,{asOf:retryAt,env});
-  assert.equal(retried.dialled,1);
-  assert.equal(calls(sqlite).length,2,"only the second automated attempt is created");
-  call = calls(sqlite)[1];
-  await voice.transitionVoiceCall(db,{callId:call.id,to:"no_answer",reason:"simulated second no answer",actor:"provider:test",asOf:retryAt+30_000});
-  await bot.runServiceRecoveryAudioBotSweep(db,{asOf:retryAt+60_000,env});
-
-  [job] = jobs(sqlite);
+  const [job] = jobs(sqlite);
   assert.equal(job.status,"escalated");
-  assert.equal(job.attempt_count,2);
-  assert.equal(calls(sqlite).length,2,"no third automated call exists");
-  assert.equal(attempts(sqlite).length,2);
-  assert.equal(attempts(sqlite)[1].disposition,"rnr");
-  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM unified_cases WHERE source_type='service_recovery_voice_job'").get().n,1,"one human case, not an escalation loop");
-  await bot.runServiceRecoveryAudioBotSweep(db,{asOf:retryAt+20*60_000,env});
-  assert.equal(calls(sqlite).length,2,"terminal escalated jobs remain terminal on later scheduler sweeps");
+  assert.equal(job.attempt_count,1);
+  assert.equal(calls(sqlite).length,1,"the 14-day cap prevents a second automated recovery dial");
+  assert.equal(attempts(sqlite).length,1);
+  assert.equal(attempts(sqlite)[0].disposition,"rnr");
+  assert.equal(attempts(sqlite)[0].retryable,0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM unified_cases WHERE source_type='service_recovery_voice_job'").get().n,1,"one human case, not an automated retry loop");
+  await bot.runServiceRecoveryAudioBotSweep(db,{asOf:DAYTIME+20*60_000,env});
+  assert.equal(calls(sqlite).length,1,"terminal escalated jobs remain terminal on later scheduler sweeps");
 });
 
 test("connected recovery binds the existing AI voice thread and stores only an opening audio digest", async () => {

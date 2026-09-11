@@ -24,6 +24,7 @@
 import { chunkedIn } from "./d1-chunked-in";
 import { createUnifiedCase } from "./unified-case-center";
 import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationPurpose } from "./communication-engine";
+import { centralConsentAllows, recordGlobalOptOut } from "./communication-governance";
 import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
 import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_CALL_STATES, VOICE_RETRYABLE_STATES, VOICE_TERMINAL_STATES, type VoiceCallState } from "./voice-call-state";
 import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
@@ -167,6 +168,8 @@ export async function recordVoiceOptOut(db: Db, input: { phone: string; source: 
   const phoneKey = normalisedDialKey(input.phone);
   if (!phoneKey) throw new Error("A real phone number is required to record a voice opt-out");
   const now = input.asOf ?? Date.now();
+  const customer=await db.prepare("SELECT id FROM canonical_customers WHERE replace(replace(replace(replace(replace(primary_phone,' ',''),'+',''),'-',''),'(',''),')','') LIKE ? OR replace(replace(replace(replace(replace(secondary_phone,' ',''),'+',''),'-',''),'(',''),')','') LIKE ? LIMIT 1").bind(`%${phoneKey.slice(-10)}`,`%${phoneKey.slice(-10)}`).first<Row>().catch(()=>null);
+  if(customer?.id)await recordGlobalOptOut(db,{customerId:text(customer.id),source:text(input.source)||"voice_call",actorId:input.actorId,asOf:now});
   await db.batch([
     db.prepare("INSERT INTO voice_call_opt_outs (phone_key,source,reason,recorded_by,recorded_at) VALUES (?,?,?,?,?) ON CONFLICT(phone_key) DO UPDATE SET source=excluded.source,reason=excluded.reason,recorded_by=excluded.recorded_by,recorded_at=excluded.recorded_at")
       .bind(phoneKey, text(input.source) || "voice_call", text(input.reason) || null, input.actorId, now),
@@ -229,7 +232,7 @@ async function quietHoursPolicy(db: Db, cityId: string) {
   // applies rather than "no restriction".
   return row
     ? { quietStart: Number(row.quiet_start_hour), quietEnd: Number(row.quiet_end_hour), promotionalCap7d: Number(row.promotional_cap_7d), maxAttempts: Number(row.max_attempts), source: "city_policy" }
-    : { quietStart: 21, quietEnd: 8, promotionalCap7d: 1, maxAttempts: 1, source: "conservative_default" };
+    : { quietStart: 21, quietEnd: 9, promotionalCap7d: 1, maxAttempts: 1, source: "conservative_default" };
 }
 
 /**
@@ -292,17 +295,17 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
 
   // Only calls that actually dialled count towards the cap. A call the gate refused never reached the
   // recipient, so counting it would let one blocked attempt suppress a legitimate later one.
-  const attempts = phoneKey ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 86_400_000).first<Row>() : null;
+  const attempts = phoneKey ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 14 * 86_400_000).first<Row>() : null;
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
-  const dailyCap = Math.min(useCase?.maxAttempts ?? 1, policy.maxAttempts);
+  const dailyCap = 1;
   const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
   const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
   add("frequency_cap", capOk, "blocked_frequency_cap",
     frequencyCapIsolated
-      ? `Controlled carrier UAT one-shot is isolated from historical recipient frequency (${attempts24h} prior dial(s) in 24h); normal caps remain unchanged`
-      : capOk ? `${attempts24h} of ${dailyCap} attempts used in the last 24h`
-        : `Frequency cap reached (${attempts24h}/${dailyCap} in 24h${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
+      ? `Controlled carrier UAT one-shot is isolated from historical recipient frequency (${attempts24h} prior dial(s) in 14d); normal caps remain unchanged`
+      : capOk ? `${attempts24h} of ${dailyCap} calls used in the last 14 days`
+        : `Frequency cap reached (${attempts24h}/${dailyCap} in 14d${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
 
   const provider = selectTelephonyProvider(env);
   const providerOk = provider.status === "connected" || provider.status === "simulated";
@@ -326,7 +329,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
-    dailyCap, capWindowStart: now - 86_400_000,
+    dailyCap, capWindowStart: now - 14 * 86_400_000,
     frequencyCapIsolated,
     marketingCap: useCase?.purpose === "marketing" ? policy.promotionalCap7d : null,
     marketingWindowStart: now - 7 * 86_400_000,
@@ -505,6 +508,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
   // 1. Consent and opt-out re-read. The gate's decision is a snapshot; a customer can withdraw in the
   //    gap before the dial, and a refusal recorded seconds ago must win over a slightly older approval.
   const still = await consentStillHolds(db, phoneKey, text(input.leadId));
+  const customerId=text(input.customerId);
+  if(customerId && !await centralConsentAllows(db,customerId,"voice")){await applyTransition(db,{callId:id,to:"blocked_opt_out",reason:"Global communication opt-out is active",actor:input.actorId,detail:{centralConsent:true},asOf:now});const row=await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();return{duplicatePrevented:false,dialled:false,blockedBy:"global_opt_out",blockedDetail:"Global communication opt-out is active",policyChecks:policy.checks,...summarise(row!)}}
   if (!still.ok) {
     await applyTransition(db, { callId: id, to: still.state!, reason: still.reason!, actor: input.actorId, detail: { revalidatedBeforeDial: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
@@ -512,8 +517,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
   }
   // 2. The frequency cap, claimed atomically. The count the gate read is advisory - it produces a good
   //    audit message - but this single statement is what actually bounds concurrent dials.
-  if (!policy.frequencyCapIsolated && !(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: policy.dailyCap, windowStart: policy.capWindowStart, now, marketingCap: policy.marketingCap, marketingWindowStart: policy.marketingWindowStart }))) {
-    const reason = `Frequency cap for this recipient was reached by a concurrent request (limit ${policy.dailyCap} in 24h)`;
+  if (!policy.frequencyCapIsolated && !(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: 1, windowStart: now-14*86_400_000, now, marketingCap: null, marketingWindowStart: now-14*86_400_000 }))) {
+    const reason = `Frequency cap for this recipient was reached by a concurrent request (limit 1 in 14 days)`;
     await applyTransition(db, { callId: id, to: "blocked_frequency_cap", reason, actor: input.actorId, detail: { concurrentClaim: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
     return { duplicatePrevented: false, dialled: false, blockedBy: "frequency_cap", blockedDetail: reason, policyChecks: policy.checks, ...summarise(row!) };
