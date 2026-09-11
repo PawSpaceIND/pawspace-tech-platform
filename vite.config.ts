@@ -13,7 +13,6 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
   vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" },
   triggers:{crons:["*/5 * * * *","*/15 * * * *","15 2 * * *","30 2 * * *"]},
   ratelimits:[{name:"PUBLIC_API_RATE_LIMITER",namespace_id:"1001",simple:{limit:100,period:60 as const}}],

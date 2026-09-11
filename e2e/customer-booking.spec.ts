@@ -55,6 +55,13 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
 }
 
 test("customer: sandbox sign-in -> grooming checkout -> persisted booking", async ({ page }) => {
+  // Google address autocomplete is an external transport boundary. Keep this deterministic while
+  // PawSpace doorstep verification, pincode, city/zone, radius and scheduling gates remain real.
+  await page.route("**/api/address-autocomplete?*", async route => {
+    const query = new URL(route.request().url()).searchParams;
+    if (query.get("mode") === "search") return route.fulfill({ json: { data: { status: "configured", suggestions: [{ placeId: "e2e-doorstep", mainText: "42, Indiranagar Double Road", secondaryText: "Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038", fullText: "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038" }] } } });
+    return route.fulfill({ json: { data: { status: "configured", address: "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038", latitude: 12.9783692, longitude: 77.6408356 } } });
+  });
   await sandboxLogin(page);
   await ensureCustomerPet(page);
   await page.goto("/mobile-app");
