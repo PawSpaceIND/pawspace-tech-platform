@@ -19,7 +19,7 @@ test("pacing lag above 25 percent only authorizes pre-approved target envelope",
  assert.match(policy,/pacingLagFraction>0\.25/); assert.match(policy,/approvedDiscountBps/); assert.match(policy,/approvedUpgradeCodes/); assert.match(ceo,/approvedDiscountBps:num\(target\.max_discount_bps\)/); assert.match(ceo,/free_upgrade_codes_json/); assert.match(ceo,/marginValidationRequired:true/); assert.doesNotMatch(policy,/approvedDiscountBps\s*\+/);
 });
 test("founder cockpit is role restricted with kill switch SSE and maker-checker queue",()=>{
- assert.match(cockpit,/\["founder","superuser"\]/); assert.match(cockpit,/PAWSPACE_AI_EXECUTIVE_ACTIVE/); assert.match(cockpit,/text\/event-stream/); assert.match(cockpit,/awaiting_approval_2/); assert.match(cockpit,/awaiting_finance_approval/); assert.match(cockpit,/pending_approval/); assert.match(cockpit,/booking_refund_cases/);
+ assert.match(cockpit,/\["founder","superuser"\]/); assert.match(cockpit,/PAWSPACE_AI_EXECUTIVE_ACTIVE/); assert.match(cockpit,/text\/event-stream/); assert.match(cockpit,/awaiting_approval_2/); assert.match(cockpit,/awaiting_finance_approval/); assert.match(cockpit,/pending_approval/); assert.match(cockpit,/booking_refund_cases/); assert.match(ceo,/PAWSPACE_AI_EXECUTIVE_ACTIVE\|\|"false"/);
 });
 test("previous Atlas worker hooks remain intact beside executive cadence",()=>{
  assert.match(worker,/handleAtlasWebSocket/); assert.match(worker,/runAtlasDailyAnalysis/); assert.match(vite,/"15 2 \* \* \*"/);

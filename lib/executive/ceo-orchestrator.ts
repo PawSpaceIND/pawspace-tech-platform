@@ -22,7 +22,7 @@ export async function ensureExecutiveTables(db:Db){
 export async function executiveActive(db:Db,runtime:Record<string,unknown>={}){
   await ensureExecutiveTables(db);
   const row=await db.prepare("SELECT value FROM executive_runtime_config WHERE key='PAWSPACE_AI_EXECUTIVE_ACTIVE'").first<Row>();
-  const configured=row?text(row.value):text(runtime.PAWSPACE_AI_EXECUTIVE_ACTIVE||"true");
+  const configured=row?text(row.value):text(runtime.PAWSPACE_AI_EXECUTIVE_ACTIVE||"false");
   return !["0","false","off","disabled"].includes(configured.toLowerCase());
 }
 
