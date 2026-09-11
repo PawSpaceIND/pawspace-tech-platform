@@ -36,7 +36,7 @@ export default function BookingCommandCenter() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load bookings"); }
     finally { if (!silent) setLoading(false); }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => {
     const events = new EventSource("/api/booking-command-center/stream");
     const refresh = () => { void load(true); };
