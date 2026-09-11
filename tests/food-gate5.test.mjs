@@ -134,7 +134,7 @@ test("Food Gate 5 closure claim is UAT-only and does not invent production depen
   assert.equal(snapshot.readiness.externalDependencies.malwareScanner, "disconnected");
   assert.equal(snapshot.readiness.externalDependencies.payments, "sandbox_only");
   assert.equal(snapshot.readiness.externalDependencies.refunds, "sandbox_only");
-  assert.equal(snapshot.readiness.externalDependencies.cogs, "configuration_required");
-  assert.equal(snapshot.readiness.externalDependencies.supplierSettlement, "rule_pending");
-  assert.equal(snapshot.readiness.externalDependencies.tax, "configuration_required");
+  assert.equal(snapshot.readiness.externalDependencies.cogs, "actual_batch_cost");
+  assert.equal(snapshot.readiness.externalDependencies.supplierSettlement, "finance_approval_governed");
+  assert.equal(snapshot.readiness.externalDependencies.tax, "policy_configurable");
 });
