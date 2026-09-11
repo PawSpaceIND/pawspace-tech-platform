@@ -651,6 +651,79 @@ have caught defects 3 and 16 outright.
 
 ---
 
+## Day 31, wave 4 — the SQL column-reference check, and the GSTR-8 close (Claude, 2026-09-11)
+
+Fourth pass, and the first one whose primary product is a **check rather than a test**. Two more
+real defects found and fixed (**twenty for the engagement**), and the highest-risk untested money
+module cleared.
+
+**Full suite 5536 → 5566, all passing.** Typecheck clean.
+
+| # | Module | Defect | Status |
+|---|---|---|---|
+| 19 | `trust-safety-governance.ts` | It carries its own copy of the global-blocklist flow alongside the corrected copy in `trust-safety-blocklist.ts`, and the two had diverged. The governance copy suppressed a blocked customer by writing `communication_preferences` columns — `sms`, `email`, `whatsapp`, `push`, `quiet_start`, `quiet_end`, `updated_by` — that the table, owned by `communication-engine.ts`, **has never had**, while omitting `source`, which is NOT NULL. Blocking a phone attached to a real customer threw `no such column: sms` *after* the `global_blocklist` row was written and *before* the voice opt-out was: a half-applied block on a trust-and-safety path. The function has no callers today, so nothing was failing in production — it was a landmine waiting for the first route wired to it. | 🔧 `03205dd` |
+| 20 | `statutory-tcs.ts` | `prepareGstr8Statutory()` computes the per-GSTIN GSTR-8 return with places of supply — and **recorded nothing**. The legacy `prepareGstr8()` has always written a `tcs_statements` row (figure, supplier count, preparer, `summary_json` snapshot). So `tcsDashboard()` reported a prepared return as *missing*, and there was no evidence of what figure finance reviewed: months later, when a notice asks what was filed for April, the only answer available was to re-run the computation over source data that has moved on. | 🔧 `f9108f0` |
+
+### The check: `tests/schema-column-reference-contract.test.mjs`
+
+A column name inside a SQL string is invisible to the build, to `tsc --noEmit` and to 5,500 passing
+tests. Only something that reads the strings can see it. That blind spot produced **three** of the
+twenty defects — 3 (`provider_verifications.verified_at`, gating every level-2 money approval),
+16 (`provider_daily_travel_legs`, one level up: a table, not a column) and now 19.
+
+`tests/helpers/sql-schema-contract.mjs` builds the schema from every `CREATE TABLE` and
+`ALTER TABLE … ADD COLUMN` in the repo, then checks the shapes it can attribute to exactly one
+table with no ambiguity: `INSERT INTO t (cols)`, single-table `UPDATE t SET col=`, and single-table
+unaliased `SELECT cols FROM t`. Anything with a join, an alias, a subquery or a qualified name is
+**skipped rather than guessed at** — a checker that cries wolf gets switched off. Two refinements
+were needed to get from 53 reported references to 7, all of which were defect 19:
+
+- `key TEXT PRIMARY KEY` is a *column* named `key`. Matching on a leading constraint word alone
+  mis-read it as a table constraint.
+- A table widened by a **templated** `ALTER TABLE … ADD COLUMN ${column}` — nine of them here,
+  including `tcs_collections` and `partner_payout_instructions` — has a column set no static reader
+  can know. Those are treated as **open**: unprovable, so nothing is claimed. Note this does *not*
+  blind the check to defects 3 or 16; `provider_verifications` is widened only by literal `ALTER`s,
+  and re-introducing defect 19 still fails the check (verified).
+
+Wired into `npm run test:schema-governance`, which `.github/workflows/schema-governance.yml`
+already runs on every PR and push to main.
+
+### Verified clean under real execution — the monthly s.52 TCS close
+
+`computeMonthlyTcsStatutory()` and `prepareGstr8Statutory()` were the highest-risk module with no
+test importing them: this pair turns a month of marketplace payouts into the figure PawSpace files
+with the government. 26 cases, arithmetic checked against hand-computed figures rather than against
+whatever the code produced. Everything but defect 20 was **already correct**:
+
+- Intra-state splits evenly across CGST/SGST and never carries IGST; inter-state is IGST only; a
+  Karnataka supplier billing into Mumbai is inter-state.
+- A refund reduces the taxable base **proportionally** (₹2,000 back on a ₹10,000 order with ₹1,000
+  provider GST reduces the ₹9,000 base by ₹1,800, not ₹2,000); a *rejected* refund reduces nothing;
+  an over-refund cannot drive the base negative; a cancelled booking with no refund row counts as
+  fully returned.
+- Own-supply engagement models are excluded — s.52 applies to supplies made *through* the operator,
+  not *by* it.
+- The month window is an **India** month: 2025-04-01 00:00 IST is in April, 2025-03-31 23:59:59.999
+  IST is not.
+- A re-run **replaces** the period rather than appending to it; a recompute that *fails* (unknown
+  provider GSTIN) leaves the previously filed month intact.
+- The rate is resolved per supply, so a month straddling 2024-07-10 files 1% and 0.5% side by side,
+  each row carrying its own rate lineage.
+- Refusals name what is missing: `provider_gstin:<id>`, `place_of_supply:<booking>`,
+  `active_operator_gstin`, `TCS period must be YYYY-MM`, and a malformed GSTIN is refused at the
+  desk rather than at the return.
+- The GSTR-8 header equals the sum of the supplier lines beneath it, and equals what the close
+  reported; an empty month reports zero rather than the previous month; the deposit must match the
+  computed liability to the paisa and a month cannot be deposited twice.
+
+**Still open and correctly so:** 109 modules have no importing test (21 money-handling —
+`provider-payout-statutory`, `subscription-payment-activation`, `razorpay-order-outbox-sweep` and
+the vertical `-client` modules are next). 228 of 678 test files still assert on source text rather
+than executing anything. **And nobody has opened the live app in a browser, this entire engagement.**
+
+---
+
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
 - Real Razorpay, WhatsApp, Exotel, Maps, KYC, MFA — sandboxed by design, need live credentials
