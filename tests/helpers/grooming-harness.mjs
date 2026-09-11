@@ -12,6 +12,7 @@ const commercialTerms = await import("../../lib/provider-commercial-terms.ts");
 export const {
   GROOMING_CATALOGUE_VERSION,
   groomingCatalogue,
+  calculateGroomingHouseholdQuote,
   governGroomingBooking,
   ensureGroomingSubscriptionPlans,
   resolveGroomingSubscriptionPlan,

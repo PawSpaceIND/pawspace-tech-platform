@@ -26,6 +26,27 @@ export const groomingCatalogue:GroomingCatalogueItem[]=[
   {code:"young-makeover",name:"Complete Makeover",offerType:"young",eligiblePetTypes:["dog","cat"],singlePrice:1399,multiPetPrice:1299,version:GROOMING_CATALOGUE_VERSION,active:true},
 ];
 
+export type GroomingHouseholdQuoteLine={petType:"dog"|"cat";packageCode:string};
+export type GroomingHouseholdQuote={baseAmount:number;multiPetDiscount:number;subtotal:number;gstAmount:number;totalAmount:number;taxMode:"inclusive"|"exclusive";taxRate:number;lines:Array<{petType:"dog"|"cat";packageCode:string;packageName:string;basePrice:number;chargedPrice:number}>};
+
+const money2=(value:number)=>Math.round((value+Number.EPSILON)*100)/100;
+export function calculateGroomingHouseholdQuote(input:{lines:GroomingHouseholdQuoteLine[];taxRate?:number;taxMode?:"inclusive"|"exclusive"}):GroomingHouseholdQuote{
+  if(!Array.isArray(input.lines)||input.lines.length<1||input.lines.length>4)throw new Error("Grooming household quote supports 1-4 pets");
+  const multi=input.lines.length>1,taxRate=Number(input.taxRate??18),taxMode=input.taxMode??"inclusive";
+  if(!Number.isFinite(taxRate)||taxRate<0||taxRate>40)throw new Error("Grooming GST rate must be between 0 and 40");
+  const lines=input.lines.map(line=>{
+    const item=groomingCatalogue.find(row=>row.active&&row.offerType!=="subscription"&&row.code===line.packageCode);
+    if(!item)throw new Error(`Active Grooming package not found: ${line.packageCode}`);
+    if(!item.eligiblePetTypes.includes(line.petType))throw new Error(`${item.name} is not eligible for ${line.petType}`);
+    return{petType:line.petType,packageCode:item.code,packageName:item.name,basePrice:item.singlePrice,chargedPrice:multi?(item.multiPetPrice??item.singlePrice):item.singlePrice};
+  });
+  const baseAmount=money2(lines.reduce((sum,line)=>sum+line.basePrice,0)),subtotal=money2(lines.reduce((sum,line)=>sum+line.chargedPrice,0));
+  const multiPetDiscount=money2(baseAmount-subtotal);
+  const gstAmount=taxMode==="inclusive"?money2(subtotal-subtotal/(1+taxRate/100)):money2(subtotal*taxRate/100);
+  const totalAmount=taxMode==="inclusive"?subtotal:money2(subtotal+gstAmount);
+  return{baseAmount,multiPetDiscount,subtotal,gstAmount,totalAmount,taxMode,taxRate,lines};
+}
+
 const defaultSubscriptionPlans=[
   {id:"gsubplan_blr_sub_3_dog",planCode:"sub-3-dog",name:"3 sessions · Dog",price:3597,sessions:3,validityValue:4,validityUnit:"months",pets:["dog"],servicePackageCode:"dog-basic"},
   {id:"gsubplan_blr_sub_3_cat",planCode:"sub-3-cat",name:"3 sessions · Cat Routine",price:2999,sessions:3,validityValue:4,validityUnit:"months",pets:["cat"],servicePackageCode:"cat-routine"},

@@ -772,3 +772,15 @@ test("controlled carrier UAT helper fails closed outside approvals, allowlist an
     /dedicated voice-carrier-uat idempotency key/,
   );
 });
+
+test("max retry exhaustion writes a CRM disposition and releases the recipient dial lock", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "retry-exhausted", useCase: "feedback_request" }));
+  await gov.transitionVoiceCall(db, { callId: first.callId, to: "ringing", reason: "provider", actor: "test", asOf: DAYTIME });
+  await gov.transitionVoiceCall(db, { callId: first.callId, to: "no_answer", reason: "provider", actor: "test", asOf: DAYTIME });
+  assert.equal(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(first.callId).released_at, null);
+  await assert.rejects(() => gov.retryVoiceCall(db, env, { callId: first.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME }), /no retry remains/);
+  assert.ok(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(first.callId).released_at);
+  assert.equal(sqlite.prepare("SELECT last_outcome FROM lead_work_items WHERE id='LEAD-V1'").get().last_outcome, "voice_terminal:retry_exhausted");
+});
