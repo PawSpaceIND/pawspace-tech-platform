@@ -332,6 +332,8 @@ test("LIFECYCLE — authority defaults to restrictive when a caller does not est
 });
 
 test("LIFECYCLE — an unavailable provider is not offered by matching, and returns once genuinely cleared", async () => {
+  const priorNodeEnv=process.env.NODE_ENV,priorPreview=process.env.PAWSPACE_LOCAL_PREVIEW;
+  process.env.NODE_ENV="test"; process.env.PAWSPACE_LOCAL_PREVIEW="on";
   const { sqlite, db } = fresh();
   const capacity = await mod.capacity();
   await capacity.ensureProviderCapacityTables(db);
@@ -353,6 +355,8 @@ test("LIFECYCLE — an unavailable provider is not offered by matching, and retu
   await capacity.setProviderAvailability(db, { providerId: seeded.id, available: true, reason: "hold lifted", actorId: OPS, actorIsStaff: true });
   const after = await capacity.loadGovernedProviders(db, seeded.city_id, zone, service);
   assert.ok(after.some((p) => p.id === seeded.id), "and must return when the restriction is genuinely lifted");
+  if(priorNodeEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=priorNodeEnv;
+  if(priorPreview===undefined)delete process.env.PAWSPACE_LOCAL_PREVIEW;else process.env.PAWSPACE_LOCAL_PREVIEW=priorPreview;
 });
 
 // --- 5. provider app: own record only ----------------------------------------------------------
