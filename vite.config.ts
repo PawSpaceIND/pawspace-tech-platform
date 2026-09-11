@@ -15,7 +15,7 @@ const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
   vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" },
-  triggers:{crons:["*/5 * * * *"]},
+  triggers:{crons:["*/5 * * * *","15 2 * * *"]},
   d1_databases: d1
     ? [
         {
