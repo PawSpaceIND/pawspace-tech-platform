@@ -1,16 +1,9 @@
 name: Engineering closure main Razorpay provider proof
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'Type main-provider-proof-674 to deploy one isolated TEST worker and run one INR 1 proof'
-        required: true
-        default: ''
-      expected_sha:
-        description: 'Exact current protected main SHA'
-        required: true
-        default: ''
+  push:
+    branches:
+      - uat/engineering-closure-main-provider-proof-20260911
 
 permissions:
   contents: read
@@ -23,7 +16,7 @@ concurrency:
 
 jobs:
   proof:
-    if: ${{ github.ref == 'refs/heads/uat/engineering-closure-main-provider-proof-20260911' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'main-provider-proof-674' }}
+    if: ${{ github.ref == 'refs/heads/uat/engineering-closure-main-provider-proof-20260911' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: pawspace-release-preview
@@ -32,6 +25,8 @@ jobs:
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
       FORBID_PRODUCTION: 'true'
       WEBHOOK_ID: TaG3ZzXULiDFUS
+      PRODUCT_SHA: 513c6f894345105c472447a1240cf63cae15d529
+      PROOF_CONFIRM: main-provider-proof-674
     steps:
       - name: Checkout disposable proof infrastructure
         uses: actions/checkout@v4
@@ -44,7 +39,7 @@ jobs:
       - name: Verify current main is exactly merged and certified PR734 source
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -67,7 +62,7 @@ jobs:
       - name: Checkout immutable main product candidate
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ env.PRODUCT_SHA }}
           path: candidate
       - name: Install exact candidate dependencies
         working-directory: candidate
@@ -80,8 +75,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Create isolated TEST-only Worker and D1 from exact main
         env:
-          CONFIRM: ${{ inputs.confirm }}
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRM: ${{ env.PROOF_CONFIRM }}
+          EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
           CANDIDATE_DIR: ${{ github.workspace }}/candidate
           CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-sandbox-evidence
           GITHUB_TOKEN: ${{ github.token }}
@@ -99,7 +94,7 @@ jobs:
         run: node --experimental-strip-types infra/scripts/deploy-main-checkout-sandbox.mjs
       - name: Verify hosted customer UI without payment
         env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_SHA: ${{ env.PRODUCT_SHA }}
           CANDIDATE_DIR: ${{ github.workspace }}/candidate
           CHECKOUT_EVIDENCE_DIR: ${{ github.workspace }}/checkout-sandbox-evidence
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -145,7 +140,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          PR674_CANDIDATE_SHA: ${{ inputs.expected_sha }}
+          PR674_CANDIDATE_SHA: ${{ env.PRODUCT_SHA }}
           PR674_WORKER_NAME: ${{ env.PROOF_WORKER }}
           PR674_WORKER_ORIGIN: ${{ env.PROOF_ORIGIN }}
         run: |
@@ -176,7 +171,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: engineering-closure-main-razorpay-proof-${{ inputs.expected_sha }}
+          name: engineering-closure-main-razorpay-proof-${{ env.PRODUCT_SHA }}
           path: |
             checkout-sandbox-evidence/
             candidate/playwright-report/
