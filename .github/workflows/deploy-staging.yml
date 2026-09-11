@@ -200,7 +200,7 @@ jobs:
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
             const requiredNames = [
-              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", "SENTRY_DSN",
+              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
               "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
               "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
             ];
@@ -208,7 +208,7 @@ jobs:
               "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
               "RAZORPAYX_KEY_ID_SANDBOX", "RAZORPAYX_KEY_SECRET_SANDBOX", "RAZORPAYX_ACCOUNT_NUMBER_SANDBOX",
               "RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX", "RAZORPAYX_WEBHOOK_SECRET_SANDBOX",
-              "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY",
+              "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY", "SENTRY_DSN",
               "META_WHATSAPP_UAT_ACCESS_TOKEN", "META_WHATSAPP_PHONE_NUMBER_ID", "META_WHATSAPP_WABA_ID",
               "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
               "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
@@ -251,8 +251,13 @@ jobs:
         env:
           STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           set -euo pipefail
+          if [ -z "$SENTRY_DSN" ]; then
+            echo "Sentry DSN not configured; optional staging self-test skipped."
+            exit 0
+          fi
           BODY="$RUNNER_TEMP/sentry-self-test.json"
           CODE="$(curl -sS -o "$BODY" -w '%{http_code}' -H "x-pawspace-uat-code: $PAWSPACE_UAT_ACCESS_CODE" "$STAGING_URL/__staging/sentry-self-test")"
           test "$CODE" = "200"
