@@ -4,7 +4,7 @@ import {readFileSync} from "node:fs";
 
 const relay=await import("../lib/razorpay-sandbox-webhook-relay.ts");
 const SHA="a".repeat(40);
-const ORIGIN="https://pawspace-checkout-674-34495251052-1.karthik-fce.workers.dev";
+const ORIGIN="https://pawspace-checkout-736-34495251052-1.karthik-fce.workers.dev";
 const base=()=>({PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN:ORIGIN,PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA:SHA});
 
 test("Razorpay sandbox relay is disabled by default",()=>assert.deepEqual(relay.resolveRazorpaySandboxRelay({PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_PAYMENT_ENV:"sandbox"}),{enabled:false}));
@@ -18,7 +18,7 @@ test("Razorpay sandbox relay requires a paired exact target and locked staging m
 });
 
 test("Razorpay sandbox relay refuses arbitrary, protected and decorated origins",()=>{
- for(const origin of ["https://pawspace-staging.karthik-fce.workers.dev","https://example.com","http://pawspace-checkout-674-34495251052-1.karthik-fce.workers.dev",`${ORIGIN}/api/razorpay-webhook`,`${ORIGIN}?x=1`,`https://user@example.com`])assert.throws(()=>relay.resolveRazorpaySandboxRelay({...base(),PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN:origin}),/exact isolated PR674|invalid/);
+ for(const origin of ["https://pawspace-staging.karthik-fce.workers.dev","https://example.com","http://pawspace-checkout-736-34495251052-1.karthik-fce.workers.dev",`${ORIGIN}/api/razorpay-webhook`,`${ORIGIN}?x=1`,`https://user@example.com`])assert.throws(()=>relay.resolveRazorpaySandboxRelay({...base(),PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN:origin}),/exact isolated certified-checkout|invalid/);
 });
 
 test("verified sandbox relay preserves raw bytes and Razorpay identity headers without following redirects",async()=>{
@@ -46,6 +46,6 @@ test("webhook route shadow-relays only after Razorpay HMAC acceptance and before
 test("staging deploy validates exact relay target provenance and serializes relay vars only when supplied",()=>{
  const stage=readFileSync(new URL("../scripts/stage-config.mjs",import.meta.url),"utf8"),verify=readFileSync(new URL("../scripts/verify-razorpay-sandbox-relay-target.mjs",import.meta.url),"utf8"),workflow=readFileSync(new URL("../.github/workflows/deploy-staging.yml",import.meta.url),"utf8");
  for(const token of ["PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN","PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA"])assert.match(stage,new RegExp(token));
- assert.match(verify,/PAWSPACE_DEPLOYMENT_ENV:"checkout-sandbox"/);assert.match(verify,/PAWSPACE_RELEASE_SHA:sha/);assert.match(verify,/RAZORPAY_WEBHOOK_SECRET_SANDBOX/);assert.match(verify,/workers\/message/);assert.match(verify,/pulls\/674/);
+ assert.match(verify,/PAWSPACE_DEPLOYMENT_ENV:"checkout-sandbox"/);assert.match(verify,/PAWSPACE_RELEASE_SHA:sha/);assert.match(verify,/RAZORPAY_WEBHOOK_SECRET_SANDBOX/);assert.match(verify,/workers\/message/);assert.match(verify,/pulls\/736/);assert.match(verify,/body\.merged!==true/);
  assert.match(workflow,/razorpay_relay_target_origin:/);assert.match(workflow,/razorpay_relay_target_sha:/);assert.match(workflow,/Verify optional Razorpay sandbox relay target/);assert.match(workflow,/verify-razorpay-sandbox-relay-target\.mjs/);
 });
