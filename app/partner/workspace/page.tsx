@@ -7,7 +7,10 @@ type Offer={bookingId:string;serviceCode:string;package:string;start:string;orde
 type Pending={bookingId:string;serviceCode:string;missing:string[]};
 type WS={linked:boolean;email?:string;engagement?:string;features?:{surface:string;payslip:boolean};onboardingStatus?:string;
   bookings?:{today:Booking[];upcoming:Booking[];past:Booking[];paymentPending:Booking[]};
-  liveAssignments?:Offer[];earnings?:{netPayout?:number;orders?:number;grossOrderValue?:number;visible?:boolean};pendingProof?:Pending[]};
+  liveAssignments?:Offer[];earnings?:{netPayout?:number;orders?:number;grossOrderValue?:number;visible?:boolean;note?:string;
+    commissionOrders?:Array<{bookingId:string;serviceCode:string;orderAmount:number;commissionMode:string;commissionValue:number;commissionAmount:number;source:string;status:string;completedAt:number;dueAt:number}>;
+    payouts?:Array<{id:string;bookingId:string;amount:number;status:string;dueAt:number;providerReference:string|null;updatedAt:number}>;
+    statements?:Array<Record<string,unknown>>};pendingProof?:Pending[]};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",green:"#3ecf8e"};
@@ -41,14 +44,22 @@ export default function PartnerWorkspacePage(){
         <header style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginTop:8}}>
           <div><h1 style={{margin:"6px 0",fontSize:28}}>Partner workspace</h1>
             <p style={{margin:0,color:C.dim}}>{data.engagement==="contract"?"Contract partner":"Commission partner"} · onboarding: <b style={{color:data.onboardingStatus==="active"?C.green:C.gold}}>{data.onboardingStatus}</b></p></div>
-          <span style={{display:"flex",gap:8,flexWrap:"wrap"}}><Link href="/partner/jobs" style={{...btn,background:C.gold,textDecoration:"none",display:"inline-block"}}>Job feed →</Link>{data.features?.payslip?<Link href="/me" style={{...btn,textDecoration:"none",display:"inline-block"}}>Payslip & leave →</Link>:null}</span>
+          <span style={{display:"flex",gap:8,flexWrap:"wrap"}}><Link href="/partner/jobs" style={{...btn,background:C.gold,textDecoration:"none",display:"inline-block"}}>Job feed →</Link>{data.engagement==="contract"?<Link href="/me" style={{...btn,textDecoration:"none",display:"inline-block"}}>People, attendance & leave →</Link>:null}</span>
         </header>
 
         {data.earnings?.visible!==false?<section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginTop:16}}>
-          <div style={{...card,marginTop:0}}><small style={{color:C.dim}}>Net payout (computed)</small><strong style={{display:"block",fontSize:24,marginTop:6,color:C.gold}}>{INR(data.earnings?.netPayout)}</strong></div>
+          <div style={{...card,marginTop:0}}><small style={{color:C.dim}}>{data.engagement==="commission"?"Commission earned (governed)":"Contract earnings (computed)"}</small><strong style={{display:"block",fontSize:24,marginTop:6,color:C.gold}}>{INR(data.earnings?.netPayout)}</strong></div>
           <div style={{...card,marginTop:0}}><small style={{color:C.dim}}>Orders</small><strong style={{display:"block",fontSize:24,marginTop:6}}>{data.earnings?.orders||0}</strong></div>
           <div style={{...card,marginTop:0}}><small style={{color:C.dim}}>Gross order value</small><strong style={{display:"block",fontSize:24,marginTop:6}}>{INR(data.earnings?.grossOrderValue)}</strong></div>
         </section>:null}
+        {data.earnings?.note?<p style={{color:C.dim,fontSize:13,marginTop:8}}>{data.earnings.note}</p>:null}
+
+        {data.engagement==="commission"?<>
+          <h2 style={{...h2,marginTop:24}}>Commission statement</h2>
+          <div style={card}>{data.earnings?.commissionOrders?.length?data.earnings.commissionOrders.map(item=><div key={item.bookingId} style={{borderBottom:`1px solid ${C.line}`,padding:"9px 0"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><span><b>{item.serviceCode}</b> · <code style={{color:C.dim}}>{item.bookingId}</code></span><span>{INR(item.orderAmount)} order → <b style={{color:C.gold}}>{INR(item.commissionAmount)}</b> commission</span></div><small style={{color:C.dim}}>{item.commissionMode} {item.commissionValue} · {item.source} · {item.status} · eligible {new Date(item.dueAt).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})}</small></div>):<p style={{color:C.dim,margin:0}}>No governed commission orders yet.</p>}</div>
+          <h2 style={h2}>Payout status</h2>
+          <div style={card}>{data.earnings?.payouts?.length?data.earnings.payouts.map(item=><div key={item.id} style={{display:"flex",justifyContent:"space-between",gap:10,borderBottom:`1px solid ${C.line}`,padding:"8px 0",flexWrap:"wrap"}}><span><code style={{color:C.dim}}>{item.bookingId}</code> · {item.status}</span><b>{INR(item.amount)}</b></div>):<p style={{color:C.dim,margin:0}}>No payout instruction has been created yet.</p>}</div>
+        </>:null}
 
         <h2 style={{...h2,marginTop:24}}>Live assignments to accept</h2>
         <div style={card}>{data.liveAssignments?.length?data.liveAssignments.map(o=><div key={o.bookingId} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.line}`,padding:"8px 0",flexWrap:"wrap",gap:8}}>

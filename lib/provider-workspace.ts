@@ -14,6 +14,7 @@
  * "proof still pending" reminders. Sandbox/UAT - no live money, media stored by reference only.
  */
 import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
+import{ensureProviderCommissionTables}from"./provider-commission-governance";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 
 type Db=D1Database;
@@ -163,35 +164,23 @@ async function bookingsForProvider(db:Db,providerId:string){
 
 /** The full workspace payload for a provider (partner app / commission dashboard). Cold-DB safe. */
 export async function providerWorkspace(db:Db,input:{providerId:string}){
- await ensureProviderWorkspaceTables(db);
- const providerId=text(input.providerId);
- const engagement=await resolveEngagementForWorker(db,{providerId});
- const features=featuresFor(engagement);
- const[bookings,offers,earnings,settlements,incentives,link]=await Promise.all([
+ await ensureProviderWorkspaceTables(db);await ensureProviderCommissionTables(db);
+ const providerId=text(input.providerId),engagement=await resolveEngagementForWorker(db,{providerId}),features=featuresFor(engagement);
+ const[bookings,offers,earnings,settlements,incentives,link,commissionOrders,commissionPayouts,partnerStatements]=await Promise.all([
   bookingsForProvider(db,providerId),
   db.prepare("SELECT o.booking_id,o.offered_at,o.expires_at,o.status,b.service_code,b.package_name,b.scheduled_start,b.total_amount FROM provider_job_offers o JOIN canonical_bookings b ON b.id=o.booking_id WHERE o.provider_id=? AND o.status='offered' AND (o.expires_at IS NULL OR o.expires_at>?) ORDER BY o.offered_at DESC LIMIT 50").bind(providerId,Date.now()).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT COALESCE(SUM(provider_net_payout),0) net,COUNT(*) orders,COALESCE(SUM(order_value),0) gross FROM provider_payout_computations WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null),
   db.prepare("SELECT booking_id,gross_booking_amount,payout_amount,status,eligible_after,rule_version,reason,updated_at FROM provider_settlement_readiness WHERE provider_id=? ORDER BY updated_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT month_start,status,result_json,finalized_at FROM groomer_incentive_results WHERE head_groomer_id=? ORDER BY month_start DESC LIMIT 12").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT status FROM provider_identity_links WHERE provider_id=? LIMIT 1").bind(providerId).first<Row>().catch(()=>null),
+  db.prepare("SELECT booking_id,service_code,order_amount,commission_mode,commission_value,commission_amount,commission_source,status,completed_at,due_at FROM provider_order_commissions WHERE provider_id=? ORDER BY completed_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
+  db.prepare("SELECT id,booking_id,amount,status,due_at,provider_reference,created_at,updated_at FROM provider_order_payouts WHERE provider_id=? ORDER BY created_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
+  db.prepare("SELECT id,period_code,earned_amount,adjustment_amount,payable_amount,status,policy_status,source_json,updated_at FROM partner_settlement_statements WHERE provider_id=? ORDER BY period_code DESC LIMIT 24").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
- // proof still pending on completed/past jobs → the customer-reminder source
  const pendingProof:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
- for(const b of bookings.past.slice(0,40)){
-  const required=PROOF_REQUIREMENTS[b.serviceCode]||[];
-  if(!required.length)continue;
-  const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
-  const have=new Set(done.results.map(r=>text(r.proof_type)));
-  const missing=required.filter(r=>!have.has(r));
-  if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});
- }
- return{
-  providerId,engagement,features,
-  onboardingStatus:link?text(link.status):"not_linked",
-  bookings,
-  liveAssignments:offers.results.map(o=>({bookingId:text(o.booking_id),serviceCode:text(o.service_code),package:text(o.package_name),start:text(o.scheduled_start),orderValue:money(o.total_amount),offeredAt:num(o.offered_at),expiresAt:o.expires_at?num(o.expires_at):null})),
-  earnings:features.payslip?{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),note:"Computed payouts and finalized incentive results; payslip, advance and leave remain in the employee portal."}:{visible:false,netPayout:0,orders:0,grossOrderValue:0,computed:{netPayout:0,orders:0,grossOrderValue:0},settlements:[],incentives:[],note:"Commission providers see only their booking dashboard; governed payouts remain Finance-only."},
-  pendingProof,
-  truth:{ownRecordOnly:true,liveMoney:false,mediaByReference:true,earningsFromGovernedLedgersOnly:true,productionReady:false},
- };
+ for(const b of bookings.past.slice(0,40)){const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));const have=new Set(done.results.map(r=>text(r.proof_type))),missing=required.filter(r=>!have.has(r));if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});}
+ const contractEarnings={netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),statements:partnerStatements.results,note:"Contract earnings are governed provider earnings, not employee salary payroll. Attendance and leave live in the People view."};
+ const commissionRows=commissionOrders.results.map(row=>({bookingId:text(row.booking_id),serviceCode:text(row.service_code),orderAmount:money(row.order_amount),commissionMode:text(row.commission_mode),commissionValue:num(row.commission_value),commissionAmount:money(row.commission_amount),source:text(row.commission_source),status:text(row.status),completedAt:num(row.completed_at),dueAt:num(row.due_at)}));
+ const commissionEarnings={visible:true,netPayout:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length,grossOrderValue:money(commissionRows.reduce((sum,row)=>sum+row.orderAmount,0)),computed:{commissionAmount:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length},commissionOrders:commissionRows,payouts:commissionPayouts.results.map(row=>({id:text(row.id),bookingId:text(row.booking_id),amount:money(row.amount),status:text(row.status),dueAt:num(row.due_at),providerReference:row.provider_reference?text(row.provider_reference):null,updatedAt:num(row.updated_at)})),statements:partnerStatements.results,note:"Commission statement is visible to the provider from governed order commissions and payout state; approval and live payout remain Finance-controlled."};
+ return{providerId,engagement,features,onboardingStatus:link?text(link.status):"not_linked",bookings,liveAssignments:offers.results.map(o=>({bookingId:text(o.booking_id),serviceCode:text(o.service_code),package:text(o.package_name),start:text(o.scheduled_start),orderValue:money(o.total_amount),offeredAt:num(o.offered_at),expiresAt:o.expires_at?num(o.expires_at):null})),earnings:engagement==="commission"?commissionEarnings:contractEarnings,pendingProof,truth:{ownRecordOnly:true,liveMoney:false,mediaByReference:true,earningsFromGovernedLedgersOnly:true,commissionStatementVisible:engagement==="commission",contractSalaryPayrollExcluded:engagement==="contract",productionReady:false}};
 }

@@ -5,8 +5,8 @@
  *   - direct     : office / salaried direct employee. Full employee self-service (/me): ranking,
  *                  attendance, leave, payslip, performance, colleague directory, salary advances.
  *   - contract   : groomers, trainers, sitters, hosts, walkers engaged on contract. Get the earning
- *                  side in the PARTNER app - ranking, incentive, attendance, leave, payslip, advance,
- *                  petrol allowance, GPay/cash stats - plus job proof/tracking duties.
+ *                  side in the PARTNER app - ranking, incentive, attendance, leave and governed contract earnings;
+ *                  salary payslip/advance remain employee-only. Petrol allowance, GPay/cash stats - plus job proof/tracking duties.
  *   - commission : pure commission service providers. NO payslip/leave/advance/attendance. Only their
  *                  own dashboard - bookings, future bookings, payment pending/status, onboarding status,
  *                  live assignments to accept - plus job proof/tracking duties.
@@ -41,7 +41,7 @@ export function normaliseEngagement(raw:unknown):EngagementKind{
 /** The feature set a given engagement kind is entitled to. Pure policy - no DB. */
 export function featuresFor(kind:EngagementKind):WorkforceFeatures{
  if(kind==="direct")return{payslip:true,leave:true,attendance:true,advance:true,performance:true,ranking:true,colleagueDirectory:true,incentive:true,petrolAllowance:false,cashStats:false,bookingsDashboard:false,liveAssignments:false,jobProofAndTracking:false,surface:"employee_portal"};
- if(kind==="contract")return{payslip:true,leave:true,attendance:true,advance:true,performance:true,ranking:true,colleagueDirectory:false,incentive:true,petrolAllowance:true,cashStats:true,bookingsDashboard:true,liveAssignments:true,jobProofAndTracking:true,surface:"partner_app"};
+ if(kind==="contract")return{payslip:false,leave:true,attendance:true,advance:false,performance:true,ranking:true,colleagueDirectory:false,incentive:true,petrolAllowance:true,cashStats:true,bookingsDashboard:true,liveAssignments:true,jobProofAndTracking:true,surface:"partner_app"};
  return{payslip:false,leave:false,attendance:false,advance:false,performance:false,ranking:false,colleagueDirectory:false,incentive:false,petrolAllowance:false,cashStats:false,bookingsDashboard:true,liveAssignments:true,jobProofAndTracking:true,surface:"commission_dashboard"};
 }
 

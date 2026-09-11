@@ -28,7 +28,7 @@ const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 export async function resolveEmployeeForActor(db:Db,email:string):Promise<Row|null>{
  const e=text(email).toLowerCase();
  if(!e)return null;
- return await db.prepare("SELECT * FROM employees WHERE (LOWER(work_email)=? OR LOWER(user_email)=?) AND employment_status='active' LIMIT 1").bind(e,e).first<Row>().catch(()=>null);
+ return await db.prepare("SELECT * FROM employees WHERE (LOWER(work_email)=? OR LOWER(user_email)=?) AND employment_status IN ('active','contract_active') LIMIT 1").bind(e,e).first<Row>().catch(()=>null);
 }
 
 /** The employee's own payslips: every payroll result for them, newest first, with the line breakdown of the latest. */
@@ -83,14 +83,15 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
  const employee=await resolveEmployeeForActor(db,input.email);
  if(!employee)return{linked:false,email:text(input.email),productionReady:false};
  const employeeId=text(employee.id);
+ const employment=await db.prepare("SELECT employment_type FROM employee_employment_versions WHERE employee_id=? AND effective_until IS NULL ORDER BY version DESC LIMIT 1").bind(employeeId).first<Row>().catch(()=>null),isContract=["contract","contractor","contract_provider"].includes(text(employment?.employment_type).toLowerCase());
  const employeeEmail=text(employee.user_email||employee.work_email||input.email).toLowerCase(),monthStart=istMonthStart();
  const[compensation,payslips,incentives,dailyIncentive,salesIncentiveTruth,advances,leave,performance,attendance]=await Promise.all([
-  ownCompensation(db,employeeId),
-  ownPayslips(db,employeeId),
+  isContract?Promise.resolve(null):ownCompensation(db,employeeId),
+  isContract?Promise.resolve({list:[] as Row[],latest:null,latestLines:[] as Row[]}):ownPayslips(db,employeeId),
   ownIncentives(db,employeeId),
   dailyIncentiveAccrualSummary(db,{employeeId:employeeEmail}).catch(()=>({list:[] as Row[],total:0})),
   salesIncentivePeriodTruth(db,{employeeId:employeeEmail,monthStart}).catch(()=>null),
-  salaryAdvanceDirectory(db,{employeeId}).catch(()=>[] as Row[]),
+  isContract?Promise.resolve([] as Row[]):salaryAdvanceDirectory(db,{employeeId}).catch(()=>[] as Row[]),
   ownLeave(db,employeeId),
   ownPerformance(db,text(employee.work_email)),
   db.prepare("SELECT work_date,status,worked_minutes,exception_code FROM attendance_days WHERE employee_id=? ORDER BY work_date DESC LIMIT 14").bind(employeeId).all<Row>().catch(()=>({results:[] as Row[]})),
@@ -99,6 +100,7 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
  return{
   linked:true,
   employee:{id:employeeId,code:text(employee.employee_code),name:text(employee.display_name),workEmail:text(employee.work_email),joinedAt:num(employee.joined_at)},
+  engagement:isContract?"contract":"employee",
   compensation,
   payslips,
   incentives,
@@ -108,7 +110,7 @@ export async function employeeSelfServiceView(db:Db,input:{email:string}){
   leave,
   attendance:attendance.results.map(a=>({workDate:text(a.work_date),status:text(a.status),workedMinutes:num(a.worked_minutes),exception:a.exception_code?text(a.exception_code):null})),
   performance,
-  truth:{ownRecordOnly:true,payslipSource:"payroll_runs",incentiveSource:"approved_scheme_results_plus_canonical_sales_period_results",rankingType:"operational_metric_sort",productionReady:false},
+  truth:{ownRecordOnly:true,contractExcludedFromSalaryPayroll:true,payslipSource:"payroll_runs",incentiveSource:"approved_scheme_results_plus_canonical_sales_period_results",rankingType:"operational_metric_sort",productionReady:false},
  };
 }
 
