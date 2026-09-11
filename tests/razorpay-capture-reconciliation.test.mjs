@@ -69,6 +69,11 @@ test("provider API capture reconciliation closes a missing-webhook capture witho
     assert.equal(outbox?.status, "SUCCEEDED", "provider reconciliation must complete the existing post-commit saga in the same run");
     assert.equal(h.scalar("SELECT COUNT(*) value FROM booking_lifecycle_events WHERE booking_id='BOOK-RECON' AND event_type='payment_captured'"), 1);
     assert.equal(h.row("SELECT actor_id FROM booking_lifecycle_events WHERE booking_id='BOOK-RECON' AND event_type='payment_captured'")?.actor_id, "razorpay_provider_api");
+    const collectionJournal = h.sqlite.prepare("SELECT account_code,debit,credit,payment_id FROM finance_journal_entries WHERE source_type='online_payment_captured' AND payment_id='PAY-RECON' ORDER BY id").all();
+    assert.equal(collectionJournal.length, 2, "a verified capture must create exactly two finance journal lines");
+    assert.equal(collectionJournal.reduce((n, row) => n + Number(row.debit || 0), 0), 1);
+    assert.equal(collectionJournal.reduce((n, row) => n + Number(row.credit || 0), 0), 1);
+    assert.ok(collectionJournal.every(row => row.payment_id === "PAY-RECON"), "both journal lines retain canonical payment identity");
 
     h.sqlite.prepare("INSERT INTO gateway_webhook_events (id,provider,environment,event_id,event_type,raw_payload,payload_sha256,signature,processing_status,received_at) VALUES ('IN-LATE','razorpay','sandbox','evt_late_webhook','payment.captured','{}','late-hash','late-sig','PROCESSING',?)").run(Date.now());
     const replay = await captureAtomic.commitRazorpayCaptureAtomic(h.db, {
