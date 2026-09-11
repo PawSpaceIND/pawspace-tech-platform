@@ -7,6 +7,7 @@ import{getWhatsAppConversationMode,setWhatsAppConversationMode}from"./whatsapp-c
 import{recordWhatsAppInteractiveSubmission}from"./whatsapp-interactive-capture";
 import{armWhatsAppNoResponseSequence,cancelWhatsAppNoResponseSequences,ensureWhatsAppNoResponseSequenceTables}from"./whatsapp-no-response-sequence";
 import{recordWhatsAppUatDelivery,recordWhatsAppUatInbound}from"./whatsapp-uat-adapter";
+import{recordGlobalOptOut}from"./communication-governance";
 
 type Row=Record<string,unknown>;
 const encoder=new TextEncoder();
@@ -38,6 +39,7 @@ async function persistOptOut(db:D1Database,customerId:string,threadId:string,eve
  if(Number(prior?.applied)===1)return;
  await ensureWhatsAppAiLeadTables(db);
  await ensureWhatsAppNoResponseSequenceTables(db);
+ await recordGlobalOptOut(db,{customerId,source:"whatsapp_inbound_opt_out",actorId:"meta_whatsapp_webhook",asOf:now});
  await db.batch([
   db.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,0,0,0,0,0,1,'whatsapp_inbound_opt_out','meta_whatsapp_webhook',?) ON CONFLICT(customer_id) DO UPDATE SET whatsapp_consent=0,opt_out=1,source='whatsapp_inbound_opt_out',updated_by='meta_whatsapp_webhook',updated_at=excluded.updated_at").bind(customerId,now),
   db.prepare("UPDATE whatsapp_ai_consent_evidence SET revoked_at=COALESCE(revoked_at,?) WHERE customer_id=? AND channel='whatsapp' AND purpose='lead_response'").bind(now,customerId),

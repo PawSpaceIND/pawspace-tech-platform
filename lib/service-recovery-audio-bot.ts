@@ -211,13 +211,11 @@ async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, a
   }
 
   if (outcome.retryable) {
-    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:true,detail:{previousState:text(call.previous_state)},finishedAt:asOf});
-    if (attemptNo < Number(job.max_attempts||SERVICE_RECOVERY_AUDIO_MAX_ATTEMPTS)) {
-      await db.prepare("UPDATE service_recovery_voice_jobs SET status='retry_pending',last_disposition=?,last_detail=?,next_attempt_at=?,updated_at=? WHERE id=?")
-        .bind(outcome.disposition,`Retryable recovery call outcome: ${text(call.state)}`,asOf+RETRY_DELAY_MS,asOf,text(job.id)).run();
-      return { retryPending:true, disposition:outcome.disposition };
-    }
-    return escalateJob(db,job,{reason:`Automated recovery exhausted ${attemptNo} attempt(s) after ${text(call.state)}`,disposition:outcome.disposition,asOf,actorId,callId});
+    // Global outbound governance permits one automated voice dial per recipient in a rolling 14-day
+    // window. A no-answer/busy outcome therefore cannot schedule another bot dial inside that window;
+    // preserve the RNR disposition and hand the recovery to a human instead of creating a dead retry.
+    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:false,detail:{previousState:text(call.previous_state),automationStoppedBy:"voice_frequency_cap_14d"},finishedAt:asOf});
+    return escalateJob(db,job,{reason:`Automated recovery stopped after ${attemptNo} attempt(s): ${text(call.state)}; rolling 14-day voice cap requires human follow-up`,disposition:outcome.disposition,asOf,actorId,callId});
   }
 
   if (outcome.disposition==="policy_blocked" || outcome.disposition==="cancelled") {
