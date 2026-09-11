@@ -81,6 +81,14 @@ export type TdsComputation={period:string;sections:Record<string,{base:number;td
 /** Compute (and idempotently persist) the month's TDS from real payroll + payout data.
  *  Recomputation replaces the period's engine-computed rows, so it is safe to re-run. */
 async function sourceTableExists(db:Db,name:string){try{return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}catch{return false;}}
+// Like safeAll, but a never-created source table is a legitimately empty read while a table that EXISTS
+// and fails to read REFUSES (throws) instead of returning [] - so a statutory recompute cannot destroy
+// and zero a period on transient/drift read failure. [AUDIT-C3 extension for 194H/194J provider sources]
+async function guardedAll(db:Db,tableName:string,sql:string,bindings:unknown[],period:string){
+ if(!(await sourceTableExists(db,tableName)))return[] as Row[];
+ try{let statement=db.prepare(sql);if(bindings.length)statement=statement.bind(...bindings);return((await statement.all<Row>()).results||[]);}
+ catch(error){throw new Error(`TDS provider-source read (${tableName}) failed for ${period}; refusing to recompute. Existing tds_deductions rows are preserved. (${error instanceof Error?error.message:String(error)})`);}
+}
 export async function computeMonthlyTds(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<TdsComputation>{
  await ensureTdsTables(db);
  const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];
@@ -104,6 +112,13 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
  if(!(await sourceTableExists(db,"employee_payroll_results"))){payroll=[];}
  else try{payroll=((await db.prepare("SELECT r.id result_id,r.employee_id,r.gross_earnings,p.id run_id FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id WHERE p.period_start<? AND p.period_end>?").bind(endMs,startMs).all<Row>()).results)||[];}
  catch(error){throw new Error(`TDS payroll read failed for ${input.period}; refusing to recompute. Existing tds_deductions rows are preserved. (${error instanceof Error?error.message:String(error)})`);}
+ // 194H/194J provider sources are read HERE - before the DELETE - with the same refuse-on-drift guard as
+ // s192 above, so a read failure on an existing source table cannot destroy the period and recompute
+ // provider TDS to zero. [AUDIT-C3 extension]
+ const[year,monthNum]=input.period.split("-").map(Number);
+ const fyStartMs=Date.UTC(monthNum>=4?year:year-1,3,1)-(330*60_000);
+ const fyPayouts=await guardedAll(db,"provider_payout_computations","SELECT c.booking_id,c.provider_id,c.provider_net_payout,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[fyStartMs,endMs],input.period);
+ const fySettlements=await guardedAll(db,"boarding_host_settlement_ledger","SELECT booking_id,provider_id,payout_amount,eligible_at FROM boarding_host_settlement_ledger WHERE payout_amount IS NOT NULL AND eligible_at>=? AND eligible_at<?",[fyStartMs,endMs],input.period);
  await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  for(const row of payroll){
   const gross=Number(row.gross_earnings||0);if(gross<=0)continue;
@@ -116,10 +131,6 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
  // read from the SOURCE tables (below-threshold months leave no deduction rows, so deduction
  // history alone cannot see earlier payouts); the untaxed portion is cumulative minus base
  // already taxed in prior months' deduction rows.
- const[year,monthNum]=input.period.split("-").map(Number);
- const fyStartMs=Date.UTC(monthNum>=4?year:year-1,3,1)-(330*60_000);
- const fyPayouts=await safeAll(db,"SELECT c.booking_id,c.provider_id,c.provider_net_payout,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[fyStartMs,endMs]);
- const fySettlements=await safeAll(db,"SELECT booking_id,provider_id,payout_amount,eligible_at FROM boarding_host_settlement_ledger WHERE payout_amount IS NOT NULL AND eligible_at>=? AND eligible_at<?",[fyStartMs,endMs]);
  type ProviderAgg={section:"194H"|"194J";fyCumulative:number;monthAmount:number;monthRefs:string[]};
  const providerAgg=new Map<string,ProviderAgg>();
  const accumulate=(section:"194H"|"194J",providerId:string,amount:number,at:number,ref:string)=>{
