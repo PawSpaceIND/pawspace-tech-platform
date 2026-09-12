@@ -40,6 +40,11 @@ export const CUSTOMER_ID = "E2E-CUS-UI-001";
 export const PROVIDER_ID = "E2E-PRV-UI-001";
 export const BOOKING_ID = "E2E-BK-UI-001";
 const PROVIDER_APPLICATION_ID = "E2E-POAPP-UI-001";
+export const E2E_ADMIN_MFA_TOKEN = "e2e-admin-mfa-session-token";
+export const E2E_FINANCE_MFA_TOKEN = "e2e-finance-mfa-session-token";
+const E2E_MFA_SECRET = "JBSWY3DPEHPK3PXP";
+const E2E_ADMIN_MFA_HASH = "qEdvcGlP7fsVoQKhbsGLaKpjzj4_x5oS6FocbJFBPI0";
+const E2E_FINANCE_MFA_HASH = "m6R7_1DLmE0VoEL-U0nQPWZNOKW42J2R8bQ4F333-80";
 
 const has = (db, table) => Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
 
@@ -86,6 +91,11 @@ export function seed(dbPath = locateDb()) {
     CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
   `);
 
+  const userCols = new Set(db.prepare("PRAGMA table_info(app_users)").all().map((row) => row.name));
+  if (!userCols.has("mfa_secret")) db.exec("ALTER TABLE app_users ADD COLUMN mfa_secret TEXT");
+  if (!userCols.has("mfa_enabled")) db.exec("ALTER TABLE app_users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0 CHECK (mfa_enabled IN (0,1))");
+  db.exec("CREATE TABLE IF NOT EXISTS active_sessions (id TEXT PRIMARY KEY NOT NULL,user_id TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,mfa_verified_at INTEGER NOT NULL,issued_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,revoked_at INTEGER,revoke_reason TEXT,FOREIGN KEY (user_id) REFERENCES app_users(id))");
+
   // Keep E2E RBAC identical to the application defaults. Tests receive no bespoke wildcard role.
   for (const role of defaultRoles) {
     out.push(upsert(db, "role_definitions", {
@@ -108,8 +118,13 @@ export function seed(dbPath = locateDb()) {
   for (const who of Object.values(IDENTITIES)) {
     out.push(upsert(db, "app_users", {
       id: who.id, email: who.email, name: who.name, role_code: who.role,
-      status: "active", created_at: now, updated_at: now,
+      status: "active", mfa_secret: ["admin","finance"].includes(who.role) ? E2E_MFA_SECRET : null,
+      mfa_enabled: ["admin","finance"].includes(who.role) ? 1 : 0, created_at: now, updated_at: now,
     }));
+  }
+
+  for (const [id, userId, token_hash] of [["E2E-MFA-ADMIN", IDENTITIES.admin.id, E2E_ADMIN_MFA_HASH], ["E2E-MFA-FINANCE", IDENTITIES.finance.id, E2E_FINANCE_MFA_HASH]]) {
+    out.push(upsert(db, "active_sessions", { id, user_id: userId, token_hash, mfa_verified_at: now, issued_at: now, expires_at: now + 24 * 3600_000, revoked_at: null, revoke_reason: null }));
   }
 
   out.push(upsert(db, "canonical_customers", {

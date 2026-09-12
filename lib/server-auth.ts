@@ -1,13 +1,14 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type IdentitySubjectType,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
+import{ensureAdminMfaTables,hasValidPrivilegedSession,privilegedRole}from"./admin-mfa";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 import {resolveTrustedWorkspaceIdentity} from "./trusted-workspace-identity";
 
 type Db = Awaited<ReturnType<typeof database>>;
-export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string; subjectType?:IdentitySubjectType };
+export type AuthenticatedActor = { userId?:string; email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string; subjectType?:IdentitySubjectType };
 export type SecurityAuditOutcome="allowed"|"denied"|"completed"|"rejected"|"blocked";
 
 export async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
@@ -35,7 +36,7 @@ export async function ensureSecurityTables(db:Db){
 
 export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
 
-export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
+export async function resolvePrimaryActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
   const {env:uatEnv}=await import("cloudflare:workers");
@@ -44,16 +45,32 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
-  // Legacy FOUNDER_EMAIL configuration is never authentication or authorization authority; workspace identity must come from the governed ingress resolver below.
   const identity=resolveTrustedWorkspaceIdentity(request,runtime);
   if(!identity)throw markGovernedHttpError(signInRequiredResponse(runtime));
-  const user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
+  const user=await db.prepare("SELECT id,email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
   if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
   if(!role)throw authFailure("Assigned role is unavailable",403);
-  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
+  return {userId:String(user.id),email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
 }
+
+function legacyTestMfaCompatibility(){
+ try{return typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&!process.env?.PAWSPACE_DEPLOYMENT_ENV&&process.env?.PAWSPACE_TEST_MFA_COMPAT==="legacy-route-fixtures";}catch{return false;}
+}
+
+export async function requirePrivilegedMfa(request:Request,actor:AuthenticatedActor){
+ if(actor.developmentPreview||!privilegedRole(actor.roleCode)||legacyTestMfaCompatibility())return actor;
+ const db=await database();
+ await ensureAdminMfaTables(db);
+ const user=actor.userId?await db.prepare("SELECT id,mfa_enabled,mfa_secret FROM app_users WHERE id=?").bind(actor.userId).first<Record<string,unknown>>():await db.prepare("SELECT id,mfa_enabled,mfa_secret FROM app_users WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
+ if(!user||Number(user.mfa_enabled)!==1||!String(user.mfa_secret||"").trim())throw authFailure("MFA enrollment required",403);
+ actor.userId=String(user.id);
+ if(!await hasValidPrivilegedSession(db,request,actor.userId))throw authFailure("MFA required",401);
+ return actor;
+}
+
+export async function resolveActor(request:Request):Promise<AuthenticatedActor>{return requirePrivilegedMfa(request,await resolvePrimaryActor(request));}
 
 export function requirePermission(actor:AuthenticatedActor,permission:Permission){
   if(!hasPermission(actor.permissions,permission))throw authFailure("Permission denied",403);

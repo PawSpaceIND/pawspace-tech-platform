@@ -50,7 +50,7 @@ const uatActorReads=new WeakMap<Db,Map<string,Promise<Row|null>>>();
 async function readUatActorRow(db:Db,email:string){
  let byEmail=uatActorReads.get(db);if(!byEmail){byEmail=new Map();uatActorReads.set(db,byEmail);}
  const running=byEmail.get(email);if(running)return running;
- const pending=db.prepare("SELECT u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null)
+ const pending=db.prepare("SELECT u.id,u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null)
   .finally(()=>{if(byEmail!.get(email)===pending)byEmail!.delete(email);});
  byEmail.set(email,pending);return pending;
 }
@@ -66,7 +66,7 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  const roleCode=String(user.role_code||"").trim();
  if(!roleCode||user.permissions_json===null||user.permissions_json===undefined)return null;
  const permissions=parsePermissions(user.permissions_json);
- return{email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
+ return{userId:String(user.id),email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
 }
 
 export async function uatStaffIdentityAllowed(db:Db,email:string){
