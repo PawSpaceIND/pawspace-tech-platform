@@ -2,27 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-test("customer app locks beta brand to Emerald with appearance modes", async () => {
+test("customer app offers Emerald kit and Brand book colours", async () => {
   const config = await readFile(new URL("../app/mobile-app/theme-config.ts", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/mobile-app/mobile.module.css", import.meta.url), "utf8");
   const globals = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const brandLock = await readFile(new URL("../app/brand-lock.css", import.meta.url), "utf8");
   const appearance = await readFile(new URL("../app/components/pawspace-appearance.tsx", import.meta.url), "utf8");
+  const brandBook = await readFile(new URL("../app/brand-book-theme.css", import.meta.url), "utf8");
 
-  // Beta offers only Emerald in the picker; legacy ThemeId values remain type-valid.
   assert.match(config, /id:"emerald"/);
+  assert.match(config, /id:"signature"/);
   assert.match(config, /resolveBrandTheme/);
-  assert.match(config, /Beta brand lock/);
-  assert.doesNotMatch(config, /id:"signature"/);
+  assert.match(config, /PLATFORM_THEME_STORAGE_KEY/);
   assert.doesNotMatch(config, /id:"midnight"/);
   assert.doesNotMatch(config, /id:"rose"/);
   assert.doesNotMatch(config, /id:"ocean"/);
 
-  // Shared design tokens still document emerald; brand-lock forces one combo on screen.
   assert.match(globals, /\[data-pawspace-mobile="true"\]\[data-theme="emerald"\]/);
   assert.match(brandLock, /#01261f|#01261F/);
   assert.match(brandLock, /#e6b34e|#E6B34E/);
+  assert.match(brandBook, /#894AED/);
+  assert.match(brandBook, /#FFAF00/);
   assert.match(appearance, /resolveBrandTheme/);
   assert.match(appearance, /Make PawSpace yours/);
 
