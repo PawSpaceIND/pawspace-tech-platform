@@ -8,7 +8,7 @@ const db={};
 const call=(toolCode,agentCode,env,arguments_={})=>executePhase2Tool(db,{agentCode,goalId:"G1",toolCode,arguments:arguments_,actor,idempotencyKey:"phase2-test-key",env});
 
 test("all requested Phase 2 vertical tools are registered",()=>{
- const expected=["ops.voice.dispatch","marketing.ads.read_metrics","marketing.proposal.submit","marketing.ads.budget.reallocate","marketing.ads.keyword.mutate","finance.yield.calculate_surge","vet.triage.evaluate","vet.prescription.digitize","finance.vet_payout.calculate"];
+ const expected=["ops.voice.dispatch","ops.rpa.execute_legacy_sync","marketing.ads.read_metrics","marketing.proposal.submit","marketing.ads.budget.reallocate","marketing.ads.keyword.mutate","finance.yield.calculate_surge","vet.triage.evaluate","vet.prescription.digitize","finance.vet_payout.calculate"];
  assert.deepEqual(Object.keys(phase2ToolSchemas).sort(),expected.sort());
 });
 

@@ -7,17 +7,19 @@ import type { MarketingAdPlatform } from "./marketing-ad-connectors";
 import { calculateSurgePricing } from "./policies/surge-pricing-engine";
 import { ensureMarginPolicyTables } from "./finance-margin-validator";
 import { ensureVetHealthcareTables, evaluateVetTriage, digitizeVetPrescriptionDraft, calculateVetPayout } from "./vet-healthcare";
+import {executeMoonshotRpaAction} from "./mas/phase3/moonshot-rpa-core";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const int=(v:unknown)=>Math.max(0,Math.trunc(Number(v)||0));
 const enabled=(v:unknown)=>!["","0","false","off","disabled"].includes(text(v).toLowerCase());
 
-export type Phase2ToolCode="ops.voice.dispatch"|"marketing.ads.read_metrics"|"marketing.proposal.submit"|"marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate"|"finance.yield.calculate_surge"|"vet.triage.evaluate"|"vet.prescription.digitize"|"finance.vet_payout.calculate";
+export type Phase2ToolCode="ops.voice.dispatch"|"ops.rpa.execute_legacy_sync"|"marketing.ads.read_metrics"|"marketing.proposal.submit"|"marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate"|"finance.yield.calculate_surge"|"vet.triage.evaluate"|"vet.prescription.digitize"|"finance.vet_payout.calculate";
 const schema=(code:Phase2ToolCode,allowedAgents:AtlasToolDefinition["allowedAgents"],riskClass:AtlasToolDefinition["riskClass"],autonomy:AtlasToolDefinition["autonomy"],requiredPermissions:string[],properties:Record<string,unknown>,required:string[],networkPolicy:AtlasToolDefinition["networkPolicy"]="none"):AtlasToolDefinition<Phase2ToolCode>=>({code,version:"1",allowedAgents,riskClass,autonomy,idempotencyRequired:riskClass!=="read",requiredPermissions,inputSchema:{type:"object",additionalProperties:false,properties,required},executionTarget:networkPolicy==="none"?"canonical_service":"external_rpa",networkPolicy});
 
 export const phase2ToolSchemas:Record<Phase2ToolCode,AtlasToolDefinition<Phase2ToolCode>>={
  "ops.voice.dispatch":schema("ops.voice.dispatch",["ops","atlas"],"high","within_envelope",["communications.call","customers.manage"],{bookingId:{type:"string"},useCase:{type:"string"}},["bookingId","useCase"],"allowlisted_https"),
+ "ops.rpa.execute_legacy_sync":schema("ops.rpa.execute_legacy_sync",["ops","atlas"],"high","within_envelope",["settings.manage"],{system:{type:"string"},action:{type:"string"},correlationId:{type:"string"},input:{type:"object"}},["system","action","correlationId"],"allowlisted_https"),
  "marketing.ads.read_metrics":schema("marketing.ads.read_metrics",["marketing","atlas"],"read","autonomous",["marketing.view"],{from:{type:"string"},to:{type:"string"},platform:{type:"string"},campaignId:{type:"string"}},["from","to"]),
  "marketing.proposal.submit":schema("marketing.proposal.submit",["marketing","atlas"],"medium","autonomous",["marketing.manage"],{toolName:{type:"string"},platform:{type:"string"},why:{type:"string"},payload:{type:"object"}},["toolName","platform","why","payload"]),
  "marketing.ads.budget.reallocate":schema("marketing.ads.budget.reallocate",["marketing","atlas"],"high","within_envelope",["marketing.manage"],{approvalId:{type:"string"},platform:{type:"string"},accountId:{type:"string"},fromResourceId:{type:"string"},toResourceId:{type:"string"},fromDailyMinor:{type:"integer"},toDailyMinor:{type:"integer"},shiftMinor:{type:"integer"},reason:{type:"string"}},["approvalId","platform","accountId","fromResourceId","toResourceId","fromDailyMinor","toDailyMinor","shiftMinor","reason"],"allowlisted_https"),
@@ -60,12 +62,14 @@ export async function executePhase2Tool(db:D1Database,input:Phase2ExecutionInput
  const env=input.env||{},target=targetVertical(input.toolCode),mutation=phase2ToolSchemas[input.toolCode].riskClass!=="read",runtime=resolveVerticalRuntime(env,target,mutation?"execute_within_envelope":"recommend");
  if(runtime.mode==="disabled")return{status:"human_handoff" as const,executed:false,reason:`${target} AI runtime is disabled`};
  if(input.toolCode==="ops.voice.dispatch"&&!enabled(env.AI_EXTERNAL_COMMUNICATION_ACTIVE))return{status:"human_handoff" as const,executed:false,reason:"AI external communication is disabled"};
+ if(input.toolCode==="ops.rpa.execute_legacy_sync"&&!enabled(env.PAWSPACE_RPA_ACTIVE))return{status:"human_handoff" as const,executed:false,reason:"Moonshot RPA is disabled"};
  if(input.toolCode==="finance.vet_payout.calculate"&&!enabled(env.AI_FINANCIAL_MUTATION_ACTIVE))return{status:"human_handoff" as const,executed:false,reason:"AI financial mutation is disabled"};
  if(mutation&&runtime.mode!=="execute_within_envelope")return{status:"human_handoff" as const,executed:false,reason:`${target} mutation requires execute_within_envelope runtime`};
  if(mutation&&!text(input.idempotencyKey))throw new Error("Idempotency key is required for Phase 2 mutation tools");
  const a=input.arguments;
  switch(input.toolCode){
   case"ops.voice.dispatch":return{status:"completed" as const,executed:true,result:await opsVoice(db,env,a,input.actor,input.idempotencyKey!)};
+  case"ops.rpa.execute_legacy_sync":{const result=await executeMoonshotRpaAction(env,{system:text(a.system),action:text(a.action),correlationId:text(a.correlationId),input:a.input});if(!result.executed)return{status:"human_handoff" as const,executed:false,reason:result.reason||"Moonshot RPA is disabled"};return{status:"completed" as const,executed:true,result};}
   case"marketing.ads.read_metrics":return{status:"completed" as const,executed:true,result:await marketingAdsReadMetrics(db,{from:text(a.from),to:text(a.to),platform:text(a.platform) as MarketingAdPlatform||undefined,campaignId:text(a.campaignId)||undefined})};
   case"marketing.proposal.submit":return{status:"completed" as const,executed:true,result:await submitMarketingProposal(db,{toolName:text(a.toolName) as "marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate",platform:text(a.platform) as MarketingAdPlatform,why:text(a.why),payload:a.payload as Row,requestedBy:input.actor.email})};
   case"marketing.ads.budget.reallocate":return{status:"completed" as const,executed:true,result:await marketingBudgetReallocate(db,env,{approvalId:text(a.approvalId),platform:text(a.platform) as MarketingAdPlatform,accountId:text(a.accountId),fromResourceId:text(a.fromResourceId),toResourceId:text(a.toResourceId),fromDailyMinor:int(a.fromDailyMinor),toDailyMinor:int(a.toDailyMinor),shiftMinor:int(a.shiftMinor),reason:text(a.reason),actor:input.actor.email})};
