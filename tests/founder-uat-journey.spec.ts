@@ -165,7 +165,7 @@ test.describe("Founder UAT: Atlas recommendation -> human approval -> Grooming a
       // Audit proof: the recommendation was made by one identity and reviewed by another.
       const auditResponse = await founder.get("/api/ai-intelligence");
       expect(auditResponse.ok(), await auditResponse.text()).toBeTruthy();
-      const row = (await auditResponse.json()).data.suggestions.find((item: any) => item.id === suggestion.id);
+      const row = (await auditResponse.json()).data.suggestions.find((item: { id?: string }) => item.id === suggestion.id);
       expect(row).toBeTruthy();
       expect(row.status).toBe("approved");
       expect(row.requested_by).toBeTruthy();

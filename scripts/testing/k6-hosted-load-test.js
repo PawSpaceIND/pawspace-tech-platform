@@ -68,7 +68,7 @@ export function setup() {
   return { template: JSON.parse(rawTemplate) };
 }
 
-export default function (data) {
+export default function hostedLoadScenario(data) {
   const sequence = (__VU * 10_000_000) + __ITER;
   for (let i = 0; i < HEALTH_WEIGHT; i += 1) {
     const res = http.get(`${BASE_URL}/healthz`, { tags: { endpoint: "healthz" } });
