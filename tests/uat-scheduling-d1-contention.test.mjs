@@ -131,7 +131,7 @@ test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger
 
 test("Track 3 staging actor reads combine identity and role lookup in one D1 query",()=>{
   const auth=fs.readFileSync(new URL("../lib/uat-staging-auth.ts",import.meta.url),"utf8");
-  assert.match(auth,/SELECT u\.name,u\.role_code,u\.status,r\.permissions_json FROM app_users u LEFT JOIN role_definitions/);
+  assert.match(auth,/SELECT u\.id,u\.name,u\.role_code,u\.status,r\.permissions_json FROM app_users u LEFT JOIN role_definitions/);
   assert.match(auth,/const uatActorReads=new WeakMap<Db,Map<string,Promise<Row\|null>>>\(\)/);
 });
 

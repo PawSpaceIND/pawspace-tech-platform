@@ -94,16 +94,11 @@ test("the seeded world distinguishes two real providers, so ownership is express
   const { sqlite, providerRole } = await world();
   assert.ok(exists(sqlite, PROVIDER_A), `${PROVIDER_A} must exist in the capacity profiles`);
   assert.ok(exists(sqlite, PROVIDER_B), `${PROVIDER_B} must exist in the capacity profiles`);
-  // The whole point: the gateway lets a provider reach this route because it holds bookings.view.
   assert.ok(providerRole.permissions.includes("bookings.view"),
     "service_provider must hold bookings.view, which is what makes route-level ownership the only control");
   assert.ok(!platformSecurity.hasPermission(providerRole.permissions, "providers.manage"),
     "service_provider must not manage providers, or ownership would be bypassed by authority");
 });
-
-// ---------------------------------------------------------------------------
-// The control itself.
-// ---------------------------------------------------------------------------
 
 test("a provider cannot mark another provider unavailable, and nothing changes", async () => {
   const { sqlite } = await world();
@@ -154,8 +149,8 @@ test("a revoked provider binding no longer owns the record", async () => {
 
 test("staff who manage providers may write any provider, by authority rather than ownership", async () => {
   const { sqlite } = await world();
-  const staffRole = platformSecurity.defaultRoles.find((role) => role.permissions.includes("providers.manage"));
-  assert.ok(staffRole, "no role manages providers, so the staff-override path is not expressible");
+  const staffRole = platformSecurity.defaultRoles.find((role) => role.code === "manager");
+  assert.ok(staffRole?.permissions.includes("providers.manage"), "manager must manage providers for this authority-path proof");
   sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)")
     .run("USR-OPS", "ops.lead@pawspace.in", "ops", staffRole.code, NOW, NOW);
   const response = await post("ops.lead@pawspace.in", { providerId: PROVIDER_B, available: false, reason: "Suspended pending an ops review" });
@@ -183,9 +178,6 @@ test("repeating the same submit is safe: still unavailable, and one self-clear r
   const body = { providerId: PROVIDER_A, available: false, reason: "Away on personal leave today" };
   assert.equal((await post(EMAIL_A, body)).status, 200);
   assert.equal((await post(EMAIL_A, body)).status, 200, "a repeated identical submit must not fail");
-  // Stated honestly: each submit inserts its own block row, so the rows DO accumulate. What matters
-  // is that the observable state is unchanged - still unavailable - and that a single self-clear
-  // lifts every block this provider imposed, so a repeat cannot leave a provider stuck.
   assert.ok(blocks(sqlite, PROVIDER_A).length >= 1, "the provider must remain blocked");
   const cleared = await post(EMAIL_A, { providerId: PROVIDER_A, available: true, reason: "Back from leave" });
   assert.equal(cleared.status, 200);
@@ -194,11 +186,9 @@ test("repeating the same submit is safe: still unavailable, and one self-clear r
 });
 
 test("a provider cannot lift a restriction that staff imposed", async () => {
-  // This is the authority half of the route's comment: ownership says whose record it is, authority
-  // says who may lift a block on it. Without the created_by predicate a suspended provider could
-  // clear its own suspension.
   const { sqlite } = await world();
-  const staffRole = platformSecurity.defaultRoles.find((role) => role.permissions.includes("providers.manage"));
+  const staffRole = platformSecurity.defaultRoles.find((role) => role.code === "manager");
+  assert.ok(staffRole?.permissions.includes("providers.manage"), "manager must manage providers for this authority-path proof");
   sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)")
     .run("USR-OPS", "ops.lead@pawspace.in", "ops", staffRole.code, NOW, NOW);
   assert.equal((await post("ops.lead@pawspace.in", { providerId: PROVIDER_A, available: false, reason: "Suspended pending an ops review" })).status, 200);
@@ -220,8 +210,6 @@ test("validation still runs, and only after ownership is established", async () 
   const { sqlite } = await world();
   const owner = await post(EMAIL_A, { providerId: PROVIDER_A });
   assert.equal(owner.status, 400, "an owner sending an incomplete body still gets a 400");
-  // The same incomplete body from a non-owner must be refused, not validated: a 400 would confirm the
-  // payload shape to someone with no claim on the record.
   const before = allBlocks(sqlite);
   const stranger = await post(EMAIL_A, { providerId: PROVIDER_B });
   assert.ok([400, 401, 403].includes(stranger.status));

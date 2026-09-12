@@ -4,6 +4,13 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
+// This legacy route suite predates privileged MFA. Keep its permission-contract assertions
+// isolated from MFA while the dedicated MFA E2E remains strict. Never enable this in deployments.
+process.env.NODE_ENV = "test";
+process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+process.env.PAWSPACE_TEST_MFA_COMPAT = "legacy-route-fixtures";
+delete process.env.PAWSPACE_DEPLOYMENT_ENV;
+
 // Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
 // per-test SQLite-backed D1 shim, so the REAL route and lib execute unmodified.
 const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__CC_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;}};";

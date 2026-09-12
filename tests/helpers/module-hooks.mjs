@@ -138,9 +138,11 @@ function installLoaderFallback(workersUrl, registerHooksError = null) {
   return workersUrl;
 }
 
-export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
+export function installWorkersHooks(globalName, envName = `${globalName}_ENV`, options = {}) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
+  if (options.strictMfa === true) delete process.env.PAWSPACE_TEST_MFA_COMPAT;
+  else process.env.PAWSPACE_TEST_MFA_COMPAT = "legacy-route-fixtures";
   if (installedWorkersDbGlobals.has(globalName)) {
     throw new Error(`installWorkersHooks DB global already registered in this test process: ${globalName}`);
   }

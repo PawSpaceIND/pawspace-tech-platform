@@ -44,7 +44,8 @@ test("server-enforces privileged API access before route handlers", async () => 
   assert.match(gateway, /Access has not been provisioned or is disabled/);
   assert.match(gateway, /Cross-origin write blocked/);
   for (const permission of ["customers.manage", "finance.manage", "marketing.manage", "pricing.manage", "scheduling.manage", "launch.manage"]) assert.match(gateway, new RegExp(permission));
-  assert.match(security, /FOUNDER_EMAIL/);
+  assert.match(security, /resolveTrustedWorkspaceIdentity/);
+  assert.match(security, /requirePrivilegedMfa/);
   assert.match(security, /security_audit_events/);
 });
 

@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
  * Employee / admin journey: workspace visibility -> control surfaces -> refund adjudication.
  * Driven as the seeded admin identity (app_users role_code='admin').
  */
-const AS_ADMIN = { "oai-authenticated-user-email": "e2e.admin@pawspace.test" };
+const AS_ADMIN = { "oai-authenticated-user-email": "e2e.admin@pawspace.test", cookie: "pawspace_admin_mfa=e2e-admin-mfa-session-token" };
 test.use({ extraHTTPHeaders: AS_ADMIN });
 
 test("the team workspace renders for an admin", async ({ page }) => {
