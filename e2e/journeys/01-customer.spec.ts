@@ -173,8 +173,6 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await page.setExtraHTTPHeaders({});
   await page.context().clearCookies();
   await page.addInitScript(() => {
-    localStorage.clear();
-    sessionStorage.clear();
     localStorage.setItem("pawspace.visual-style", "professional");
   });
   const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
