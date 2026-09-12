@@ -73,9 +73,20 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
+type ObservabilityFields=Record<string,string|number|boolean|null|undefined>;
+function emitStructuredError(event:string,fields:ObservabilityFields={}){
+  console.error(JSON.stringify({timestamp:new Date().toISOString(),level:"error",event,...fields}));
+}
+function apiSurface(pathname:string){const parts=pathname.split("/").filter(Boolean);return parts[0]==="api"?`/api/${parts[1]||"root"}`:"non_api";}
+function observeApiResponse(request:Request,response:Response){
+  if(response.status>=500)emitStructuredError("api_failure",{surface:apiSurface(new URL(request.url).pathname),method:request.method,status:response.status});
+  return response;
+}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    try{
 
     if(url.pathname==="/__staging/sentry-self-test"){
       if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});
@@ -85,6 +96,14 @@ const worker = {
       const eventId=Sentry.captureException(new Error("controlled_staging_sentry_self_test"),{tags:{surface:"staging_self_test"},extra:{piiSafe:true}});
       const flushed=await Sentry.flush(2_000);
       return Response.json({ok:flushed,eventId,piiSafe:true},{status:flushed?200:503,headers:{"cache-control":"no-store"}});
+    }
+
+    if(url.pathname==="/__staging/sentry-unhandled-self-test"){
+      if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});
+      const supplied=request.headers.get("x-pawspace-uat-code")||"";
+      if(!env.PAWSPACE_UAT_ACCESS_CODE||supplied!==env.PAWSPACE_UAT_ACCESS_CODE)return new Response("Forbidden",{status:403});
+      if(!env.SENTRY_DSN)return Response.json({ok:false,error:"sentry_not_configured"},{status:503,headers:{"cache-control":"no-store"}});
+      throw new Error("controlled_staging_sentry_unhandled_self_test");
     }
 
     // Carrier traffic remains outside PawSpace browser/session auth. The AgentStream handler performs
@@ -100,7 +119,7 @@ const worker = {
     if (url.pathname.startsWith("/api/")) {
       const edgeLimiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;
       if(edgeLimiter){const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()||"unknown";const decision=await edgeLimiter.limit({key:`${url.pathname}:${ip}`});if(!decision.success)return secureApiResponse(Response.json({error:"Too many requests"},{status:429,headers:{"retry-after":"60","cache-control":"no-store"}}));}
-      if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
+      if(url.pathname==="/api/identity-session"){const response=await handler.fetch(request,env,ctx);return secureApiResponse(observeApiResponse(request,response));}
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
       const isDiallerWebhook=url.pathname==="/api/dialler/callback";
@@ -127,7 +146,7 @@ const worker = {
       const response = await handler.fetch(request, env, ctx);
       if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
-      return secureApiResponse(response);
+      return secureApiResponse(observeApiResponse(request,response));
     }
 
     if (url.pathname === "/_vinext/image") {
@@ -142,6 +161,10 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+    }catch(error){
+      if(url.pathname.startsWith("/api/"))emitStructuredError("api_unhandled_failure",{surface:apiSurface(url.pathname),method:request.method,status:500,errorType:error instanceof Error?error.name:"UnknownError"});
+      throw error;
+    }
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
@@ -218,6 +241,9 @@ const worker = {
       if(atlasDaily.status==="rejected")errors.push(`atlas daily analysis: ${atlasDaily.reason instanceof Error?atlasDaily.reason.message:String(atlasDaily.reason)}`);
       if(dpdpRetention.status==="rejected")errors.push(`DPDP retention: ${dpdpRetention.reason instanceof Error?dpdpRetention.reason.message:String(dpdpRetention.reason)}`);else if(dpdpRetention.value.failed)errors.push(`DPDP retention: ${dpdpRetention.value.failed} erasure exception(s)`);
       if(templateSyncError)errors.push(templateSyncError);
+      const settlementUnmatched=settlementRecon.status==="fulfilled"?Number((settlementRecon.value as Record<string,unknown>).unmatched||0):0;
+      const financialErrorCount=errors.filter(error=>/(ledger|journal|finance|payment|razorpay|capture|settlement|reconcil)/i.test(error)).length;
+      if(settlementUnmatched>0||financialErrorCount>0)emitStructuredError("financial_ledger_discrepancy",{settlementUnmatchedCount:settlementUnmatched,failureCount:financialErrorCount});
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },

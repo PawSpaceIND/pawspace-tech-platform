@@ -9,6 +9,9 @@ assert.match(worker,/Sentry\.withSentry/);
 assert.match(worker,/sendDefaultPii:false/);
 assert.match(worker,/SENTRY_DSN/);
 assert.match(worker,/controlled_staging_sentry_self_test/);
+assert.match(worker,/controlled_staging_sentry_unhandled_self_test/);
+assert.match(worker,/api_unhandled_failure/);
+assert.match(worker,/financial_ledger_discrepancy/);
 assert.match(wrangler,/\[observability\]/);
 assert.match(wrangler,/invocation_logs = true/);
 assert.match(wrangler,/\[observability\.traces\]/);
@@ -18,6 +21,9 @@ console.log(JSON.stringify({
   sentryGlobalWrapper:true,
   defaultPiiDisabled:true,
   stagingSelfTest:true,
+  stagingUnhandledSelfTest:true,
+  structuredApiFailures:true,
+  financialDiscrepancyEvents:true,
   invocationLogs:true,
   traces:true
 }));
