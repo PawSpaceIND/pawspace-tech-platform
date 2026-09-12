@@ -31,8 +31,11 @@ test("the mobile app surface renders (was a blank screen in the 2026-09-05 audit
   const res = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(res?.status()).toBe(200);
   await expect(page.getByRole("navigation", { name: "Customer navigation" })).toBeVisible({ timeout: 15_000 });
-  const body = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
-  expect(body.length, "/mobile-app must not render blank").toBeGreaterThan(150);
+  await expect.poll(async()=>{
+    const text=(await page.locator("body").innerText()).replace(/\s+/g," ").trim();
+    return text.length;
+  },{message:"/mobile-app must not render blank",timeout:15_000}).toBeGreaterThan(150);
+  const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
 });
 
