@@ -169,6 +169,11 @@ export async function ensureIntegrationReadinessTables(db:Db){
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
 
+export async function integrationReadinessTablesReady(db:Db){
+ const rows=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('integration_registry','integration_readiness_events','integration_live_evidence','integration_evidence_requests')").all<Row>();
+ return new Set(rows.results.map(row=>string(row.name))).size===4;
+}
+
 async function ensureIntegrationReadinessForRead(db:Db,options?:IntegrationReadOptions){
  if(!options?.tablesReady)await ensureIntegrationReadinessTables(db);
 }
@@ -389,8 +394,8 @@ export async function integrationLaunchBlockers(db:Db,options?:IntegrationReadOp
 export async function integrationReadinessAudit(db:Db,integrationCode?:string,options?:IntegrationReadOptions){await ensureIntegrationReadinessForRead(db,options);const query=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");const rows=await query.all<Row>();return rows.results;}
 
 /** One hosted control-plane read bootstraps once, then reads one transactionally consistent D1 snapshot. */
-export async function readIntegrationReadinessSnapshot(db:Db,runtime:Record<string,unknown>,integrationCode?:string){
- await ensureIntegrationReadinessTables(db);
+export async function readIntegrationReadinessSnapshot(db:Db,runtime:Record<string,unknown>,integrationCode?:string,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);
  const tablesReady={tablesReady:true};
  await syncIntegrationCredentialPresence(db,runtime,tablesReady);
  const auditStatement=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");
