@@ -1,0 +1,28 @@
+title = "PawSpace secret scanning policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "pawspace-cloudflare-token"
+description = "Cloudflare OAuth/API token"
+regex = '''(?i)\b(?:cfoat|cfort|cfpat)_[A-Za-z0-9._-]{20,}\b'''
+keywords = ["cfoat_", "cfort_", "cfpat_"]
+
+[[rules]]
+id = "pawspace-cloudflare-api-token-assignment"
+description = "Cloudflare API token assignment"
+regex = '''(?i)CLOUDFLARE(?:_API)?_TOKEN\s*[:=]\s*["']?[A-Za-z0-9._-]{20,}["']?'''
+keywords = ["cloudflare", "CLOUDFLARE_API_TOKEN"]
+
+[[rules]]
+id = "pawspace-payment-secret-key"
+description = "Stripe/Razorpay secret or key identifier"
+regex = '''\b(?:sk_(?:live|test)_[A-Za-z0-9]{8,}|rzp_(?:live|test)_[A-Za-z0-9]{8,})\b'''
+keywords = ["sk_live_", "sk_test_", "rzp_live_", "rzp_test_"]
+
+[[rules]]
+id = "pawspace-aes-gcm-secret"
+description = "AES-GCM encryption secret assignment"
+regex = '''(?i)(?:AES(?:_256)?_GCM|ENCRYPTION|DATA_ENCRYPTION|KMS)_(?:KEY|SECRET)\s*[:=]\s*["']?[A-Za-z0-9+/_=-]{24,}["']?'''
+keywords = ["AES_GCM", "AES_256_GCM", "ENCRYPTION_KEY", "ENCRYPTION_SECRET", "DATA_ENCRYPTION_KEY", "KMS_KEY"]
