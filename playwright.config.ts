@@ -18,6 +18,7 @@ export default defineConfig({
     "e2e/frontend-resilience.spec.ts",
     "e2e/mission-01.spec.ts",
     "e2e/partner-journey.spec.ts",
+    "tests/e2e/**/*.spec.ts",
   ],
   timeout: 60_000,
   expect: { timeout: 15_000 },
@@ -41,7 +42,8 @@ export default defineConfig({
     env: { ...process.env, PW_PORT: String(port), PAWSPACE_PAYMENT_ENV: "sandbox" },
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile-chromium", use: { ...devices["Pixel 7"] } },
+    { name: "backend-concurrency", testMatch: "tests/e2e/**/*.spec.ts", use: {} },
+    { name: "chromium", testIgnore: "tests/e2e/**/*.spec.ts", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile-chromium", testIgnore: "tests/e2e/**/*.spec.ts", use: { ...devices["Pixel 7"] } },
   ],
 });
