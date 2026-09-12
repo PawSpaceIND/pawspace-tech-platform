@@ -33,23 +33,6 @@
 
 html,
 body {
-  background: var(--kit-cream) !important;
+  background: var(--kit-cream);
   color: var(--kit-ink);
-}
-
-/* Primary actions match the locked board (dark green fill). */
-.checkout-bar button,
-.primary-button,
-.paw-appearance-done,
-.paw-appearance-dialog button.paw-appearance-done {
-  background: var(--kit-emerald) !important;
-  color: #fff8ee !important;
-}
-
-.hero {
-  background: linear-gradient(160deg, #01261f 0%, #0b3d32 100%) !important;
-}
-
-.hero h1 em {
-  color: var(--kit-gold) !important;
 }
