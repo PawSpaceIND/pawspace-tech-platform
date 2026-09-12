@@ -7,7 +7,7 @@ import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, THEME_STORAG
 export default function PawSpaceAppearance() {
   const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME);
   const [mode, setMode] = useState<AppearanceMode>(DEFAULT_APPEARANCE);
-  const [visualStyle, setVisualStyle] = useState("professional");
+  const [visualStyle, setVisualStyle] = useState("cartoon");
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const sync = () => {
@@ -21,8 +21,8 @@ export default function PawSpaceAppearance() {
         }
       } catch { /* Appearance remains usable when device storage is unavailable. */ }
       setTheme(chosen); setMode(appearance);
-      let style = "professional";
-      try { if (localStorage.getItem("pawspace.visual-style") === "cartoon") style = "cartoon"; } catch { /* Device preference only. */ }
+      let style = "cartoon";
+      try { if (localStorage.getItem("pawspace.visual-style") === "professional") style = "professional"; } catch { /* Device preference only. */ }
       setVisualStyle(style);
       document.documentElement.dataset.pawStyle = style;
       document.documentElement.dataset.pawTheme = "emerald";
@@ -48,10 +48,10 @@ export default function PawSpaceAppearance() {
     <dialog ref={dialog} className="paw-appearance-dialog" aria-labelledby="paw-appearance-title">
       <div className="paw-appearance-head"><img src="/assets/pawspace-icon.jpeg" alt="PawSpace"/><button aria-label="Close appearance settings" onClick={() => dialog.current?.close()}>×</button></div>
       <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>One brand: emerald, gold and ivory — the same combo across every screen.</p>
-      <fieldset><legend>Visual style</legend>{["professional", "cartoon"].map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
+      <fieldset><legend>Visual style</legend>{["cartoon", "professional"].map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
         setVisualStyle(style); document.documentElement.dataset.pawStyle = style;
         try { localStorage.setItem("pawspace.visual-style", style); } catch { /* Session-only choice. */ }
-      }}/><span><b>{style === "professional" ? "Professional" : "Cartoon"}</b><small>{style === "professional" ? "Clean care essentials · default" : "Playful illustrated companion · alternative"}</small></span></label>)}</fieldset>
+      }}/><span><b>{style === "cartoon" ? "Illustrated mascots" : "Professional"}</b><small>{style === "cartoon" ? "Cute breed art on every service · default" : "Compact icons only"}</small></span></label>)}</fieldset>
       <fieldset><legend>Brand colour</legend>{themes.map(option => <label key={option.id} className="paw-theme-choice"><input type="radio" name="paw-theme" value={option.id} checked={theme === option.id} onChange={() => choose(option.id)}/><span><b>{option.label}</b><small>{option.tagline}</small></span><span className="paw-swatches" aria-hidden="true">{option.swatches.map(colour => <i key={colour} style={{background:colour}}/>)}</span></label>)}</fieldset>
       <fieldset><legend>Display</legend><div className="paw-mode-choices">{(["light", "dark", "system"] as const).map(value => <label key={value}><input type="radio" name="paw-mode" checked={mode===value} onChange={() => choose(theme,value)}/>{value}</label>)}</div></fieldset>
       <button className="paw-appearance-done" onClick={() => dialog.current?.close()}>Done</button>
