@@ -31,3 +31,25 @@ remote = false
 binding = "ATLAS_VECTORIZE"
 index_name = "pawspace-atlas-memory"
 remote = false
+
+# Edge hardening intent (Blocker 4)
+# NOTE: Wrangler rate-limit bindings are Worker-consumed bindings; they do not
+# replace Cloudflare zone-level WAF / Rate Limiting Rules. Pre-Worker blocking
+# for SQLi/XSS/headless traffic must be configured in Cloudflare Rulesets
+# (http_request_firewall_managed/custom and http_ratelimit) on the routed zone.
+# The standalone verification harness in scripts/security/waf-edge-test.sh is
+# fail-closed and must observe HTTP 403/429 from the real Cloudflare edge.
+
+[[ratelimits]]
+name = "GLOBAL_API_RATE_LIMITER"
+namespace_id = "1003"
+[ratelimits.simple]
+limit = 100
+period = 60
+
+[[ratelimits]]
+name = "AUTH_OTP_RATE_LIMITER"
+namespace_id = "1004"
+[ratelimits.simple]
+limit = 5
+period = 60
