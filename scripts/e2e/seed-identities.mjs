@@ -6,7 +6,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { defaultRoles } from "../../lib/platform-security.ts";
 
 const D1_DIRS = [
@@ -44,7 +43,8 @@ const PROVIDER_APPLICATION_ID = "E2E-POAPP-UI-001";
 export const E2E_ADMIN_MFA_TOKEN = "e2e-admin-mfa-session-token";
 export const E2E_FINANCE_MFA_TOKEN = "e2e-finance-mfa-session-token";
 const E2E_MFA_SECRET = "JBSWY3DPEHPK3PXP";
-const tokenHash = (value) => createHash("sha256").update(value).digest("base64url");
+const E2E_ADMIN_MFA_HASH = "qEdvcGlP7fsVoQKhbsGLaKpjzj4_x5oS6FocbJFBPI0";
+const E2E_FINANCE_MFA_HASH = "m6R7_1DLmE0VoEL-U0nQPWZNOKW42J2R8bQ4F333-80";
 
 const has = (db, table) => Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
 
@@ -123,8 +123,8 @@ export function seed(dbPath = locateDb()) {
     }));
   }
 
-  for (const [id, userId, raw] of [["E2E-MFA-ADMIN", IDENTITIES.admin.id, E2E_ADMIN_MFA_TOKEN], ["E2E-MFA-FINANCE", IDENTITIES.finance.id, E2E_FINANCE_MFA_TOKEN]]) {
-    out.push(upsert(db, "active_sessions", { id, user_id: userId, token_hash: tokenHash(raw), mfa_verified_at: now, issued_at: now, expires_at: now + 24 * 3600_000, revoked_at: null, revoke_reason: null }));
+  for (const [id, userId, token_hash] of [["E2E-MFA-ADMIN", IDENTITIES.admin.id, E2E_ADMIN_MFA_HASH], ["E2E-MFA-FINANCE", IDENTITIES.finance.id, E2E_FINANCE_MFA_HASH]]) {
+    out.push(upsert(db, "active_sessions", { id, user_id: userId, token_hash, mfa_verified_at: now, issued_at: now, expires_at: now + 24 * 3600_000, revoked_at: null, revoke_reason: null }));
   }
 
   out.push(upsert(db, "canonical_customers", {
