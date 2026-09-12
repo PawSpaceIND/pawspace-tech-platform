@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {productionOtpEnabled} from "../lib/otp-production-runtime.ts";
+import "./helpers/register-hooks.mjs";
+
+const {productionOtpEnabled} = await import("../lib/otp-production-runtime.ts");
 
 // This source-contract suite is the stable regression surface for the finalized P0/P1 guards.
 const read=(path)=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
