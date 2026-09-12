@@ -50,6 +50,8 @@ interface Env {
   PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
   PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
   AI_VOICE_RATE_LIMITER?:RateLimitBinding;
+  ATLAS_VECTORIZE?:{upsert(vectors:Array<{id:string;values:number[];metadata:Record<string,unknown>}>):Promise<unknown>;query(values:number[],options:Record<string,unknown>):Promise<unknown>};
+  ATLAS_SECURE_CONTEXT_KEY?:string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {

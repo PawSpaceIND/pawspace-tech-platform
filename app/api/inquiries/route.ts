@@ -5,7 +5,6 @@ const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cac
 
 export const INQUIRY_SERVICE_CATEGORIES=[
  ...pawspaceServices.map(service=>({code:service.code,name:service.name,group:service.group})),
- {code:"veterinary",name:"Doorstep Veterinary",group:"Health"},
 ]as const;
 
 type InquiryCategory=(typeof INQUIRY_SERVICE_CATEGORIES)[number];
@@ -16,7 +15,7 @@ const aliases:Record<string,string>={
  taxi:"pet_taxi",pet_taxi:"pet_taxi",
  walking:"dog_walking",dog_walking:"dog_walking",
  funeral:"funeral_memorial",memorial:"funeral_memorial",funeral_memorial:"funeral_memorial",
- vet:"veterinary",veterinary:"veterinary",doorstep_vet:"veterinary",
+ vet:"vet_consult",veterinary:"vet_consult",doorstep_vet:"vet_consult",
 };
 
 function serviceCategory(value:unknown):InquiryCategory|undefined{

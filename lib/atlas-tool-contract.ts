@@ -1,5 +1,5 @@
-export type AtlasAgentCode="atlas"|"sales"|"marketing"|"ops"|"hr"|"finance";
-export type AtlasToolNamespace="sales"|"memory"|"vision"|"iot"|"commerce"|"rpa";
+export type AtlasAgentCode="atlas"|"sales"|"marketing"|"ops"|"hr"|"finance"|"healthcare";
+export type AtlasToolNamespace="sales"|"marketing"|"ops"|"finance"|"vet"|"memory"|"vision"|"iot"|"commerce"|"rpa";
 export type AtlasToolCode=`${AtlasToolNamespace}.${string}`;
 export type AtlasExecutionTarget="canonical_service"|"external_rpa";
 export type AtlasNetworkPolicy="none"|"allowlisted_https";
