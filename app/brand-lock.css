@@ -1,7 +1,6 @@
 /*
  * PawSpace beta brand lock — Emerald #01261F + Gold #E6B34E only.
  * Presentation-only. Does not change booking, payment, or identity logic.
- * Ensures pages that never opted into .ps-unified-* still match the brand.
  */
 :root {
   --psu-emerald: #01261f;
@@ -11,6 +10,9 @@
   --purple: #01261f;
   --purple-deep: #001913;
   --orange: #e6b34e;
+  --ds-text: #0c2e25;
+  --ds-text-muted: #64756f;
+  --ds-border-strong: #c5d6cf;
 }
 
 html, body {
@@ -18,12 +20,58 @@ html, body {
   color: #0c2e25;
 }
 
-/* Force alternate mobile theme ids onto emerald tokens during beta */
+/* Home hero: kill residual purple gradient from legacy globals */
+.hero {
+  background: radial-gradient(circle at 84% 8%, #1f6b57 0, transparent 31%), linear-gradient(135deg, #01261f 0%, #064c3c 68%, #0a604b 100%) !important;
+  box-shadow: 0 24px 70px rgba(1, 38, 31, 0.22) !important;
+}
+.hero p { color: #dce9e4 !important; }
+.hero h1 em { color: var(--psu-gold) !important; }
+
+.checkout-bar {
+  background: rgba(1, 38, 31, 0.97) !important;
+  box-shadow: 0 18px 45px rgba(1, 38, 31, 0.28) !important;
+}
+.checkout-bar span { color: #dce9e4 !important; }
+.checkout-bar small { color: #a8c0b8 !important; }
+.checkout-bar button,
+.primary-button {
+  background: var(--psu-gold) !important;
+  color: #251b05 !important;
+}
+
+.step-badge,
+.offer-tabs button.active {
+  background: #edf3ef !important;
+  color: #01261f !important;
+}
+.pet-switch { background: #f2f5f1 !important; }
+.pet-switch button.active { color: #01261f !important; box-shadow: 0 4px 16px rgba(6, 54, 43, 0.1) !important; }
+.count-picker button.active,
+.slots-grid button.selected,
+.date-row button.active {
+  border-color: #01261f !important;
+  background: #01261f !important;
+  color: #fff !important;
+}
+.date-row button.active { background: #edf3ef !important; color: #0c2e25 !important; }
+.package-card:hover { border-color: #8fb5a8 !important; box-shadow: 0 14px 34px rgba(6, 54, 43, 0.08) !important; }
+.package-card.selected {
+  border-color: #01261f !important;
+  background: linear-gradient(180deg, #fff, #f3f8f5) !important;
+}
+.selected .radio-dot { background: #01261f !important; border-color: #01261f !important; }
+.modal-backdrop { background: rgba(1, 38, 31, 0.62) !important; }
+.toast-pill { background: #01261f !important; }
+
+/* Force alternate mobile / saved theme ids onto emerald tokens */
+[data-pawspace-mobile="true"],
 [data-pawspace-mobile="true"][data-theme="signature"],
 [data-pawspace-mobile="true"][data-theme="midnight"],
 [data-pawspace-mobile="true"][data-theme="rose"],
 [data-pawspace-mobile="true"][data-theme="ocean"],
 [data-pawspace-mobile="true"][data-theme="sage"],
+html[data-paw-theme],
 html[data-paw-theme="signature"],
 html[data-paw-theme="midnight"],
 html[data-paw-theme="rose"],
@@ -47,7 +95,6 @@ html[data-paw-theme="sage"] {
   --ps-protection: #01261f;
 }
 
-/* Appearance chrome matches brand */
 .paw-appearance-trigger {
   border-color: #cfe0d9 !important;
   color: #01261f !important;
