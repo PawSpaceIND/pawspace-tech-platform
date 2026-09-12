@@ -214,14 +214,26 @@ export async function marketingBudgetReallocate(db: Db, runtime: Runtime, input:
   await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.fromResourceId, proposedDailyMinor: nextFrom });
   await assertBudgetEnvelope(db, { platform: input.platform, accountId: input.accountId, resourceId: input.toResourceId, proposedDailyMinor: nextTo });
   await claimApproval(db, input.approvalId);
+  let sourceMutated = false;
   try {
     const fromResult = await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.fromResourceId, amountMinor: nextFrom, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
+    sourceMutated = true;
     const result = await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.toResourceId, amountMinor: nextTo, actor: input.actor, reason: input.reason, fetchImpl: input.fetchImpl });
     const executionId = text((result as Row).id) || uid("MAE");
     await finishApproval(db, input.approvalId, executionId);
     return { approvalId: input.approvalId, approvedBy: text(approval.approved_by), fromDailyMinor: nextFrom, toDailyMinor: nextTo, fromResult, result };
   } catch (error) {
-    await failApprovalExecution(db, input.approvalId, error instanceof Error ? error.message : String(error));
+    const original = error instanceof Error ? error.message : String(error);
+    if (sourceMutated) {
+      try {
+        await mutateMarketingAdResource(db, runtime, { platform: input.platform, mutationType: "budget", resourceId: input.fromResourceId, amountMinor: payload.fromDailyMinor, actor: input.actor, reason: `Compensation rollback: ${input.reason}`, fetchImpl: input.fetchImpl });
+        await failApprovalExecution(db, input.approvalId, `${original} | source_compensated=true`);
+      } catch (rollbackError) {
+        const rollback = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        await failApprovalExecution(db, input.approvalId, `${original} | source_compensated=false | rollback_error=${rollback}`);
+        throw new Error(`Marketing budget reallocation failed and source rollback failed: ${rollback}`, { cause: error });
+      }
+    } else await failApprovalExecution(db, input.approvalId, original);
     throw error;
   }
 }

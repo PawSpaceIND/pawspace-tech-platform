@@ -1,0 +1,38 @@
+/*
+ * Locked product kit — Happier Pets / Happier People (2026-09-12).
+ * Presentation only. Does not change booking, Razorpay, payouts, auth, or logo assets.
+ */
+:root {
+  --kit-emerald: #01261f;
+  --kit-emerald-2: #0b3d32;
+  --kit-gold: #e6b34e;
+  --kit-cream: #fff8ee;
+  --kit-surface: #ffffff;
+  --kit-raised: #f3eee4;
+  --kit-ink: #173c31;
+  --kit-muted: #5b6f66;
+  --kit-line: #e4ddd0;
+  --paw-bg: #fff8ee;
+  --paw-surface: #ffffff;
+  --paw-raised: #f3eee4;
+  --paw-text: #173c31;
+  --paw-muted: #5b6f66;
+  --paw-line: #e4ddd0;
+  --paw-primary: #01261f;
+  --paw-on-primary: #fff8ee;
+  --paw-gold: #e6b34e;
+  --paw-hero: #01261f;
+  --paw-hero-text: #fff8ee;
+  --paw-lilac: #e8f0ec;
+  --paw-yellow: #f7e7c2;
+  --paw-pink: #f4e4dc;
+  --paw-mint: #dceee0;
+  --paw-welcome: #01261f;
+  --paw-welcome-text: #f7e7c2;
+}
+
+html,
+body {
+  background: var(--kit-cream);
+  color: var(--kit-ink);
+}

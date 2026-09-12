@@ -1,0 +1,32 @@
+/* Presentation only. Breed mascots on discovery cards. */
+html[data-paw-style="cartoon"] .home .cards .cardPhoto>img,
+html:not([data-paw-style="professional"]) .home .cards .cardPhoto>img {
+  display: block !important;
+  width: 112px !important;
+  height: 112px !important;
+  object-fit: contain !important;
+  border-radius: 18px !important;
+  background: #fff8ee !important;
+}
+html .home .cards .card {
+  background: #fff !important;
+  border: 1px solid #e4ddd0 !important;
+  border-radius: 20px !important;
+  box-shadow: 0 8px 22px rgba(1, 38, 31, 0.06) !important;
+}
+html .home .welcomeHero {
+  background: linear-gradient(135deg, #01261f, #0b3d32) !important;
+  color: #fff8ee !important;
+}
+html .home .welcomeHero:after {
+  background: linear-gradient(90deg, rgba(1, 38, 31, 0.72), transparent) !important;
+}
+html .home .welcomeHero em {
+  color: #e6b34e !important;
+}
+html .home .cards .card>button .ctaLabel {
+  color: #01261f;
+}
+html .home [data-service="funeral"] .cardPhoto>img {
+  filter: grayscale(0.35) saturate(0.7);
+}
