@@ -29,28 +29,50 @@ const defaults=[
 ] as const;
 
 const capacityTablesEnsured=new WeakSet<Db>();
+const capacityTablesEnsuring=new WeakMap<Db,Promise<void>>();
+const providerBookingGuardReady=new WeakSet<Db>();
+const providerBookingGuardEnsuring=new WeakMap<Db,Promise<void>>();
 const capacityDefaultsSeeded=new WeakSet<Db>();
 
-export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;await db.batch([
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_capacity_audit (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_recovery_cases (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,booking_id TEXT,failed_provider_id TEXT NOT NULL,reason_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',replacement_provider_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',opened_at INTEGER NOT NULL,resolved_at INTEGER,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_performance_events (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,group_id TEXT,booking_id TEXT,event_type TEXT NOT NULL,impact_score INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_capacity_profiles_lookup ON provider_capacity_profiles(city_id,live,status,effective_from,effective_to)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_active ON provider_unavailability(provider_id,status,starts_at,ends_at)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_assignment_offers_group ON provider_assignment_offers(group_id)"),
-]);
- for(const ddl of [
-  "ALTER TABLE provider_capacity_profiles ADD COLUMN contract_type TEXT CHECK(contract_type IN ('full_time','commission'))",
-  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_registration_number TEXT",
-  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_verification_status TEXT NOT NULL DEFAULT 'not_required'",
-  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_provider_ref TEXT"
- ]) await db.prepare(ddl).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
- await db.prepare("UPDATE provider_capacity_profiles SET contract_type=CASE WHEN provider_model='full_time' THEN 'full_time' ELSE 'commission' END WHERE contract_type IS NULL").run();
- capacityTablesEnsured.add(db);}
+async function providerCapacitySchemaReady(db:Db){
+ const [objects,columns]=await Promise.all([
+  db.prepare("SELECT name FROM sqlite_master WHERE name IN ('provider_capacity_profiles','provider_capacity_audit','provider_assignment_offers','provider_recovery_cases','provider_performance_events','provider_unavailability','idx_provider_capacity_profiles_lookup','idx_provider_unavailability_active','idx_provider_unavailability_window','idx_provider_assignment_offers_group')").all<Row>(),
+  db.prepare("PRAGMA table_info(provider_capacity_profiles)").all<Row>(),
+ ]);
+ const names=new Set(objects.results.map(row=>String(row.name)));
+ const cols=new Set(columns.results.map(row=>String(row.name)));
+ return names.size===10&&['contract_type','vci_registration_number','vci_verification_status','vci_provider_ref'].every(column=>cols.has(column));
+}
+
+export async function ensureProviderCapacityTables(db:Db){
+ if(capacityTablesEnsured.has(db))return;
+ const active=capacityTablesEnsuring.get(db);if(active)return active;
+ const work=(async()=>{
+  if(await providerCapacitySchemaReady(db)){capacityTablesEnsured.add(db);return;}
+  await db.batch([
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_capacity_audit (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)"),
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_recovery_cases (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,booking_id TEXT,failed_provider_id TEXT NOT NULL,reason_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',replacement_provider_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',opened_at INTEGER NOT NULL,resolved_at INTEGER,updated_at INTEGER NOT NULL)"),
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_performance_events (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,group_id TEXT,booking_id TEXT,event_type TEXT NOT NULL,impact_score INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
+   db.prepare("CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_capacity_profiles_lookup ON provider_capacity_profiles(city_id,live,status,effective_from,effective_to)"),
+   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_active ON provider_unavailability(provider_id,status,starts_at,ends_at)"),
+   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),
+   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_assignment_offers_group ON provider_assignment_offers(group_id)"),
+  ]);
+  for(const ddl of [
+   "ALTER TABLE provider_capacity_profiles ADD COLUMN contract_type TEXT CHECK(contract_type IN ('full_time','commission'))",
+   "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_registration_number TEXT",
+   "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_verification_status TEXT NOT NULL DEFAULT 'not_required'",
+   "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_provider_ref TEXT"
+  ]) await db.prepare(ddl).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+  await db.prepare("UPDATE provider_capacity_profiles SET contract_type=CASE WHEN provider_model='full_time' THEN 'full_time' ELSE 'commission' END WHERE contract_type IS NULL").run();
+  capacityTablesEnsured.add(db);
+ })().finally(()=>{capacityTablesEnsuring.delete(db);});
+ capacityTablesEnsuring.set(db,work);
+ return work;
+}
 
 export async function seedProviderCapacityDefaults(db:Db){if(capacityDefaultsSeeded.has(db))return;await ensureProviderCapacityTables(db);const now=Date.now();await db.batch(defaults.map(p=>db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,'active',1,'2026-08-01',NULL,'founder_seed',?)").bind(p.id,p.cityId,p.name,p.model,JSON.stringify(p.services),JSON.stringify(p.zones),p.rating,p.qualityScore,p.capacity,p.travelBufferMinutes,p.maxDailyJobs,p.acceptanceTimeoutMinutes,now)));capacityDefaultsSeeded.add(db);}
 
@@ -63,7 +85,19 @@ export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,se
 
 export async function getGovernedProvider(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();if(!row)return null;return attachHomeBase(db,rowToProvider(row),Date.now());}
 export async function providerUnavailableForWindow(db:Db,input:{providerId:string;scheduledStart:string;scheduledEnd:string}){await ensureProviderCapacityTables(db);const blocked=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(input.providerId,input.scheduledEnd,input.scheduledStart).first<Row>();return Boolean(blocked);}
-export async function ensureProviderBookingGuard(db:Db){await ensureProviderCapacityTables(db);await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS provider_booking_confirmation_guards (group_id TEXT PRIMARY KEY,created_at INTEGER NOT NULL)"),db.prepare("CREATE TRIGGER IF NOT EXISTS block_unavailable_provider_booking BEFORE INSERT ON provider_booking_confirmation_guards WHEN EXISTS (SELECT 1 FROM scheduling_reservations r JOIN provider_unavailability u ON u.provider_id=r.provider_id AND u.status='active' AND u.starts_at<r.scheduled_end AND u.ends_at>r.scheduled_start WHERE r.group_id=NEW.group_id AND r.status!='cancelled') BEGIN SELECT RAISE(ABORT,'provider_unavailable_before_booking'); END")]);}
+export async function ensureProviderBookingGuard(db:Db){
+ if(providerBookingGuardReady.has(db))return;
+ const active=providerBookingGuardEnsuring.get(db);if(active)return active;
+ const work=(async()=>{
+  const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('provider_booking_confirmation_guards','block_unavailable_provider_booking')").all<Row>();
+  if(new Set(rows.results.map(row=>String(row.name))).size===2){providerBookingGuardReady.add(db);return;}
+  await ensureProviderCapacityTables(db);
+  await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS provider_booking_confirmation_guards (group_id TEXT PRIMARY KEY,created_at INTEGER NOT NULL)"),db.prepare("CREATE TRIGGER IF NOT EXISTS block_unavailable_provider_booking BEFORE INSERT ON provider_booking_confirmation_guards WHEN EXISTS (SELECT 1 FROM scheduling_reservations r JOIN provider_unavailability u ON u.provider_id=r.provider_id AND u.status='active' AND u.starts_at<r.scheduled_end AND u.ends_at>r.scheduled_start WHERE r.group_id=NEW.group_id AND r.status!='cancelled') BEGIN SELECT RAISE(ABORT,'provider_unavailable_before_booking'); END")]);
+  providerBookingGuardReady.add(db);
+ })().finally(()=>{providerBookingGuardEnsuring.delete(db);});
+ providerBookingGuardEnsuring.set(db,work);
+ return work;
+}
 export async function getProviderAcceptanceTimeout(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT acceptance_timeout_minutes FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();return Math.max(1,Number(row?.acceptance_timeout_minutes||3));}
 export async function createAssignmentOffer(db:Db,input:{groupId:string;bookingId?:string;providerId:string;attemptNo?:number}){await seedProviderCapacityDefaults(db);await assertProviderAssignable(db,input.providerId);const timeout=await getProviderAcceptanceTimeout(db,input.providerId),now=Date.now(),expiresAt=now+timeout*60_000;await db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=COALESCE(excluded.booking_id,booking_id),provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(input.groupId,input.bookingId??null,input.providerId,now,expiresAt,input.attemptNo??1,now).run();return{timeoutMinutes:timeout,expiresAt};}
 export async function recordProviderPerformance(db:Db,input:{providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown}){await ensureProviderCapacityTables(db);await db.prepare("INSERT INTO provider_performance_events (id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.providerId,input.groupId??null,input.bookingId??null,input.eventType,input.impactScore,JSON.stringify(input.detail??{}),Date.now()).run();}
