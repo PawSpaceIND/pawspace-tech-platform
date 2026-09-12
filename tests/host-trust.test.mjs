@@ -135,9 +135,11 @@ test("host-trust-panel displays badges, stats, and reviews",async()=>{
 
 test("host-trust-panel uses Emerald and Gold theme colors",async()=>{
   const panel=await read("app/mobile-app/host-trust-panel.tsx");
-  assert.match(panel,/var\(--ds-primary-500\)/);
-  assert.match(panel,/var\(--ds-surface\)/);
-  assert.match(panel,/var\(--ds-border\)/);
+  const styles=await read("app/mobile-app/host-trust-panel.module.css");
+  assert.match(panel,/host-trust-panel\.module\.css/);
+  assert.match(styles,/var\(--ds-primary-500\)/);
+  assert.match(styles,/var\(--ds-surface\)/);
+  assert.match(styles,/var\(--ds-border\)/);
 });
 
 test("host-trust-panel includes pagination for reviews",async()=>{

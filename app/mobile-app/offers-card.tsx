@@ -5,10 +5,7 @@
 // copies the code and calls the optional onSelectCode callback so the checkout stream can wire it
 // into its own CouponField - this component never applies a discount itself.
 import { useEffect, useState } from "react";
-
-const EMERALD = "#01261F";
-const GOLD = "#E6B34E";
-const IVORY = "#F6F2E9";
+import styles from "./offers-card.module.css";
 
 type CustomerOffer = {
   code: string;
@@ -59,28 +56,20 @@ export default function OffersCard({ customerId, onSelectCode }: { customerId: s
     onSelectCode?.(code);
   };
 
-  const cardShell: React.CSSProperties = {
-    background: EMERALD,
-    color: IVORY,
-    borderRadius: 20,
-    padding: 20,
-    fontFamily: "system-ui, -apple-system, sans-serif",
-    maxWidth: 420,
-    boxShadow: "0 12px 28px rgba(1,38,31,0.35)",
-  };
+
 
   if (loading) {
     return (
-      <section style={cardShell}>
-        <p style={{ margin: 0, opacity: 0.8 }}>Loading offers…</p>
+      <section className={styles.cardShell}>
+        <p className={styles.loadingText}>Loading offers…</p>
       </section>
     );
   }
 
   if (error || !offers) {
     return (
-      <section style={cardShell}>
-        <p style={{ margin: 0, opacity: 0.85 }}>{error || "Offers unavailable."}</p>
+      <section className={styles.cardShell}>
+        <p className={styles.errorText}>{error || "Offers unavailable."}</p>
       </section>
     );
   }
@@ -88,61 +77,40 @@ export default function OffersCard({ customerId, onSelectCode }: { customerId: s
   const otherCoupons = offers.coupons.filter((offer) => offer.code !== offers.autoApply?.code);
 
   return (
-    <section style={cardShell}>
-      <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, letterSpacing: 0.4, textTransform: "uppercase" }}>Offers for you</div>
+    <section className={styles.cardShell}>
+      <div className={styles.sectionTitle}>Offers for you</div>
 
       {offers.autoApply && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 14,
-            borderRadius: 14,
-            background: `linear-gradient(135deg, rgba(230,179,78,0.22), rgba(230,179,78,0.08))`,
-            border: `1px solid ${GOLD}`,
-          }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 700, color: GOLD }}>🎉 Welcome offer applied</div>
-          <p style={{ fontSize: 13, lineHeight: 1.45, margin: "6px 0 0", opacity: 0.92 }}>
+        <div className={styles.autoApply}>
+          <div className={styles.autoApplyTitle}>🎉 Welcome offer applied</div>
+          <p className={styles.offerDescription}>
             <b>{offers.autoApply.code}</b> · {offers.autoApply.description}
           </p>
         </div>
       )}
 
       {otherCoupons.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, letterSpacing: 0.4, textTransform: "uppercase" }}>Available codes</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Available codes</div>
+          <div className={styles.couponList}>
             {otherCoupons.map((offer) => (
               <button
                 key={offer.code}
                 type="button"
                 onClick={() => selectCode(offer.code)}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 14px",
-                  borderRadius: 999,
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.16)",
-                  color: IVORY,
-                  cursor: "pointer",
-                  textAlign: "left",
-                  font: "inherit",
-                }}
+                className={styles.couponButton}
               >
                 <span>
-                  <b style={{ color: GOLD }}>{offer.code}</b> <span style={{ opacity: 0.85, fontSize: 13 }}>· {offer.description}</span>
+                  <b className={styles.code}>{offer.code}</b> <span className={styles.description}>· {offer.description}</span>
                 </span>
-                <span style={{ fontSize: 12, opacity: 0.75, flexShrink: 0 }}>{copiedCode === offer.code ? "Copied ✓" : "Tap to use"}</span>
+                <span className={styles.copyState}>{copiedCode === offer.code ? "Copied ✓" : "Tap to use"}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {offers.coupons.length === 0 && <p style={{ fontSize: 13, opacity: 0.75, marginTop: 12 }}>No offers available right now.</p>}
+      {offers.coupons.length === 0 && <p className={styles.empty}>No offers available right now.</p>}
     </section>
   );
 }
