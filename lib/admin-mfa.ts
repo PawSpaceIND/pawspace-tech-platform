@@ -11,7 +11,7 @@ function b64url(bytes:Uint8Array){let s="";for(const b of bytes)s+=String.fromCh
 async function sha256(value:string){const d=await crypto.subtle.digest("SHA-256",enc.encode(value));return b64url(new Uint8Array(d));}
 function token(){const b=new Uint8Array(32);crypto.getRandomValues(b);return b64url(b);}
 function readCookie(request:Request,name:string){for(const part of (request.headers.get("cookie")||"").split(";")){const[k,...rest]=part.trim().split("=");if(k===name)return decodeURIComponent(rest.join("="));}return"";}
-function base32(value:string){const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",clean=value.toUpperCase().replace(/[^A-Z2-7]/g,"");let bits="",out=[] as number[];for(const ch of clean){const n=alphabet.indexOf(ch);if(n<0)throw new Error("Invalid TOTP secret");bits+=n.toString(2).padStart(5,"0");}for(let i=0;i+8<=bits.length;i+=8)out.push(parseInt(bits.slice(i,i+8),2));return new Uint8Array(out);}
+function base32(value:string){const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",clean=value.toUpperCase().replace(/[^A-Z2-7]/g,"");let bits="";const out=[] as number[];for(const ch of clean){const n=alphabet.indexOf(ch);if(n<0)throw new Error("Invalid TOTP secret");bits+=n.toString(2).padStart(5,"0");}for(let i=0;i+8<=bits.length;i+=8)out.push(parseInt(bits.slice(i,i+8),2));return new Uint8Array(out);}
 
 export async function ensureAdminMfaTables(db:Db){
  if(ensured.has(db as unknown as object))return;
