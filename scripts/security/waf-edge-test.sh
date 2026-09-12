@@ -42,3 +42,4 @@ if (( FAILURES > 0 )); then
   fail "EDGE_SECURITY_RESULT=FAIL failures=$FAILURES"
 fi
 log "EDGE_SECURITY_RESULT=SUCCESS waf=403 rate_limit=429"
+log "NOTE status-code proof alone does not prove zero Worker CPU/D1; pair with Cloudflare Security Events or Worker tail absence for pre-Worker certification"

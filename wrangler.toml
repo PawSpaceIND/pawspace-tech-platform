@@ -53,3 +53,11 @@ namespace_id = "1004"
 [ratelimits.simple]
 limit = 5
 period = 60
+
+# Blocker 4 certification note:
+# These bindings declare Worker-side rate-limit capabilities only. Cloudflare
+# zone-level Rulesets must separately enforce the production edge policy before
+# Worker execution: global 100 req/min, auth/OTP 5 req/min, managed WAF SQLi/XSS
+# block mode, and bot/headless mitigation. The current OAuth token is zone-read
+# only, so this repository change intentionally does not claim those zone rules
+# have been provisioned.
