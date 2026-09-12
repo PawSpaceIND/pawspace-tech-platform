@@ -26,3 +26,6 @@ test("read receipt advances both message and outbox after delivery", async () =>
  assert.equal(ctx.sqlite.prepare("SELECT status FROM communication_messages WHERE id=?").get(message.messageId).status, "read");
  assert.equal(ctx.sqlite.prepare("SELECT status FROM communication_outbox WHERE message_id=?").get(message.messageId).status, "read");
 });
+
+
+test("dispatcher treats email SMS and WhatsApp as external live channels and routes configuration failures to retry or dead-letter",()=>{const dispatcher=fs.readFileSync("lib/communication-outbox-dispatcher.ts","utf8"),boundary=fs.readFileSync("lib/communication-provider-boundary.ts","utf8"),adapters=fs.readFileSync("lib/communication-adapters.ts","utf8");assert.match(dispatcher,/email.*sms.*whatsapp/);assert.match(dispatcher,/routeFailure/);assert.match(dispatcher,/production_.*adapter|binding\.environment/);assert.doesNotMatch(dispatcher,/m\.channel<>\'whatsapp\'/);assert.match(boundary,/adapterEnvironment/);assert.match(boundary,/live_ready/);assert.match(adapters,/environment\?:"sandbox"\|"production"/);});
