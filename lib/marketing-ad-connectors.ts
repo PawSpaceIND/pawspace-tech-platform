@@ -403,8 +403,11 @@ export async function mutateMarketingAdResource(db: Db, runtime: Runtime, input:
       response = await fetchImpl(`https://googleads.googleapis.com/${config.version}/customers/${config.customerId}/${endpointType}:mutate`, { method:"POST",headers:googleHeaders(config),body:JSON.stringify({operations:[{update:{resourceName:`customers/${config.customerId}/${resourceType}/${resourceId}`,[field]:String(amountMinor*10_000)},updateMask}]}) });
     } else {
       const config = metaConfig(runtime); if (!config.configured) throw new Error("Meta Ads connector is not configured; META_ADS_API_VERSION must be explicit");
+      if (!/^\d{1,30}$/.test(resourceId)) throw new Response("Meta Ads resource ID must be numeric", { status: 400 });
       const body = new URLSearchParams(); body.set(input.mutationType === "budget" ? "daily_budget" : "bid_amount", String(amountMinor));
-      response = await fetchImpl(`https://graph.facebook.com/${config.version}/${resourceId}`, { method:"POST",headers:{authorization:`Bearer ${config.accessToken}`,"content-type":"application/x-www-form-urlencoded"},body:body.toString() });
+      const endpoint = new URL(`/${config.version}/${resourceId}`, "https://graph.facebook.com");
+      if (endpoint.protocol !== "https:" || endpoint.hostname !== "graph.facebook.com") throw new Error("Meta mutation endpoint failed provider-host validation");
+      response = await fetchImpl(endpoint, { method:"POST",headers:{authorization:`Bearer ${config.accessToken}`,"content-type":"application/x-www-form-urlencoded"},body:body.toString() });
     }
     const parsed = await parseProviderResponse(response, input.platform === "google_ads" ? "Google Ads" : "Meta Ads");
     const requestId = response.headers.get("request-id") || response.headers.get("x-fb-trace-id") || text(parsed.requestId || parsed.id);
