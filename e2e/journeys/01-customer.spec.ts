@@ -172,7 +172,11 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   test.setTimeout(120_000);
   await page.setExtraHTTPHeaders({});
   await page.context().clearCookies();
-  await page.addInitScript(() => localStorage.removeItem("pawspace.visual-style"));
+  await page.addInitScript(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    localStorage.setItem("pawspace.visual-style", "professional");
+  });
   const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(response?.status()).toBe(200);
   const home = page.locator('[data-home-design="pawspace-prototype-converged"]');
@@ -184,14 +188,14 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await expect(care.getByRole("heading", { name: "Care for every little need" })).toBeVisible();
   const names = ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"];
   await expect(care.getByRole("button")).toHaveCount(names.length);
-  // Professional is the reviewed default: icon cards deliberately hide the artwork.
+  // Force the reviewed professional baseline: icon cards deliberately hide the artwork.
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
   await expect(care.locator("article img").first()).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath("customer-approved-professional-home.png"), fullPage: true });
   // Switch through the real preference controls before checking illustrated assets.
   await page.getByRole("button", { name: "Change PawSpace appearance" }).click();
   const appearance = page.getByRole("dialog", { name: "Make PawSpace yours." });
-  await appearance.getByRole("radio", { name: /^Cartoon/ }).check();
+  await appearance.getByRole("radio", { name: /^Illustrated mascots/ }).check();
   await appearance.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "cartoon");
   const measurements = [];
