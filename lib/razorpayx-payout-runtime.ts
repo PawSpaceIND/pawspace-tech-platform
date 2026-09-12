@@ -16,6 +16,7 @@ export async function ensureRazorpayXPayoutRuntime(db:Db){
   db.prepare("CREATE TABLE IF NOT EXISTS razorpayx_payout_provider_state (local_payout_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,booking_id TEXT,statement_id TEXT,provider_id TEXT NOT NULL,amount_paise INTEGER NOT NULL,currency TEXT NOT NULL,fund_account_id TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,provider_payout_id TEXT UNIQUE,provider_status TEXT,last_utr TEXT,last_error TEXT,last_payload_sha256 TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS razorpayx_webhook_events (event_id TEXT PRIMARY KEY,event_type TEXT NOT NULL,provider_payout_id TEXT,payload_sha256 TEXT NOT NULL,processing_status TEXT NOT NULL,reason TEXT,received_at INTEGER NOT NULL,processed_at INTEGER)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_rpx_webhook_payout ON razorpayx_webhook_events(provider_payout_id,received_at)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS razorpayx_live_reconciliation_holds (local_payout_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,provider_payout_id TEXT,status TEXT NOT NULL CHECK(status IN ('RECONCILIATION_REQUIRED','CLEARED_BY_HUMAN')),automatic_retry_allowed INTEGER NOT NULL DEFAULT 0 CHECK(automatic_retry_allowed=0),failure_reason TEXT NOT NULL,failed_at INTEGER NOT NULL,cleared_by TEXT,cleared_reason TEXT,cleared_at INTEGER,updated_at INTEGER NOT NULL)"),
  ]);
 }
 
@@ -37,6 +38,40 @@ async function resolvePayoutSource(db:Db,id:string){
  if(commission)return{source:"commission" as const,row:commission};
  if(settlement)return{source:"settlement" as const,row:settlement};
  return null;
+}
+
+export async function assertRazorpayXLiveAutomationAllowed(db:Db,payoutId:string){
+ await ensureRazorpayXPayoutRuntime(db);const id=text(payoutId);
+ const hold=await db.prepare("SELECT status,automatic_retry_allowed,failure_reason FROM razorpayx_live_reconciliation_holds WHERE local_payout_id=?").bind(id).first<Row>();
+ if(hold&&text(hold.status)==="RECONCILIATION_REQUIRED")throw new Response("RazorpayX live payout is locked for human reconciliation; automated retry is forbidden",{status:409});
+ return{payoutId:id,allowed:true};
+}
+
+export async function recordRazorpayXLivePayoutFailure(db:Db,input:{payoutId:string;providerPayoutId?:string|null;reason:string}){
+ await ensureRazorpayXPayoutRuntime(db);const id=text(input.payoutId),reason=text(input.reason);if(!id||!reason)throw new Response("Payout id and failure reason are required",{status:400});
+ const resolved=await resolvePayoutSource(db,id);if(!resolved)throw new Response("Live payout record not found",{status:404});const{source,row}=resolved;
+ if(text(row.environment)!=="live")throw new Response("Live reconciliation quarantine only accepts live payout records",{status:409});
+ const providerPayoutId=text(input.providerPayoutId)||text(row.provider_reference)||null,t=now(),table=sourceTable(source),sourceError=source==="settlement"?",last_error=?":"",sourceBinds=source==="settlement"?[reason,t,id]:[t,id];
+ const statements=[
+  db.prepare(`UPDATE ${table} SET status='RECONCILIATION_REQUIRED'${sourceError},updated_at=? WHERE id=? AND environment='live'`).bind(...sourceBinds),
+  db.prepare("INSERT INTO razorpayx_live_reconciliation_holds (local_payout_id,source_type,provider_payout_id,status,automatic_retry_allowed,failure_reason,failed_at,cleared_by,cleared_reason,cleared_at,updated_at) VALUES (?,?,?,'RECONCILIATION_REQUIRED',0,?,?,NULL,NULL,NULL,?) ON CONFLICT(local_payout_id) DO UPDATE SET source_type=excluded.source_type,provider_payout_id=COALESCE(excluded.provider_payout_id,razorpayx_live_reconciliation_holds.provider_payout_id),status='RECONCILIATION_REQUIRED',automatic_retry_allowed=0,failure_reason=excluded.failure_reason,failed_at=excluded.failed_at,cleared_by=NULL,cleared_reason=NULL,cleared_at=NULL,updated_at=excluded.updated_at").bind(id,source,providerPayoutId,reason,t,t),
+ ];
+ if(source==="commission"){statements.push(db.prepare("UPDATE provider_order_commissions SET status='RECONCILIATION_REQUIRED',updated_at=? WHERE payout_id=?").bind(t,id));}
+ else if(text(row.statement_id)){statements.push(db.prepare("UPDATE partner_settlement_statements SET status='held',updated_at=? WHERE id=? AND status IN ('approved','paid','settled')").bind(t,text(row.statement_id)));}
+ await db.batch(statements);
+ return{payoutId:id,source,status:"RECONCILIATION_REQUIRED" as const,automaticRetryAllowed:false,humanInterventionRequired:true,providerPayoutId,reason};
+}
+
+export async function executeRazorpayXLivePayoutGuarded<T>(db:Db,input:{payoutId:string;execute:()=>Promise<T>;providerPayoutId?:(result:T)=>string|null|undefined}){
+ const id=text(input.payoutId);await assertRazorpayXLiveAutomationAllowed(db,id);const resolved=await resolvePayoutSource(db,id);if(!resolved)throw new Response("Live payout record not found",{status:404});if(text(resolved.row.environment)!=="live")throw new Response("Guarded live execution only accepts live payout records",{status:409});
+ try{return await input.execute();}catch(error){const reason=error instanceof Error?error.message:String(error);await recordRazorpayXLivePayoutFailure(db,{payoutId:id,reason});throw error;}
+}
+
+export async function clearRazorpayXLiveReconciliationHold(db:Db,input:{payoutId:string;actorId:string;reason:string}){
+ await ensureRazorpayXPayoutRuntime(db);const id=text(input.payoutId),actor=text(input.actorId),reason=text(input.reason);if(!actor||reason.length<8)throw new Response("Human actor and reconciliation reason are required",{status:400});const t=now();
+ const changed=await db.prepare("UPDATE razorpayx_live_reconciliation_holds SET status='CLEARED_BY_HUMAN',automatic_retry_allowed=0,cleared_by=?,cleared_reason=?,cleared_at=?,updated_at=? WHERE local_payout_id=? AND status='RECONCILIATION_REQUIRED'").bind(actor,reason,t,t,id).run();
+ if(Number(changed.meta?.changes||0)!==1)throw new Response("No live reconciliation hold is awaiting human clearance",{status:409});
+ return{payoutId:id,status:"CLEARED_BY_HUMAN" as const,automaticRetryAllowed:false,requeueRequired:true,clearedBy:actor};
 }
 
 export async function dispatchRazorpayXSandboxPayout(db:Db,env:Env,input:{payoutId:string}){
