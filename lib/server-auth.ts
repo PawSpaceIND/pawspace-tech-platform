@@ -1,7 +1,7 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type IdentitySubjectType,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
-import{hasValidPrivilegedSession,privilegedRole}from"./admin-mfa";
+import{ensureAdminMfaTables,hasValidPrivilegedSession,privilegedRole}from"./admin-mfa";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
@@ -45,7 +45,6 @@ export async function resolvePrimaryActor(request:Request):Promise<Authenticated
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
-  // Legacy FOUNDER_EMAIL configuration is never authentication or authorization authority; workspace identity must come from the governed ingress resolver below.
   const identity=resolveTrustedWorkspaceIdentity(request,runtime);
   if(!identity)throw markGovernedHttpError(signInRequiredResponse(runtime));
   const user=await db.prepare("SELECT id,email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
@@ -59,6 +58,7 @@ export async function resolvePrimaryActor(request:Request):Promise<Authenticated
 export async function requirePrivilegedMfa(request:Request,actor:AuthenticatedActor){
  if(actor.developmentPreview||!privilegedRole(actor.roleCode))return actor;
  const db=await database();
+ await ensureAdminMfaTables(db);
  const user=actor.userId?await db.prepare("SELECT id,mfa_enabled,mfa_secret FROM app_users WHERE id=?").bind(actor.userId).first<Record<string,unknown>>():await db.prepare("SELECT id,mfa_enabled,mfa_secret FROM app_users WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
  if(!user||Number(user.mfa_enabled)!==1||!String(user.mfa_secret||"").trim())throw authFailure("MFA enrollment required",403);
  actor.userId=String(user.id);
