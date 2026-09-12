@@ -2,34 +2,54 @@
 
 ## Scope and objectives
 
-This policy covers recovery of PawSpace Cloudflare D1 data after destructive writes, operator error, or database corruption. It is intentionally independent of application schema changes and must not be used to modify product tables during a drill.
+This policy covers Cloudflare D1 operational recovery for PawSpace. It is intentionally independent of application migrations and API code. Production recovery is executed only by an authorized incident commander; automated drills must use an isolated database whose name is explicitly classified as DR, UAT, test, or sandbox.
 
-- **RPO target:** less than 1 minute. D1 continuous Time Travel history is the recovery source; the responder captures a current bookmark immediately before any controlled destructive drill and records the UTC timestamp.
-- **RTO target:** less than 5 minutes from declared recovery point to restored integrity proof for the isolated database.
-- These values are PawSpace operational objectives. If the provider cannot return a qualifying bookmark or restore inside the target window, the drill fails and the database is not certified for freeze.
+- **RPO (Recovery Point Objective): < 1 minute.** PawSpace relies on D1 continuous Time Travel history and captures a pre-change bookmark immediately before destructive or high-risk operations. A drill passes only when the measured interval between the protected canary write and the captured recovery bookmark is under 60 seconds.
+- **RTO (Recovery Time Objective): < 5 minutes.** A drill passes only when bookmark restore plus post-restore integrity verification completes in under 300 seconds.
+- **Recovery truth:** a restore is not complete when Wrangler exits successfully. PawSpace must query the restored database and prove the expected rowset/checksum matches the pre-failure baseline.
+
+Cloudflare D1 Time Travel operates on remote D1 databases. The local D1 emulator is useful for application tests but cannot certify remote Time Travel recovery.
 
 ## Blast-radius isolation
 
-Every destructive drill must run against a dedicated local, preview, test, sandbox, or UAT database. Shared staging and production databases are forbidden. The drill harness rejects names that look like production/live/primary databases and requires an explicit `DR_D1_ISOLATED=1` acknowledgement for remote D1 mode.
+1. Production/live/golden database names are denied by the automated drill harness.
+2. Drills run only against dedicated ephemeral DR databases or explicitly isolated UAT/test/sandbox databases.
+3. The harness refuses to overwrite a pre-existing `__dr_drill_canary` table.
+4. The drill records an original bookmark before any mutation, creates a timestamped canary, records a second pre-corruption recovery bookmark, destroys only the canary, restores to the recovery bookmark, and proves exact state equality.
+5. After proof, the harness restores the original bookmark so the test database returns to its pre-drill state.
+6. Any failed drill is treated as an incident: no production restore is attempted from the failed automation path until the failure is diagnosed.
 
-The only object created by the drill is `__dr_drill_canary`. The harness never reads, writes, migrates, or restores individual PawSpace application tables. A remote Time Travel restore is database-wide, so the target D1 instance must be disposable and isolated from concurrent product traffic.
+## Recovery procedure
 
-## Recovery point and evidence
+1. Freeze mutating jobs for the affected database and record the incident start time.
+2. Identify the last known-good timestamp/bookmark and independently verify the target database name/UUID.
+3. Record current D1 Time Travel information before restore.
+4. Execute `wrangler d1 time-travel restore <database> --bookmark <bookmark>`.
+5. Run integrity probes for critical tables, row counts, financial invariants, and representative business records.
+6. Re-enable writers only after recovery verification and incident-commander approval.
+7. Record measured RPO/RTO and attach terminal evidence to the incident record.
 
-For remote D1, the harness records the start timestamp, seeds a unique canary token, then obtains a D1 Time Travel bookmark representing the pre-destruction recovery point. Evidence must include the database name, UTC timestamp, bookmark, token SHA-256, destructive action, restore action, recovered token SHA-256, integrity result, elapsed recovery time, and cleanup result.
+## Dual-region continuity architecture
 
-For local deterministic validation, the harness uses a disposable SQLite database and an exact pre-destruction snapshot as a PITR simulation. This proves the orchestration and mathematical canary comparison without claiming that SQLite itself implements Cloudflare Time Travel. Remote D1 certification must use the real bookmark path.
+D1 is a Cloudflare-managed database service rather than a customer-managed two-node SQL cluster. PawSpace therefore treats dual-region resilience as a **logical primary/standby topology**, not as native multi-writer replication:
 
-## Failover runbook
+- **Primary:** the active PawSpace D1 database, with Time Travel providing point-in-time rollback for logical corruption.
+- **Standby:** a separately provisioned D1 database in a geographically distinct location class, kept ready for controlled restore/import and application binding cutover.
+- **Control plane:** database identifiers, restore bookmarks, last verified export/checkpoint, and cutover state are recorded outside the affected database.
+- **Failover:** freeze writes, restore/import the verified recovery point to the standby, validate invariants, then switch the application binding/configuration through the normal reviewed deployment path.
+- **Failback:** after the original primary is repaired, perform the same validation and controlled cutover in reverse; never attempt dual writes during recovery.
 
-1. Declare the affected database and freeze writers to that isolated environment.
-2. Identify the last known-good UTC timestamp and retrieve the matching D1 Time Travel bookmark.
-3. Record the bookmark and incident ID before executing any restore.
-4. Restore the isolated database with `wrangler d1 time-travel restore <db> --bookmark <bookmark>`.
-5. Run deterministic integrity queries and compare expected canary/business invariants.
-6. If proof fails, keep writers frozen, select the preceding known-good bookmark, and repeat. Never advance an unverified database.
-7. After proof succeeds, remove drill canaries, verify integrity again, record RPO/RTO evidence, and only then reopen writers.
+Time Travel is the primary logical-corruption recovery mechanism. The geographically distinct standby is a separate continuity layer for larger blast-radius events; it must not be represented as synchronous D1 multi-region consensus unless Cloudflare explicitly provides and PawSpace has enabled such a product capability.
 
-## Freeze gate
+## Drill acceptance criteria
 
-Blocker 2 is green only when the automated drill exits `0`, the pre- and post-restore token hashes are identical, database integrity reports healthy, cleanup is complete, `git diff --check` passes, and TypeScript validation passes. Remote production recovery remains a separately authorized incident action; this drill never authorizes a production restore.
+A Blocker 2 drill is successful only when all of the following are true:
+
+- isolated target classification passes the production-deny guard;
+- original and pre-corruption Time Travel bookmarks are captured;
+- canary creation and destructive drop are both observed remotely;
+- restore returns the exact canary token, timestamp, and checksum;
+- baseline and recovered canonical rowset SHA-256 digests are identical;
+- measured RPO is `< 60s` and measured RTO is `< 300s`;
+- cleanup restores the database to its original pre-drill state;
+- the script exits `0` and repository integrity checks remain clean.
