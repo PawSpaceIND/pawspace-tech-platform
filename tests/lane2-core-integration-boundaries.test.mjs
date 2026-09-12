@@ -1249,3 +1249,26 @@ test("the four sequential transition rules still hold after the atomic rewrite",
   await post({ event_id: "TR-5", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
   assert.equal(statusOf().status, "verified", "failed -> verified applies");
 });
+
+test("steady-state booking support schemas use read probes instead of replaying DDL", async () => {
+  const { makeCountingD1 } = await import("./helpers/d1-harness.mjs");
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const conversation = await import("../lib/booking-conversation.ts");
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, created_at INTEGER NOT NULL)");
+
+  const bootstrap = makeCountingD1(sqlite);
+  await capacity.ensureProviderCapacityTables(bootstrap.db);
+  await capacity.ensureProviderBookingGuard(bootstrap.db);
+  await conversation.ensureBookingConversationOnInsert(bootstrap.db);
+
+  const steady = makeCountingD1(sqlite);
+  await capacity.ensureProviderCapacityTables(steady.db);
+  assert.equal(steady.calls(), 2, "fresh request should verify provider schema with two read-only probes");
+  steady.reset();
+  await capacity.ensureProviderBookingGuard(steady.db);
+  assert.equal(steady.calls(), 1, "provider booking guard should use one sqlite_master probe on steady state");
+  steady.reset();
+  await conversation.ensureBookingConversationOnInsert(steady.db);
+  assert.equal(steady.calls(), 1, "booking conversation trigger should use one sqlite_master probe on steady state");
+});
