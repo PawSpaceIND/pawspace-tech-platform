@@ -25,6 +25,6 @@ test("payroll auto-deducts one instalment per run and closes the advance on full
 });
 
 test("the payroll route exposes governed advance actions", () => {
-  for (const a of ["request_advance", "approve_advance", "close_advance"]) assert.match(route, new RegExp(`action==="${a}"`));
-  assert.match(route, /mode"\)==="advances"/);
+  for (const a of ["request_advance", "approve_advance", "close_advance"]) assert.match(route, new RegExp(`action\\s*===\\s*"${a}"`));
+  assert.match(route, /mode"\)\s*===\s*"advances"/);
 });
