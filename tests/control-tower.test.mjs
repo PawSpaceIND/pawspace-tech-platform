@@ -122,8 +122,8 @@ test("an empty platform reports zeros and 'not connected', never a plausible per
 test("case signals are counted from real cases, and SLA coverage is measured against every pair", async () => {
   const { sqlite, db } = fresh(["unified_cases", "case_policies"]);
   const insertCase = (id, status, dueAt) => sqlite.prepare(
-    "INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,source_type,source_id,owner_team,resolution_due_at,created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, `ik-${id}`, "customer_complaint", "high", status, "t", "d", "test", id, "cx", dueAt, "uat", ASOF, "uat", ASOF);
+    "INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,source_type,source_id,owner_team,first_response_due_at,manager_escalation_due_at,resolution_due_at,created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, `ik-${id}`, "customer_complaint", "high", status, "t", "d", "test", id, "cx", ASOF + 60 * 60_000, ASOF + 12 * 60 * 60_000, dueAt, "uat", ASOF, "uat", ASOF);
   insertCase("C-BREACH", "open", ASOF - 60_000);       // past its resolution due time
   insertCase("C-INSIDE", "in_progress", ASOF + 60_000); // still inside SLA
   insertCase("C-DONE", "resolved", ASOF - 60_000);      // resolved cases are not open, breached or not
