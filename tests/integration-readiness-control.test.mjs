@@ -31,6 +31,12 @@ test("controlled-live verification requires production evidence approval and ope
  assert.match(api,/Sandbox verification must include an evidence reference/);assert.match(api,/Controlled-live verification must include both evidence and approval references/);
 });
 
+test("hosted readiness GET probes schema once and skips steady-state bootstrap DDL",()=>{
+ assert.match(api,/integrationReadinessTablesReady\(db\)/);
+ assert.match(api,/if\(!tablesReady\)await ensureIntegrationReadinessTables\(db\)/);
+ assert.match(api,/readIntegrationReadinessSnapshot\(db,runtime,integrationCode\|\|undefined,\{tablesReady:true\}\)/);
+});
+
 test("integration readiness API is launch-governed and audited",()=>{
  assert.match(api,/requirePermission\(actor,"launch\.view"\)/);assert.match(api,/requirePermission\(actor,"launch\.manage"\)/);assert.match(registry,/integration\.readiness\.update/);
  assert.match(api,/sameOrigin\(request\)/);assert.match(api,/Cross-origin integration readiness write blocked/);assert.doesNotMatch(api,/error\.text\(\)/);
