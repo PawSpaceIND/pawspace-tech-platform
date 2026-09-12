@@ -5,7 +5,6 @@ import "./review-overrides.css";
 import "./unified-pawspace-theme.css";
 import "./brand-lock.css";
 import "./prototype-convergence.css";
-import "./kit-lock.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
 import OrderNotificationCenter from "./components/order-notification-center";
 import PawSpaceAppearance from "./components/pawspace-appearance";

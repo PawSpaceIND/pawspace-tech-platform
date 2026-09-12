@@ -1,18 +1,30 @@
 /*
  * PawSpace beta brand lock — Emerald #01261F + Gold #E6B34E only.
+ * Happier Pets kit tokens (cream surface) layered here.
  * Presentation-only. Does not change booking, payment, or identity logic.
  */
 :root {
   --psu-emerald: #01261f;
   --psu-emerald-2: #064c3c;
   --psu-gold: #e6b34e;
-  --psu-ivory: #fffdf8;
+  --psu-ivory: #fff8ee;
+  --kit-cream: #fff8ee;
   --purple: #01261f;
   --purple-deep: #001913;
   --orange: #e6b34e;
   --ds-text: #0c2e25;
   --ds-text-muted: #64756f;
   --ds-border-strong: #c5d6cf;
+  --paw-bg: #fff8ee;
+  --paw-surface: #ffffff;
+  --paw-raised: #f3eee4;
+  --paw-text: #173c31;
+  --paw-muted: #5b6f66;
+  --paw-line: #e4ddd0;
+  --paw-primary: #01261f;
+  --paw-on-primary: #fff8ee;
+  --paw-gold: #e6b34e;
+  --paw-hero: #01261f;
 }
 
 html, body {
@@ -81,7 +93,7 @@ html[data-paw-theme="sage"] {
   --ps-primary-2: #0a4a3c;
   --ps-accent: #e6b34e;
   --ps-accent-text: #2a1e05;
-  --ps-bg: #f2f7f5;
+  --ps-bg: #fff8ee;
   --ps-surface: #ffffff;
   --ps-surface-2: #e6efeb;
   --ps-text: #0a231c;
