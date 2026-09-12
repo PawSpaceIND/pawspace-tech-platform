@@ -8,6 +8,8 @@ const GROOM_SANJAY_EMAIL = "e2e.groom.sanjay@pawspace.test";
 const ADMIN_EMAIL = "e2e.admin@pawspace.test";
 const FINANCE_EMAIL = "e2e.finance@pawspace.test";
 const CUSTOMER_ID = "E2E-CUS-UI-001";
+const ADMIN_MFA_COOKIE = "pawspace_admin_mfa=e2e-admin-mfa-session-token";
+const FINANCE_MFA_COOKIE = "pawspace_admin_mfa=e2e-finance-mfa-session-token";
 const PROVIDER_ID = "E2E-PRV-UI-001";
 const PET_ID = "E2E-PET-UI-001";
 const PROVIDER_EMAILS:Record<string,string>={
@@ -27,6 +29,7 @@ async function actorApi(baseURL: string, email: string) {
       "oai-authenticated-user-email": email,
       "oai-authenticated-user-full-name": encodeURIComponent(email.split("@")[0]),
       "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+      ...(email === ADMIN_EMAIL ? { cookie: ADMIN_MFA_COOKIE } : email === FINANCE_EMAIL ? { cookie: FINANCE_MFA_COOKIE } : {}),
     },
   });
 }
@@ -79,7 +82,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       const day=start.toISOString().slice(0,10);
       const boardApi=await expectOk(await admin.get(`/api/uat-scheduling?date=${encodeURIComponent(day)}`),"admin waiting-request board API");
       expect(boardApi.data.pendingRequests.some((row:{groupId:string})=>row.groupId===groupId)).toBe(true);
-      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL});
+      await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL,cookie:ADMIN_MFA_COOKIE});
       await page.goto("/team/scheduling");
       // Wait for client hydration before changing the controlled date input. On mobile Chromium the
       // server-rendered input can accept a Playwright fill before React attaches onChange, then hydration
@@ -281,7 +284,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await expect(feedbackCard).toHaveCount(0);await expect(page.getByText(bookingId,{exact:false}).first()).toBeVisible();
     await page.screenshot({path:test.info().outputPath(`customer-feedback-saved-${assignmentMode}.png`),fullPage:true});
     await page.context().clearCookies();
-    await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL });
+    await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL, cookie: ADMIN_MFA_COOKIE });
     const adminUi = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
     expect(adminUi?.status() ?? 500).toBeLessThan(500);
     await expect(page.locator("body")).toContainText(/booking/i);
