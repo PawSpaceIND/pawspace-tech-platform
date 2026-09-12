@@ -26,6 +26,7 @@ export async function ensureAdminMfaTables(db:Db){
 }
 
 export function privilegedRole(roleCode:string){return PRIVILEGED.has(String(roleCode).toLowerCase());}
+export function newTotpSecret(){const bytes=new Uint8Array(20);crypto.getRandomValues(bytes);const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";let bits="",out="";for(const byte of bytes)bits+=byte.toString(2).padStart(8,"0");for(let i=0;i<bits.length;i+=5)out+=alphabet[parseInt(bits.slice(i,i+5).padEnd(5,"0"),2)];return out;}
 export function adminMfaCookie(value:string,ttlSeconds:number){return`${COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.max(60,ttlSeconds)}`;}
 export function clearAdminMfaCookie(){return`${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;}
 export async function totpCode(secret:string,at=Date.now()){
