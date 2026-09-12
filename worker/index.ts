@@ -88,6 +88,9 @@ const worker = {
     const url = new URL(request.url);
     try{
 
+    // Lightweight edge liveness probe: no auth, D1, secrets, or external integrations.
+    if(url.pathname==="/healthz"&&request.method==="GET")return Response.json({status:"ok"},{status:200,headers:{"cache-control":"no-store","content-type":"application/json; charset=utf-8"}});
+
     if(url.pathname==="/__staging/sentry-self-test"){
       if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});
       const supplied=request.headers.get("x-pawspace-uat-code")||"";
