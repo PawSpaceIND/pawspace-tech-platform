@@ -6,6 +6,18 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 PAWSPACE_AI_EXECUTIVE_ACTIVE = "false"
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
+
 [triggers]
 crons = ["*/5 * * * *", "*/15 * * * *", "15 2 * * *"]
 
