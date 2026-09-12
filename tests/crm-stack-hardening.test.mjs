@@ -169,8 +169,8 @@ async function seededCustomer360() {
     .run("CPR-1", "ik-coupon-1", "CPQ-1", "uat-coupon-care100", "UATCARE100", customerId, "BK-GROOM-1", 100, "consumed", now, now);
   sqlite.prepare("INSERT INTO customer_experience_tickets (id,customer_id,category,priority,subject,detail,owner,manager,sla_due_at,status,escalation_level,customer_status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run("TKT-1", customerId, "Service quality", "high", "Late groomer", "Groomer arrived 40 minutes late", "CX Desk", "Sales Manager", now + 3600000, "open", 0, "We received your request", "test", now, now);
-  sqlite.prepare("INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,customer_id,source_type,source_id,owner_team,created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run("CASE-1", "ik-case-1", "refund", "high", "open", "Refund requested", "Refund for late service", customerId, "manual", "TKT-1", "cx", "test", now, "test", now);
+  sqlite.prepare("INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,customer_id,source_type,source_id,owner_team,first_response_due_at,manager_escalation_due_at,resolution_due_at,created_by,created_at,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("CASE-1", "ik-case-1", "refund", "high", "open", "Refund requested", "Refund for late service", customerId, "manual", "TKT-1", "cx", now + 60 * 60_000, now + 12 * 60 * 60_000, now + 24 * 60 * 60_000, "test", now, "test", now);
   return { sqlite, db, customerId };
 }
 

@@ -89,21 +89,23 @@ test("HTTP callback route sends both Interakt provider aliases to the canonical 
  assert.doesNotMatch(atomic,/x-interakt-signature/);
 });
 
-test("WhatsApp dispatcher has no sandbox path to live Meta token or production phone id",()=>{
+test("WhatsApp dispatch is single-owner through the unified adapter boundary",()=>{
  const runtime=fs.readFileSync("lib/whatsapp-production-runtime.ts","utf8");
- assert.match(runtime,/liveCommunicationEnabled\(env\)/);
- assert.match(runtime,/dispatchMetaWhatsAppUat/);
- assert.match(runtime,/metaWhatsAppCredentials\(env\)/);
- assert.doesNotMatch(runtime,/META_WHATSAPP_ACCESS_TOKEN\|\|META_WHATSAPP_UAT_ACCESS_TOKEN/);
- const uat=fs.readFileSync("lib/meta-whatsapp-uat-dispatch.ts","utf8");
- assert.match(uat,/META_WHATSAPP_UAT_DELIVERY_ENABLED/);
- assert.match(uat,/META_WHATSAPP_UAT_ALLOWLIST\|\|env\.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST/);
+ const dispatcher=fs.readFileSync("lib/communication-outbox-dispatcher.ts","utf8");
+ const boundary=fs.readFileSync("lib/communication-provider-boundary.ts","utf8");
+ assert.match(runtime,/export \{runWhatsAppOutboxDispatcher\} from "\.\/communication-outbox-dispatcher"/);
+ assert.doesNotMatch(runtime,/dispatchInteraktWhatsApp/);
+ assert.doesNotMatch(runtime,/dispatchMetaWhatsAppUat/);
+ assert.match(dispatcher,/"email","sms","whatsapp"/);
+ assert.match(dispatcher,/dispatchExternalCommunication/);
+ assert.match(boundary,/live_ready/);
+ assert.match(boundary,/production/);
 });
 
 test("undispatchable generic rows consume retry budget instead of hot-looping",()=>{
  const dispatcher=fs.readFileSync("lib/communication-outbox-dispatcher.ts","utf8");
- assert.match(dispatcher,/sandbox_\$\{channel\}_adapter_not_configured/);
- assert.match(dispatcher,/failOutboxAttempt\(db,messageId,"canonical_recipient_missing"\)/);
+ assert.match(dispatcher,/\$\{binding\.environment\}_\$\{channel\}_adapter_not_configured/);
+ assert.match(dispatcher,/routeFailure\(db,messageId,"canonical_recipient_missing"\)/);
  assert.match(dispatcher,/deadLetterOutbox\(db,messageId,"unsupported_outbox_channel"/);
 });
 
