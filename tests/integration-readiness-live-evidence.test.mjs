@@ -87,6 +87,22 @@ test("one readiness snapshot performs the registry bootstrap exactly once", asyn
     .map(item => item.integrationCode), "blockers and registry rows must come from the same transactional result");
 });
 
+test("steady-state readiness snapshot skips DDL bootstrap when tables are already certified ready", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  let ddlPrepareCount = 0;
+  const db = makeD1(sqlite, sql => {
+    if (/^(CREATE TABLE|CREATE INDEX)/i.test(sql.trim())) ddlPrepareCount += 1;
+  });
+  await registry.ensureIntegrationReadinessTables(db);
+  ddlPrepareCount = 0;
+
+  assert.equal(await registry.integrationReadinessTablesReady(db), true);
+  const snapshot = await registry.readIntegrationReadinessSnapshot(db, {}, undefined, { tablesReady: true });
+
+  assert.equal(ddlPrepareCount, 0, "steady-state hosted reads must not prepare schema DDL");
+  assert.ok(snapshot.data.items.length > 0);
+});
+
 // ---------------------------------------------------------------------------
 // Credential presence is configuration only
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{readIntegrationReadinessSnapshot,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
+import{ensureIntegrationReadinessTables,integrationReadinessTablesReady,readIntegrationReadinessSnapshot,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
 import{ensureLoeIntegrationReadiness}from"../../../lib/integration-readiness-loe";
 import{readUatSandboxReadiness}from"../../../lib/uat-sandbox-readiness";
 
@@ -9,9 +9,11 @@ async function seedLoeReadiness(db:D1Database){const{env}=await import("cloudfla
 export async function GET(request:Request){
  try{
   const actor=await resolveActor(request);requirePermission(actor,"launch.view");const db=await database();
+  const tablesReady=await integrationReadinessTablesReady(db);
+  if(!tablesReady)await ensureIntegrationReadinessTables(db);
   const runtime=await seedLoeReadiness(db);
   const url=new URL(request.url),integrationCode=String(url.searchParams.get("integrationCode")||"").trim();
-  const{data,blockers,audit,evidenceRequests,liveEvidence}=await readIntegrationReadinessSnapshot(db,runtime,integrationCode||undefined);
+  const{data,blockers,audit,evidenceRequests,liveEvidence}=await readIntegrationReadinessSnapshot(db,runtime,integrationCode||undefined,{tablesReady:true});
   const uatSandbox=await readUatSandboxReadiness(db,runtime);
   return json({data,blockers,audit,evidenceRequests,liveEvidence,uatSandbox,productionReady:false});
  }catch(error){return authError(error,"Unable to load integration readiness");}
