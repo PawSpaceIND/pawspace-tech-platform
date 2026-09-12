@@ -319,6 +319,9 @@ const ACTION_MAP: Readonly<Record<string, PayrollActionDefinition>> =
 
 export async function POST(request: Request) {
   try {
+    // Establish the payroll authorization perimeter before parsing any user-controlled payload.
+    // Each static action handler still enforces its stricter, action-specific permission.
+    await authorize(request, "payroll.view");
     const body = (await request.json()) as Row;
     const definition = ACTION_MAP[text(body.action)];
     if (!definition) {
