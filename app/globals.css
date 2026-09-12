@@ -393,6 +393,7 @@ body:has(nav[aria-label="Customer navigation"]) .ps-order-fab { bottom: calc(104
 .cookie-consent button { border:1px solid rgba(255,255,255,.55); border-radius:999px; padding:10px 14px; cursor:pointer; font:inherit; }
 .cookie-consent button:first-child { background:transparent; color:#fff; }
 .cookie-consent button:last-child { background:#fff; color:#01261f; }
+body:has(nav[aria-label="Customer navigation"]) .cookie-consent { bottom:calc(88px + env(safe-area-inset-bottom)); }
 .legal-shell { min-height:70vh; background:#f7f8f5; color:#142721; }
 .legal-header { display:flex; justify-content:space-between; gap:20px; padding:22px clamp(18px,5vw,72px); border-bottom:1px solid rgba(0,0,0,.1); background:#fff; }
 .legal-header nav { display:flex; flex-wrap:wrap; gap:18px; }
