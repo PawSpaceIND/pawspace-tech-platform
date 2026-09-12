@@ -1,7 +1,9 @@
-ALTER TABLE app_users ADD COLUMN mfa_secret TEXT;
-ALTER TABLE app_users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0 CHECK (mfa_enabled IN (0,1));
+-- Privileged MFA/session controls. SQLite/D1 lacks ADD COLUMN IF NOT EXISTS, so
+-- schema application must use the governed PRAGMA-backed directives below.
+-- @add-column-if-missing app_users|mfa_secret|TEXT
+-- @add-column-if-missing app_users|mfa_enabled|INTEGER NOT NULL DEFAULT 0 CHECK (mfa_enabled IN (0,1))
 
-CREATE TABLE active_sessions (
+CREATE TABLE IF NOT EXISTS active_sessions (
   id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
@@ -13,5 +15,5 @@ CREATE TABLE active_sessions (
   FOREIGN KEY (user_id) REFERENCES app_users(id)
 );
 
-CREATE INDEX idx_active_sessions_user_validity
+CREATE INDEX IF NOT EXISTS idx_active_sessions_user_validity
   ON active_sessions(user_id, revoked_at, expires_at);
