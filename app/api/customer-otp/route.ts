@@ -7,6 +7,7 @@ import { uatLoginEnabled } from "../../../lib/uat-staging-auth";
 import { developmentOtpSandboxEnabled } from "../../../lib/otp-sandbox-runtime";
 import { productionOtpEnabled } from "../../../lib/otp-production-runtime";
 import { normalizeIndianMobile, parseSmsTestAllowlist, sendFast2SmsMessage } from "../../../lib/sms-test-provider";
+import { sendProductionSms } from "../../../lib/production-sms-provider";
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers });
 const unavailable = () => json({ error: "OTP delivery is not configured for this environment" }, 503, { "cache-control": "no-store" });
@@ -54,12 +55,8 @@ export async function POST(request: Request) {
         }
       }
       try{
-        await sendFast2SmsMessage({
-          apiKey:String(runtime.FAST2SMS_API_KEY??""),
-          phone:normalized,
-          message:`Your PawSpace verification code is ${result.sandboxCode}. It expires in 5 minutes.`,
-          udf1:productionMode?"pawspace-production-customer-otp":"pawspace-staging-customer-otp",
-        });
+        if(productionMode) await sendProductionSms(runtime,{phone:normalized,message:`Your PawSpace verification code is ${result.sandboxCode}. It expires in 5 minutes.`,idempotencyKey:`otp-${result.challengeId}`});
+        else await sendFast2SmsMessage({apiKey:String(runtime.FAST2SMS_API_KEY??""),phone:normalized,message:`Your PawSpace verification code is ${result.sandboxCode}. It expires in 5 minutes.`,udf1:"pawspace-staging-customer-otp"});
       }catch{
         await discardCustomerOtpChallenge(db,result.challengeId);
         return deliveryFailed();
@@ -78,8 +75,8 @@ export async function POST(request: Request) {
       const binding = await upsertIdentityBinding(db, {
         identitySource: verified.identitySource, principalType: verified.principalType, principalKey: verified.principalKey,
         subjectType: verified.subjectType, subjectId: verified.subjectId, cityId: verified.cityId ?? null,
-        verificationState: "verified", expiresAt: null, metadata: { verifiedBy: productionMode ? "customer_otp_fast2sms_production" : stagingLiveMode ? "customer_otp_fast2sms_staging" : "customer_otp_sandbox", assertionIssuedAt: verified.issuedAt },
-        actorId: `customer_otp:${verified.identitySource}`, reason: productionMode ? "Verified production Fast2SMS OTP identity assertion exchange" : stagingLiveMode ? "Verified isolated-staging Fast2SMS OTP identity assertion exchange" : "Verified sandbox OTP identity assertion exchange",
+        verificationState: "verified", expiresAt: null, metadata: { verifiedBy: productionMode ? "customer_otp_production_sms" : stagingLiveMode ? "customer_otp_fast2sms_staging" : "customer_otp_sandbox", assertionIssuedAt: verified.issuedAt },
+        actorId: `customer_otp:${verified.identitySource}`, reason: productionMode ? "Verified production SMS OTP identity assertion exchange" : stagingLiveMode ? "Verified isolated-staging Fast2SMS OTP identity assertion exchange" : "Verified sandbox OTP identity assertion exchange",
       });
       const issued = await issuePlatformSession(db, {
         bindingId: String(binding?.id || ""), identitySource: verified.identitySource, principalType: verified.principalType,
