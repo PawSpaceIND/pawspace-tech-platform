@@ -103,6 +103,20 @@ test("steady-state readiness snapshot skips DDL bootstrap when tables are alread
   assert.ok(snapshot.data.items.length > 0);
 });
 
+test("steady-state readiness certification is read-only and seed-complete", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const prepared = [];
+  const db = makeD1(sqlite, sql => prepared.push(sql.trim()));
+  await registry.ensureIntegrationReadinessTables(db);
+
+  prepared.length = 0;
+  assert.equal(await registry.integrationReadinessTablesReady(db), true);
+  assert.equal(prepared.some(sql => /^(CREATE|ALTER|INSERT|UPDATE|DELETE)\b/i.test(sql)), false, "steady-state readiness probe performed a write");
+
+  sqlite.prepare("DELETE FROM integration_registry WHERE integration_code = ?").run("INT-PAY-01");
+  assert.equal(await registry.integrationReadinessTablesReady(db), false, "missing canonical seed must force bootstrap");
+});
+
 // ---------------------------------------------------------------------------
 // Credential presence is configuration only
 // ---------------------------------------------------------------------------
