@@ -36,6 +36,7 @@ import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
 import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+import{handleEdgeHealth}from"../lib/edge-health";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
@@ -89,7 +90,8 @@ const worker = {
     try{
 
     // Lightweight edge liveness probe: no auth, D1, secrets, or external integrations.
-    if(url.pathname==="/healthz"&&request.method==="GET")return Response.json({status:"ok"},{status:200,headers:{"cache-control":"no-store","content-type":"application/json; charset=utf-8"}});
+    const healthResponse=handleEdgeHealth(request);
+    if(healthResponse)return healthResponse;
 
     if(url.pathname==="/__staging/sentry-self-test"){
       if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});

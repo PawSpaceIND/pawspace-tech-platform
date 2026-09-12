@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
+import "tsx/esm";
 
-const worker = fs.readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
+const { handleEdgeHealth } = await import("../lib/edge-health.ts");
 
-test("Cloudflare Worker exposes a dependency-free GET /healthz liveness probe", () => {
-  const health = worker.indexOf('url.pathname==="/healthz"&&request.method==="GET"');
-  const apiGateway = worker.indexOf('url.pathname.startsWith("/api/")');
-  assert.ok(health >= 0, "Worker must register GET /healthz");
-  assert.ok(apiGateway > health, "health probe must terminate before API auth/database work");
-  assert.match(worker, /Response\.json\(\{status:"ok"\}/);
-  assert.match(worker, /"cache-control":"no-store"/);
+test("GET /healthz returns dependency-free non-cacheable liveness response", async () => {
+  const response = handleEdgeHealth(new Request("https://edge.test/healthz"));
+  assert.ok(response);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
+  assert.deepEqual(await response.json(), { status: "ok" });
+});
+
+test("health handler declines non-GET and non-health routes", () => {
+  assert.equal(handleEdgeHealth(new Request("https://edge.test/healthz", { method: "POST" })), null);
+  assert.equal(handleEdgeHealth(new Request("https://edge.test/api/healthz")), null);
 });
