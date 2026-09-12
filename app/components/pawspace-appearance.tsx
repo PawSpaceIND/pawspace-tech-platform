@@ -47,7 +47,7 @@ export default function PawSpaceAppearance() {
     <button className="paw-appearance-trigger" aria-label="Change PawSpace appearance" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">◐</span><span>Appearance</span></button>
     <dialog ref={dialog} className="paw-appearance-dialog" aria-labelledby="paw-appearance-title">
       <div className="paw-appearance-head"><img src="/assets/pawspace-icon.jpeg" alt="PawSpace"/><button aria-label="Close appearance settings" onClick={() => dialog.current?.close()}>×</button></div>
-      <h2 id="paw-appearance-title">PawSpace look.</h2><p>One brand: emerald, gold and ivory — the same combo across every screen.</p>
+      <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>One brand: emerald, gold and ivory — the same combo across every screen.</p>
       <fieldset><legend>Visual style</legend>{["professional", "cartoon"].map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
         setVisualStyle(style); document.documentElement.dataset.pawStyle = style;
         try { localStorage.setItem("pawspace.visual-style", style); } catch { /* Session-only choice. */ }
