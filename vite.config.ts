@@ -81,6 +81,9 @@ export default defineConfig(async () => {
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         inspectorPort: false,
+        ...(process.env.PAWSPACE_DEPLOYMENT_ENV === "e2e"
+          ? { configPath: "./wrangler.e2e.toml" }
+          : {}),
         config: localBindingConfig,
       }),
     ],

@@ -1246,3 +1246,5 @@
 /* Keep checkout actions in document order so they cannot cover the terms they confirm. */
 .flow .primary { position: static; box-shadow: none; }
 .flow .stayIntro h2 { color: #fff !important; }
+
+.careInstructions{display:grid;gap:12px}

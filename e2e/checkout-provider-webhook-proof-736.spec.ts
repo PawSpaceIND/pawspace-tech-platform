@@ -504,6 +504,33 @@ async function strictFinancialTruth(dbId: string, bookingId: string) {
   };
 }
 
+async function waitForStrictFinancialTruth(
+  dbId: string,
+  bookingId: string,
+  timeoutMs = 30_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = await strictFinancialTruth(dbId, bookingId);
+  while (Date.now() < deadline) {
+    const reconciliation = latest.reconciliation;
+    const debit = latest.journal.reduce((n: number, row: Json) => n + Number(row.debit || 0), 0);
+    const credit = latest.journal.reduce((n: number, row: Json) => n + Number(row.credit || 0), 0);
+    if (
+      Number(reconciliation?.captured_amount) === 1 &&
+      Number(reconciliation?.variance_amount || 0) === 0 &&
+      String(reconciliation?.reconciliation_status) === "matched" &&
+      latest.postings.length === 1 &&
+      latest.journal.length === 2 &&
+      debit === 1 &&
+      credit === 1 &&
+      latest.lifecycleCount === 1
+    ) return latest;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    latest = await strictFinancialTruth(dbId, bookingId);
+  }
+  return latest;
+}
+
 async function visibleRazorpayFrame(page: Page) {
   await expect
     .poll(() => page.frames().some((frame) => /razorpay/i.test(frame.url())), {
@@ -920,7 +947,7 @@ test("PR736 product-native checkout proves Razorpay Test capture and provider-si
   if (delivered.hit) {
     expect(truth?.status).toBe("captured");
     expect(intent?.state).toBe("CAPTURED");
-    const finance = await strictFinancialTruth(dbId, fixture.bookingId);
+    const finance = await waitForStrictFinancialTruth(dbId, fixture.bookingId);
     report.internalPaymentId = finance.payment?.id;
     report.reconciliation = finance.reconciliation;
     report.collectionPostings = finance.postings;

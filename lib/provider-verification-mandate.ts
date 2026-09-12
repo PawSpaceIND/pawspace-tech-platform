@@ -44,6 +44,7 @@ export const VERIFICATION_TYPES: VerificationType[] = [
   { code: "bank_kyc", label: "Bank account / KYC", automatable: true },
   { code: "pet_handling_induction", label: "Pet-handling induction", automatable: false },
   { code: "emergency_safety_training", label: "Emergency and safety training", automatable: false },
+  { code: "vci_registration", label: "Veterinary Council registration", automatable: true },
 ];
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
 /*
@@ -51,7 +52,7 @@ const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || 
  * four above - so there was no way to require Aadhaar of a dog walker at all, let alone a police check
  * of someone who takes sole physical custody of an animal and drives it away. [PTJA-W1-F53]
  */
-export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host", "dog_walker", "pet_taxi_driver"];
+export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host", "dog_walker", "pet_taxi_driver", "veterinarian"];
 
 /** The two outcomes that are a DECISION about a check. Kept identical to TERMINAL_VERIFICATION_STATUSES
  *  in lib/idfy-callback-boundary.ts, which enforces the same rule on the callback path. */
@@ -78,6 +79,8 @@ export const VERIFICATION_CATEGORY_BY_VERTICAL: Record<string, string> = {
   walking: "dog_walker",
   pet_taxi: "pet_taxi_driver",
   taxi: "pet_taxi_driver",
+  vet_consult: "veterinarian",
+  veterinary: "veterinarian",
 };
 export function verificationCategoryForVertical(verticalKey: string): string | null {
   return VERIFICATION_CATEGORY_BY_VERTICAL[text(verticalKey).toLowerCase()] || null;
@@ -95,6 +98,7 @@ const DEFAULT_MANDATES: Record<string, string[]> = {
   host: ["aadhaar", "pan", "house_verification", "pet_proofing_photo"],
   dog_walker: ["aadhaar", "address", "police_verification", "selfie_liveness", "pet_handling_induction", "emergency_safety_training", "references_background"],
   pet_taxi_driver: ["aadhaar", "address", "police_verification", "selfie_liveness", "pet_handling_induction", "emergency_safety_training", "driving_licence", "vehicle_registration", "vehicle_insurance", "vehicle_fitness_pollution"],
+  veterinarian: ["aadhaar", "pan", "vci_registration"],
 };
 
 async function ensureVerificationMandateTablesUncached(db: Db) {
@@ -293,10 +297,16 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
   if (!type) throw new Error("Unknown verification type");
   const applicationId = text(input.applicationId), category = text(input.category), now = Date.now();
   if (!applicationId) throw new Error("applicationId is required");
+  const application = type.code === "vci_registration" ? await db.prepare("SELECT provider_id,vertical_key,vci_registration_number FROM provider_onboarding_applications WHERE id=?").bind(applicationId).first<Row>() : null;
+  const vciNumber = type.code === "vci_registration" ? text(input.payload?.vci_registration_number) : "";
+  if (type.code === "vci_registration") {
+    if (!application || verificationCategoryForVertical(text(application.vertical_key)) !== "veterinarian") throw new Error("VCI verification is only valid for Vet onboarding applications");
+    if (!vciNumber || vciNumber !== text(application.vci_registration_number)) throw new Error("VCI registration number must match the Vet onboarding application");
+  }
   let status = "pending", automated = 0, providerRef: string | null = null, detail: Record<string, unknown> = {};
   if (type.automatable) {
     if (!idfyConfigured(env)) { status = "pending"; detail = { reason: "IDfy not connected - check queued until verification is switched on" }; }
-    else { const r = await verifyWithIdfy(env, { checkType: type.code, referenceId: `${applicationId}:${type.code}`, payload: input.payload || {} }); automated = 1; if (r.connected) { status = r.status; providerRef = r.reference; detail = { via: "idfy" }; } else { status = "pending"; detail = { reason: r.reason }; } }
+    else { const r = await verifyWithIdfy(env, { checkType: type.code, referenceId: `${applicationId}:${type.code}`, payload: input.payload || {} }); automated = 1; if (r.connected) { status = r.status; providerRef = r.reference; detail = type.code === "vci_registration" ? { via: "idfy", vciRegistrationNumber: vciNumber } : { via: "idfy" }; } else { status = "pending"; detail = { reason: r.reason }; } }
   } else { status = "manual_review"; detail = { reason: "Manual/agent verification required (photo or physical check)" }; }
   // A NON-DECISION MAY NOT OVERWRITE A DECISION.
   //
@@ -320,6 +330,10 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
   const id = uid("PVER");
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,verified_at,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,verified_at=excluded.verified_at,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), status === "verified" ? now : null, input.actorId, now, now).run();
+  if (type.code === "vci_registration" && status === "verified" && text(application?.provider_id)) {
+    const providerId = text(application?.provider_id);
+    await db.prepare("UPDATE provider_capacity_profiles SET vci_registration_number=?,vci_verification_status='verified',vci_provider_ref=?,updated_by=?,updated_at=? WHERE id=?").bind(vciNumber, providerRef, input.actorId, now, providerId).run().catch(() => null);
+  }
   await syncProviderPoolEligibility(db, applicationId);
   return { applicationId, verificationType: type.code, status, automated: Boolean(automated), providerRef };
 }

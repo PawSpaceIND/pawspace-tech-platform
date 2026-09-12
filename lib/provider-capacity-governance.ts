@@ -42,7 +42,15 @@ export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsur
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_active ON provider_unavailability(provider_id,status,starts_at,ends_at)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_assignment_offers_group ON provider_assignment_offers(group_id)"),
-]);capacityTablesEnsured.add(db);}
+]);
+ for(const ddl of [
+  "ALTER TABLE provider_capacity_profiles ADD COLUMN contract_type TEXT CHECK(contract_type IN ('full_time','commission'))",
+  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_registration_number TEXT",
+  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_verification_status TEXT NOT NULL DEFAULT 'not_required'",
+  "ALTER TABLE provider_capacity_profiles ADD COLUMN vci_provider_ref TEXT"
+ ]) await db.prepare(ddl).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+ await db.prepare("UPDATE provider_capacity_profiles SET contract_type=CASE WHEN provider_model='full_time' THEN 'full_time' ELSE 'commission' END WHERE contract_type IS NULL").run();
+ capacityTablesEnsured.add(db);}
 
 export async function seedProviderCapacityDefaults(db:Db){if(capacityDefaultsSeeded.has(db))return;await ensureProviderCapacityTables(db);const now=Date.now();await db.batch(defaults.map(p=>db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,'active',1,'2026-08-01',NULL,'founder_seed',?)").bind(p.id,p.cityId,p.name,p.model,JSON.stringify(p.services),JSON.stringify(p.zones),p.rating,p.qualityScore,p.capacity,p.travelBufferMinutes,p.maxDailyJobs,p.acceptanceTimeoutMinutes,now)));capacityDefaultsSeeded.add(db);}
 
