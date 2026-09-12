@@ -30,6 +30,8 @@ function validateShape(def:AtlasToolDefinition,args:Record<string,unknown>){
  if("amount" in args||"amountPaise" in args||"totalAmount" in args||"paymentStatus" in args)throw new Error("Authoritative monetary fields must be resolved by PawSpace core services");
 }
 async function tableExists(db:D1Database,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first());}
+export { enforceAtlasToolRateLimit } from "./atlas-rate-limit";
+import { enforceAtlasToolRateLimit } from "./atlas-rate-limit";
 export async function atlasAiExecutionEnabled(db:D1Database,env:Record<string,unknown>={}){
  let value=text(env.PAWSPACE_AI_EXECUTIVE_ACTIVE||"false");
  if(await tableExists(db,"executive_runtime_config")){const row=await db.prepare("SELECT value FROM executive_runtime_config WHERE key='PAWSPACE_AI_EXECUTIVE_ACTIVE'").first<Row>();if(row)value=text(row.value);}
@@ -53,7 +55,7 @@ async function hashRequest(input:AtlasToolRequest){const raw=JSON.stringify(stab
 async function auditStart(db:D1Database,input:AtlasToolRequest,decision:string){await db.prepare("CREATE TABLE IF NOT EXISTS atlas_tool_gateway_audit (id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,agent_code TEXT NOT NULL,tool_code TEXT NOT NULL,request_hash TEXT NOT NULL,idempotency_key TEXT,policy_decision TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,completed_at INTEGER)").run();await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_atlas_gateway_idempotency ON atlas_tool_gateway_audit(idempotency_key) WHERE idempotency_key IS NOT NULL").run();const id=`ATGW-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO atlas_tool_gateway_audit (id,goal_id,agent_code,tool_code,request_hash,idempotency_key,policy_decision,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,input.goalId,input.agentCode,input.toolCode,await hashRequest(input),input.idempotencyKey||null,decision,Date.now()).run();return id;}
 
 export async function executeAtlasTool(db:D1Database,input:AtlasToolRequest){
- const def=schemas[input.toolCode];if(!def)throw new Error("Atlas tool is not registered");if(!def.allowedAgents.includes(input.agentCode))throw new Response("Agent is not permitted to call this tool",{status:403});if(!permissionAllowed(input.actor,def.requiredPermissions))throw new Response("Atlas tool permission denied",{status:403});validateShape(def,input.arguments);
+ const def=schemas[input.toolCode];if(!def)throw new Error("Atlas tool is not registered");if(!def.allowedAgents.includes(input.agentCode))throw new Response("Agent is not permitted to call this tool",{status:403});if(!permissionAllowed(input.actor,def.requiredPermissions))throw new Response("Atlas tool permission denied",{status:403});validateShape(def,input.arguments);await enforceAtlasToolRateLimit(db,input);
  const context=await activeGoalContext(db,{goalId:input.goalId});const mode=context.goal.autonomyMode as GoalAutonomyMode;
  if(!(await atlasAiExecutionEnabled(db,input.env)))return handoff(db,input,"AI executive is disabled; workflow routed to Human Staff");
  const requestedCity=text(input.arguments.cityId);if(context.goal.cityId&&requestedCity&&requestedCity!==context.goal.cityId)throw new Response("Tool request is outside the Founder goal city scope",{status:403});

@@ -7,22 +7,29 @@ import type { MarketingAdPlatform } from "./marketing-ad-connectors";
 import { calculateSurgePricing } from "./policies/surge-pricing-engine";
 import { ensureMarginPolicyTables } from "./finance-margin-validator";
 import { ensureVetHealthcareTables, evaluateVetTriage, digitizeVetPrescriptionDraft, calculateVetPayout } from "./vet-healthcare";
+import { foodSupplyChainSnapshot } from "./food-supply-chain";
+import { taxiFleetForBooking, registerProviderTaxiVehicle } from "./taxi-fleet-governance";
+import { detectFinanceAnomalies } from "./finance-intelligence-governance";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const int=(v:unknown)=>Math.max(0,Math.trunc(Number(v)||0));
 const enabled=(v:unknown)=>!["","0","false","off","disabled"].includes(text(v).toLowerCase());
 
-export type Phase2ToolCode="ops.voice.dispatch"|"marketing.ads.read_metrics"|"marketing.proposal.submit"|"marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate"|"finance.yield.calculate_surge"|"vet.triage.evaluate"|"vet.prescription.digitize"|"finance.vet_payout.calculate";
+export type Phase2ToolCode="ops.voice.dispatch"|"ops.inventory.check"|"ops.fleet.track"|"ops.provisioning.execute"|"marketing.ads.read_metrics"|"marketing.proposal.submit"|"marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate"|"finance.yield.calculate_surge"|"finance.ledger.reconcile"|"vet.triage.evaluate"|"vet.prescription.digitize"|"finance.vet_payout.calculate";
 const schema=(code:Phase2ToolCode,allowedAgents:AtlasToolDefinition["allowedAgents"],riskClass:AtlasToolDefinition["riskClass"],autonomy:AtlasToolDefinition["autonomy"],requiredPermissions:string[],properties:Record<string,unknown>,required:string[],networkPolicy:AtlasToolDefinition["networkPolicy"]="none"):AtlasToolDefinition<Phase2ToolCode>=>({code,version:"1",allowedAgents,riskClass,autonomy,idempotencyRequired:riskClass!=="read",requiredPermissions,inputSchema:{type:"object",additionalProperties:false,properties,required},executionTarget:networkPolicy==="none"?"canonical_service":"external_rpa",networkPolicy});
 
 export const phase2ToolSchemas:Record<Phase2ToolCode,AtlasToolDefinition<Phase2ToolCode>>={
  "ops.voice.dispatch":schema("ops.voice.dispatch",["ops","atlas"],"high","within_envelope",["communications.call","customers.manage"],{bookingId:{type:"string"},useCase:{type:"string"}},["bookingId","useCase"],"allowlisted_https"),
+ "ops.inventory.check":schema("ops.inventory.check",["ops","atlas"],"read","autonomous",["scheduling.manage"],{sku:{type:"string"},zoneId:{type:"string"}},[]),
+ "ops.fleet.track":schema("ops.fleet.track",["ops","atlas"],"read","autonomous",["scheduling.manage"],{bookingId:{type:"string"}},["bookingId"]),
+ "ops.provisioning.execute":schema("ops.provisioning.execute",["ops","atlas"],"high","within_envelope",["providers.manage"],{providerId:{type:"string"},cityId:{type:"string"},vehicleClass:{type:"string"},label:{type:"string"},registrationNumber:{type:"string"}},["providerId","cityId","vehicleClass","label","registrationNumber"]),
  "marketing.ads.read_metrics":schema("marketing.ads.read_metrics",["marketing","atlas"],"read","autonomous",["marketing.view"],{from:{type:"string"},to:{type:"string"},platform:{type:"string"},campaignId:{type:"string"}},["from","to"]),
  "marketing.proposal.submit":schema("marketing.proposal.submit",["marketing","atlas"],"medium","autonomous",["marketing.manage"],{toolName:{type:"string"},platform:{type:"string"},why:{type:"string"},payload:{type:"object"}},["toolName","platform","why","payload"]),
  "marketing.ads.budget.reallocate":schema("marketing.ads.budget.reallocate",["marketing","atlas"],"high","within_envelope",["marketing.manage"],{approvalId:{type:"string"},platform:{type:"string"},accountId:{type:"string"},fromResourceId:{type:"string"},toResourceId:{type:"string"},fromDailyMinor:{type:"integer"},toDailyMinor:{type:"integer"},shiftMinor:{type:"integer"},reason:{type:"string"}},["approvalId","platform","accountId","fromResourceId","toResourceId","fromDailyMinor","toDailyMinor","shiftMinor","reason"],"allowlisted_https"),
  "marketing.ads.keyword.mutate":schema("marketing.ads.keyword.mutate",["marketing","atlas"],"high","within_envelope",["marketing.manage"],{approvalId:{type:"string"},platform:{type:"string"},accountId:{type:"string"},campaignId:{type:"string"},adGroupId:{type:"string"},criterionId:{type:"string"},keyword:{type:"string"},operation:{type:"string"},matchType:{type:"string"},currentDailyMinor:{type:"integer"},reason:{type:"string"}},["approvalId","platform","accountId","campaignId","adGroupId","keyword","operation","currentDailyMinor","reason"],"allowlisted_https"),
  "finance.yield.calculate_surge":schema("finance.yield.calculate_surge",["finance","atlas"],"read","autonomous",["finance.view"],{bookingId:{type:"string"},zone:{type:"object"},weather:{type:"object"},capacity:{type:"object"}},["bookingId","zone","weather","capacity"]),
+ "finance.ledger.reconcile":schema("finance.ledger.reconcile",["finance","atlas"],"read","autonomous",["finance.view"],{periodCode:{type:"string"}},[]),
  "vet.triage.evaluate":schema("vet.triage.evaluate",["healthcare","atlas"],"read","autonomous",[],{customerId:{type:"string"},petId:{type:"string"},symptoms:{type:"string"}},["customerId","petId","symptoms"]),
  "vet.prescription.digitize":schema("vet.prescription.digitize",["healthcare","atlas"],"medium","within_envelope",["bookings.manage"],{appointmentId:{type:"string"},providerId:{type:"string"},sourceType:{type:"string"},clinicalNotes:{type:"string"},sourceMediaRef:{type:"string"}},["appointmentId","providerId","sourceType","clinicalNotes"]),
  "finance.vet_payout.calculate":schema("finance.vet_payout.calculate",["finance","healthcare","atlas"],"high","within_envelope",["finance.manage"],{appointmentId:{type:"string"},providerId:{type:"string"}},["appointmentId","providerId"]),
@@ -35,6 +42,11 @@ async function opsVoice(db:D1Database,env:Row,args:Row,actor:AuthenticatedActor,
  if(!customer||!text(customer.primary_phone))throw new Response("Canonical customer phone is unavailable",{status:409});
  return requestOutboundVoiceCall(db,env,{idempotencyKey,useCase:text(args.useCase)||"booking_confirmation",phone:text(customer.primary_phone),cityId:text(booking.city_id),customerId:text(booking.customer_id),bookingId:text(booking.id),actorId:actor.email,actorPermissions:actor.permissions});
 }
+
+async function opsInventory(db:D1Database,args:Row){const snapshot=await foodSupplyChainSnapshot(db),sku=text(args.sku),zone=text(args.zoneId),inventory=(snapshot.inventory as Row[]).filter(row=>(!sku||text(row.sku)===sku)&&(!zone||text(row.zone_id)===zone));return{inventory,count:inventory.length,source:"canonical_food_inventory" as const};}
+async function opsFleet(db:D1Database,args:Row){const fleet=await taxiFleetForBooking(db,text(args.bookingId));if(!fleet)throw new Response("Canonical Taxi fleet reservation not found",{status:404});return{bookingId:text(args.bookingId),fleet,source:"canonical_taxi_fleet" as const};}
+async function opsProvision(db:D1Database,args:Row,actor:AuthenticatedActor){const vehicleClass=text(args.vehicleClass);if(!["citroen_ec3","xuv"].includes(vehicleClass))throw new Response("vehicleClass must be citroen_ec3 or xuv",{status:400});return registerProviderTaxiVehicle(db,{providerId:text(args.providerId),cityId:text(args.cityId),vehicleClass:vehicleClass as "citroen_ec3"|"xuv",label:text(args.label),registrationNumber:text(args.registrationNumber),actorId:actor.email});}
+async function ledgerReconcile(db:D1Database,args:Row){const result=await detectFinanceAnomalies(db,{periodCode:text(args.periodCode)||undefined}),unbalanced=result.anomalies.filter(item=>text(item.type)==="unbalanced_journal");return{periodCode:result.periodCode,balanced:unbalanced.length===0,unbalancedJournals:unbalanced,anomalyCount:result.anomalyCount,autoPosting:false,source:"canonical_finance_journal" as const};}
 
 async function surge(db:D1Database,args:Row){
  await ensureMarginPolicyTables(db);
@@ -66,11 +78,15 @@ export async function executePhase2Tool(db:D1Database,input:Phase2ExecutionInput
  const a=input.arguments;
  switch(input.toolCode){
   case"ops.voice.dispatch":return{status:"completed" as const,executed:true,result:await opsVoice(db,env,a,input.actor,input.idempotencyKey!)};
+  case"ops.inventory.check":return{status:"completed" as const,executed:true,result:await opsInventory(db,a)};
+  case"ops.fleet.track":return{status:"completed" as const,executed:true,result:await opsFleet(db,a)};
+  case"ops.provisioning.execute":return{status:"completed" as const,executed:true,result:await opsProvision(db,a,input.actor)};
   case"marketing.ads.read_metrics":return{status:"completed" as const,executed:true,result:await marketingAdsReadMetrics(db,{from:text(a.from),to:text(a.to),platform:text(a.platform) as MarketingAdPlatform||undefined,campaignId:text(a.campaignId)||undefined})};
   case"marketing.proposal.submit":return{status:"completed" as const,executed:true,result:await submitMarketingProposal(db,{toolName:text(a.toolName) as "marketing.ads.budget.reallocate"|"marketing.ads.keyword.mutate",platform:text(a.platform) as MarketingAdPlatform,why:text(a.why),payload:a.payload as Row,requestedBy:input.actor.email})};
   case"marketing.ads.budget.reallocate":return{status:"completed" as const,executed:true,result:await marketingBudgetReallocate(db,env,{approvalId:text(a.approvalId),platform:text(a.platform) as MarketingAdPlatform,accountId:text(a.accountId),fromResourceId:text(a.fromResourceId),toResourceId:text(a.toResourceId),fromDailyMinor:int(a.fromDailyMinor),toDailyMinor:int(a.toDailyMinor),shiftMinor:int(a.shiftMinor),reason:text(a.reason),actor:input.actor.email})};
   case"marketing.ads.keyword.mutate":return{status:"completed" as const,executed:true,result:await marketingKeywordMutate(db,env,{approvalId:text(a.approvalId),platform:text(a.platform) as MarketingAdPlatform,accountId:text(a.accountId),campaignId:text(a.campaignId),adGroupId:text(a.adGroupId),criterionId:text(a.criterionId)||undefined,keyword:text(a.keyword),operation:text(a.operation) as "add_negative"|"pause"|"enable",matchType:(text(a.matchType)||"EXACT") as "EXACT"|"PHRASE"|"BROAD",currentDailyMinor:int(a.currentDailyMinor),reason:text(a.reason),actor:input.actor.email})};
   case"finance.yield.calculate_surge":return{status:"completed" as const,executed:true,result:await surge(db,a)};
+  case"finance.ledger.reconcile":return{status:"completed" as const,executed:true,result:await ledgerReconcile(db,a)};
   case"vet.triage.evaluate":return{status:"completed" as const,executed:true,result:await vetTriage(db,a)};
   case"vet.prescription.digitize":return{status:"completed" as const,executed:true,result:await vetPrescription(db,a)};
   case"finance.vet_payout.calculate":return{status:"completed" as const,executed:true,result:await vetPayout(db,a,input.actor)};
