@@ -386,14 +386,13 @@ body:has(nav[aria-label="Customer navigation"]) .ps-order-fab { bottom: calc(104
 .legal-footer { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px 24px; padding:20px clamp(16px,4vw,48px); border-top:1px solid rgba(0,0,0,.12); font-size:14px; background:#fff; color:#16332d; }
 .legal-footer nav { display:flex; flex-wrap:wrap; gap:16px; }
 .legal-footer a, .legal-header a, .legal-document a { color:inherit; text-decoration:underline; text-underline-offset:3px; }
-.cookie-consent { position:fixed; z-index:1000; left:16px; right:16px; bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:20px; max-width:960px; margin:auto; padding:18px; border:1px solid rgba(255,255,255,.18); border-radius:16px; background:#01261f; color:#fff; box-shadow:0 18px 45px rgba(0,0,0,.28); pointer-events:none; }
+.cookie-consent { display:flex; justify-content:space-between; align-items:center; gap:20px; width:min(960px,calc(100% - 32px)); margin:16px auto; padding:18px; border:1px solid rgba(255,255,255,.18); border-radius:16px; background:#01261f; color:#fff; box-shadow:0 18px 45px rgba(0,0,0,.18); }
 .cookie-consent p { margin:6px 0 0; line-height:1.5; }
-.cookie-consent a { color:inherit; text-decoration:underline; pointer-events:auto; }
-.cookie-consent__actions { display:flex; flex-shrink:0; gap:10px; pointer-events:auto; }
+.cookie-consent a { color:inherit; text-decoration:underline; }
+.cookie-consent__actions { display:flex; flex-shrink:0; gap:10px; }
 .cookie-consent button { border:1px solid rgba(255,255,255,.55); border-radius:999px; padding:10px 14px; cursor:pointer; font:inherit; }
 .cookie-consent button:first-child { background:transparent; color:#fff; }
 .cookie-consent button:last-child { background:#fff; color:#01261f; }
-body:has(nav[aria-label="Customer navigation"]) .cookie-consent { bottom:calc(88px + env(safe-area-inset-bottom)); }
 .legal-shell { min-height:70vh; background:#f7f8f5; color:#142721; }
 .legal-header { display:flex; justify-content:space-between; gap:20px; padding:22px clamp(18px,5vw,72px); border-bottom:1px solid rgba(0,0,0,.1); background:#fff; }
 .legal-header nav { display:flex; flex-wrap:wrap; gap:18px; }

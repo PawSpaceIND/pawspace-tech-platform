@@ -20,5 +20,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#01261F" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className="antialiased"><ReviewUxFixes />{children}<LegalFooter /><CookieConsent /><PawSpaceAppearance /><OrderNotificationCenter /></body></html>;
+  return <html lang="en"><body className="antialiased"><ReviewUxFixes /><CookieConsent />{children}<LegalFooter /><PawSpaceAppearance /><OrderNotificationCenter /></body></html>;
 }
