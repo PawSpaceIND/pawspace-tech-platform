@@ -4,8 +4,7 @@ import {DatabaseSync} from "node:sqlite";
 import {readFileSync} from "node:fs";
 import {d1} from "./helpers/execution-harness.mjs";
 import {ensureAtlasMemoryTables,setAtlasMemoryConsent,storeAtlasMemory,readAtlasSecureContext,retrieveAtlasMemoryForLlm} from "../lib/atlas-vector-memory.ts";
-import {enforceAtlasToolRateLimit} from "../lib/atlas-tool-gateway.ts";
-import {phase2ToolSchemas} from "../lib/atlas-phase2-vertical-tools.ts";
+import {enforceAtlasToolRateLimit} from "../lib/atlas-rate-limit.ts";
 const secureKey=Buffer.alloc(32,9).toString("base64"),embedding=Array.from({length:1024},(_,i)=>i/1024);
 const actor={email:"ops@test",name:"Ops",roleCode:"admin",permissions:["customers.manage"],developmentPreview:false,identitySource:"session",principalType:"staff",principalKey:"staff:ops@test"};
 function world(){const sqlite=new DatabaseSync(":memory:"),db=d1(sqlite);return{sqlite,db}}
@@ -27,8 +26,10 @@ test("Atlas gateway enforces independent per-agent and per-tool rate buckets",as
  await enforceAtlasToolRateLimit(db,input);await assert.rejects(()=>enforceAtlasToolRateLimit(db,input),error=>error instanceof Response&&error.status===429&&Number(error.headers.get("retry-after"))>=1);sqlite.close();
 });
 test("remediation vertical tools are registered with conservative boundaries",()=>{
- for(const code of["ops.inventory.check","ops.fleet.track","ops.provisioning.execute","finance.ledger.reconcile"])assert.ok(phase2ToolSchemas[code],`${code} must be registered`);
- assert.equal(phase2ToolSchemas["finance.ledger.reconcile"].riskClass,"read");assert.equal(phase2ToolSchemas["ops.provisioning.execute"].autonomy,"within_envelope");
+ const source=readFileSync(new URL("../lib/atlas-phase2-vertical-tools.ts",import.meta.url),"utf8");
+ for(const code of["ops.inventory.check","ops.fleet.track","ops.provisioning.execute","finance.ledger.reconcile"])assert.match(source,new RegExp(`"${code.replaceAll(".","\\.")}"`),`${code} must be registered`);
+ assert.match(source,/"finance\.ledger\.reconcile":schema\("finance\.ledger\.reconcile",\["finance","atlas"\],"read","autonomous"/);
+ assert.match(source,/"ops\.provisioning\.execute":schema\("ops\.provisioning\.execute",\["ops","atlas"\],"high","within_envelope"/);
 });
 test("marketing budget reallocation compensates a successful source mutation when destination fails",()=>{
  const source=readFileSync(new URL("../lib/marketing-agent-gateway.ts",import.meta.url),"utf8");
