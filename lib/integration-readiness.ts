@@ -1,3 +1,4 @@
+import { chunkedIn } from "./d1-chunked-in";
 import { VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 export type IntegrationReadinessState=
   |"not_started"|"code_ready"|"sandbox_setup_required"|"sandbox_ready_for_test"|"sandbox_verified"
@@ -169,9 +170,19 @@ export async function ensureIntegrationReadinessTables(db:Db){
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
 
+const readinessTableNames=["integration_registry","integration_readiness_events","integration_live_evidence","integration_evidence_requests","security_audit_events"] as const;
+
+/** Read-only steady-state probe. Missing schema/seed or a pending legacy seed migration requires bootstrap. */
 export async function integrationReadinessTablesReady(db:Db){
- const rows=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('integration_registry','integration_readiness_events','integration_live_evidence','integration_evidence_requests')").all<Row>();
- return new Set(rows.results.map(row=>string(row.name))).size===4;
+ try{
+  const tableRows=await chunkedIn(readinessTableNames,async(chunk,placeholders)=>(await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`).bind(...chunk).all<Row>()).results);
+  if(new Set(tableRows.map(row=>string(row.name))).size!==readinessTableNames.length)return false;
+  const seedCodes=seeds.map(seed=>seed.code);
+  const seeded=await chunkedIn(seedCodes,async(chunk,placeholders)=>(await db.prepare(`SELECT integration_code FROM integration_registry WHERE integration_code IN (${placeholders})`).bind(...chunk).all<Row>()).results);
+  if(new Set(seeded.map(row=>string(row.integration_code))).size!==seedCodes.length)return false;
+  const pending=await db.prepare("SELECT COUNT(*) AS count FROM integration_registry WHERE (integration_code='INT-VOICE-01' AND updated_by IN ('system_seed','runtime_presence_check') AND code_boundary_status='partial') OR (integration_code='INT-KYC-01' AND updated_by IN ('system_seed','runtime_presence_check') AND code_boundary_status='partial') OR (integration_code='INT-COMMS-01' AND credential_detector='wati') OR (integration_code='INT-PAY-02' AND updated_by IN ('system_seed','runtime_presence_check') AND provider='Provider not selected' AND code_boundary_status='partial')").first<Row>();
+  return Number(pending?.count??0)===0;
+ }catch{return false;}
 }
 
 async function ensureIntegrationReadinessForRead(db:Db,options?:IntegrationReadOptions){
