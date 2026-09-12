@@ -1,6 +1,8 @@
-ALTER TABLE atlas_secure_context_facts ADD COLUMN aad_agent_id TEXT NOT NULL DEFAULT 'legacy';
-ALTER TABLE atlas_secure_context_facts ADD COLUMN aad_purpose TEXT NOT NULL DEFAULT 'legacy';
-ALTER TABLE atlas_secure_context_facts ADD COLUMN aad_version INTEGER NOT NULL DEFAULT 0;
+-- SQLite/D1 has no ADD COLUMN IF NOT EXISTS. The schema runner executes these
+-- PRAGMA-governed directives only when each column is absent.
+-- @add-column-if-missing atlas_secure_context_facts|aad_agent_id|TEXT NOT NULL DEFAULT 'legacy'
+-- @add-column-if-missing atlas_secure_context_facts|aad_purpose|TEXT NOT NULL DEFAULT 'legacy'
+-- @add-column-if-missing atlas_secure_context_facts|aad_version|INTEGER NOT NULL DEFAULT 0
 
 DROP INDEX IF EXISTS idx_atlas_secure_context_scope;
 CREATE INDEX IF NOT EXISTS idx_atlas_secure_context_scope
