@@ -110,6 +110,7 @@ export const APPROVED_VERIFICATION_BY_VERTICAL:Record<string,ProviderVerificatio
   pet_sitting:{configured:true,requiredTypes:["aadhaar","pan","address"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"pet_sitter",blockProvidersWithoutVerificationRecord:false},
   dog_training:{configured:true,requiredTypes:["aadhaar","pan","police_verification"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"trainer",blockProvidersWithoutVerificationRecord:false},
   boarding:{configured:true,requiredTypes:["aadhaar","pan","house_verification","pet_proofing_photo"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"host",blockProvidersWithoutVerificationRecord:false},
+  vet_consult:{configured:true,requiredTypes:["aadhaar","pan","vci_registration"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"veterinarian",blockProvidersWithoutVerificationRecord:true},
 };
 /** The catalogue's own aliases for the same verticals. */
 export const VERTICAL_ALIASES:Record<string,string>={sitting:"pet_sitting",training:"dog_training",walking:"dog_walking",taxi:"pet_taxi"};
