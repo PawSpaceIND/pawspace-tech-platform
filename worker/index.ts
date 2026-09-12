@@ -36,6 +36,8 @@ import{handleAtlasWebSocket}from"../lib/intelligence/atlas-websocket";
 import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
 import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
+import{handleMoonshotTelemetry,handleMoonshotVision,handleMoonshotRpa}from"../lib/mas/phase3/moonshot-pipelines";
+import type{MoonshotEnv}from"../lib/mas/phase3/moonshot-pipelines";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
@@ -50,6 +52,9 @@ interface Env {
   PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
   PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
   AI_VOICE_RATE_LIMITER?:RateLimitBinding;
+  MOONSHOT_TELEMETRY_RATE_LIMITER?:RateLimitBinding;
+  MOONSHOT_VISION_RATE_LIMITER?:RateLimitBinding;
+  MOONSHOT_RPA_RATE_LIMITER?:RateLimitBinding;
   ATLAS_VECTORIZE?:{upsert(vectors:Array<{id:string;values:number[];metadata:Record<string,unknown>}>):Promise<unknown>;query(values:number[],options:Record<string,unknown>):Promise<unknown>};
   ATLAS_SECURE_CONTEXT_KEY?:string;
   IMAGES: {
@@ -96,6 +101,10 @@ const worker = {
     if(url.pathname==="/voice/ai-self-test/negotiate")return handleAiVoiceSelfTestNegotiate(request,env as unknown as Record<string,unknown>);
     if(url.pathname==="/voice/ai-self-test")return handleAiVoiceSelfTestStream(request,env as unknown as Record<string,unknown>);
     if(url.pathname==="/api/admin/atlas-chat"&&(request.headers.get("upgrade")||"").toLowerCase()==="websocket")return handleAtlasWebSocket(request);
+
+    if(url.pathname==="/api/v1/moonshot/telemetry")return secureApiResponse(await handleMoonshotTelemetry(request,env as unknown as MoonshotEnv));
+    if(url.pathname==="/api/v1/moonshot/vision-analyze")return secureApiResponse(await handleMoonshotVision(request,env as unknown as MoonshotEnv));
+    if(url.pathname==="/api/v1/moonshot/rpa")return secureApiResponse(await handleMoonshotRpa(request,env as unknown as MoonshotEnv));
 
     if (url.pathname.startsWith("/api/")) {
       const edgeLimiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;
