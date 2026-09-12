@@ -13,16 +13,19 @@ html[data-paw-theme="signature"] {
   --paw-hero-text: #ffffff;
   --paw-welcome: #894AED;
   --paw-welcome-text: #FFAF00;
+  --ps-ink: #252525;
+  --ps-deep: #5b2bb8;
+  --ps-primary: #894AED;
+  --ps-gold: #FFAF00;
+  --ps-bg: #F7F3FF;
+  --ps-surface: #ffffff;
+  --ps-muted: #6b6578;
+  --ps-line: #e4d7ff;
   --psu-emerald: #894AED;
   --psu-gold: #FFAF00;
   --psu-ivory: #F7F3FF;
   --purple: #894AED;
   --orange: #FFAF00;
-}
-html[data-paw-theme="signature"],
-html[data-paw-theme="signature"] body {
-  background: #F7F3FF;
-  color: #252525;
 }
 html[data-paw-theme="signature"] .home .welcomeHero {
   background: linear-gradient(135deg, #5b2bb8, #894AED) !important;

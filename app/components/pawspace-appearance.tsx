@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, PLATFORM_THEME_STORAGE_KEY, THEME_STORAGE_KEY, isAppearanceMode, isOfferedTheme, isThemeId, readPlatformDefaultTheme, resolveBrandTheme, themes, type ThemeId, type AppearanceMode } from "../mobile-app/theme-config";
+import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, PLATFORM_THEME_STORAGE_KEY, THEME_STORAGE_KEY, isAppearanceMode, isOfferedTheme, resolveBrandTheme, themes, type ThemeId, type AppearanceMode } from "../mobile-app/theme-config";
 
 /** Device-local presentation only. Never reads or writes account/service data. */
 export default function PawSpaceAppearance() {
-  const [theme, setTheme] = useState<ThemeId>(readPlatformDefaultTheme());
+  const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME);
   const [mode, setMode] = useState<AppearanceMode>(DEFAULT_APPEARANCE);
   const [visualStyle, setVisualStyle] = useState("cartoon");
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const sync = () => {
-      let chosen: ThemeId = readPlatformDefaultTheme(), appearance: AppearanceMode = DEFAULT_APPEARANCE;
+      let chosen: ThemeId = DEFAULT_THEME, appearance: AppearanceMode = DEFAULT_APPEARANCE;
       try {
         const saved = localStorage.getItem(THEME_STORAGE_KEY), savedMode = localStorage.getItem(APPEARANCE_STORAGE_KEY);
         const platform = localStorage.getItem(PLATFORM_THEME_STORAGE_KEY);
         if (isOfferedTheme(saved)) chosen = saved;
         else if (isOfferedTheme(platform)) chosen = platform;
-        else if (isThemeId(saved)) chosen = resolveBrandTheme(saved);
+        else chosen = resolveBrandTheme(saved);
         if (isAppearanceMode(savedMode)) appearance = savedMode;
       } catch { /* Appearance remains usable when device storage is unavailable. */ }
       setTheme(chosen); setMode(appearance);
