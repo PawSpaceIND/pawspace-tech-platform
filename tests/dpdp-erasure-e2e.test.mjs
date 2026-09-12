@@ -2,8 +2,10 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import{readFileSync}from"node:fs";
 import{freshCountingD1}from"./helpers/d1-harness.mjs";
-import{eraseCustomerPersonalData}from"../lib/dpdp-erasure.ts";
-import{runDpdpTransientRetentionSweep}from"../lib/dpdp-retention.ts";
+import{installWorkersHooks}from"./helpers/module-hooks.mjs";
+installWorkersHooks("__DPDP_E2E_DB__");
+const{eraseCustomerPersonalData}=await import("../lib/dpdp-erasure.ts");
+const{runDpdpRetentionSweep}=await import("../lib/dpdp-retention.ts");
 
 const now=Date.UTC(2026,8,12,3,45,0,0);
 const customerId="DPDP-E2E-CUSTOMER";
@@ -49,8 +51,8 @@ test("30-day DPDP transient sweeper purges stale telemetry and deleted-account A
  sqlite.prepare("INSERT INTO universal_provider_location_events VALUES (?,?)").run("GPS-NEW",recent);
  sqlite.prepare("INSERT INTO route_eta_snapshots VALUES (?,?)").run("ETA-OLD",stale);
  sqlite.prepare("INSERT INTO route_eta_snapshots VALUES (?,?)").run("ETA-NEW",recent);
- const result=await runDpdpTransientRetentionSweep(db,{asOf:now,retentionDays:30});
- assert.equal(result.status,"completed");
+ const result=await runDpdpRetentionSweep(db,{asOf:now});
+ assert.equal(result.transient.status,"completed");
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_secure_context_facts WHERE customer_id='DELETED-1'").get().count,0);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_vector_memories WHERE customer_id='DELETED-1'").get().count,0);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM universal_provider_location_events").get().count,1);

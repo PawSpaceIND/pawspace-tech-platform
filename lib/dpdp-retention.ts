@@ -9,7 +9,7 @@ const text=(value:unknown)=>String(value??"").trim();
 
 async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
 
-export async function runDpdpTransientRetentionSweep(db:Db,input:{asOf?:number;retentionDays?:number}={}){
+async function runDpdpTransientRetentionSweep(db:Db,input:{asOf?:number;retentionDays?:number}={}){
  const asOf=input.asOf??Date.now(),retentionDays=Math.max(1,Math.floor(input.retentionDays??30)),cutoff=asOf-retentionDays*DAY_MS;
  const statements:Array<ReturnType<Db["prepare"]>>=[];
  if(await tableExists(db,"universal_provider_location_events"))statements.push(db.prepare("DELETE FROM universal_provider_location_events WHERE created_at<?").bind(cutoff));
