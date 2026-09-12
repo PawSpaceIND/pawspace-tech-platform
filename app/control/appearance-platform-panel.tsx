@@ -7,16 +7,17 @@ import { PLATFORM_THEME_STORAGE_KEY, isOfferedTheme, themes, type ThemeId } from
 export default function AppearancePlatformPanel({ notify }: { notify: (message: string) => void }) {
   const [theme, setTheme] = useState<ThemeId>("emerald");
   useEffect(() => {
+    let frame = 0;
     try {
       const stored = localStorage.getItem(PLATFORM_THEME_STORAGE_KEY);
-      if (isOfferedTheme(stored)) setTheme(stored);
+      if (isOfferedTheme(stored)) frame = requestAnimationFrame(() => setTheme(stored));
     } catch { /* Session-only. */ }
+    return () => { if (frame) cancelAnimationFrame(frame); };
   }, []);
   function choose(next: ThemeId) {
     if (!isOfferedTheme(next)) return;
     setTheme(next);
     try { localStorage.setItem(PLATFORM_THEME_STORAGE_KEY, next); } catch { /* Session-only. */ }
-    document.documentElement.dataset.pawTheme = next;
     window.dispatchEvent(new CustomEvent("pawspace-appearance-change"));
     notify(next === "signature" ? "Platform default set to Brand book (purple + gold)." : "Platform default set to Emerald kit.");
   }
