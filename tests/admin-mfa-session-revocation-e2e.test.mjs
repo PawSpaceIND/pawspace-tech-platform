@@ -3,7 +3,7 @@ import assert from"node:assert/strict";
 import{installWorkersHooks}from"./helpers/module-hooks.mjs";
 import{freshSqlite,makeD1}from"./helpers/taxi-harness.mjs";
 
-installWorkersHooks("__MFA_DB__","__MFA_ENV__");
+installWorkersHooks("__MFA_DB__","__MFA_ENV__",{strictMfa:true});
 const KEY="k".repeat(32),CODE="primary-password-fixture",EMAIL="anjali.finance33@tkpetcare.in";
 const env={PAWSPACE_UAT_LOGIN:"on",PAWSPACE_UAT_SIGNING_KEY:KEY,PAWSPACE_UAT_ACCESS_CODE:CODE};
 const cookiePart=value=>String(value||"").split(";")[0];
