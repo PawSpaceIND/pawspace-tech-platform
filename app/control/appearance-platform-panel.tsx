@@ -38,10 +38,6 @@ export default function AppearancePlatformPanel({ notify }: { notify: (message: 
     window.dispatchEvent(new CustomEvent("pawspace-appearance-change"));
     notify(next === "signature" ? "Platform default set to Brand book (purple + gold)." : "Platform default set to Emerald kit.");
   }
-  const swatches: Record<ThemeId, string[]> = {
-    emerald: ["#01261F", "#E6B34E", "#FFF8EE"],
-    signature: ["#894AED", "#FFAF00", "#F7F3FF"],
-  };
   return (
     <section aria-label="Platform appearance">
       <p style={{ fontSize: 15, lineHeight: 1.5, margin: "0 0 16px", color: "#3D4A46" }}>
@@ -62,7 +58,7 @@ export default function AppearancePlatformPanel({ notify }: { notify: (message: 
               <span style={name}>{option.label}{on ? " · current" : ""}</span>
               <span style={tag}>{option.tagline}</span>
               <span style={swatchRow} aria-hidden>
-                {(swatches[option.id] || swatches.emerald).map((color) => <span key={color} style={swatch(color)} />)}
+                {option.swatches.map((color) => <span key={color} style={swatch(color)} />)}
               </span>
             </button>
           );
