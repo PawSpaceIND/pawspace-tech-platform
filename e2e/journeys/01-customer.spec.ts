@@ -172,6 +172,7 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   test.setTimeout(120_000);
   await page.setExtraHTTPHeaders({});
   await page.context().clearCookies();
+  await page.addInitScript(() => localStorage.removeItem("pawspace.visual-style"));
   const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(response?.status()).toBe(200);
   const home = page.locator('[data-home-design="pawspace-prototype-converged"]');
