@@ -41,7 +41,8 @@
     "cap:sync:customer": "CAPACITOR_TARGET=customer npx cap sync",
     "cap:sync:partner": "CAPACITOR_TARGET=partner npx cap sync",
     "cap:init:customer": "npx cap init PawSpaceCustomer com.pawspace.customer --web-dir .next",
-    "cap:init:partner": "npx cap init PawSpacePartner com.pawspace.partner --web-dir .next"
+    "cap:init:partner": "npx cap init PawSpacePartner com.pawspace.partner --web-dir .next",
+    "test:mas": "PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --import tsx --test --test-concurrency=1 tests/atlas-vector-memory.test.mjs tests/atlas-mas-remediation.test.mjs tests/executive-ceo-orchestrator.test.mjs tests/mas-dual-mode-phase1.test.mjs tests/mas-phase2-runtime-bootstrap.test.mjs tests/mas-phase2-vertical-wiring.spec.mjs tests/vet-healthcare-module.test.mjs tests/financial-lifecycle-executable-concurrency.test.mjs"
   },
   "dependencies": {
     "@capacitor-community/native-market": "^8.0.0",

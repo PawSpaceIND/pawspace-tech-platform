@@ -4,10 +4,11 @@ import {classifyAtlasMemory,storeAtlasMemory,retrieveAtlasMemoryForLlm,ATLAS_VEC
 
 class DbMock{
  constructor(){this.calls=[];this.rows=[]}
- prepare(sql){const call={sql,binds:[]};this.calls.push(call);return{bind:(...binds)=>{call.binds=binds;return{run:async()=>({meta:{changes:1}}),all:async()=>({results:this.rows}),first:async()=>null}},run:async()=>({meta:{changes:1}})}}
+ prepare(sql){const call={sql,binds:[]};this.calls.push(call);return{bind:(...binds)=>{call.binds=binds;return{run:async()=>({meta:{changes:1}}),all:async()=>({results:this.rows}),first:async()=>sql.includes("atlas_memory_consents")?{status:"granted"}:null}},run:async()=>({meta:{changes:1}})}}
 }
 const secureKey=Buffer.alloc(32,7).toString("base64");
 const embedding=Array.from({length:1024},(_,i)=>i/1024);
+const actor={email:"ops@test",name:"Ops",roleCode:"admin",permissions:["customers.manage"],developmentPreview:false,identitySource:"session",principalType:"staff",principalKey:"staff:ops@test"};
 
 test("Vectorize contract is bge-m3 / 1024 / cosine",()=>{
  assert.equal(ATLAS_VECTOR_MEMORY_MODEL,"@cf/baai/bge-m3");
@@ -38,18 +39,18 @@ test("ordinary behavioral memory uses bge-m3 and filtered Vectorize metadata",as
 });
 test("LLM retrieval of a sensitive query stops before embeddings or Vectorize",async()=>{
  const db=new DbMock();let aiCalls=0,vectorCalls=0;
- const result=await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{},query:async()=>{vectorCalls++;return{matches:[]}}}},{customerId:"C1",petId:"P1",query:"What is the lockbox code?"});
- assert.deepEqual(result,{matches:[],secureContextExcluded:true});assert.equal(aiCalls,0);assert.equal(vectorCalls,0);
+ const result=await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{},query:async()=>{vectorCalls++;return{matches:[]}}}},{actor,customerId:"C1",petId:"P1",query:"What is the lockbox code?"});
+ assert.deepEqual(result,{matches:[],secureContextExcluded:true,consentDenied:false});assert.equal(aiCalls,0);assert.equal(vectorCalls,0);
 });
 
 test("normal LLM retrieval always filters customer, pet and non-sensitive metadata",async()=>{
  const db=new DbMock();let filter=null;
- await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async(_v,options)=>{filter=options.filter;return{matches:[]}}}},{customerId:"C1",petId:"P1",query:"What does the dog dislike?"});
+ await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async(_v,options)=>{filter=options.filter;return{matches:[]}}}},{actor,customerId:"C1",petId:"P1",query:"What does the dog dislike?"});
  assert.deepEqual(filter,{customer_id:"C1",sensitivity:"non_sensitive",pet_id:"P1"});
 });
 
 test("customer-only retrieval is scoped to customer-global memories, never every pet",async()=>{
  const db=new DbMock();let filter=null;
- await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async(_v,options)=>{filter=options.filter;return{matches:[]}}}},{customerId:"C1",query:"What should staff remember?"});
+ await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async(_v,options)=>{filter=options.filter;return{matches:[]}}}},{actor,customerId:"C1",query:"What should staff remember?"});
  assert.deepEqual(filter,{customer_id:"C1",pet_id:"",sensitivity:"non_sensitive"});
 });
