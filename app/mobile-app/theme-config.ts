@@ -3,19 +3,20 @@ export type AppearanceMode="system"|"light"|"dark";
 export type ThemeOption={id:ThemeId;label:string;tagline:string;swatches:[string,string,string]};
 export const THEME_STORAGE_KEY="pawspace.customer.theme";
 export const APPEARANCE_STORAGE_KEY="pawspace.customer.appearance";
+/** Beta brand lock: only Emerald is offered. Alternate ids remain type-valid for stored prefs but resolve to emerald. */
 export const themes:ThemeOption[]=[
-{id:"emerald",label:"PawSpace Emerald",tagline:"Deep emerald, gold and ivory",swatches:["#01261F","#E6B34E","#f2f7f5"]},
-{id:"signature",label:"PawSpace Signature",tagline:"Iconic purple, saffron and ivory",swatches:["#5d22a8","#ffb128","#f7f5fa"]},
-{id:"midnight",label:"Midnight Luxe",tagline:"Deep plum, violet and champagne",swatches:["#25103f","#9b6de3","#e8c985"]},
-{id:"sage",label:"Sage Serenity",tagline:"Calm sage, forest and warm cream",swatches:["#295f4e","#7fa58c","#f4efe5"]},
-{id:"rose",label:"Rose Gold",tagline:"Burgundy, blush and rose gold",swatches:["#7c2946","#c98983","#f8ece9"]},
-{id:"ocean",label:"Ocean Premium",tagline:"Deep teal, aqua and pearl",swatches:["#07566b","#35a9b8","#eef8f9"]},
+{id:"emerald",label:"PawSpace Emerald",tagline:"Deep emerald, gold and ivory — brand standard",swatches:["#01261F","#E6B34E","#f2f7f5"]},
 ];
-const themeIds=new Set(themes.map(theme=>theme.id));
+const allThemeIds=new Set<ThemeId>(["emerald","signature","midnight","sage","rose","ocean"]);
 const appearanceModes=new Set<AppearanceMode>(["system","light","dark"]);
-export function isThemeId(value:string|null|undefined):value is ThemeId{return Boolean(value&&themeIds.has(value as ThemeId));}
+export function isThemeId(value:string|null|undefined):value is ThemeId{return Boolean(value&&allThemeIds.has(value as ThemeId));}
 export function isAppearanceMode(value:string|null|undefined):value is AppearanceMode{return Boolean(value&&appearanceModes.has(value as AppearanceMode));}
+/** Any legacy stored theme collapses to emerald for a single brand combo. */
+export function resolveBrandTheme(value:string|null|undefined):ThemeId{
+  if(value==="emerald")return "emerald";
+  return "emerald";
+}
 const configuredTheme=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_THEME:undefined;
 const configuredAppearance=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_APPEARANCE:undefined;
-export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?configuredTheme:"emerald";
+export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?resolveBrandTheme(configuredTheme):"emerald";
 export const DEFAULT_APPEARANCE:AppearanceMode=isAppearanceMode(configuredAppearance)?configuredAppearance:"system";

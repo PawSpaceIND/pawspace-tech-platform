@@ -1,0 +1,61 @@
+/*
+ * PawSpace beta brand lock — Emerald #01261F + Gold #E6B34E only.
+ * Presentation-only. Does not change booking, payment, or identity logic.
+ * Ensures pages that never opted into .ps-unified-* still match the brand.
+ */
+:root {
+  --psu-emerald: #01261f;
+  --psu-emerald-2: #064c3c;
+  --psu-gold: #e6b34e;
+  --psu-ivory: #fffdf8;
+  --purple: #01261f;
+  --purple-deep: #001913;
+  --orange: #e6b34e;
+}
+
+html, body {
+  background: var(--psu-ivory) !important;
+  color: #0c2e25;
+}
+
+/* Force alternate mobile theme ids onto emerald tokens during beta */
+[data-pawspace-mobile="true"][data-theme="signature"],
+[data-pawspace-mobile="true"][data-theme="midnight"],
+[data-pawspace-mobile="true"][data-theme="rose"],
+[data-pawspace-mobile="true"][data-theme="ocean"],
+[data-pawspace-mobile="true"][data-theme="sage"],
+html[data-paw-theme="signature"],
+html[data-paw-theme="midnight"],
+html[data-paw-theme="rose"],
+html[data-paw-theme="ocean"],
+html[data-paw-theme="sage"] {
+  --ps-primary: #01261f;
+  --ps-primary-2: #0a4a3c;
+  --ps-accent: #e6b34e;
+  --ps-accent-text: #2a1e05;
+  --ps-bg: #f2f7f5;
+  --ps-surface: #ffffff;
+  --ps-surface-2: #e6efeb;
+  --ps-text: #0a231c;
+  --ps-muted: #5c6f68;
+  --ps-border: #d6e4de;
+  --ps-hero: #01261f;
+  --ps-hero-2: #0a4a3c;
+  --ps-stage-1: #0a4a3c;
+  --ps-stage-2: #01261f;
+  --ps-stage-3: #00120e;
+  --ps-protection: #01261f;
+}
+
+/* Appearance chrome matches brand */
+.paw-appearance-trigger {
+  border-color: #cfe0d9 !important;
+  color: #01261f !important;
+  background: #fff !important;
+}
+.paw-appearance-done,
+.paw-appearance-dialog button.paw-appearance-done {
+  background: #e6b34e !important;
+  color: #251b05 !important;
+  border: 0 !important;
+}
