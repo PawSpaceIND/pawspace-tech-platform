@@ -98,8 +98,10 @@ INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effect
 
 -- ---------------------------------------------------------------------------------------------------
 -- Identity: staff login (asha.groomer1) opens the Partner workspace as the city-wide UAT groomer, and a
--- synthetic partner OTP number per UAT groomer lets a tester sign in to /partner-app with the sandbox
--- OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by 10-digit phone.
+-- synthetic partner OTP number per UAT groomer AND per UAT trainer lets a tester sign in to /partner-app
+-- with the sandbox OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by
+-- 10-digit phone, and the row id is the provider_capacity_profiles id so the session owns that
+-- provider's work orders. Groomers use 9000000901-907, trainers 9000000931-936.
 -- ---------------------------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',verified_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000) ON CONFLICT(email) DO UPDATE SET provider_id=excluded.provider_id,status='active',verified_at=excluded.verified_at,updated_at=excluded.updated_at;
@@ -112,7 +114,13 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_groom_south','blr','Rahul M. (UAT South)','9000000904',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_north','blr','Priya N. (UAT North)','9000000905',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_west','blr','Suresh V. (UAT West)','9000000906',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000);
+ ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','9000000931',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_east','blr','Arjun T. (UAT East)','9000000932',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_south','blr','Kavya R. (UAT South)','9000000933',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_north','blr','Nikhil B. (UAT North)','9000000934',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_west','blr','Anitha G. (UAT West)','9000000935',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_central','blr','Rohan D. (UAT Central)','9000000936',NULL,'uat_staging_seed',1789300000000,1789300000000);
 
 -- ---------------------------------------------------------------------------------------------------
 -- 3. PUBLISHED AVAILABILITY. backend/src/scheduling.ts refuses a provider with no scheduling_availability
