@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, globSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as nodeModule from "node:module";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,8 @@ if (typeof nodeModule.registerHooks === "function") {
 
 const auth = await import("../lib/server-auth.ts");
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+/** globSync rejects a URL cwd on Node 24 (ERR_INVALID_ARG_TYPE); Node 22 accepted it. Pass a path. */
+const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 
 /** What the caller actually receives: authError applied to a thrown value, then its JSON body. */
 async function surfaced(thrown, fallback) {
@@ -90,7 +93,7 @@ test("NO customer route throws the identity refusal ungoverned any more", () => 
   // Swept by directory rather than by a list, because the first pass fixed only the four routes the
   // frontend audit reached and left seven more carrying the identical defect - including
   // pet-emergency, where a signed-out customer was told "Unable to raise emergency request".
-  const routes = globSync("app/api/**/route.ts", { cwd: new URL("../", import.meta.url) });
+  const routes = globSync("app/api/**/route.ts", { cwd: repoRoot });
   assert.ok(routes.length > 100, `expected the api route tree, found ${routes.length}`);
 
   const ungoverned = routes.filter((path) => /throw new Response\("Verified customer identity is required"/.test(read(path)));
@@ -109,7 +112,7 @@ test("no customer route lets the request body decide which identity source is co
   // requireCustomerOwnership ran unconditionally after it and refuses any customer id not bound to the
   // caller, so this was a shape problem rather than an open door - but a request field steering the
   // identity path is worth removing, and the alert blocks the merge.
-  const routes = globSync("app/api/**/route.ts", { cwd: new URL("../", import.meta.url) });
+  const routes = globSync("app/api/**/route.ts", { cwd: repoRoot });
   const conditional = routes.filter((path) => /requestedCustomerId\?null:await resolvePlatformSession/.test(read(path)));
   assert.deepEqual(conditional, [],
     `these let user input choose the identity source: ${conditional.join(", ")}`);
