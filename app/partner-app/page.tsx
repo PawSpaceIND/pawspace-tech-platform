@@ -363,6 +363,10 @@ export default function PartnerMobileApp() {
       const response = await fetch("/api/identity-session", { method: "DELETE", headers: { "content-type": "application/json" } });
       if (!response.ok && response.status !== 401) { const body = await response.json().catch(() => ({})) as { error?: string }; throw new Error(body.error || "Unable to sign out"); }
       setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setPaymentRequest(null); setEarnings(null); setMediaMessage(""); setMediaAssets([]);
+      // The workspace state that arrives with the earnings payload belongs to the same account and must
+      // be dropped with it. pendingProof in particular names the previous partner's BOOKING IDS, so
+      // leaving it behind would carry one partner's work into the next partner's screen.
+      setEarningsNotice(""); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] });
       setSessionState("unauthenticated");
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to sign out"); }
     finally { setSigningOut(false); }
