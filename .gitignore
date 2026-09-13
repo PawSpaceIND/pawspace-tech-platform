@@ -88,4 +88,5 @@ artifacts/
 # Browser E2E local artefacts
 /test-results/
 /playwright-report/
+/playwright-report-sweep/
 /dist/server/.wrangler/
