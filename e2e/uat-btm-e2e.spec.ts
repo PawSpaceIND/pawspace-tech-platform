@@ -38,7 +38,17 @@ const PROVIDER_PHONES: Record<string, string> = {
   uatcap_groom_east_2: "9000000911", uatcap_groom_east_3: "9000000912", uatcap_groom_south_2: "9000000913", uatcap_groom_south_3: "9000000914",
   uatcap_groom_north_2: "9000000915", uatcap_groom_north_3: "9000000916", uatcap_groom_west_2: "9000000917", uatcap_groom_west_3: "9000000918",
   uatcap_groom_central_2: "9000000919", uatcap_groom_central_3: "9000000920",
+  uatcap_groom_east_4: "9000000921", uatcap_groom_east_5: "9000000922", uatcap_groom_south_4: "9000000923", uatcap_groom_south_5: "9000000924",
+  uatcap_groom_north_4: "9000000925", uatcap_groom_north_5: "9000000926", uatcap_groom_west_4: "9000000927", uatcap_groom_west_5: "9000000928",
+  uatcap_groom_central_4: "9000000929", uatcap_groom_central_5: "9000000930",
 };
+/**
+ * Slot order for the proof: the LATE windows first. Every booking the proof makes holds one groomer for that
+ * window plus the 30-minute travel buffer either side, so booking 11:00 also blocks 09:00 and 13:00 for that
+ * groomer. Taking 15:00 (then 09:00) leaves the midday windows, the ones a manual tester picks first, free.
+ */
+const SLOTS_ONLINE = [/^3:00–5:00 PM/, /^9:00–11:00 AM/, /^1:00–3:00 PM/, /^11:00 AM–1:00 PM/];
+const SLOTS_PAY_AFTER = [/^3:00–5:00 PM/, /^9:00–11:00 AM/, /^11:00 AM–1:00 PM/, /^1:00–3:00 PM/];
 const CUSTOMER_EMAIL = "uat.btm.customer@example.com";
 
 const report: string[] = ["# PawSpace staging — BTM Layout (560068) end-to-end proof", "", `- Origin: ${BASE}`, `- Requested date: ${SERVICE_DATE}`, `- Run: ${new Date().toISOString()}`, ""];
@@ -183,7 +193,9 @@ type BookingAttempt = { reserve: ReserveOutcome | null; created: CreatedOutcome 
  * the capacity question needs) and returned as refused:true so the caller can try another slot.
  */
 async function confirmBooking(page: Page): Promise<BookingAttempt> {
-  const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST", { timeout: 60_000 }).catch(() => null);
+  // The slot step also POSTs /api/uat-scheduling with action:"preview" (the "Preferred groomer" list); only the
+  // reserve call, which carries no action, decides capacity.
+  const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 60_000 }).catch(() => null);
   const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
   const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
   await expect(confirm, "Confirm booking must be enabled with the alternative phone blank").toBeEnabled();
@@ -316,11 +328,27 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
   await shot(page, "razorpay-card");
   await frameOutline(frame, "Razorpay checkout with the card entered");
 
-  // D. Pay.
+  // D. Continue / Pay. Razorpay's card form asks for the name on the card and an email only AFTER the first
+  // Continue (run 12 outline: "Please enter name on your card", "Please fill out this field"), so fill whatever
+  // it then asks for and press again, bounded to three rounds.
   const popupPromise = page.context().waitForEvent("page", { timeout: 25_000 }).catch(() => null);
-  const pay = frame.getByRole("button", { name: /^pay\b|pay ₹|pay now|continue/i }).last();
-  await pay.click({ timeout: 10_000 });
-  log("ℹ️ Pay pressed.");
+  const payButton = () => frame.getByRole("button", { name: /^pay\b|pay ₹|pay now|^continue$/i }).last();
+  await payButton().click({ timeout: 10_000 });
+  log("ℹ️ Continue/Pay pressed.");
+  for (let round = 1; round <= 3; round += 1) {
+    await page.waitForTimeout(2_000);
+    let filled = false;
+    const holderLate = frame.getByPlaceholder(/name on (your )?card/i).or(frame.locator("#card_name, input[name='card[name]']"));
+    if (await visible(holderLate) && !(await holderLate.first().inputValue().catch(() => ""))) { await holderLate.first().fill("UAT BTM Customer"); filled = true; }
+    const emailLate = frame.getByPlaceholder(/email/i).or(frame.locator("#email, input[type='email']"));
+    if (await visible(emailLate) && !(await emailLate.first().inputValue().catch(() => ""))) { await emailLate.first().fill(CUSTOMER_EMAIL); filled = true; }
+    if (!filled) break;
+    log(`ℹ️ The card form asked for more details (name on card / email): filled, pressing Continue again (round ${round}).`);
+    await frameOutline(frame, `Razorpay card form before Continue (round ${round})`, 1_800);
+    if (await visible(payButton(), 3_000)) await payButton().click({ timeout: 10_000 }).catch(() => {});
+  }
+  await page.waitForTimeout(2_000);
+  await frameOutline(frame, "Razorpay checkout right after Continue", 2_500);
 
   // E. Razorpay's test bank page (Success / Failure): inside the checkout, in a nested frame, or as a popup.
   const popup = await popupPromise;
@@ -330,7 +358,7 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
     return false;
   };
   let bankDone = false;
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 90_000;
   while (!bankDone && Date.now() < deadline) {
     if (popup && await successIn(popup, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (popup)."); break; }
     if (await successIn(frame, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (checkout iframe)."); break; }
@@ -339,7 +367,7 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
   }
   await shot(page, "razorpay-after-pay");
   if (!bankDone) {
-    log("ℹ️ No test-bank Success button was found within 60 s; the card may have been captured directly, or the bank step did not render.");
+    log("ℹ️ No test-bank Success button was found within 90 s; the card may have been captured directly, or the bank step did not render.");
     logFrames(page, "Frames after Pay");
     await frameOutline(frame, "Razorpay checkout after Pay");
     if (popup) await frameOutline(popup, "Popup after Pay");
@@ -424,7 +452,7 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
     await customerOtpLogin(page);
     log(`✅ Login: sandbox OTP for ${PHONE} accepted (identity-session 200).`);
     await ensurePet(page);
-    const { created } = await bookWithSlotFallback(page, [/^11:00 AM–1:00 PM/, /^1:00–3:00 PM/, /^3:00–5:00 PM/, /^9:00–11:00 AM/], "online");
+    const { created } = await bookWithSlotFallback(page, SLOTS_ONLINE, "online");
     expect(created?.status, `canonical booking: ${JSON.stringify(created?.body ?? { note: "no canonical booking call was made" })}`).toBe(201);
     const data = (created?.body.data ?? {}) as Record<string, unknown>;
     bookingId = String(data.bookingId || data.id || "");
@@ -457,7 +485,7 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
 });
 
 test("2. Fallback — pay-after booking for the partner lifecycle when the online capture did not complete", async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   if (paymentCaptured) { log("ℹ️ Online capture succeeded; no fallback booking needed."); return; }
   section("2b. Fallback booking (pay after service) for the partner lifecycle");
   const context = await browser.newContext();
@@ -466,7 +494,7 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
   try {
     await customerOtpLogin(page);
     await ensurePet(page);
-    const { created } = await bookWithSlotFallback(page, [/^1:00–3:00 PM/, /^3:00–5:00 PM/, /^11:00 AM–1:00 PM/, /^9:00–11:00 AM/], "after");
+    const { created } = await bookWithSlotFallback(page, SLOTS_PAY_AFTER, "after");
     expect(created?.status, `canonical booking: ${JSON.stringify(created?.body ?? { note: "no canonical booking call was made" })}`).toBe(201);
     const data = (created?.body.data ?? {}) as Record<string, unknown>;
     bookingId = String(data.bookingId || data.id || "");
