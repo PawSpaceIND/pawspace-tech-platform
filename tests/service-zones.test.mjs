@@ -68,13 +68,14 @@ test("gateway allowlists service-zone as public",async()=>{
   assert.match(gateway,/url\.pathname==="\/api\/service-zone"/);
 });
 
-test("address-picker component collects pincode and resolves zone",async()=>{
+test("address-picker component derives pincode from Google Places and resolves zone",async()=>{
   const page=await read("app/mobile-app/address-picker.tsx");
   assert.match(page,/"use client"/);
   assert.match(page,/\/api\/service-zone/);
-  assert.match(page,/replace\(\/\\D\/g,""\)\.slice\(0,6\)/);
+  assert.match(page,/function pinFrom\(value:string\)/);
+  assert.match(page,/value\.match\(\/\\b\[1-9\]\\d\{5\}\\b\//);
   assert.match(page,/onZoneResolved/);
-  assert.match(page,/\[pincode,setPincode\]=useState/);
+  assert.match(page,/searchAddresses\(/);
   assert.match(page,/resolveServiceCoverage\(pincode\)/);
   assert.match(page,/resolveAddress\(/);
   assert.match(page,/validGpsCoordinates/);

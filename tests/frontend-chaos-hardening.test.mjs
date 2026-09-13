@@ -4,13 +4,14 @@ import { readFile } from 'node:fs/promises';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Google Maps lookup has a deadline and a manual-address service-area fallback', async () => {
+test('Google Places autocomplete is bounded and map selection is required', async () => {
   const [client, picker] = await Promise.all([read('lib/address-autocomplete-client.ts'), read('app/mobile-app/address-picker.tsx')]);
   assert.match(client, /AbortController/);
   assert.match(client, /8_000/);
   assert.match(client, /Address lookup timed out/);
-  assert.match(picker, /configuration_required\|timeout\|timed out/);
-  assert.match(picker, /Continue with manual address/);
+  assert.match(picker, /Google address suggestions/);
+  assert.match(picker, /addressLine1/);
+  assert.doesNotMatch(picker, /Continue with manual address/);
   assert.match(picker, /sessionStorage\.getItem\(SELECTED_SERVICE_ADDRESS_KEY\)/);
 });
 

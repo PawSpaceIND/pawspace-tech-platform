@@ -51,7 +51,13 @@ export async function POST(request: Request) {
       const data = await createBookingPaymentOrder(db, runtime, { bookingId, customerId: session.subjectId, actorId: session.subjectId });
       if (!data.connected) return json({ error: "Secure checkout is unavailable or needs reconciliation. Contact billing support before retrying." }, 503);
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);
-      return json({ data: { ...data, locks } }, 201);
+      return json({ data: { ...data, razorpay_order_id: data.orderId, RAZORPAY_KEY_ID: data.keyId, locks } }, 201);
+    }
+    if (body.action === "status") {
+      await assertCustomerCheckoutBooking(db, session.subjectId, bookingId, false);
+      const stage = await paymentStageAmount(db, bookingId);
+      if (!stage) return json({ error: "Payment record was not found." }, 404);
+      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status: stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation" } });
     }
     if (body.action === "confirm") {
       if (![body.orderId, body.paymentId, body.signature].every(value => typeof value === "string")) return json({ error: "Invalid payment receipt." }, 400);

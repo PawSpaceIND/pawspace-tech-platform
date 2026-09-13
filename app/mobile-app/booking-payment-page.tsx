@@ -7,14 +7,16 @@ const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",curr
 
 type Props={
  serviceName:string; totalAmount:number; amountDueNow:number; mode:"prepaid"|"split"|"split_50_50"|"pay_after_service";
- bookingId?:string; busy?:boolean; onCreateBooking?:()=>Promise<void>|void; onVerified?:()=>Promise<void>|void; onBack?:()=>void;
+ bookingId?:string; busy?:boolean; autoStart?:boolean; onCreateBooking?:()=>Promise<void>|void; onVerified?:()=>Promise<void>|void; onBack?:()=>void;
 };
-export default function BookingPaymentPage({serviceName,totalAmount,amountDueNow,mode,bookingId,busy=false,onCreateBooking,onVerified,onBack}:Props){
+export default function BookingPaymentPage({serviceName,totalAmount,amountDueNow,mode,bookingId,busy=false,autoStart=false,onCreateBooking,onVerified,onBack}:Props){
  const[state,setState]=useState<CheckoutState>({phase:"ready",message:"",canCheck:false});
- const controller=useRef<CustomerCheckoutController|null>(null),notified=useRef(false);
+ const controller=useRef<CustomerCheckoutController|null>(null),notified=useRef(false),autoStarted=useRef(false);
  const payAfter=mode==="pay_after_service",dueNow=payAfter?0:amountDueNow;
  useEffect(()=>{if(!bookingId){controller.current=null;return;}let active=true;controller.current=new CustomerCheckoutController(bookingId,value=>{if(active)setState(value);});return()=>{active=false;controller.current=null;};},[bookingId]);
  useEffect(()=>{if(state.phase!=="captured"||notified.current)return;notified.current=true;void onVerified?.();},[state.phase,onVerified]);
+ useEffect(()=>{if(!autoStart||!bookingId||payAfter||autoStarted.current||!controller.current)return;autoStarted.current=true;void controller.current.start();},[autoStart,bookingId,payAfter]);
+ useEffect(()=>{if(state.phase!=="pending")return;const timer=window.setInterval(()=>void controller.current?.start(),2500);return()=>window.clearInterval(timer);},[state.phase]);
  const working=busy||["starting","checkout","confirming"].includes(state.phase);
  async function primary(){if(!bookingId){await onCreateBooking?.();return;}if(payAfter){await onVerified?.();return;}await controller.current?.start();}
  return <section className={styles.page} aria-label={`${serviceName} payment`}>

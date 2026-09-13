@@ -117,11 +117,10 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
   // External Maps transport is deterministic in browser E2E; PawSpace coverage, pincode, zone and booking gates remain real.
   await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-grooming-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
-  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
-  await page.getByLabel("Pincode",{exact:true}).fill("560038");
-  await page.getByRole("button",{name:"Use this address",exact:true}).click();
-  await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();
-  await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
+  await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
+  await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();
+  await page.locator("#grooming-address-line-2").fill("Near the park");
+  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
 
   // Separate project slots while exercising the dates actually offered by the customer UI.
   const ist=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
@@ -133,8 +132,9 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.getByRole("button",{name:"Review booking",exact:true}).click();
   await expect(page.getByText("Review and confirm",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:/^Pay after service/}).click();
+  await page.getByLabel("Alternative Phone Number",{exact:true}).fill("9000000988");
   const created=page.waitForResponse(response=>response.url().includes("/api/canonical-bookings")&&response.request().method()==="POST");
-  await page.getByRole("button",{name:"Continue to payment",exact:true}).click();
+  await page.getByRole("button",{name:"Confirm booking",exact:true}).click();
   const response=await created;
   expect(response.status(),await response.text()).toBe(201);
   const result=await response.json(),bookingId=String(result.data?.bookingId||"");
@@ -241,21 +241,20 @@ test("address choice: customer can recover from a wrong map match and editing cl
   resolved.push(query.get("placeId")||"");
   await route.fulfill({json:{data:{status:"configured",address:query.get("placeId")==="doorstep"?"42 Double Road, Indiranagar, Bengaluru 560038":"Indiranagar, Bengaluru",latitude:12.978,longitude:77.641}}});
  });
- await page.getByLabel("Complete doorstep address",{exact:true}).fill("42 Double Road, Indiranagar, Bengaluru");
- await page.getByLabel("Pincode",{exact:true}).fill("560038");
- await page.getByRole("button",{name:"Use this address",exact:true}).click();
- const matches=page.getByRole("region",{name:"Matching map addresses",exact:true});
+ await page.locator("#grooming-address-line-1").fill("42 Double Road, Indiranagar, Bengaluru");
+ const matches=page.getByRole("region",{name:"Google address suggestions",exact:true});
  await expect(matches.getByRole("button")).toHaveCount(2);
  expect(resolved).toEqual([]);
- await matches.getByRole("button",{name:"Indiranagar, Bengaluru",exact:true}).click();
- await expect(page.getByRole("alert")).toContainText("does not match the selected pincode");
+ await matches.getByRole("button",{name:/^Indiranagar/}).click();
+ await expect(page.getByRole("alert")).toContainText("does not include a serviceable 6-digit PIN code");
  await page.screenshot({path:test.info().outputPath("customer-address-choice.png"),fullPage:true});
- await matches.getByRole("button",{name:"42 Double Road, Indiranagar, Bengaluru 560038",exact:true}).click();
- await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
+ await page.locator("#grooming-address-line-1").fill("42 Double Road, Indiranagar, Bengaluru");
+ await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/^42 Double Road/}).click();
+ await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
  expect(resolved).toEqual(["area","doorstep"]);
  await expect(page.getByRole("button",{name:"Review booking",exact:true})).toBeEnabled();
- await page.getByLabel("Pincode",{exact:true}).fill("560034");
- await expect(page.getByText("Service doorstep ready",{exact:true})).toBeHidden();
+ await page.locator("#grooming-address-line-1").fill("99 Koramangala, Bengaluru");
+ await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
 });
 
@@ -268,7 +267,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
  const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
- await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Use this address",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
+ await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
   const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart);
@@ -305,7 +304,8 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   expect(writes).toHaveLength(0);const after=await page.context().request.get("/api/customer-account");expect(after.ok()).toBeTruthy();expect((await after.json()).data.bookings).toEqual(initial.data.bookings);
  }else{
   const created=page.waitForResponse(response=>response.url().endsWith("/api/sitting-bookings")&&response.request().method()==="POST");await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);const body=await response.json();const bookingId=String(body.data.bookingId),paymentId=String(body.data.paymentId);expect(bookingId).not.toBe("");expect(paymentId).toMatch(/^PAY-SIT-/);
-  await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible();
+  await expect.poll(async()=>{const saved=await page.context().request.get("/api/customer-account");if(!saved.ok())return "account_unavailable";const account=await saved.json();const row=account.data.bookings.find((booking:{id:string})=>booking.id===bookingId);return row?.status??"missing";},{timeout:30_000,message:"Sitting booking should enter payment_pending before the payment review UI is asserted"}).toBe("payment_pending");
+  await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible({timeout:30_000});
   await expect(page.getByText("Secure Razorpay checkout",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
   const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
@@ -379,4 +379,20 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
 
  }
 
+});
+
+test("grooming truth test mounts Razorpay iframe from payment_pending",async({page})=>{
+ test.setTimeout(90_000);
+ await page.addInitScript(()=>{class R{options:Record<string,unknown>;constructor(options:Record<string,unknown>){this.options=options}on(){}open(){const f=document.createElement("iframe");f.className="razorpay-checkout-frame";f.title="Razorpay Checkout";document.body.appendChild(f)}close(){}};(window as Window&{Razorpay?:typeof R}).Razorpay=R});
+ await sandboxLogin(page,"9000000915");await ensureCustomerPet(page);await page.goto("/mobile-app");
+ await page.locator("nav").getByRole("button",{name:/home/i}).last().click();
+ const chooseLocation=page.getByRole("button",{name:"Choose your service location"});if(await chooseLocation.isVisible().catch(()=>false)){await chooseLocation.click();await page.getByRole("dialog",{name:"Choose your service area"}).getByRole("button",{name:"Browse without location",exact:true}).click()}
+ await serviceCard(page,"Grooming").getByRole("button",{name:/book now/i}).click();await page.getByRole("button",{name:/Choose a package/i}).click();await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
+ await page.route("**/api/address-autocomplete?*",async route=>{const q=new URL(route.request().url()).searchParams;if(q.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"truth-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Bengaluru 560038",fullText:"42, Indiranagar Double Road, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}})});
+ await page.locator("#grooming-address-line-1").fill("42 Indiranagar Double Road");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar/}).click();await page.locator("#grooming-address-line-2").fill("2nd floor");await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ const dateButtons=page.locator('button[aria-pressed]');await expect(dateButtons.first()).toBeVisible();if(await dateButtons.count()>1)await dateButtons.nth(1).click();await page.getByRole("button",{name:/^11:00 AM–1:00 PM/}).click();await page.getByRole("button",{name:"Review booking",exact:true}).click();
+ await page.getByLabel("Customer Name",{exact:true}).fill("Razorpay Browser Customer");await page.getByLabel("Customer Phone Number",{exact:true}).fill("9000000915");await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeDisabled();await page.getByLabel("Alternative Phone Number",{exact:true}).fill("9000000916");await page.getByLabel("Special instructions to groomer",{exact:true}).fill("Please ring the bell once.");await page.getByRole("button",{name:/^Pay online/}).click();
+ const sandboxKey=["rzp","test","frontendsync913"].join("_");
+ await page.route("**/api/customer-checkout",async route=>{const body=route.request().postDataJSON();if(body?.action!=="start")return route.continue();return route.fulfill({status:201,json:{data:{connected:true,environment:"sandbox",bookingId:body.bookingId,orderId:"order_frontendsync913",keyId:sandboxKey,razorpay_order_id:"order_frontendsync913",RAZORPAY_KEY_ID:sandboxKey,amountPaise:134900,currency:"INR",locks:{PAWSPACE_PAYMENT_ENV:"sandbox",FORBID_PRODUCTION:"true",PAWSPACE_PAYMENT_LIVE_APPROVED:"false"}}}})});
+ const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST");await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirm booking",exact:true}).click();const response=await created;expect(response.status(),await response.text()).toBe(201);const payload=await response.json();expect(payload.data.status).toBe("payment_pending");await expect(page.locator(".razorpay-checkout-frame")).toBeAttached();
 });
