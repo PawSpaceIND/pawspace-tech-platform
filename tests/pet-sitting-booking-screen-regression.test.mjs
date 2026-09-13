@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { canPlanStay, staySearchKey } from "../lib/stay-search-state.ts";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -12,6 +13,23 @@ test("Pet Sitting page keeps selected mode and booking mode synchronized", async
 });
 
 test("Pet Sitting exposes all four booking stages and guarded transitions", async () => {
+  assert.equal(canPlanStay({ datesValid: true, petCount: 1, serviceAvailable: true }), true);
+  assert.equal(canPlanStay({ datesValid: false, petCount: 1, serviceAvailable: true }), false);
+  assert.equal(canPlanStay({ datesValid: true, petCount: 0, serviceAvailable: true }), false);
+
+  const key = staySearchKey({
+    cityId: "blr",
+    zoneId: "hsr",
+    location: "HSR Layout",
+    start: "2026-09-14",
+    end: "2026-09-15",
+    careWindow: "12 hours",
+    startTime: "09:00",
+    petIds: ["pet-2", "pet-1"],
+    species: ["dog"],
+  });
+  assert.match(key, /pet-1/);
+
   const flow = await read("app/mobile-app/stay-flow.tsx");
   for (const stage of [1, 2, 3, 4]) assert.match(flow, new RegExp(`stage === ${stage}`));
   assert.match(flow, /canPlanStay\(\{datesValid,petCount:selectedPets\.length,serviceAvailable:serviceLocation\?\.zone\.serviceAvailable\}\)/);
