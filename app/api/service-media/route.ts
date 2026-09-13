@@ -24,7 +24,21 @@ async function mediaEvent(db:Db,mediaId:string,bookingId:string,eventType:string
 export async function GET(request:Request){try{const db=await database();await ensureTables(db);await ensureMediaBoundaryTables(db);
   const grantToken=(new URL(request.url).searchParams.get("grant")||"").trim();
   if(grantToken){const read=await resolveMediaReadGrant(db,grantToken);return json({data:{mediaId:read.mediaId,mimeType:read.mimeType,expiresAt:read.expiresAt,audience:read.audience,adapterConnected:false,objectDelivered:false}});}
-  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const url=new URL(request.url),bookingId=(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:String(row.scan_status)==="clean"&&String(row.access_status)==="ready"&&String(row.retention_status)==="active"&&Number(row.synthetic||0)===0}))});}catch(error){return authError(error,"Unable to load service media");}}
+  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const url=new URL(request.url),bookingId=(url.searchParams.get("bookingId")||"").trim();
+  // Ops review queue: every asset whose verified upload is waiting for a second person's decision. This is
+  // the list the Control tower's "Service proof review" reads; it needs bookings.manage because that is
+  // the permission record_scan (the decision) requires, so nobody sees a queue they cannot act on.
+  if(!bookingId&&url.searchParams.get("pending")==="1"){requirePermission(actor,"bookings.manage");const pending=await db.prepare("SELECT a.id,a.booking_id,a.provider_id,a.purpose,a.mime_type,a.size_bytes,a.review_status,a.scan_status,a.access_status,a.created_by,a.created_at,a.updated_at,w.provider_name,w.service_code,w.status work_order_status FROM service_media_assets a LEFT JOIN provider_work_orders w ON w.booking_id=a.booking_id WHERE a.review_status='pending_review' AND a.retention_status='active' ORDER BY a.created_at LIMIT 200").all<Row>();return json({pending:pending.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:false}))});}
+  if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,review_status,reviewed_by,review_reason,release_basis,created_by,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:isProofReady(row)}))});}catch(error){return authError(error,"Unable to load service media");}}
+
+/**
+ * Mirrors assertServiceProofRef in lib/service-media-security.ts: a scanner did not condemn the file,
+ * a second person approved it, the release boundary let it through, and it is a real (non-synthetic)
+ * registered object. The old inline check required scan_status='clean', which the review step no
+ * longer writes when no scanner has run (UAT releases on `permitted_environment`), so the Partner app
+ * kept reading proofReady:false for assets the lifecycle gate would in fact accept.
+ */
+function isProofReady(row:Row){return !["infected","unreadable","rejected"].includes(String(row.scan_status))&&String(row.review_status??"")==="approved"&&Boolean(String(row.release_basis??"").trim())&&String(row.access_status)==="ready"&&String(row.retention_status)==="active"&&Number(row.synthetic||0)===0;}
 
 /**
  * Steps 1-3 of the approved signed-upload rule. This route used to answer
