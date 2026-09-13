@@ -24,7 +24,8 @@
 --      Sitting, Walking and Taxi are not radius-gated and stay city-wide.
 --
 -- PAWSPACE_SCHEDULING_ENV="uat" on staging means seedUatRoster then auto-creates scheduling_availability
--- on the customer's reserve path, so no separate availability seed is needed. Idempotent: INSERT OR
+-- on the customer's reserve path; gate 3 at the end of this file also publishes authored availability for
+-- the next two weeks so capacity does not depend on that per-request write. Idempotent: INSERT OR
 -- IGNORE / WHERE NOT EXISTS, safe to re-run. UAT roster DATA on isolated staging only; it does not
 -- weaken any booking, payment, or identity gate, and never touches production.
 
@@ -112,3 +113,26 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_groom_north','blr','Priya N. (UAT North)','9000000905',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_west','blr','Suresh V. (UAT West)','9000000906',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 3. PUBLISHED AVAILABILITY. backend/src/scheduling.ts refuses a provider with no scheduling_availability
+--    row for the date ("No published availability") or a requested time outside every window ("outside
+--    roster"). On a uat runtime the reserve path auto-writes source='uat_roster' rows (seedUatRoster),
+--    but only for the requested date, only 09:00-19:00 for day services, and only where no authored row
+--    exists. This block publishes authored source='roster' rows for every seeded provider, every zone in
+--    its zones_json, yesterday..+15 days (UTC; the extra day each side absorbs the IST offset):
+--    06:00-22:00 IST for day services, all day for boarding. Authored rows are the authority for a
+--    provider/date (lib/scheduling-roster-authority.ts), so they must cover EVERY zone the provider
+--    serves - a partial set would hide the zones it omits. Ids use the prefix 'uatseed_' so they never
+--    collide with the runtime's 'uat_<id>_<date>_<zone>' ids: a colliding INSERT OR IGNORE would leave a
+--    uat_roster row where an authored one is expected and silently drop that zone. Re-running extends
+--    the window forward; existing rows are left untouched.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date);
+CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source);
+WITH RECURSIVE days(d,n) AS (SELECT date('now','-1 day'),0 UNION ALL SELECT date(d,'+1 day'),n+1 FROM days WHERE n<16)
+INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at)
+SELECT 'uatseed_'||p.id||'_'||days.d||'_'||z.value,p.id,p.city_id,z.value,days.d,CASE WHEN p.services_json LIKE '%"boarding"%' THEN '["00:00-23:59"]' ELSE '["06:00-22:00"]' END,'roster',strftime('%s','now')*1000
+FROM provider_capacity_profiles p,json_each(p.zones_json) z,days
+WHERE p.id LIKE 'uatcap\_%' ESCAPE '\';
