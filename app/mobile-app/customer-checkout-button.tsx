@@ -12,11 +12,13 @@ export default function CustomerCheckoutButton({ bookingId, paymentStatus, onRef
     return () => { active = false; controller.current = null; };
   }, [bookingId]);
   const busy = ["starting", "checkout", "confirming"].includes(state.phase);
+  const waitingOnWebhook = state.phase === "confirming";
   return <div aria-busy={busy}>
+    {waitingOnWebhook && <p role="status">Waiting for payment confirmation…</p>}
     {state.message && <p className={state.phase === "error" ? styles.error : undefined} role={state.phase === "error" ? "alert" : "status"}>{state.message}</p>}
     {!["captured", "settled"].includes(state.phase) && <button type="button" className={styles.button} disabled={busy}
       onClick={() => { void controller.current?.start(); }}>
-      {busy ? "Payment in progress…" : state.canCheck ? "Check payment status" : paymentStatus === "captured" ? "Check balance (test)" : "Review & pay (test)"}
+      {waitingOnWebhook ? "Waiting for payment confirmation…" : busy ? "Payment in progress…" : state.canCheck ? "Check payment status" : paymentStatus === "captured" ? "Check balance (test)" : "Review & pay (test)"}
     </button>}
     {!busy && state.phase !== "ready" && !state.canCheck && <button type="button" className={styles.button} onClick={onRefresh}>Refresh billing</button>}
   </div>;
