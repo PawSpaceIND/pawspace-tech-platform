@@ -16,6 +16,7 @@
 import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
 import{ensureProviderCommissionTables}from"./provider-commission-governance";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
+import{findIdentityBinding,type IdentitySource,type PrincipalType}from"./identity-binding";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -74,6 +75,28 @@ export async function resolveProviderForActor(db:Db,email:string):Promise<string
  const e=text(email).toLowerCase();if(!e)return null;
  const link=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=? AND status='active'").bind(e).first<Row>().catch(()=>null);
  return link?text(link.provider_id):null;
+}
+
+export type ProviderIdentityActor={email:string;identitySource:IdentitySource;principalType:PrincipalType;principalKey:string};
+
+/**
+ * Resolve the provider bound to this identity, own-record only.
+ *
+ * The Partner app signs in with OTP, which issues a platform identity session whose actor email is the
+ * synthetic audit id `provider:<subjectId>` rather than a mailbox. Resolving by email alone therefore
+ * matched no row for ANY Partner-app session and reported the provider as unlinked - which the Earnings
+ * tab rendered as a silent zero rather than as "not linked". Prefer the verified identity binding, the
+ * same check requireProviderOwnership makes, and keep the legacy email link for workspace sign-ins.
+ *
+ * The binding is deliberately the only session-derived source: resolvePlatformSession already revokes a
+ * session whose binding stops being active and verified, so reading the binding here keeps revocation
+ * authoritative. Trusting the session's own subject id instead would outlive a revoked binding.
+ */
+export async function resolveProviderForIdentity(db:Db,actor:ProviderIdentityActor):Promise<string|null>{
+ const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"}).catch(()=>null);
+ const bound=binding?text(binding.subject_id):"";
+ if(bound)return bound;
+ return resolveProviderForActor(db,actor.email);
 }
 
 const CUSTOMER_MESSAGE:Record<string,string>={

@@ -1,0 +1,189 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import * as nodeModule from "node:module";
+
+// ---------------------------------------------------------------------------
+// Session -> provider binding for the Partner app workspace.
+//
+// EXECUTED, not asserted about. The Partner app signs in with OTP, which issues a platform identity
+// session. resolvePrimaryActor then reports that session's actor email as the synthetic audit id
+// `provider:<subjectId>` - there is no mailbox anywhere in the flow. /api/provider-workspace resolved
+// the provider with an email-only lookup against provider_identity_links, so it matched nothing for
+// EVERY Partner-app session: GET answered 200 with {linked:false} and no earnings key, which the
+// Earnings tab rendered as a silent zero, and POST threw an ungoverned 403 that authError redacted.
+//
+// This drives the real chain - OTP, signed assertion, identity binding, platform session, actor - and
+// then resolves the provider from it, so a regression to email-only resolution fails here.
+// ---------------------------------------------------------------------------
+
+const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
+const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
+
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
+  export async function resolve(specifier, context, nextResolve) {
+    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
+
+function makeD1(sqlite) {
+  function statement(sql, args) {
+    return {
+      bind: (...bound) => statement(sql, bound),
+      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    };
+  }
+  return {
+    prepare: (sql) => statement(sql, []),
+    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    exec: async (sql) => { sqlite.exec(sql); },
+  };
+}
+
+/** The signing secret is obviously synthetic and local to this process. */
+function fresh() {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-uat-signing-secret-for-tests" };
+  return { sqlite, db };
+}
+
+const mod = {
+  otp: () => import("../lib/partner-otp.ts"),
+  binding: () => import("../lib/identity-binding.ts"),
+  session: () => import("../lib/platform-session.ts"),
+  assertion: () => import("../lib/verified-identity-assertion.ts"),
+  workspace: () => import("../lib/provider-workspace.ts"),
+};
+
+/**
+ * Everything /api/identity-session POST does, with the repository's own functions, and then the actor
+ * that lib/server-auth's resolvePrimaryActor builds from the resolved session. The synthetic audit-id
+ * email is the whole point of the defect, so it is derived here rather than hand-written.
+ */
+async function signedInPartnerActor(db, { phone, name = "Asha Partner", cityId = "blr" }) {
+  const [otp, binding, session, assertion] = await Promise.all([mod.otp(), mod.binding(), mod.session(), mod.assertion()]);
+  const challenge = await otp.requestPartnerOtp(db, { phone });
+  const verified = await otp.verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode, name, cityId });
+
+  const payload = await assertion.verifyIdentityAssertion(db, verified.assertion);
+  const bound = await binding.upsertIdentityBinding(db, {
+    identitySource: payload.identitySource,
+    principalType: payload.principalType,
+    principalKey: payload.principalKey,
+    subjectType: payload.subjectType,
+    subjectId: payload.subjectId,
+    cityId: payload.cityId ?? null,
+    verificationState: "verified",
+    expiresAt: null,
+    actorId: `otp_adapter:${payload.identitySource}`,
+    reason: "Verified OTP identity assertion exchange",
+  });
+  const issued = await session.issuePlatformSession(db, {
+    bindingId: String(bound.id),
+    identitySource: payload.identitySource,
+    principalType: payload.principalType,
+    principalKey: payload.principalKey,
+    subjectType: payload.subjectType,
+    subjectId: payload.subjectId,
+    ttlSeconds: 28_800,
+  });
+
+  const request = new Request("https://app.pawspace.test/api/provider-workspace", {
+    headers: { cookie: `${session.PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}` },
+  });
+  const resolved = await session.resolvePlatformSession(db, request);
+  assert.ok(resolved, "the OTP session must resolve; the rest of this test is meaningless otherwise");
+
+  return {
+    providerId: verified.providerId,
+    bindingId: String(bound.id),
+    actor: {
+      email: resolved.auditId,
+      name: `Provider ${resolved.subjectId}`,
+      roleCode: resolved.roleCode,
+      permissions: resolved.permissions,
+      developmentPreview: false,
+      identitySource: resolved.identitySource,
+      principalType: resolved.principalType,
+      principalKey: resolved.principalKey,
+      subjectType: resolved.subjectType,
+    },
+  };
+}
+
+test("an OTP Partner-app session carries no mailbox, so email-only provider resolution finds nothing", async () => {
+  const { db } = fresh();
+  const workspace = await mod.workspace();
+  const { actor, providerId } = await signedInPartnerActor(db, { phone: "9000000101" });
+
+  // This is the shape the defect turned on: the actor's "email" is an audit id, not an address.
+  assert.equal(actor.email, `provider:${providerId}`);
+  assert.equal(actor.subjectType, "provider");
+  assert.equal(actor.roleCode, "service_provider");
+
+  assert.equal(await workspace.resolveProviderForActor(db, actor.email), null,
+    "email-only resolution cannot match a synthetic audit id - this is the bug being fixed");
+});
+
+test("resolveProviderForIdentity resolves the provider from the verified identity binding", async () => {
+  const { db } = fresh();
+  const workspace = await mod.workspace();
+  const { actor, providerId } = await signedInPartnerActor(db, { phone: "9000000102" });
+
+  assert.equal(await workspace.resolveProviderForIdentity(db, actor), providerId,
+    "the Partner app's own session must resolve to its own provider record");
+});
+
+test("resolveProviderForIdentity still honours the legacy provider_identity_links email link", async () => {
+  const { sqlite, db } = fresh();
+  const workspace = await mod.workspace();
+  const binding = await mod.binding();
+  await binding.ensureIdentityBindingTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES (?,?,'active',1,1)")
+    .run("groomer.arun@pawspace.in", "groom_arun");
+
+  const staffActor = {
+    email: "groomer.arun@pawspace.in",
+    identitySource: "workspace",
+    principalType: "email",
+    principalKey: "groomer.arun@pawspace.in",
+  };
+  assert.equal(await workspace.resolveProviderForIdentity(db, staffActor), "groom_arun",
+    "a workspace sign-in with no identity binding must keep working through the legacy link");
+});
+
+test("a revoked identity binding stops resolving, so revocation stays authoritative", async () => {
+  const { db } = fresh();
+  const workspace = await mod.workspace();
+  const binding = await mod.binding();
+  const { actor, bindingId, providerId } = await signedInPartnerActor(db, { phone: "9000000103" });
+
+  assert.equal(await workspace.resolveProviderForIdentity(db, actor), providerId);
+
+  await binding.revokeIdentityBinding(db, { id: bindingId, actorId: "ops.one@pawspace.in", reason: "Partner offboarded" });
+
+  assert.equal(await workspace.resolveProviderForIdentity(db, actor), null,
+    "a revoked binding must not resolve, and must not fall back to the session's own subject id");
+});
