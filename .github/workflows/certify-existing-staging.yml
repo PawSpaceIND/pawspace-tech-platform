@@ -82,3 +82,54 @@ jobs:
           path: staging-certification-existing.json
           if-no-files-found: warn
           retention-days: 14
+
+  visual-uat-sweep:
+    if: ${{ inputs.confirm == 'certify-existing-staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pawspace-staging
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      PW_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
+      PW_STAFF_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Validate exact deployed SHA input
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_SHA" in *[!0-9a-f]* | "") exit 1;; esac
+          test "${#EXPECTED_SHA}" -eq 40
+      - name: Install Playwright sweep dependencies
+        run: |
+          npm run install:ci
+          npx playwright install --with-deps chromium
+      - name: Prove the live worker is the requested isolated staging SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+          WORKER_NAME: pawspace-staging
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Run live cross-persona visual UAT sweep
+        run: npx playwright test e2e/visual-uat-sweep.spec.ts --project=chromium --reporter=line,html
+      - name: Upload visual UAT screenshots and Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-uat-evidence-${{ inputs.expected_sha }}-${{ github.run_id }}
+          path: |
+            visual-uat-evidence/
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
