@@ -1,8 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-const phone = process.env.PW_PARTNER_PHONE || "9000000912";
+const basePhone = process.env.PW_PARTNER_PHONE || "9000000912";
+function phoneForProject(projectName:string){
+  if(!projectName.includes("mobile"))return basePhone;
+  return String(Number(basePhone)+1).padStart(basePhone.length,"0");
+}
 
-async function sandboxPartnerLogin(page: import("@playwright/test").Page) {
+async function sandboxPartnerLogin(page: import("@playwright/test").Page, phone:string) {
   await page.goto("/partner/onboarding");
   const phoneInput = page.getByPlaceholder("10-digit phone number");
   await expect(phoneInput).toBeVisible();
@@ -31,8 +35,8 @@ async function sandboxPartnerLogin(page: import("@playwright/test").Page) {
   }), { timeout: 15_000 }).not.toBeNull();
 }
 
-test("partner: verified OTP login -> authenticated queue surface", async ({ page }) => {
-  await sandboxPartnerLogin(page);
+test("partner: verified OTP login -> authenticated queue surface", async ({ page }, testInfo) => {
+  await sandboxPartnerLogin(page, phoneForProject(testInfo.project.name));
 
   const session = await page.evaluate(async () => {
     const response = await fetch("/api/identity-session", { cache: "no-store" });

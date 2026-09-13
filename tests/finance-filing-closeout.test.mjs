@@ -348,6 +348,12 @@ test("Finance approvals use the authenticated actor and refuse the maker", async
   const { sqlite, db } = await closeWorld();
   const patch = async (actorEmail, body, extraHeaders = {}) => {
     const headers = { "content-type": "application/json", ...extraHeaders, ...(actorEmail ? { "oai-authenticated-user-email": actorEmail } : {}) };
+    if (body?.id && ["expense","bill","period"].includes(body.entity)) {
+      const table = body.entity === "expense" ? "finance_expenses" : body.entity === "bill" ? "finance_bills" : "finance_close_periods";
+      const key = body.entity === "period" ? "period_code" : "id";
+      const row = sqlite.prepare(`SELECT updated_at FROM ${table} WHERE ${key}=?`).get(body.id);
+      if (row) headers["if-match"] = `"${row.updated_at}"`;
+    }
     const response = await financeRoute.PATCH(new Request(`${ORIGIN}/api/finance-control`, { method: "PATCH", headers, body: JSON.stringify(body) }));
     return { status: response.status, body: await response.json().catch(() => null) };
   };
@@ -458,9 +464,17 @@ test("Finance approvals use the authenticated actor and refuse the maker", async
 // ---------------------------------------------------------------------------------------------
 test("A locked period refuses finance writes and approvals atomically", async () => {
   const { sqlite, db } = await closeWorld();
+  sqlite.prepare("INSERT OR IGNORE INTO finance_close_periods (period_code,status,checklist_json,updated_at) VALUES ('2026-07','open','[]',0)").run();
   const patch = async (actorEmail, body) => {
+    const headers = { "content-type": "application/json", "oai-authenticated-user-email": actorEmail };
+    if (body?.id && ["expense","bill","period"].includes(body.entity)) {
+      const table = body.entity === "expense" ? "finance_expenses" : body.entity === "bill" ? "finance_bills" : "finance_close_periods";
+      const key = body.entity === "period" ? "period_code" : "id";
+      const row = sqlite.prepare(`SELECT updated_at FROM ${table} WHERE ${key}=?`).get(body.id);
+      if (row) headers["if-match"] = `"${row.updated_at}"`;
+    }
     const response = await financeRoute.PATCH(new Request(`${ORIGIN}/api/finance-control`, {
-      method: "PATCH", headers: { "content-type": "application/json", "oai-authenticated-user-email": actorEmail }, body: JSON.stringify(body),
+      method: "PATCH", headers, body: JSON.stringify(body),
     }));
     return { status: response.status, body: await response.json().catch(() => null) };
   };

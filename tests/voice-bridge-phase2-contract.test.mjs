@@ -56,7 +56,9 @@ test("only customer/provider ownership can initiate and no notification is fabri
 test("webhook reuses the existing signature verifier and is replay-safe", () => {
   assert.match(governance, /verifyVoiceWebhookSignature/);
   assert.match(governance, /provider_event_id TEXT NOT NULL UNIQUE/);
-  assert.match(governance, /payloadHash\.slice\(0, 16\)/);
+  assert.match(governance, /const bridgeEventId = event\.providerEventId/);
+  assert.doesNotMatch(governance, /payloadHash\.slice\(0, 16\)/);
+  assert.match(governance, /replayed with a different payload/);
   assert.match(webhookRoute, /recordVoiceBridgeEvent/);
   assert.match(webhookRoute, /readBoundedRequestText/);
 });

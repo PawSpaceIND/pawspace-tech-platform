@@ -13,6 +13,8 @@ const id=(prefix:string)=>`${prefix}_${crypto.randomUUID().slice(0,12)}`;
 const DEFAULT_ENTITY_ID="pawspace_india";
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 function finite(value:unknown,fallback?:number){const parsed=value===undefined&&fallback!==undefined?fallback:Number(value);return Number.isFinite(parsed)?parsed:null;}
+function expectedVersion(request:Request){const raw=String(request.headers.get("if-match")||"").replace(/^W\//,"").replaceAll('"',"").trim();const value=Number(raw);if(!raw||!Number.isFinite(value)||value<0)throw new Response("Finance mutations require an If-Match row version",{status:428});return value;}
+function assertVersion(row:Row,expected:number){if(Number(row.updated_at)!==expected)throw new Response("Finance record changed since it was loaded; refresh before retrying",{status:412});}
 
 async function ensureColumn(db:Db,table:"finance_expenses"|"finance_bills",column:"category_code"|"created_by"){
  const exists=async()=>{const columns=await db.prepare(`PRAGMA table_info(${table})`).all<Row>();return columns.results.some(row=>String(row.name)===column);};
@@ -102,10 +104,10 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
  return json({error:"Unsupported finance entity"},400);
  }catch(error){return authError(error,"Finance save failed");}}
 
-export async function PATCH(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database();await seed(db);const body=await request.json()as{entity?:string;id?:string;action?:string;reason?:string};if(!body.id||!body.action||!body.reason||body.reason.trim().length<5)return json({error:"A reason of at least 5 characters is required"},400);const changedAt=Date.now();
+export async function PATCH(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const version=expectedVersion(request);const db=await database();await seed(db);const body=await request.json()as{entity?:string;id?:string;action?:string;reason?:string};if(!body.id||!body.action||!body.reason||body.reason.trim().length<5)return json({error:"A reason of at least 5 characters is required"},400);const changedAt=Date.now();
  if(body.entity==="expense"){
   if(!["approve","reject","pay"].includes(body.action))return json({error:"Unsupported expense action"},400);
-  const row=await db.prepare("SELECT * FROM finance_expenses WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Expense not found"},404);const currentStatus=String(row.status||"");
+  const row=await db.prepare("SELECT * FROM finance_expenses WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Expense not found"},404);assertVersion(row,version);const currentStatus=String(row.status||"");
   if(body.action==="approve"){
    if(row.created_by&&String(row.created_by)===actor.email)return json({error:"Maker cannot approve their own transaction"},403);
    if(["approved","paid"].includes(currentStatus))return json({data:{id:body.id,status:currentStatus,duplicatePrevented:true}});
@@ -128,7 +130,7 @@ export async function PATCH(request:Request){try{sameOrigin(request);const actor
  }
  if(body.entity==="bill"){
   if(!["approve","reject","pay"].includes(body.action))return json({error:"Unsupported bill action"},400);
-  const row=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Bill not found"},404);const currentStatus=String(row.status||"");
+  const row=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Bill not found"},404);assertVersion(row,version);const currentStatus=String(row.status||"");
   if(body.action==="approve"){
    if(row.created_by&&String(row.created_by)===actor.email)return json({error:"Maker cannot approve their own transaction"},403);
    if(["approved","paid"].includes(currentStatus))return json({data:{id:body.id,status:currentStatus,duplicatePrevented:true}});
@@ -149,6 +151,6 @@ export async function PATCH(request:Request){try{sameOrigin(request);const actor
   if(!Number(rejected.meta.changes)){const latest=await db.prepare("SELECT status FROM finance_bills WHERE id=?").bind(body.id).first<Row>();return json({error:`Bill can no longer be rejected from ${String(latest?.status||"unknown")}`},409);}
   await audit(db,actor.email,"bill",body.id,"reject",{status:"rejected"},body.reason);await securityAudit(db,actor,"finance.bill.reject","bill",body.id,"completed",{});return json({data:{id:body.id,status:"rejected"}});
  }
- if(body.entity==="period"&&body.action==="lock"){await db.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked','[]',?,?,?) ON CONFLICT(period_code) DO UPDATE SET status='locked',locked_at=excluded.locked_at,locked_by=excluded.locked_by,updated_at=excluded.updated_at").bind(body.id,changedAt,actor.email,changedAt).run();await audit(db,actor.email,"period",body.id,"locked",{status:"locked"},body.reason);await securityAudit(db,actor,"finance.period.lock","period",body.id,"completed",{});return json({data:{id:body.id,status:"locked"}});}
+ if(body.entity==="period"&&body.action==="lock"){const current=await db.prepare("SELECT * FROM finance_close_periods WHERE period_code=?").bind(body.id).first<Row>();if(!current)return json({error:"Finance period not found; refresh before retrying"},412);assertVersion(current,version);const locked=await db.prepare("UPDATE finance_close_periods SET status='locked',locked_at=?,locked_by=?,updated_at=? WHERE period_code=? AND updated_at=? AND status<>'locked'").bind(changedAt,actor.email,changedAt,body.id,version).run();if(!Number(locked.meta.changes))return json({error:"Finance period changed concurrently; refresh before retrying"},412);await audit(db,actor.email,"period",body.id,"locked",{status:"locked"},body.reason);await securityAudit(db,actor,"finance.period.lock","period",body.id,"completed",{});return json({data:{id:body.id,status:"locked",version:changedAt}});}
  return json({error:"Unsupported finance change"},400);
  }catch(error){const message=error instanceof Error?error.message:"Finance update failed";if(message==="period_locked")return json({error:message},409);if(message==="journal_already_posted")return json({error:"Finance source has already been posted by another approval"},409);if(message==="maker_cannot_approve")return json({error:"Maker cannot approve their own transaction"},403);if(message==="approval_conflict")return json({error:"Finance approval state changed concurrently"},409);return authError(error,"Finance update failed");}}
