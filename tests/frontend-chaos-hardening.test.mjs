@@ -40,10 +40,11 @@ test('delayed Razorpay webhook renders waiting state and polls the same receipt'
 });
 
 test('provider proof calls have bounded 3G failure behavior and replay-safe retry guidance', async () => {
-  const proof = await read('lib/boarding-proof-client.ts');
-  assert.match(proof, /20_000/);
-  assert.match(proof, /AbortController/);
-  assert.match(proof, /Please retry; the previous request is safe to replay/);
+  const [proof, bounded] = await Promise.all([read('lib/boarding-proof-client.ts'), read('lib/bounded-fetch.ts')]);
+  assert.match(proof, /boundedFetch/);
+  assert.match(bounded, /20_000/);
+  assert.match(bounded, /AbortController/);
+  assert.match(bounded, /Please retry; replay-safe actions will reuse their idempotency key/);
 });
 
 test('Booking Wizard, Pet Manager and Payment Screen have local error boundaries', async () => {
@@ -82,9 +83,9 @@ test('hung provider proof request aborts and explicitly permits retry', async t 
       const error = new Error('aborted'); error.name = 'AbortError'; reject(error);
     }, { once: true });
   });
-  const { updateBoardingProof } = await import(`../lib/boarding-proof-client.ts?chaos=${Date.now()}`);
-  const request = updateBoardingProof({ stayId: 'stay-chaos', action: 'prepare_media', idempotencyKey: 'chaos-retry-1' });
-  const assertion = assert.rejects(request, /timed out.*Please retry.*safe to replay/i);
+  const { boundedFetch } = await import(`../lib/bounded-fetch.ts?chaos=${Date.now()}`);
+  const request = boundedFetch('/api/proof-chaos', { method: 'POST' });
+  const assertion = assert.rejects(request, /timed out.*Please retry.*idempotency key/i);
   t.mock.timers.tick(20_001);
   await assertion;
 });
