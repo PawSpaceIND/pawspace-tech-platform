@@ -231,7 +231,11 @@ test("the Partner app offers Sign out and only ever re-asks the server after it"
   assert.match(page, /finally \{\s*setSigningOut\(false\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);\s*\}/,
     "after the revoke (or its failure) the identity check runs again and decides");
   assert.equal(page.split('setSessionState("unauthenticated")').length, 2, "only the server-refusal path opens the gate");
-  assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out"\}<\/b>/, "Sign out is in the More menu");
+  assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out \/ switch partner"\}<\/b>/, "Sign out is in the More menu, named for what a tester looks for");
+  assert.match(page, /\{identity\?\.subjectId && <button type="button" className=\{styles\.headerSignOut\} onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}>/, "and in the header of a signed-in shell");
+  // Every per-account state is dropped when the session changes hands (sign-out and switch alike).
+  assert.match(page, /const resetAccountState = \(\) => \{\s*setJobs\(\[\]\); setSelectedId\(""\); setTab\("home"\); setOperationResult\(null\); setPaymentRequest\(null\); setEarnings\(null\); setMediaMessage\(""\); setMediaAssets\(\[\]\);\s*\};/);
+  assert.equal(page.split("resetAccountState();").length, 3, "sign-out and the switch both reset the account state");
   // One busy guard for both account actions: a sign-out and a switch can never be in flight together.
   assert.match(page, /const accountBusy = signingOut \|\| switching;/);
   assert.equal(page.split("if (accountBusy) return;").length, 3, "both handlers refuse to start while the other is in flight");
@@ -251,8 +255,8 @@ test("the UAT provider switch is rendered only when the gated roster answers, an
     "a switched-to provider with no grooming job is still named from the roster");
   assert.match(page, /\{uatProviders && <section className=\{styles\.uatSwitch\}/);
   assert.match(page, /body: JSON\.stringify\(\{ providerId: uatProviderId, code: uatCode \}\)/, "the shared UAT access code is required");
-  assert.match(page, /setUatCode\(""\); setJobs\(\[\]\); setSelectedId\(""\); setTab\("home"\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
-    "a successful switch clears the old provider's jobs and re-runs the identity check");
+  assert.match(page, /setUatCode\(""\); resetAccountState\(\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
+    "a successful switch clears the old provider's state and re-runs the identity check");
   assert.doesNotMatch(page, /setIdentity\(\{/, "the switch response never becomes a client-side identity");
 });
 

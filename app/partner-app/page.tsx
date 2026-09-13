@@ -301,6 +301,11 @@ export default function PartnerMobileApp() {
   // share one busy guard: a sign-out and a switch in flight together could revoke the session the
   // switch just issued, or leave the switch's new session behind after the sign-out.
   const accountBusy = signingOut || switching;
+  // Every piece of per-account state is dropped when the session changes hands, so the next partner
+  // never sees the previous one's jobs, earnings, payment request or media before their own loads.
+  const resetAccountState = () => {
+    setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setPaymentRequest(null); setEarnings(null); setMediaMessage(""); setMediaAssets([]);
+  };
   const signOut = async () => {
     if (accountBusy) return;
     setSigningOut(true); setError("");
@@ -308,7 +313,7 @@ export default function PartnerMobileApp() {
       const response = await fetch("/api/identity-session", { method: "DELETE" });
       const body = await response.json().catch(() => ({})) as { data?: { loggedOut?: boolean }; error?: string };
       if (!response.ok || !body.data?.loggedOut) throw new Error(body.error || "Unable to sign out");
-      setJobs([]); setSelectedId(""); setTab("home");
+      resetAccountState();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to sign out");
     } finally {
@@ -323,7 +328,7 @@ export default function PartnerMobileApp() {
       const response = await fetch("/api/uat-provider-switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providerId: uatProviderId, code: uatCode }) });
       const body = await response.json().catch(() => ({})) as { data?: { providerId?: string }; error?: string };
       if (!response.ok || !body.data?.providerId) throw new Error(body.error || "Unable to switch UAT provider");
-      setUatCode(""); setJobs([]); setSelectedId(""); setTab("home");
+      setUatCode(""); resetAccountState();
       setSessionState("checking"); setIdentityKey((value) => value + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to switch UAT provider");
@@ -360,7 +365,10 @@ export default function PartnerMobileApp() {
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <button type="button" className={styles.identityPill} onClick={() => setTab("more")} aria-label="Account, switch provider and sign out"><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span><em>›</em></button>
+        <div className={styles.headerAccount}>
+          <button type="button" className={styles.identityPill} onClick={() => setTab("more")} aria-label="Account, switch provider and sign out"><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span><em>›</em></button>
+          {identity?.subjectId && <button type="button" className={styles.headerSignOut} onClick={() => void signOut()} disabled={accountBusy}>{signingOut ? "Signing out…" : "Sign out"}</button>}
+        </div>
       </header>
 
       <section className={styles.content}>
@@ -458,7 +466,7 @@ export default function PartnerMobileApp() {
         {tab === "more" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
-          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={accountBusy}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out"}</b><small>Ends this partner session on this device</small></span><em>›</em></button></div>
+          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={accountBusy}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out / switch partner"}</b><small>Ends this session; the next partner enters their own phone and OTP</small></span><em>›</em></button></div>
           {!uatProviders && uatRosterError && <p role="status" className={styles.empty}>Switch UAT provider is unavailable right now: {uatRosterError}</p>}
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
             <b>Switch UAT provider</b>
