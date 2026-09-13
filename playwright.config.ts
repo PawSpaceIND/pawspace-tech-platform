@@ -20,6 +20,7 @@ export default defineConfig({
     "e2e/partner-journey.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
     "e2e/uat-cross-module-wiring.spec.ts",
+    "e2e/visual-uat-sweep.spec.ts",
     "tests/e2e/**/*.spec.ts",
   ],
   timeout: 60_000,
