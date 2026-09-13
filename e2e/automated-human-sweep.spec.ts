@@ -155,9 +155,16 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     bookingId = String(body.data?.bookingId || body.data?.id || "");
     log(`✅ Provider assigned + canonical booking created (HTTP 201). Booking ID: ${bookingId || "(from confirmation)"}${/^PS-/.test(bookingId) ? " (PS- canonical)" : ""}.`);
 
-    // Pay-after confirms on the server-authoritative BookingPaymentPage.
-    const payConfirm = page.getByRole("button", { name: "Confirm booking", exact: true });
-    if (await payConfirm.isVisible().catch(() => false)) await payConfirm.click();
+    // Pay-after confirms on the server-authoritative BookingPaymentPage. It mounts only after the 201 and its
+    // primary button is disabled ("Please wait…") until the checkout controller settles, so wait for the page
+    // and for an enabled "Confirm booking" instead of probing once (a one-shot isVisible() raced the mount).
+    const paymentPage = page.getByRole("region", { name: "Grooming payment" });
+    await expect(paymentPage, "pay-after payment page rendered after the 201").toBeVisible({ timeout: 20_000 });
+    await expect(paymentPage.getByText(/Nothing is charged now/), "pay-after notice shown").toBeVisible();
+    const payConfirm = paymentPage.getByRole("button", { name: "Confirm booking", exact: true });
+    await expect(payConfirm, "pay-after 'Confirm booking' enabled").toBeEnabled({ timeout: 20_000 });
+    await payConfirm.click();
+    log("✅ Pay-after payment page: 'Nothing is charged now' notice shown; 'Confirm booking' accepted.");
     await expect(page.getByText("Your groomer is reserved.", { exact: true })).toBeVisible({ timeout: 20_000 });
     const confirmed = await page.getByText(/BOOKING CONFIRMED ·/).textContent().catch(() => "");
     if (!bookingId) bookingId = confirmed?.match(/BOOKING CONFIRMED ·\s*(\S+)/)?.[1] || "";
