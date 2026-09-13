@@ -9,6 +9,13 @@ export interface MobileRazorpayCheckoutOptions {
   prefill?: { name?: string; contact?: string; email?: string };
   notes?: Record<string, string>;
   themeColor?: string;
+  /**
+   * Same-origin absolute URL Razorpay POSTs the receipt to when Checkout runs in redirect mode.
+   * Checkout.js silently switches to redirect mode inside in-app browsers/WebViews and for some
+   * bank/UPI flows; without callback_url the customer is stranded on api.razorpay.com after paying.
+   * The modal `handler` still wins whenever the modal can run (redirect stays false).
+   */
+  callbackUrl?: string;
 }
 export interface MobileRazorpaySuccessResult {
   success: true;
@@ -36,6 +43,15 @@ export function assertSandboxPaymentLocks(env?: Record<string, unknown>): void {
       throw new Error(`PAWSPACE PAYMENT SECURITY LOCK VIOLATION: ${key} must be explicitly ${expected}`);
     }
   }
+}
+/** A callback must be an absolute https (or local-development http) URL on the page's own origin. */
+export function isValidCheckoutCallbackUrl(value: string, pageOrigin?: string): boolean {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  if (url.username || url.password || url.hash) return false;
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return false;
+  return !pageOrigin || url.origin === pageOrigin;
 }
 export function assertSandboxKey(keyId: string): void {
   const key = String(keyId || "").trim();
@@ -98,13 +114,23 @@ export async function openMobileRazorpayCheckout(options: MobileRazorpayCheckout
     return failure("INVALID_PARAMETERS", "An order ID, positive integer paise amount and INR currency are required");
   }
   if (typeof window === "undefined") return failure("NO_WINDOW_CONTEXT", "Payment checkout requires a browser or webview environment");
+  const pageOrigin = String(window.location?.origin || "");
+  if (options.callbackUrl !== undefined && !isValidCheckoutCallbackUrl(options.callbackUrl, /^https?:\/\//.test(pageOrigin) ? pageOrigin : undefined)) {
+    return failure("INVALID_PARAMETERS", "The payment return address must be a secure PawSpace URL on this origin");
+  }
   if (checkoutOpen) return failure("CHECKOUT_ALREADY_OPEN", "Finish or close the current checkout before opening another");
   checkoutOpen = true;
   const win = window as unknown as SdkWindow;
+  // The in-page modal + handler stays the primary path, so `redirect` is deliberately NOT set: forcing it
+  // true would reload the page after every payment, and an explicit false must never be read as a veto on
+  // Checkout.js's own redirect/hosted fallback. Whenever Checkout.js does leave the page (in-app browsers,
+  // WebViews, some bank/UPI flows) it POSTs the same receipt fields to callback_url instead of stranding
+  // the customer on a Razorpay-hosted JSON page.
   const payload = { key: options.keyId.trim(), order_id: options.orderId, amount: options.amountPaise,
     currency: "INR", name: options.name || "PawSpace (Sandbox)", description: options.description || "PawSpace Service Booking",
     prefill: options.prefill || {}, notes: { ...options.notes, environment: "sandbox", platform: "pawspace_mobile" },
-    theme: { color: options.themeColor || "#4b168c" } };
+    theme: { color: options.themeColor || "#4b168c" },
+    ...(options.callbackUrl ? { callback_url: options.callbackUrl } : {}) };
   try {
     if (win.RazorpayCheckout && typeof win.RazorpayCheckout.open === "function") {
       return await new Promise<MobileRazorpayResult>((resolve) => {

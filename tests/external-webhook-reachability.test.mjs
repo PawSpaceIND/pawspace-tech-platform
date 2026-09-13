@@ -105,6 +105,9 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     "/api/staging-login", "/api/customer-offers", "/api/host-profile", "/api/customer-otp", "/api/customer-profile",
     "/api/customer-account", "/api/booking-rating", "/api/customer-support-case", "/api/live-price-quote",
     "/api/training-requirements", "/api/host-trust", "/api/service-zone", "/api/partner-otp", "/api/pet-passport-public",
+    // Razorpay's redirect-mode callback_url: a stateless 303 adapter to the booking confirmation page.
+    // The cross-site form POST carries no session; the receipt is verified by /api/customer-checkout.
+    "/api/razorpay-checkout-return",
   ]);
   // Customer inboxes authenticate inside the route; executed ownership/rejection tests
   // live in the connected notification suites. They are not public webhook surfaces.
