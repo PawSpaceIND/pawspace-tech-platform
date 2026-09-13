@@ -42,6 +42,7 @@ export async function GET(request:Request){try{
   if(contacts.length){
     const ids=contacts.map(row=>String(row.id));
     const totals=new Map<string,number>();
+    const latestBookings=new Map<string,string>();
     const read=new Set<string>();
     for(let index=0;index<ids.length;index+=50){
       const slice=ids.slice(index,index+50);
@@ -50,12 +51,15 @@ export async function GET(request:Request){try{
       if(!rows)continue;
       for(const id of slice)read.add(id);
       for(const row of rows.results)totals.set(String(row.customer_id),Number(row.total||0));
+      const bookingRows=await db.prepare(`SELECT customer_id,id,created_at FROM canonical_bookings WHERE customer_id IN (${slice.map(()=>"?").join(",")}) ORDER BY created_at DESC`).bind(...slice).all<Record<string,unknown>>().catch(()=>null);
+      if(bookingRows)for(const row of bookingRows.results){const customerId=String(row.customer_id);if(!latestBookings.has(customerId))latestBookings.set(customerId,String(row.id));}
     }
     for(const contact of contacts){
       const known=read.has(String(contact.id));
       const booked=totals.get(String(contact.id))??0;
       contact.lifetime_value=known?booked:null;
       contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
+      contact.latest_booking_id=latestBookings.get(String(contact.id))??null;
     }
   }
   const access=await customerDataAccessResolver(db);
