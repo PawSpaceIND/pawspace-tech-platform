@@ -266,6 +266,24 @@ export default function PartnerMobileApp() {
 
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
+  // Sign out / switch partner. DELETE /api/identity-session revokes the server-side platform session
+  // (platform_identity_sessions -> revoked, audited) and clears the HttpOnly cookie; nothing about the
+  // identity lives in the browser, so afterwards the page simply has no identity and the auth gate
+  // renders the OTP sign-in for the next partner. Every job/payment/media state is dropped so a
+  // second account never sees the first one's data flash before its own probe answers.
+  const [signingOut, setSigningOut] = useState(false);
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true); setError("");
+    try {
+      const response = await fetch("/api/identity-session", { method: "DELETE", headers: { "content-type": "application/json" } });
+      if (!response.ok && response.status !== 401) { const body = await response.json().catch(() => ({})) as { error?: string }; throw new Error(body.error || "Unable to sign out"); }
+      setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setPaymentRequest(null); setEarnings(null); setMediaMessage(""); setMediaAssets([]);
+      setSessionState("unauthenticated");
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to sign out"); }
+    finally { setSigningOut(false); }
+  };
+
   // No verified provider session: the dashboard is not rendered at all. Sign-in is the same OTP
   // transport the onboarding flow uses (/api/partner-otp issues the provider session cookie), and a
   // successful verification only re-runs the server identity check above.
@@ -294,7 +312,10 @@ export default function PartnerMobileApp() {
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+          {identity?.subjectId && <button type="button" className={styles.secondary} onClick={() => void signOut()} disabled={signingOut} aria-label="Sign out" style={{ padding: "6px 10px", fontSize: 12 }}>{signingOut ? "Signing out…" : "Sign out"}</button>}
+        </div>
       </header>
 
       <section className={styles.content}>
@@ -392,7 +413,7 @@ export default function PartnerMobileApp() {
         {tab === "more" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
-          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link></div>
+          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={signingOut}><i>⎋</i><span><b>Sign out / switch partner</b><small>Ends this session; the next partner enters their own phone and OTP</small></span><em>›</em></button></div>
           <section className={styles.safetyCard}><b>UAT boundary</b><p>This mobile app uses verified provider identity and canonical work orders. It cannot self-activate a provider, expose unmasked customer phone numbers, make live payouts, or enable background GPS.</p></section>
         </>}
       </section>
