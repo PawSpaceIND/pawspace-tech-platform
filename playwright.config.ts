@@ -18,6 +18,7 @@ export default defineConfig({
     "e2e/frontend-resilience.spec.ts",
     "e2e/mission-01.spec.ts",
     "e2e/partner-journey.spec.ts",
+    "e2e/uat-grooming-checkout-ui.spec.ts",
     "tests/e2e/**/*.spec.ts",
   ],
   timeout: 60_000,
