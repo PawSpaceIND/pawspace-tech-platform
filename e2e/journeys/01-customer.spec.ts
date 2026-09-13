@@ -184,7 +184,7 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await expect(page.locator('[data-home-design="option-5-premium-visual"]')).toHaveCount(0);
   await expect(home.locator('img[src="/assets/pawspace-icon.jpeg"]')).toBeVisible();
   const care = page.getByRole("region", { name: "Care services", exact: true });
-  await expect(care.getByRole("heading", { name: "Care for every little need" })).toBeVisible();
+  await expect(care.getByRole("heading", { name: "Everything your pet needs, in one happy place." })).toBeVisible();
   const names = ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"];
   await expect(care.getByRole("button")).toHaveCount(names.length);
   // Force the reviewed professional baseline: icon cards deliberately hide the artwork.
