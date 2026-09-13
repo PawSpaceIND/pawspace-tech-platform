@@ -95,7 +95,10 @@ type WorkspaceEarnings = {
   commissionOrders?: WorkspaceCommissionOrder[];
   payouts?: WorkspaceCommissionPayout[];
 };
-type WorkspacePayload = { linked?: boolean; reason?: string; engagement?: string; earnings?: WorkspaceEarnings };
+/** Shift liveness for today, and the proof stages the server says are still outstanding. */
+type WorkspaceLiveness = { required: boolean; matched: boolean; shiftDate: string; checkId: string | null };
+type WorkspacePendingProof = { bookingId: string; serviceCode: string; missing: string[] };
+type WorkspacePayload = { linked?: boolean; reason?: string; engagement?: string; onboardingStatus?: string; liveness?: WorkspaceLiveness; pendingProof?: WorkspacePendingProof[]; earnings?: WorkspaceEarnings };
 
 const activeTravelStates = new Set(["assigned", "on_the_way", "arrived"]);
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -133,6 +136,7 @@ export default function PartnerMobileApp() {
   const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
   const [earningsNotice, setEarningsNotice] = useState("");
   const [engagement, setEngagement] = useState("");
+  const [workspaceState, setWorkspaceState] = useState<{ onboardingStatus: string; liveness: WorkspaceLiveness | null; pendingProof: WorkspacePendingProof[] }>({ onboardingStatus: "", liveness: null, pendingProof: [] });
 
   useEffect(() => {
     let cancelled = false;
@@ -196,10 +200,13 @@ export default function PartnerMobileApp() {
       if (!response.ok) throw new Error(body.error || "Unable to load earnings");
       // linked:false is a 200 carrying no earnings key - an identity with no provider record bound to
       // it. Rendering that as zero rupees was indistinguishable from having earned nothing, so say it.
-      if (body.data?.linked === false) { setEarnings(null); setEngagement(""); setEarningsNotice(body.data.reason || "No active provider record is linked to your identity."); return; }
+      if (body.data?.linked === false) { setEarnings(null); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] }); setEarningsNotice(body.data.reason || "No active provider record is linked to your identity."); return; }
       const next = body.data?.earnings ?? null;
       setEarnings(next);
       setEngagement(body.data?.engagement ?? "");
+      // Returned by the same call all along: today's liveness gate, the onboarding link state and the
+      // proof stages the server considers outstanding. None of them used to leave this handler.
+      setWorkspaceState({ onboardingStatus: body.data?.onboardingStatus ?? "", liveness: body.data?.liveness ?? null, pendingProof: body.data?.pendingProof ?? [] });
       setEarningsNotice(!next ? "Earnings are not available for this provider record yet."
         : next.visible === false ? "Earnings are withheld for this provider record until Finance controls are satisfied."
           : "");
@@ -491,6 +498,11 @@ export default function PartnerMobileApp() {
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER FINANCE</small><h1>Earnings</h1></div><span /></div>
           <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
           {earningsNotice && <section className={styles.notice} role="status"><b>Earnings are not shown yet</b><p>{earningsNotice}</p></section>}
+          {/* The shift-liveness gate, the onboarding link state and outstanding proof: all three arrive
+              with the earnings payload and none of them used to be shown anywhere. */}
+          {workspaceState.liveness?.required && !workspaceState.liveness.matched && <section className={styles.notice} role="alert"><b>Shift liveness check due</b><p>Today&rsquo;s schedule stays closed until a live selfie is matched against your verified onboarding profile{workspaceState.liveness.shiftDate ? ` for ${workspaceState.liveness.shiftDate}` : ""}.</p><Link href="/partner/onboarding">Open onboarding &amp; documents</Link></section>}
+          {workspaceState.onboardingStatus && workspaceState.onboardingStatus !== "active" && <section className={styles.notice} role="status"><b>Onboarding is {label(workspaceState.onboardingStatus)}</b><p>Settlement and payout states stay withheld until your partner profile is active.</p><Link href="/partner/onboarding">Open onboarding &amp; documents</Link></section>}
+          {!!workspaceState.pendingProof.length && <section className={styles.notice} role="status"><b>Service proof still outstanding</b><ul>{workspaceState.pendingProof.map(item => <li key={item.bookingId}>{item.bookingId} · {label(item.serviceCode)} — missing {item.missing.map(label).join(", ")}</li>)}</ul><p>A completed job without its required proof holds up the settlement for that booking.</p></section>}
           {earnings && earnings.visible !== false && <>
             <div className={styles.financeRows}><article><div><b>{isCommission ? "Commission earned" : "Computed net payout"}</b><small>Governed payout computations only</small></div><strong>{money(earningsNetPayout)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earningsOrders}</strong></article><article><div><b>Gross order value</b><small>{isCommission ? "What the commission is computed from" : "Order value behind the payout"}</small></div><strong>{money(earningsGross)}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
             {(earnings.settlements ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
