@@ -167,10 +167,15 @@ test("the Partner app consumes the three workspace fields it used to drop", () =
   assert.match(page, /liveness\?: WorkspaceLiveness/);
   assert.match(page, /pendingProof\?: WorkspacePendingProof\[\]/);
   // Declared is not shown: each must also be read in the render.
-  assert.match(page, /workspaceState\.liveness\?\.required && !workspaceState\.liveness\.matched/);
+  // The gate only returns required:true after its own "no matched check" throw, so matched is true on
+  // every value that reaches the client. Rendering !matched would be a branch nothing can enter; the
+  // blocked case arrives as the governed 428 and is shown by the shell's error banner on every tab.
+  assert.match(page, /workspaceState\.liveness\?\.required && workspaceState\.liveness\.matched/);
+  assert.doesNotMatch(page, /liveness\.required && !workspaceState\.liveness\.matched/,
+    "an unreachable liveness branch reads as coverage it does not provide");
   assert.match(page, /workspaceState\.onboardingStatus && workspaceState\.onboardingStatus !== "active"/);
   assert.match(page, /workspaceState\.pendingProof\.length/);
-  assert.match(page, /Shift liveness check due/);
+  assert.match(page, /Shift liveness matched/);
   assert.match(page, /Service proof still outstanding/);
 });
 

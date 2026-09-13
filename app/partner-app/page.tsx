@@ -499,8 +499,11 @@ export default function PartnerMobileApp() {
           <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
           {earningsNotice && <section className={styles.notice} role="status"><b>Earnings are not shown yet</b><p>{earningsNotice}</p></section>}
           {/* The shift-liveness gate, the onboarding link state and outstanding proof: all three arrive
-              with the earnings payload and none of them used to be shown anywhere. */}
-          {workspaceState.liveness?.required && !workspaceState.liveness.matched && <section className={styles.notice} role="alert"><b>Shift liveness check due</b><p>Today&rsquo;s schedule stays closed until a live selfie is matched against your verified onboarding profile{workspaceState.liveness.shiftDate ? ` for ${workspaceState.liveness.shiftDate}` : ""}.</p><Link href="/partner/onboarding">Open onboarding &amp; documents</Link></section>}
+              with the earnings payload and none of them used to be shown anywhere.
+              The gate only RETURNS required:true after its own "no matched check" throw, so matched is
+              true on every value that gets here - an unmatched gate arrives as the governed 428, which
+              the shell's error banner shows on every tab. The reachable state to render is the pass. */}
+          {workspaceState.liveness?.required && workspaceState.liveness.matched && <section className={styles.notice} role="status"><b>Shift liveness matched</b><p>Your live selfie was matched against your verified onboarding profile{workspaceState.liveness.shiftDate ? ` for ${workspaceState.liveness.shiftDate}` : ""}, so today&rsquo;s schedule is open.</p></section>}
           {workspaceState.onboardingStatus && workspaceState.onboardingStatus !== "active" && <section className={styles.notice} role="status"><b>Onboarding is {label(workspaceState.onboardingStatus)}</b><p>Settlement and payout states stay withheld until your partner profile is active.</p><Link href="/partner/onboarding">Open onboarding &amp; documents</Link></section>}
           {!!workspaceState.pendingProof.length && <section className={styles.notice} role="status"><b>Service proof still outstanding</b><ul>{workspaceState.pendingProof.map(item => <li key={item.bookingId}>{item.bookingId} · {label(item.serviceCode)} — missing {item.missing.map(label).join(", ")}</li>)}</ul><p>A completed job without its required proof holds up the settlement for that booking.</p></section>}
           {earnings && earnings.visible !== false && <>
