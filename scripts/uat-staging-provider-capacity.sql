@@ -49,7 +49,7 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 -- Two more dedicated full-time groomers per zone. The engine holds one job per provider per overlapping
 -- window ("Existing booking conflicts with travel/service buffer"), so with a single groomer per zone the
 -- first tester to confirm a slot exhausted it for everyone else and every later attempt on that slot was
--- refused NO_SCHEDULE_AVAILABLE even though the roster gates all passed. Three per zone keep parallel
+-- refused NO_SCHEDULE_AVAILABLE even though the roster gates all passed. More per zone keep parallel
 -- testers (and the automated proof) from starving each other on the same date and time.
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_east_2','blr','Tanvi P. (UAT East 2)','full_time','["grooming"]','["blr-east"]',1,4.8,94,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_east_3','blr','Vikram L. (UAT East 3)','full_time','["grooming"]','["blr-east"]',1,4.7,93,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
@@ -61,6 +61,7 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_west_3','blr','Karan Y. (UAT West 3)','full_time','["grooming"]','["blr-west"]',1,4.7,93,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_central_2','blr','Pooja E. (UAT Central 2)','full_time','["grooming"]','["blr-central"]',1,4.8,94,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_central_3','blr','Aditya F. (UAT Central 3)','full_time','["grooming"]','["blr-central"]',1,4.7,93,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
 -- Headroom teams (_4/_5), ranked below the others by quality score so they are picked only once the rest of the
 -- zone is booked: automated proofs and parallel testers consume the higher-ranked groomers first, and a
 -- manual tester still finds a free groomer in every window on the same date.
@@ -74,6 +75,7 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_west_5','blr','Harish P. (UAT West 5)','full_time','["grooming"]','["blr-west"]',1,4.6,91,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_central_4','blr','Preethi N. (UAT Central 4)','full_time','["grooming"]','["blr-central"]',1,4.7,92,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_central_5','blr','Varun G. (UAT Central 5)','full_time','["grooming"]','["blr-central"]',1,4.6,91,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
 -- Manual-test reserve (_6/_7/_8), ranked lowest: automated proofs and parallel testers exhaust a date one
 -- groomer-window at a time (each booking also blocks that groomer's adjacent windows through the travel
 -- buffer), and a manual tester must still find a free groomer on the date everyone is using.
@@ -180,13 +182,35 @@ INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effect
 
 -- ---------------------------------------------------------------------------------------------------
 -- Identity: staff login (asha.groomer1) opens the Partner workspace as the city-wide UAT groomer, and a
--- synthetic partner OTP number per UAT groomer lets a tester sign in to /partner-app with the sandbox
--- OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by 10-digit phone.
+-- synthetic partner OTP number per UAT groomer AND per UAT trainer lets a tester sign in to /partner-app
+-- with the sandbox OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by
+-- 10-digit phone, and the row id is the provider_capacity_profiles id so the session owns that
+-- provider's work orders. Groomers use 9000000901-907, trainers 9000000931-936.
 -- ---------------------------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',verified_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000) ON CONFLICT(email) DO UPDATE SET provider_id=excluded.provider_id,status='active',verified_at=excluded.verified_at,updated_at=excluded.updated_at;
 
 CREATE TABLE IF NOT EXISTS canonical_providers (id TEXT PRIMARY KEY,city_id TEXT,name TEXT NOT NULL,phone TEXT NOT NULL UNIQUE,email TEXT,source TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+-- Manual-test reserve groomers: 9000000951-953 east, 954-956 south, 957-959 north, 960-962 west, 963-965 central.
+-- Upsert on id (the trainers below use 9000000931-936, and an earlier seed had given these rows numbers in
+-- that range): a row that already exists is renumbered so every synthetic number stays unique.
+INSERT INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
+ ('uatcap_groom_east_6','blr','Neha O. (UAT East 6)','9000000951',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_east_7','blr','Rajesh Q. (UAT East 7)','9000000952',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_east_8','blr','Sunil W. (UAT East 8)','9000000953',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_south_6','blr','Divya Z. (UAT South 6)','9000000954',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_south_7','blr','Arun X. (UAT South 7)','9000000955',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_south_8','blr','Meghna B. (UAT South 8)','9000000956',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_north_6','blr','Kavitha U. (UAT North 6)','9000000957',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_north_7','blr','Praveen I. (UAT North 7)','9000000958',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_north_8','blr','Shalini L. (UAT North 8)','9000000959',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_west_6','blr','Ganesh M. (UAT West 6)','9000000960',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_west_7','blr','Ritu N. (UAT West 7)','9000000961',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_west_8','blr','Vinay K. (UAT West 8)','9000000962',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_central_6','blr','Aisha R. (UAT Central 6)','9000000963',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_central_7','blr','Mohan T. (UAT Central 7)','9000000964',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_central_8','blr','Latha S. (UAT Central 8)','9000000965',NULL,'uat_staging_seed',1789300000000,1789300000000)
+ ON CONFLICT(id) DO UPDATE SET phone=excluded.phone,name=excluded.name,updated_at=excluded.updated_at;
 INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
  ('uatcap_groom_ft','blr','PawSpace Grooming Team (UAT)','9000000901',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_cm','blr','PawSpace Grooming Partner (UAT)','9000000902',NULL,'uat_staging_seed',1789300000000,1789300000000),
@@ -194,9 +218,16 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_groom_south','blr','Rahul M. (UAT South)','9000000904',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_north','blr','Priya N. (UAT North)','9000000905',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_west','blr','Suresh V. (UAT West)','9000000906',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000);
+ ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','9000000931',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_east','blr','Arjun T. (UAT East)','9000000932',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_south','blr','Kavya R. (UAT South)','9000000933',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_north','blr','Nikhil B. (UAT North)','9000000934',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_west','blr','Anitha G. (UAT West)','9000000935',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_central','blr','Rohan D. (UAT Central)','9000000936',NULL,'uat_staging_seed',1789300000000,1789300000000);
 -- Partner OTP numbers for the extra per-zone groomers: 9000000911-912 east, 913-914 south, 915-916 north,
--- 917-918 west, 919-920 central.
+-- 917-918 west, 919-920 central; headroom teams 921-922 east, 923-924 south, 925-926 north, 927-928 west,
+-- 929-930 central.
 INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
  ('uatcap_groom_east_2','blr','Tanvi P. (UAT East 2)','9000000911',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_east_3','blr','Vikram L. (UAT East 3)','9000000912',NULL,'uat_staging_seed',1789300000000,1789300000000),
@@ -207,9 +238,7 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_groom_west_2','blr','Lakshmi J. (UAT West 2)','9000000917',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_west_3','blr','Karan Y. (UAT West 3)','9000000918',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_central_2','blr','Pooja E. (UAT Central 2)','9000000919',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central_3','blr','Aditya F. (UAT Central 3)','9000000920',NULL,'uat_staging_seed',1789300000000,1789300000000);
--- Headroom teams: 9000000921-922 east, 923-924 south, 925-926 north, 927-928 west, 929-930 central.
-INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
+ ('uatcap_groom_central_3','blr','Aditya F. (UAT Central 3)','9000000920',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_east_4','blr','Ishaan R. (UAT East 4)','9000000921',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_east_5','blr','Nandini S. (UAT East 5)','9000000922',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_south_4','blr','Bhavana T. (UAT South 4)','9000000923',NULL,'uat_staging_seed',1789300000000,1789300000000),
@@ -220,23 +249,6 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_groom_west_5','blr','Harish P. (UAT West 5)','9000000928',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_central_4','blr','Preethi N. (UAT Central 4)','9000000929',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_groom_central_5','blr','Varun G. (UAT Central 5)','9000000930',NULL,'uat_staging_seed',1789300000000,1789300000000);
--- Manual-test reserve: 9000000931-933 east, 934-936 south, 937-939 north, 940-942 west, 943-945 central.
-INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
- ('uatcap_groom_east_6','blr','Neha O. (UAT East 6)','9000000931',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_east_7','blr','Rajesh Q. (UAT East 7)','9000000932',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_east_8','blr','Sunil W. (UAT East 8)','9000000933',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_south_6','blr','Divya Z. (UAT South 6)','9000000934',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_south_7','blr','Arun X. (UAT South 7)','9000000935',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_south_8','blr','Meghna B. (UAT South 8)','9000000936',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_north_6','blr','Kavitha U. (UAT North 6)','9000000937',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_north_7','blr','Praveen I. (UAT North 7)','9000000938',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_north_8','blr','Shalini L. (UAT North 8)','9000000939',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_west_6','blr','Ganesh M. (UAT West 6)','9000000940',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_west_7','blr','Ritu N. (UAT West 7)','9000000941',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_west_8','blr','Vinay K. (UAT West 8)','9000000942',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central_6','blr','Aisha R. (UAT Central 6)','9000000943',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central_7','blr','Mohan T. (UAT Central 7)','9000000944',NULL,'uat_staging_seed',1789300000000,1789300000000),
- ('uatcap_groom_central_8','blr','Latha S. (UAT Central 8)','9000000945',NULL,'uat_staging_seed',1789300000000,1789300000000);
 
 -- ---------------------------------------------------------------------------------------------------
 -- 3. PUBLISHED AVAILABILITY. backend/src/scheduling.ts refuses a provider with no scheduling_availability
