@@ -275,9 +275,12 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
   try { event = normaliseTelephonyEvent(input.rawBody, "exotel"); }
   catch { return { accepted: false as const, status: 400, reason: "Exotel call event is malformed" }; }
   const payloadHash = await sha256Hex(input.rawBody);
-  const bridgeEventId = `${event.providerEventId}:${payloadHash.slice(0, 16)}`;
-  const existing = await db.prepare("SELECT id,session_id,applied FROM voice_call_session_events WHERE provider_event_id=?").bind(bridgeEventId).first<Row>();
-  if (existing) return { accepted: true as const, status: 200, duplicate: true, applied: Boolean(existing.applied), sessionId: text(existing.session_id) || null };
+  const bridgeEventId = event.providerEventId;
+  const existing = await db.prepare("SELECT id,session_id,applied,payload_sha256 FROM voice_call_session_events WHERE provider_event_id=?").bind(bridgeEventId).first<Row>();
+  if (existing) {
+    if (text(existing.payload_sha256) !== payloadHash) return { accepted: false as const, status: 409, reason: "Exotel event ID was replayed with a different payload" };
+    return { accepted: true as const, status: 200, duplicate: true, applied: Boolean(existing.applied), sessionId: text(existing.session_id) || null };
+  }
 
   let session: Row | null = null;
   if (event.callRef) session = await db.prepare("SELECT * FROM voice_call_sessions WHERE id=?").bind(event.callRef).first<Row>();
@@ -306,7 +309,14 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
     statements.push(db.prepare("UPDATE voice_call_sessions SET status='failed',failure_code=?,failure_detail=?,failed_at=?,updated_at=? WHERE id=? AND status=?").bind(`exotel_${event.kind}`,text(event.providerStatus).slice(0,120)||event.kind,now,now,text(session.id),current));
     applied = true;
   }
-  await db.batch(statements);
+  try { await db.batch(statements); }
+  catch (error) {
+    const message=error instanceof Error?error.message:String(error);
+    if (!/UNIQUE constraint failed.*provider_event_id|voice_call_session_events\.provider_event_id/i.test(message)) throw error;
+    const winner=await db.prepare("SELECT session_id,applied,payload_sha256 FROM voice_call_session_events WHERE provider_event_id=?").bind(bridgeEventId).first<Row>();
+    if (!winner || text(winner.payload_sha256)!==payloadHash) return { accepted:false as const,status:409,reason:"Exotel event ID was replayed with a different payload" };
+    return { accepted:true as const,status:200,duplicate:true,applied:Boolean(winner.applied),sessionId:text(winner.session_id)||null };
+  }
   if (applied) await db.prepare("UPDATE voice_call_session_events SET applied=1 WHERE provider_event_id=?").bind(bridgeEventId).run();
   return { accepted: true as const, status: 200, duplicate: false, applied, sessionId: text(session.id), from: current, to: target, eventKind: event.kind, recordingStored: Boolean(recordingRef) };
 }

@@ -55,7 +55,7 @@ test('Booking Wizard, Pet Manager and Payment Screen have local error boundaries
   assert.match(shell, /CriticalErrorBoundary name="Pet Manager"/);
   assert.match(checkout, /CriticalErrorBoundary name="Payment Screen"/);
   assert.match(boundary, /Something went wrong\./);
-  assert.match(boundary, /Start Over/);
+  assert.match(boundary, /Reload section/);
 });
 
 test('hung Maps request is aborted instead of hanging forever', async t => {

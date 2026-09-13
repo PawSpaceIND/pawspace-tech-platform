@@ -44,6 +44,7 @@ const URL = "https://finance.pawspace.in/api/finance-control";
 function freshDb() {
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__BACKFIN_DB__ = makeD1(sqlite);
+  globalThis.__BACKFIN_SQLITE__ = sqlite;
   globalThis.__BACKFIN_ENV__ = {};
   sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)");
   for (const [id, email] of [["maker", MAKER], ["checker-a", CHECKER_A], ["checker-b", CHECKER_B]]) sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run(id, email, id, "finance", "active");
@@ -51,7 +52,16 @@ function freshDb() {
 }
 
 const route = await import("../app/api/finance-control/route.ts");
-const as = (email, method, body) => new Request(URL, { method, headers: { "oai-authenticated-user-email": email, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+const as = (email, method, body) => {
+  const headers = { "oai-authenticated-user-email": email, "content-type": "application/json" };
+  if (method === "PATCH" && body?.id && ["expense","bill","period"].includes(body.entity)) {
+    const table = body.entity === "expense" ? "finance_expenses" : body.entity === "bill" ? "finance_bills" : "finance_close_periods";
+    const key = body.entity === "period" ? "period_code" : "id";
+    const row = globalThis.__BACKFIN_SQLITE__?.prepare(`SELECT updated_at FROM ${table} WHERE ${key}=?`).get(body.id);
+    if (row) headers["if-match"] = `"${row.updated_at}"`;
+  }
+  return new Request(URL, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+};
 
 async function createExpense(email = MAKER) {
   const response = await route.POST(as(email, "POST", { entity: "expense", expenseDate: "2026-08-10", merchant: "Backend Audit Co", category: "Travel & fuel", amount: 5000, gstAmount: 762 }));
@@ -130,7 +140,7 @@ test("two concurrent independent approvers preserve one claim and one journal pa
   const expenseId = created.body.data.id;
   const results = await Promise.all([approve(CHECKER_A, expenseId, "checker A concurrent approval"), approve(CHECKER_B, expenseId, "checker B concurrent approval")]);
   assert.ok(results.some((r) => r.status === 200), JSON.stringify(results));
-  assert.ok(results.every((r) => r.status === 200 || r.status === 409), JSON.stringify(results));
+  assert.ok(results.every((r) => r.status === 200 || r.status === 412), JSON.stringify(results));
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_entries WHERE source_id=?").get(expenseId).c, 2);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_posting_claims WHERE source_type='expense' AND source_id=?").get(expenseId).c, 1);
 });
