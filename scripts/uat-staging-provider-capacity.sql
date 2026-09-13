@@ -1,47 +1,114 @@
--- UAT STAGING provider roster (city-wide).
+-- UAT STAGING provider roster (city-wide, every Bengaluru zone).
 --
 -- Why this exists: the scheduler assigns providers from provider_capacity_profiles filtered by
 -- (city_id, service in services_json, zone in zones_json, live=1, status='active', effective window).
 -- Without a matching profile the reserve path returns NO_SCHEDULE_AVAILABLE and the customer sees
 -- "No provider is available for the date and time you chose." The staging deploy loads only the staff
--- directory (employee-seed.sql), so before this file staging had no bookable roster in any zone.
+-- directory (employee-seed.sql), and the runtime founder_seed defaults cover blr-east only, so testers
+-- in any other zone (e.g. BTM Layout 560068 = blr-south) could never complete a booking.
 --
--- This seeds one full-time + one commission provider per core service, each covering EVERY Bengaluru
--- zone (blr-east/south/north/west/central), live and active, effective from the start of 2026, with a
--- generous max_daily_jobs so slots do not fill during testing. PAWSPACE_SCHEDULING_ENV="uat" on staging
--- means seedUatRoster then auto-creates scheduling_availability on the customer's reserve path, so no
--- separate availability seed is needed. Idempotent: INSERT OR IGNORE, safe to re-run.
+-- Two gates every row here must satisfy, both enforced by lib/ at request time:
 --
--- This is UAT roster DATA on isolated staging only. It does not weaken any booking, payment, or identity
--- gate, and never touches production.
+--   1. PROVENANCE. lib/provider-assignment-eligibility.ts refuses any provider that has no onboarding
+--      verification record UNLESS the runtime is PAWSPACE_SCHEDULING_ENV=uat AND the profile's
+--      updated_by is exactly 'founder_seed' (the same provenance the runtime defaults use). A row with
+--      any other updated_by is silently dropped from the candidate set BEFORE evaluation, which is why
+--      an earlier version of this file (updated_by='uat_staging_seed') loaded fine yet every booking
+--      still failed with an EMPTY evaluations list. The UPDATE below repairs rows already loaded.
+--
+--   2. SERVICE RADIUS. Grooming and Dog Training are matched within SERVICE_DISCOVERY_RADIUS_KM (16 km)
+--      of the customer's geocoded address (lib/service-discovery-address.ts), so each of those
+--      providers needs a current provider_home_base row or it is refused with "no active geocoded home
+--      base". Staging does not enable the test home-base fixture, so this file seeds one provider per
+--      zone with a home base inside that zone, plus a central base for the city-wide rows. Boarding,
+--      Sitting, Walking and Taxi are not radius-gated and stay city-wide.
+--
+-- PAWSPACE_SCHEDULING_ENV="uat" on staging means seedUatRoster then auto-creates scheduling_availability
+-- on the customer's reserve path, so no separate availability seed is needed. Idempotent: INSERT OR
+-- IGNORE / WHERE NOT EXISTS, safe to re-run. UAT roster DATA on isolated staging only; it does not
+-- weaken any booking, payment, or identity gate, and never touches production.
 
 CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL);
 
--- Grooming: a full-time provider (auto-assigned instantly) and a commission provider, both city-wide.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_ft','blr','PawSpace Grooming Team (UAT)','full_time','["grooming"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,97,1,30,20,3,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_cm','blr','PawSpace Grooming Partner (UAT)','commission','["grooming"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.8,93,1,30,20,60,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
+-- Repair rows loaded by the earlier version of this file: same UAT roster, wrong provenance.
+UPDATE provider_capacity_profiles SET updated_by='founder_seed',version=version+1,updated_at=1789300000000 WHERE updated_by='uat_staging_seed';
 
+-- ---------------------------------------------------------------------------------------------------
+-- Grooming (radius-gated): one full-time groomer per zone, each based inside their zone, plus a
+-- city-wide full-time team and a city-wide commission partner (exercises the accept/decline offer path).
+-- ---------------------------------------------------------------------------------------------------
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_ft','blr','PawSpace Grooming Team (UAT)','full_time','["grooming"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,97,1,30,20,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_cm','blr','PawSpace Grooming Partner (UAT)','commission','["grooming"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.8,93,1,30,20,60,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_east','blr','Divya K. (UAT East)','full_time','["grooming"]','["blr-east"]',1,4.9,96,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_south','blr','Rahul M. (UAT South)','full_time','["grooming"]','["blr-south"]',1,4.9,96,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_north','blr','Priya N. (UAT North)','full_time','["grooming"]','["blr-north"]',1,4.8,94,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_west','blr','Suresh V. (UAT West)','full_time','["grooming"]','["blr-west"]',1,4.8,94,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_groom_central','blr','Meera S. (UAT Central)','full_time','["grooming"]','["blr-central"]',1,4.9,95,1,30,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- Dog training (radius-gated, recurring): one full-time trainer per zone plus a city-wide team.
+-- ---------------------------------------------------------------------------------------------------
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,1,45,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_east','blr','Arjun T. (UAT East)','full_time','["dog_training"]','["blr-east"]',1,4.9,95,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_south','blr','Kavya R. (UAT South)','full_time','["dog_training"]','["blr-south"]',1,4.9,95,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_north','blr','Nikhil B. (UAT North)','full_time','["dog_training"]','["blr-north"]',1,4.8,93,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_west','blr','Anitha G. (UAT West)','full_time','["dog_training"]','["blr-west"]',1,4.8,93,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_central','blr','Rohan D. (UAT Central)','full_time','["dog_training"]','["blr-central"]',1,4.9,94,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- Boarding / Pet sitting / Dog walking / Pet taxi: not radius-gated, city-wide.
+-- ---------------------------------------------------------------------------------------------------
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_host_cm','blr','PawSpace Boarding Host (UAT)','commission','["boarding"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,4,0,12,60,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_sit_cm','blr','PawSpace Sitter (UAT)','commission','["pet_sitting"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.8,92,4,30,12,60,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_walk_ft','blr','PawSpace Walker (UAT)','full_time','["dog_walking"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,1,20,20,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_taxi_ft','blr','PawSpace Pet Taxi (UAT)','full_time','["pet_taxi"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,1,20,16,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- Home bases for every radius-gated provider (grooming + training), one per zone, well inside the
+-- 16 km service radius of every governed pincode in that zone. The runtime founder_seed defaults
+-- (groom_*/train_*, blr-east) get an Indiranagar base too, so the built-in east roster also matches on
+-- staging. WHERE NOT EXISTS: a base authored through Ops or the partner app is never overridden.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from);
+
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_ft','uatcap_groom_ft','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_ft');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_cm','uatcap_groom_cm','UAT base: Shivajinagar, Bengaluru 560042',12.9850,77.6050,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_cm');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_east','uatcap_groom_east','UAT base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_east');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_south','uatcap_groom_south','UAT base: BTM Layout 2nd Stage, Bengaluru 560068',12.9166,77.6101,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_south');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_north','uatcap_groom_north','UAT base: Hebbal, Bengaluru 560024',13.0358,77.5970,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_north');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_west','uatcap_groom_west','UAT base: Rajajinagar, Bengaluru 560010',12.9910,77.5550,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_west');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_central','uatcap_groom_central','UAT base: Ulsoor, Bengaluru 560008',12.9810,77.6200,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_central');
+
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft','uatcap_train_ft','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_east','uatcap_train_east','UAT base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_east');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_south','uatcap_train_south','UAT base: BTM Layout 2nd Stage, Bengaluru 560068',12.9166,77.6101,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_south');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_north','uatcap_train_north','UAT base: Hebbal, Bengaluru 560024',13.0358,77.5970,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_north');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_west','uatcap_train_west','UAT base: Rajajinagar, Bengaluru 560010',12.9910,77.5550,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_west');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_central','uatcap_train_central','UAT base: Ulsoor, Bengaluru 560008',12.9810,77.6200,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_central');
+
+-- Runtime founder_seed defaults (blr-east only) so the built-in east roster can also match on staging.
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-groom_arun','groom_arun','UAT base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='groom_arun');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-groom_kiran','groom_kiran','UAT base: Domlur, Bengaluru 560071',12.9611,77.6387,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='groom_kiran');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-groom_sanjay','groom_sanjay','UAT base: Kalyan Nagar, Bengaluru 560043',13.0230,77.6410,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='groom_sanjay');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-train_kiran','train_kiran','UAT base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='train_kiran');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-train_ramesh','train_ramesh','UAT base: Marathahalli, Bengaluru 560037',12.9591,77.6974,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='train_ramesh');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-train_meera','train_meera','UAT base: Whitefield, Bengaluru 560066',12.9698,77.7500,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='train_meera');
+
+-- ---------------------------------------------------------------------------------------------------
+-- Identity: staff login (asha.groomer1) opens the Partner workspace as the city-wide UAT groomer, and a
+-- synthetic partner OTP number per UAT groomer lets a tester sign in to /partner-app with the sandbox
+-- OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by 10-digit phone.
+-- ---------------------------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',verified_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000) ON CONFLICT(email) DO UPDATE SET provider_id=excluded.provider_id,status='active',verified_at=excluded.verified_at,updated_at=excluded.updated_at;
 
--- Dog training (recurring): full-time so meet-and-greet + programme assign immediately.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,1,45,12,3,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-
--- Boarding (host): overnight capacity for a few guest pets, city-wide.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_host_cm','blr','PawSpace Boarding Host (UAT)','commission','["boarding"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,4,0,12,60,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-
--- Pet sitting: city-wide visits.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_sit_cm','blr','PawSpace Sitter (UAT)','commission','["pet_sitting"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.8,92,4,30,12,60,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-
--- Dog walking: recurring, city-wide.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_walk_ft','blr','PawSpace Walker (UAT)','full_time','["dog_walking"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,1,20,20,3,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-
--- Pet taxi: full-time, city-wide.
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_taxi_ft','blr','PawSpace Pet Taxi (UAT)','full_time','["pet_taxi"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,1,20,16,3,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
-
--- Partner-feed identity link (legacy fallback used by /api/partner-job-feed -> ownProviderId): map the
--- seeded groomer staff email to the full-time grooming provider so that a booking auto-assigned to
--- uatcap_groom_ft appears in that groomer's /partner/jobs feed. This lets the automated persona sweep
--- prove customer booking -> partner job card end to end. Staging UAT only.
-CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-INSERT OR IGNORE INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000);
+CREATE TABLE IF NOT EXISTS canonical_providers (id TEXT PRIMARY KEY,city_id TEXT,name TEXT NOT NULL,phone TEXT NOT NULL UNIQUE,email TEXT,source TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES
+ ('uatcap_groom_ft','blr','PawSpace Grooming Team (UAT)','9000000901',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_cm','blr','PawSpace Grooming Partner (UAT)','9000000902',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_east','blr','Divya K. (UAT East)','9000000903',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_south','blr','Rahul M. (UAT South)','9000000904',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_north','blr','Priya N. (UAT North)','9000000905',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_west','blr','Suresh V. (UAT West)','9000000906',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_groom_central','blr','Meera S. (UAT Central)','9000000907',NULL,'uat_staging_seed',1789300000000,1789300000000);

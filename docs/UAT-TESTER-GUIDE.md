@@ -60,6 +60,12 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
 ## 4. Staff journeys (Phase 1-lite; deep testing in Phase 3)
 
 - **Partner job feed** (`/partner/jobs` via groomer/manager login): new bookings appear; boarding requests show Accept/Decline.
+- **Partner app as a UAT groomer** (`/partner-app`): sign in with the partner OTP using one of the seeded UAT groomer
+  numbers — `9000000901` (city-wide Grooming Team, the groomer most auto-assignments land on), `9000000904`
+  (Rahul M., South), `9000000903` (East), `9000000905` (North), `9000000906` (West), `9000000907` (Central). The
+  OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
+  five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
+  on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
 - **Scheduling board** (`/team/scheduling?date=YYYY-MM-DD`, manager): day columns per provider; try a reassign.
 - **Relocation triage** (`/team/relocation-enquiries`): your submitted enquiries appear with Domestic/Intl tags.
 
