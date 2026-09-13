@@ -2,6 +2,8 @@
 
 Prepared 2026-09-13 (UTC). Evidence pack per `docs/PRELIVE_REGRESSION_BENGALURU_PILOT_UAT.md` §2 and §16. Everything here is referenced, not embedded; all identities and phone numbers below are seeded UAT fixtures from `docs/UAT-TESTER-GUIDE.md`, never real customers.
 
+> Superseded 2026-09-13 20:20 UTC by release candidate rc.3: see `docs/BENGALURU_UAT_SIGNOFF_RC3_2026-09-13.md`. This pack stays as the record of rc.2.
+
 ## 1. Release candidate identity
 
 | Field | Value |
