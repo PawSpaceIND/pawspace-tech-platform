@@ -71,7 +71,7 @@ const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "curren
 
 type OverviewMetrics={bookingsToday:number;confirmed:number;completed:number;inProgress:number;cancelled:number;unassigned:number;recognizedRevenue:number;providersActive:number|null;providersTotal:number|null;openTickets:number|null;ticketsNeedingAttention:number|null};
 type OverviewCapacity={providerId:string;name:string;zone:string|null;slots:{slot:string;state:"available"|"booked"|"completed";bookingId:string|null;label:string}[]};
-type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;scheduledTimeIst:string;slot:string|null;amount:number};
+type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;scheduledTimeIst:string;activityAt:number;slot:string|null;amount:number};
 type OverviewData={date:string;dayWindow:{timezone:string;startUtc:string;endUtc:string};zoneId:string|null;zones:string[];metrics:OverviewMetrics;capacity:OverviewCapacity[];capacityShown:number;capacityTotal:number|null;slots:string[];activity:OverviewActivity[];activityShown:number;activityTotal:number;sourceStatus:Record<string,string>};
 
 /** Live operations data. Nothing on this screen is hard-coded: an empty day shows zeros, and a
@@ -93,6 +93,7 @@ function useOperationsOverview(zoneId:string){
 }
 /** The IST day the overview is reporting on, written out for the header. */
 const longDay=(day:string)=>{const at=new Date(`${day}T12:00:00+05:30`);return Number.isFinite(at.getTime())?at.toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"long",day:"numeric",month:"long",year:"numeric"}):day;};
+const longInstantDay=(value:string)=>{const at=new Date(value);return Number.isFinite(at.getTime())?at.toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"long",day:"numeric",month:"long",year:"numeric"}):value;};
 const titleCase=(value:string)=>value.replace(/[_-]+/g," ").replace(/\b\w/g,letter=>letter.toUpperCase());
 /** Tabs still rendering the built-in sample rows rather than the database. Labelled on screen so a
  *  tester never files a bug against invented data - and so the list shrinks visibly as each is wired. */
@@ -174,8 +175,8 @@ export default function AdminPage() {
         {(view === "overview" || view === "bookings") && <section className={styles.splitGrid}>
           <div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Today</span><h2>Booking activity</h2></div><Link className={styles.textButton} href="/team/operations/bookings">View all →</Link></div>
             {overviewLoading&&<p className={styles.dataNote}>Loading today’s bookings…</p>}
-            {!overviewLoading&&!liveActivity.length&&<p className={styles.dataNote}>No bookings are scheduled for this day{zone?` in ${zone}`:""}. This is a live read of canonical_bookings, not an empty template.</p>}
-            {!!overview&&overview.activityShown<overview.activityTotal&&<p className={styles.dataNote}>Showing the first {overview.activityShown} of {overview.activityTotal} bookings today.</p>}
+            {!overviewLoading&&!liveActivity.length&&<p className={styles.dataNote}>No booking was scheduled or updated today{zone?` in ${zone}`:""}. This is a live read of canonical_bookings, not an empty template.</p>}
+            {!!overview&&overview.activityShown<overview.activityTotal&&<p className={styles.dataNote}>Showing the first {overview.activityShown} of {overview.activityTotal} scheduled or updated bookings today.</p>}
             {!!liveActivity.length&&<div className={styles.bookingList}>{liveActivity.map(row => <button key={row.bookingId} className={selectedActivity?.bookingId === row.bookingId ? styles.selectedBooking : ""} onClick={() => setSelectedBookingId(row.bookingId)}><span className={styles.timePill}>{row.scheduledTimeIst||"—"}</span><div><strong>{row.customer}</strong><small>{titleCase(row.service)} · {row.packageName}</small></div><div className={styles.bookingMeta}><strong>{money(row.amount)}</strong><small>{row.provider??"Unassigned"}</small></div><span className={styles.status}>{titleCase(row.status)}</span></button>)}</div>}
           </div>
           <aside className={styles.detailPanel}><div className={styles.panelHead}><div><span className={styles.kicker}>{selectedActivity?.bookingId??"No booking selected"}</span><h2>Booking details</h2></div></div>
@@ -184,7 +185,7 @@ export default function AdminPage() {
               <div className={styles.customerCard}><span>{selectedActivity.customer.split(" ").map(part => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{selectedActivity.customer}</strong><small>{titleCase(selectedActivity.service)}</small></div></div>
               <dl>
                 <div><dt>Package</dt><dd><strong>{selectedActivity.packageName||"—"}</strong></dd></div>
-                <div><dt>Slot ({overview?.dayWindow.timezone??"IST"})</dt><dd>{overview?longDay(overview.date):""}<br/><strong>{selectedActivity.scheduledTimeIst||"—"}{selectedActivity.slot?` · ${selectedActivity.slot}`:""}</strong></dd></div>
+                <div><dt>Service slot ({overview?.dayWindow.timezone??"IST"})</dt><dd>{longInstantDay(selectedActivity.scheduledStart)}<br/><strong>{selectedActivity.scheduledTimeIst||"—"}{selectedActivity.slot?` · ${selectedActivity.slot}`:""}</strong></dd></div>
                 <div><dt>Assigned provider</dt><dd><strong>{selectedActivity.provider??"Not assigned yet"}</strong></dd></div>
                 <div><dt>Status &amp; value</dt><dd>{titleCase(selectedActivity.status)}<br/><strong>{money(selectedActivity.amount)}</strong></dd></div>
               </dl>

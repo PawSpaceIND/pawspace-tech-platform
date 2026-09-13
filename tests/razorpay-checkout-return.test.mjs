@@ -8,6 +8,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__RAZORPAY_CHECKOUT_RETURN_DB__", "__RAZORPAY_CHECKOUT_RETURN_ENV__");
@@ -19,6 +20,15 @@ const origin = "https://pawspace-staging.example.workers.dev";
 const locks = { PAWSPACE_PAYMENT_ENV: "sandbox", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false" };
 const signature = "a".repeat(64);
 const form = (fields) => new URLSearchParams(fields).toString();
+
+test("booking confirmation renders only the customer-owned canonical server projection", async () => {
+  const page = await readFile(new URL("../app/mobile-app/booking-confirmation/booking-confirmation-view.tsx", import.meta.url), "utf8");
+  assert.match(page, /loadCustomerConfirmationProjection\(bookingId, abort\.signal\)/);
+  assert.doesNotMatch(page, /loadCustomerAccount|localStorage|sessionStorage/, "the success page must not reconstruct pre-payment client state");
+  assert.match(page, /const success = verified && canonicalReady/);
+  for (const field of ["scheduledStart", "scheduledEnd", "providerName", "providerModel", "paymentStatus", "transactionId"]) assert.match(page, new RegExp(`projection\\.${field}`));
+  assert.match(page, /Finalizing your confirmed booking/, "capture alone shows a synchronization state, not success");
+});
 
 async function post(fields, { bookingId = "BK-RETURN-1", contentType = "application/x-www-form-urlencoded", body } = {}) {
   const response = await route.POST(new Request(`${origin}${CHECKOUT_RETURN_PATH}?bookingId=${encodeURIComponent(bookingId)}`, {

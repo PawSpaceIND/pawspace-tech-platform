@@ -94,7 +94,7 @@ test("the dashboard is rendered only for a server-verified provider session", as
   const page = await source("app/partner-app/page.tsx");
   const gate = page.match(/if \((sessionState !== "verified")\) return <main className=\{styles\.viewport\}>/);
   assert.ok(gate, "the sign-in gate must return before the dashboard markup");
-  for (const state of ["checking", "unauthenticated"]) assert.equal(evaluate(gate[1], { sessionState: state }), true, `${state} must block the dashboard`);
+  for (const state of ["checking", "revoking", "revocation_failed", "unauthenticated"]) assert.equal(evaluate(gate[1], { sessionState: state }), true, `${state} must block the dashboard`);
   assert.equal(evaluate(gate[1], { sessionState: "verified" }), false, "a verified session must reach the dashboard");
   // The gate precedes the dashboard, so its hidden markers and controls are unreachable without a session.
   assert.ok(page.indexOf('if (sessionState !== "verified") return') < page.indexOf('<span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>'));
@@ -103,14 +103,25 @@ test("the dashboard is rendered only for a server-verified provider session", as
 test("an unauthenticated visitor gets the OTP sign-in, not a restricted dashboard", async () => {
   const page = await source("app/partner-app/page.tsx");
   assert.match(page, /import PartnerLogin from "\.\.\/partner\/partner-login";/);
-  assert.match(page, /sessionState === "checking"\s*\?\s*<p role="status"[^>]*>Checking your partner session…<\/p>/, "a session still being resolved shows a status line, never the sign-in form nor the dashboard");
+  assert.match(page, /Checking your partner session…/, "a session still being resolved shows a status line, never the sign-in form nor the dashboard");
   assert.match(page, /<PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"/);
-  assert.match(page, /onLoggedIn=\{\(\) => \{ setError\(""\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\); \}\}/,
+  assert.match(page, /onLoggedIn=\{\(\) => \{ sessionVersion\.current\+=1;setError\(""\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\); \}\}/,
     "a successful OTP only re-runs the server identity check");
   assert.match(page, /\}, \[identityKey\]\);/, "the identity effect must re-run when the sign-in completes");
-  assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled\) \{ setIdentity\(null\); setSessionState\("unauthenticated"\); \} \}\);/,
+  assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled && version === sessionVersion\.current\) \{ setIdentity\(null\); setSessionState\("unauthenticated"\); \} \}\);/,
     "a refused or missing session clears the identity and opens the gate");
   assert.match(page, /setSessionState\("verified"\)/);
+});
+
+test("both sign-out controls revoke the backend session and purge provider-owned client state before another login", async () => {
+  const [page, queue] = await Promise.all([source("app/partner-app/page.tsx"), source("lib/provider-proof-offline-queue.ts")]);
+  assert.ok((page.match(/onClick=\{\(\) => void signOut\(\)\}/g) || []).length >= 2, "header and More tab must share the same sign-out path");
+  assert.match(page, /setSessionState\("revoking"\)/, "the authenticated workspace unmounts before revocation waits on the network");
+  assert.ok(page.indexOf('setSessionState("revoking")') < page.indexOf('fetch("/api/identity-session", { method: "DELETE"'), "client state is gated before DELETE resolves");
+  for (const wipe of [/setIdentity\(null\)/, /setJobs\(\[\]\)/, /setEarnings\(null\)/, /setMediaAssets\(\[\]\)/, /setPaymentRequest\(null\)/, /clearProviderProofQueue\(\)/]) assert.match(page, wipe);
+  assert.match(page, /method: "DELETE", credentials:"same-origin"/);
+  assert.match(queue, /export async function clearProviderProofQueue\(\)/);
+  assert.match(page, /sessionState === "revocation_failed"/, "a failed revocation must block a new login until the user retries it");
 });
 
 test("identity is still resolved by the server alone", async () => {
@@ -227,21 +238,24 @@ test("a seeded UAT trainer signs in through the real partner OTP route and the g
  * ---------------------------------------------------------------------------------------------- */
 test("the Partner app offers Sign out and only ever re-asks the server after it", async () => {
   const page = await source("app/partner-app/page.tsx");
-  assert.match(page, /fetch\("\/api\/identity-session", \{ method: "DELETE" \}\)/, "sign out is the server's revoke, not a cookie trick");
-  assert.match(page, /finally \{\s*setSigningOut\(false\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);\s*\}/,
-    "after the revoke (or its failure) the identity check runs again and decides");
+  assert.match(page, /fetch\("\/api\/identity-session", \{ method: "DELETE", credentials:"same-origin"/, "sign out is the server's revoke, not a cookie trick");
+  assert.match(page, /clearProviderProofQueue\(\)\]\);\s*if \(!response\.ok && response\.status !== 401\)[^\n]*\n[^\n]*\n\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
+    "after the revoke the identity check runs again and decides; a failed revoke stays in revocation_failed");
   assert.equal(page.split('setSessionState("unauthenticated")').length, 2, "only the server-refusal path opens the gate");
   assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out \/ switch partner"\}<\/b>/, "Sign out is in the More menu, named for what a tester looks for");
   assert.match(page, /\{identity\?\.subjectId && <button type="button" className=\{styles\.headerSignOut\} onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}>/, "and in the header of a signed-in shell");
   // Every per-account state is dropped when the session changes hands (sign-out and switch alike).
   // Asserted as "each of these setters is present" rather than as the exact body: the reset is the
-  // right home for any new per-account state, and pinning the literal list made ADDING to it a test
-  // failure. PR #847 added three fields here (earningsNotice, engagement, workspaceState - the last
-  // naming the previous partner's booking ids), which is the behaviour this assertion wants.
+  // right home for any new per-account state, so pinning the literal list makes ADDING to it fail.
+  // main's list is required in full below; PR #847 adds earningsNotice, engagement and
+  // workspaceState (the last naming the previous partner's booking ids), which is what this wants.
   const resetBody = page.match(/const resetAccountState = \(\) => \{([\s\S]*?)\n  \};/);
   assert.ok(resetBody, "resetAccountState must exist as one shared reset");
-  for (const setter of ['setJobs([])', 'setSelectedId("")', 'setTab("home")', 'setOperationResult(null)',
-                        'setPaymentRequest(null)', 'setEarnings(null)', 'setMediaMessage("")', 'setMediaAssets([])']) {
+  for (const setter of ['setIdentity(null)', 'setJobs([])', 'setSelectedId("")', 'setTab("home")',
+                        'setOperationResult(null)', 'setOperationBusy(false)', 'setPaymentRequest(null)',
+                        'setPaymentPollKey(0)', 'setEarnings(null)', 'setMediaMessage("")', 'setMediaAssets([])',
+                        'setMediaAssetsError("")', 'setMediaPollKey(0)', 'setBusy(false)', 'setRefreshKey(0)',
+                        'lifecycleLock.current = false']) {
     assert.ok(resetBody[1].includes(setter), `resetAccountState must drop ${setter}`);
   }
   assert.equal(page.split("resetAccountState();").length, 3, "sign-out and the switch both reset the account state");
@@ -264,8 +278,8 @@ test("the UAT provider switch is rendered only when the gated roster answers, an
     "a switched-to provider with no grooming job is still named from the roster");
   assert.match(page, /\{uatProviders && <section className=\{styles\.uatSwitch\}/);
   assert.match(page, /body: JSON\.stringify\(\{ providerId: uatProviderId, code: uatCode \}\)/, "the shared UAT access code is required");
-  assert.match(page, /setUatCode\(""\); resetAccountState\(\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
-    "a successful switch clears the old provider's state and re-runs the identity check");
+  assert.match(page, /sessionVersion\.current \+= 1;\s*setUatCode\(""\); resetAccountState\(\); await clearProviderProofQueue\(\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
+    "a successful switch invalidates the old provider's in-flight reads, clears its state and queued proofs, and re-runs the identity check");
   assert.doesNotMatch(page, /setIdentity\(\{/, "the switch response never becomes a client-side identity");
 });
 

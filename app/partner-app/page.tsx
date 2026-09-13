@@ -7,7 +7,7 @@ import GroomingRouteCard from "./grooming-route-card";
 import PartnerLogin from "../partner/partner-login";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
-import { discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
+import { clearProviderProofQueue, discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -121,7 +121,7 @@ export default function PartnerMobileApp() {
   // The dashboard is gated on the SERVER's answer only. "checking" avoids flashing the sign-in form at
   // a partner whose session is still being resolved; "unauthenticated" mounts the OTP sign-in in place
   // of the dashboard. A successful OTP never becomes an identity here: it only re-asks the server.
-  const [sessionState, setSessionState] = useState<"checking" | "verified" | "unauthenticated">("checking");
+  const [sessionState, setSessionState] = useState<"checking" | "verified" | "revoking" | "revocation_failed" | "unauthenticated">("checking");
   const [identityKey, setIdentityKey] = useState(0);
   // Sign-out and the UAT-only provider switch both end in the same place: the server is asked again
   // who this session is, and the gate above renders whatever it answers.
@@ -149,9 +149,11 @@ export default function PartnerMobileApp() {
   const [earningsNotice, setEarningsNotice] = useState("");
   const [engagement, setEngagement] = useState("");
   const [workspaceState, setWorkspaceState] = useState<{ onboardingStatus: string; liveness: WorkspaceLiveness | null; pendingProof: WorkspacePendingProof[] }>({ onboardingStatus: "", liveness: null, pendingProof: [] });
+  const sessionVersion = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    const version = sessionVersion.current;
     fetch("/api/identity-session", { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { data?: Identity; error?: string };
@@ -159,8 +161,8 @@ export default function PartnerMobileApp() {
         if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
         return body.data;
       })
-      .then((data) => { if (!cancelled) { setIdentity(data); setSessionState("verified"); setError(""); } })
-      .catch(() => { if (!cancelled) { setIdentity(null); setSessionState("unauthenticated"); } });
+      .then((data) => { if (!cancelled && version === sessionVersion.current) { setIdentity(data); setSessionState("verified"); setError(""); } })
+      .catch(() => { if (!cancelled && version === sessionVersion.current) { setIdentity(null); setSessionState("unauthenticated"); } });
     return () => { cancelled = true; };
   }, [identityKey]);
 
@@ -186,6 +188,7 @@ export default function PartnerMobileApp() {
   useEffect(() => {
     if (!identity?.subjectId) return;
     let cancelled = false;
+    const version = sessionVersion.current;
     fetch(`/api/partner-grooming-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as JobsResponse;
@@ -193,12 +196,12 @@ export default function PartnerMobileApp() {
         return body.jobs ?? [];
       })
       .then((next) => {
-        if (cancelled) return;
+        if (cancelled || version !== sessionVersion.current) return;
         setJobs(next);
         setSelectedId((current) => current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? ""));
         setError("");
       })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
+      .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
     return () => { cancelled = true; };
   }, [identity?.subjectId, refreshKey, paymentPollKey]);
 
@@ -226,10 +229,16 @@ export default function PartnerMobileApp() {
   useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
   useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
   useEffect(() => {
-    if (tab !== "earnings") return;
+    if (tab !== "earnings" || sessionState !== "verified") return;
+    let active = true;
+    const version = sessionVersion.current;
     void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => {
       const body = await response.json() as { data?: WorkspacePayload; error?: string };
       if (!response.ok) throw new Error(body.error || "Unable to load earnings");
+      // main's staleness guard, and every setter below sits inside it. workspaceState especially:
+      // pendingProof names the PREVIOUS partner's booking ids, so a response arriving after the
+      // session changed hands is exactly the leak resetAccountState exists to prevent.
+      if (!active || version !== sessionVersion.current) return;
       // linked:false is a 200 carrying no earnings key - an identity with no provider record bound to
       // it. Rendering that as zero rupees was indistinguishable from having earned nothing, so say it.
       if (body.data?.linked === false) { setEarnings(null); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] }); setEarningsNotice(body.data.reason || "No active provider record is linked to your identity."); return; }
@@ -242,8 +251,9 @@ export default function PartnerMobileApp() {
       setEarningsNotice(!next ? "Earnings are not available for this provider record yet."
         : next.visible === false ? "Earnings are withheld for this provider record until Finance controls are satisfied."
           : "");
-    }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings"));
-  }, [tab, refreshKey]);
+    }).catch(problem => { if (active && version === sessionVersion.current) setError(problem instanceof Error ? problem.message : "Unable to load earnings"); });
+    return () => { active = false; };
+  }, [tab, refreshKey, sessionState]);
 
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
@@ -282,14 +292,16 @@ export default function PartnerMobileApp() {
   };
 
   useEffect(() => {
+    if(sessionState!=="verified"||!identity?.subjectId)return;
+    let active=true;
     const flush = () => void flushProviderProofQueue(registerQueuedProof).then(result => {
-      if (result.uploaded) { setMediaMessage(`${result.uploaded} queued proof image${result.uploaded === 1 ? "" : "s"} synced.`); setRefreshKey(value => value + 1); }
+      if (active&&result.uploaded) { setMediaMessage(`${result.uploaded} queued proof image${result.uploaded === 1 ? "" : "s"} synced.`); setRefreshKey(value => value + 1); }
     });
     flush();
     window.addEventListener("online", flush);
     const timer = window.setInterval(flush, 15_000);
-    return () => { window.removeEventListener("online", flush); window.clearInterval(timer); };
-  }, []);
+    return () => { active=false;window.removeEventListener("online", flush); window.clearInterval(timer); };
+  }, [sessionState, identity?.subjectId]);
 
   const prepareMedia = async (file: File, purpose: "before_service" | "after_service") => {
     if (!selected) return; setBusy(true); setError(""); setMediaMessage("");
@@ -398,26 +410,29 @@ export default function PartnerMobileApp() {
   // Every piece of per-account state is dropped when the session changes hands, so the next partner
   // never sees the previous one's jobs, earnings, payment request or media before their own loads.
   const resetAccountState = () => {
-    setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setPaymentRequest(null); setEarnings(null); setMediaMessage(""); setMediaAssets([]);
+    setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setOperationBusy(false);
+    setPaymentRequest(null); setPaymentPollKey(0); setEarnings(null); setMediaMessage(""); setMediaAssets([]); setMediaAssetsError(""); setMediaPollKey(0);
+    setBusy(false); setRefreshKey(0); lifecycleLock.current = false;
     // The workspace state that arrives with the earnings payload belongs to the same account and is
     // dropped with it. pendingProof names the previous partner's BOOKING IDS, so leaving it behind
     // would carry one partner's work onto the next partner's screen - on the UAT provider switch
-    // just as much as on sign-out, which is why it lives in the shared reset.
+    // just as much as on sign-out, which is why it lives in this shared reset.
     setEarningsNotice(""); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] });
   };
   const signOut = async () => {
     if (accountBusy) return;
-    setSigningOut(true); setError("");
+    sessionVersion.current += 1;
+    setSigningOut(true); setError(""); setSessionState("revoking");
+    // Purge every provider-owned client projection before the network round-trip. This immediately
+    // unmounts jobs, GPS and proof controls, aborting child telemetry, with no stale-account flash.
+    resetAccountState();
     try {
-      const response = await fetch("/api/identity-session", { method: "DELETE" });
-      const body = await response.json().catch(() => ({})) as { data?: { loggedOut?: boolean }; error?: string };
-      if (!response.ok || !body.data?.loggedOut) throw new Error(body.error || "Unable to sign out");
-      resetAccountState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to sign out");
-    } finally {
-      setSigningOut(false); setSessionState("checking"); setIdentityKey((value) => value + 1);
-    }
+      const [response] = await Promise.all([fetch("/api/identity-session", { method: "DELETE", credentials:"same-origin", headers: { "content-type": "application/json" } }), clearProviderProofQueue()]);
+      if (!response.ok && response.status !== 401) { const body = await response.json().catch(() => ({})) as { error?: string }; throw new Error(body.error || "Unable to sign out"); }
+      // The server decides what this device is now: the identity check re-runs and opens the gate on its refusal.
+      setSessionState("checking"); setIdentityKey((value) => value + 1);
+    } catch (problem) { setError(`${problem instanceof Error ? problem.message : "Unable to sign out"}. Retry session revocation before signing in again.`); setSessionState("revocation_failed"); }
+    finally { setSigningOut(false); }
   };
   const switchUatProvider = async () => {
     if (accountBusy) return;
@@ -427,7 +442,9 @@ export default function PartnerMobileApp() {
       const response = await fetch("/api/uat-provider-switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providerId: uatProviderId, code: uatCode }) });
       const body = await response.json().catch(() => ({})) as { data?: { providerId?: string }; error?: string };
       if (!response.ok || !body.data?.providerId) throw new Error(body.error || "Unable to switch UAT provider");
-      setUatCode(""); resetAccountState();
+      // The previous provider's in-flight reads must not land on the new session, and their queued proofs must not follow it.
+      sessionVersion.current += 1;
+      setUatCode(""); resetAccountState(); await clearProviderProofQueue();
       setSessionState("checking"); setIdentityKey((value) => value + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to switch UAT provider");
@@ -446,12 +463,12 @@ export default function PartnerMobileApp() {
         <div className={styles.identityPill}><i>{sessionState === "checking" ? "…" : "!"}</i><span>{sessionState === "checking" ? "Checking" : "Sign in"}</span></div>
       </header>
       <section className={styles.content} aria-label="Partner sign-in">
-        {sessionState === "checking"
-          ? <p role="status" className={styles.empty}>Checking your partner session…</p>
+        {sessionState === "checking" || sessionState === "revoking" || sessionState === "revocation_failed"
+          ? sessionState === "revocation_failed" ? <><div className={styles.error} role="alert">{error}</div><button type="button" className={styles.secondary} onClick={() => void signOut()}>Retry session revocation</button></> : <p role="status" className={styles.empty}>{sessionState === "revoking" ? "Ending your partner session and clearing this device…" : "Checking your partner session…"}</p>
           : <>
             <PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"
               description="Verify your registered phone number to open your jobs, GPS and earnings. Nothing on this screen is available without a verified provider session."
-              onLoggedIn={() => { setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
+              onLoggedIn={() => { sessionVersion.current+=1;setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
             <p className={styles.empty}>New to PawSpace? <Link href="/partner/onboarding">Start your caregiver application</Link> first; the same phone number signs you in here once your profile exists.</p>
           </>}
       </section>
