@@ -283,7 +283,7 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
   log("ℹ️ Razorpay sandbox checkout iframe mounted.");
   await shot(page, "razorpay-modal");
   const frame: FrameLocator = page.frameLocator(selector).first();
-  const visible = async (loc: ReturnType<FrameLocator["locator"]>, timeout = 3_000) => loc.first().isVisible({ timeout }).catch(() => false);
+  const visible = async (loc: ReturnType<FrameLocator["locator"]>, timeout = 3_000) => loc.first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false);
   await page.waitForTimeout(2_500);
   await frameOutline(frame, "Razorpay checkout as opened");
 
@@ -349,6 +349,14 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
     await frameOutline(frame, `Razorpay card form before Continue (round ${round})`, 1_800);
     if (await visible(payButton(), 3_000)) await payButton().click({ timeout: 10_000 }).catch(() => {});
   }
+  // Razorpay then offers to tokenise the card ("Save your card for future payments?" / "Maybe later" /
+  // "Yes, secure my card"): decline, a test card is never saved.
+  const declineSave = async () => {
+    const later = frame.getByRole("button", { name: /maybe later|no thanks|not now|skip/i });
+    if (await visible(later, 8_000)) { await later.first().click({ timeout: 10_000 }).catch(() => {}); log("ℹ️ Declined Razorpay's save-card prompt (\"Maybe later\")."); return true; }
+    return false;
+  };
+  await declineSave();
   await page.waitForTimeout(2_000);
   await frameOutline(frame, "Razorpay checkout right after Continue", 2_500);
 
@@ -356,7 +364,7 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
   const popup = await popupPromise;
   const successIn = async (scope: { getByRole: FrameLocator["getByRole"] }, timeout: number) => {
     const b = scope.getByRole("button", { name: /^success$/i }).first();
-    if (await b.isVisible({ timeout }).catch(() => false)) { await b.click({ timeout: 10_000 }); return true; }
+    if (await b.waitFor({ state: "visible", timeout }).then(() => true).catch(() => false)) { await b.click({ timeout: 10_000 }); return true; }
     return false;
   };
   let bankDone = false;
@@ -365,6 +373,7 @@ async function completeRazorpayTestPayment(page: Page): Promise<void> {
     if (popup && await successIn(popup, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (popup)."); break; }
     if (await successIn(frame, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (checkout iframe)."); break; }
     for (const f of page.frames()) { if (await successIn(f, 1_000)) { bankDone = true; log(`ℹ️ Test-bank "Success" pressed (frame ${f.url()}).`); break; } }
+    if (!bankDone && await declineSave()) continue;
     if (!bankDone) await page.waitForTimeout(2_000);
   }
   await shot(page, "razorpay-after-pay");
@@ -501,9 +510,18 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
     const data = (created?.body.data ?? {}) as Record<string, unknown>;
     bookingId = String(data.bookingId || data.id || "");
     bookingMode = "pay_after";
+    // The app saves the service location and then shows the server-authoritative payment page; its
+    // "Confirm booking" (pay after service) is what records the acceptance. Wait for it rather than peeking.
     const payConfirm = page.getByRole("button", { name: "Confirm booking", exact: true });
-    if (await payConfirm.isVisible().catch(() => false)) await payConfirm.click();
-    await expect(page.getByText("Your groomer is reserved.", { exact: true })).toBeVisible({ timeout: 20_000 });
+    if (await payConfirm.waitFor({ state: "visible", timeout: 60_000 }).then(() => true).catch(() => false)) {
+      await payConfirm.click();
+      log("ℹ️ Pay-after: \"Confirm booking\" pressed on the payment page.");
+    } else {
+      log("ℹ️ Pay-after: no payment-page Confirm button appeared within 60 s (the flow may have confirmed directly).");
+    }
+    const reserved = page.getByText("Your groomer is reserved.", { exact: true });
+    if (!(await reserved.waitFor({ state: "visible", timeout: 90_000 }).then(() => true).catch(() => false))) await frameOutline(page, "Customer page after the pay-after confirm (confirmation text not found)", 2_500);
+    await expect(reserved).toBeVisible();
     log(`✅ Pay-after booking ${bookingId} confirmed on the same BTM doorstep and date; provider ${assignedProviderName || assignedProviderId}.`);
     await shot(page, "customer-fallback-confirmation");
   } finally { await context.close(); }
