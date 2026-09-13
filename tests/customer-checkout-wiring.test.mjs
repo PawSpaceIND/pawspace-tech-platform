@@ -189,7 +189,7 @@ for (const [field, value] of Object.entries({ environment: 'live', keyId: 'rzp_l
 }
 test('dismissed checkout neither confirms nor invents a paid state', async () => {
   const c = client({ result: { success: false, environment: 'sandbox', code: 'USER_DISMISSED', description: 'Checkout closed' } });
-  await c.controller.start(); assert.equal(c.requests.length, 1); assert.equal(c.states.at(-1).phase, 'error');
+  await c.controller.start(); assert.equal(c.requests.length, 1); assert.equal(c.states.at(-1).phase, 'pending'); assert.equal(c.states.at(-1).canCheck, true);
 });
 
 async function cookie(db, subjectId = 'C1', subjectType = 'customer') {
