@@ -6,7 +6,10 @@ export type LoggedInProvider = { providerId: string; providerName: string; phone
 
 const box: React.CSSProperties = { width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" };
 
-export default function PartnerLogin({ onLoggedIn }: { onLoggedIn: (provider: LoggedInProvider) => void }) {
+type Copy = { eyebrow?: string; title?: string; description?: string };
+/** Same OTP transport everywhere; only the framing copy differs between onboarding and the Partner app. */
+export default function PartnerLogin({ onLoggedIn, eyebrow = "🐾 Become a caregiver", title = "Sign in to start your application",
+  description = "Verify your phone number to create or continue your caregiver application." }: { onLoggedIn: (provider: LoggedInProvider) => void } & Copy) {
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
@@ -52,9 +55,9 @@ export default function PartnerLogin({ onLoggedIn }: { onLoggedIn: (provider: Lo
 
   return (
     <section className={styles.section} style={{ maxWidth: 440, textAlign: "center" }}>
-      <span className={styles.eyebrow}>🐾 Become a caregiver</span>
-      <h1 style={{ fontSize: "clamp(28px,4vw,38px)", margin: "10px 0 6px" }}>Sign in to start your application</h1>
-      <p style={{ color: "var(--ps-muted)", fontSize: 15 }}>Verify your phone number to create or continue your caregiver application.</p>
+      <span className={styles.eyebrow}>{eyebrow}</span>
+      <h1 style={{ fontSize: "clamp(28px,4vw,38px)", margin: "10px 0 6px" }}>{title}</h1>
+      <p style={{ color: "var(--ps-muted)", fontSize: 15 }}>{description}</p>
       {stage === "phone" && (
         <>
           <input

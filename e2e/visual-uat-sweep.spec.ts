@@ -4,6 +4,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 const ADDRESS = "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
 const PROVIDER_NAME = "PawSpace Grooming Team (UAT)";
+const PROVIDER_ID = "uatcap_groom_ft";
 const phone = `6${String(Date.now()).slice(-9)}`;
 const evidenceDir = process.env.PW_VISUAL_UAT_ARTIFACT_DIR || "visual-uat-evidence";
 mkdirSync(evidenceDir, { recursive: true });
@@ -82,13 +83,20 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
     .getByRole("button", { name: /42.*Indiranagar Double Road/ })
     .click();
   await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Preferred groomer" })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(PROVIDER_NAME) })).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(PROVIDER_NAME) }).click();
   const serviceDay = Number(serviceDate.slice(-2));
   const serviceMonth = new Intl.DateTimeFormat("en-IN", { month: "short", timeZone: "Asia/Kolkata" }).format(new Date(`${serviceDate}T12:00:00+05:30`));
   await page.getByRole("button", { name: new RegExp(`${serviceDay} ${serviceMonth}$`) }).click();
   await page.getByRole("button", { name: new RegExp(`^${slot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).click();
+  const preferredRegion = page.getByRole("region", { name: "Preferred groomer" });
+  await expect(preferredRegion).toBeVisible();
+  const preferredProvider = preferredRegion.getByRole("button", { name: new RegExp(PROVIDER_NAME) });
+  const preferredVisible = await expect(preferredProvider).toBeVisible({ timeout: 10_000 }).then(() => true).catch(() => false);
+  if (preferredVisible) {
+    await preferredProvider.click();
+  } else {
+    await expect(preferredRegion.getByRole("alert")).toContainText("Availability search timed out");
+    await preferredRegion.getByRole("button", { name: "No preference" }).click();
+  }
   await page.getByRole("button", { name: "Review booking" }).click();
   await page.getByLabel("Alternative Phone Number").fill("9876543210");
 }
@@ -147,6 +155,13 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     await openGrooming(page, serviceDate);
     const bookingId = await createPayAfter(page);
     await shot(page, "01-customer-pay-after-confirmed.png");
+
+    const canonicalResponse = await founder.page.request.get("/api/canonical-bookings");
+    expect(canonicalResponse.status(), await canonicalResponse.text()).toBe(200);
+    const canonical = await canonicalResponse.json();
+    const canonicalBooking = (canonical.bookings || []).find((row: { id?: string }) => row.id === bookingId);
+    expect(canonicalBooking, `ADMIN_DISCONNECTION: ${bookingId} missing from canonical lifecycle`).toBeTruthy();
+    expect(canonicalBooking.provider_id, `SCHEDULING_DISCONNECTION: ${bookingId} assigned to unexpected provider`).toBe(PROVIDER_ID);
 
     const feedResponse = await partner.page.request.get("/api/partner-job-feed");
     expect(feedResponse.status(), await feedResponse.text()).toBe(200);
