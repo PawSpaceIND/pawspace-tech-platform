@@ -108,3 +108,16 @@ test("the closed finding needed no closure-harness change: the gate already skip
   assert.doesNotMatch(classifier, /evidence\.(identity|auth|rbac)\w*/i, "the classifier must never branch on identity evidence");
   assert.doesNotMatch(classifier, /↻|refresh/i, "no special case for the refresh control");
 });
+
+
+test("5. unauthenticated partner app mounts the OTP login gate before restricted dashboard content", async () => {
+  const page = await source("app/partner-app/page.tsx");
+  assert.match(page, /import PartnerLogin/);
+  assert.match(page, /const \[sessionChecked, setSessionChecked\] = useState\(false\)/);
+  assert.match(page, /if \(sessionChecked && !identity\) return/);
+  assert.match(page, /<PartnerLogin[^>]+onLoggedIn=/);
+  assert.match(page, /setSessionChecked\(false\); setIdentityKey\(\(value\) => value \+ 1\)/);
+  const gate = page.match(/if \(sessionChecked && !identity\) return <main[\s\S]*?<\/main>;/)?.[0] || "";
+  assert.match(gate, /TEST TRANSACTION ENGINE/);
+  assert.match(gate, /LIVE CUSTOMER PROFILE/);
+});

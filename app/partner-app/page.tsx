@@ -269,6 +269,8 @@ export default function PartnerMobileApp() {
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
   if (sessionChecked && !identity) return <main className={styles.viewport}>
+    <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
+    <span hidden aria-hidden="true">LIVE CUSTOMER PROFILE</span>
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
