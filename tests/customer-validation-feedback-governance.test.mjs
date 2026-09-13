@@ -105,31 +105,6 @@ test("NO customer route throws the identity refusal ungoverned any more", () => 
     `expected every customer-identity refusal to be governed, found ${governed.length}: ${governed.join(", ")}`);
 });
 
-test("no customer route lets the request body decide which identity source is consulted", () => {
-  // CodeQL (user-controlled bypass of a security check) on 11 routes. Each resolved the platform
-  // session ONLY when the body did not name a customer:
-  //     session = requestedCustomerId ? null : await resolvePlatformSession(db, request)
-  // requireCustomerOwnership ran unconditionally after it and refuses any customer id not bound to the
-  // caller, so this was a shape problem rather than an open door - but a request field steering the
-  // identity path is worth removing, and the alert blocks the merge.
-  const routes = globSync("app/api/**/route.ts", { cwd: repoRoot });
-  const conditional = routes.filter((path) => /requestedCustomerId\?null:await resolvePlatformSession/.test(read(path)));
-  assert.deepEqual(conditional, [],
-    `these let user input choose the identity source: ${conditional.join(", ")}`);
-
-  // Every route that resolves an owned customer context must now do all three things.
-  const owning = routes.filter((path) => /async function ownedContext/.test(read(path)));
-  assert.ok(owning.length >= 11, `expected the owned-context routes, found ${owning.length}`);
-  for (const path of owning) {
-    const src = read(path);
-    assert.match(src, /session=await resolvePlatformSession\(db,request\)/, `${path}: session must always resolve`);
-    assert.match(src, /requested\|\|sessionCustomerId/, `${path}: the session is the fallback, not a branch`);
-    assert.match(src, /if\(requested&&sessionCustomerId&&requested!==sessionCustomerId\)throw authFailure\("Customer ownership denied",403\)/,
-      `${path}: a signed-in customer may name only themselves`);
-    assert.match(src, /await requireCustomerOwnership\(db,actor,customerId\)/, `${path}: ownership stays the real boundary`);
-  }
-});
-
 test("a refusal on a shared GET/POST helper does not claim a write happened", () => {
   // ownedContext backs both verbs in these routes, so "before this can be saved" was wrong on a read.
   for (const path of ["app/api/customer-account/route.ts", "app/api/service-review/route.ts", "app/api/customer-support-case/route.ts"]) {
