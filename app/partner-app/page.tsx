@@ -31,6 +31,9 @@ type JobEvent = { eventType: string; entityType: string; actorId: string; detail
  * occurrenceCount matters for the same reason: a multi-visit package rendered as if it were one visit.
  */
 type Job = {
+  serviceCode?: string;
+  trainingSessionId?: string;
+  training?: { sequenceNo: number; totalSessions: number; completedSessions: number; programmeStatus: string; requirements: string[]; attendance: Record<string, unknown>; homework: Record<string, unknown>; progress: Record<string, unknown>; evidenceRefs: string[] };
   bookingId: string;
   workOrderId: string;
   providerId: string;
@@ -195,7 +198,7 @@ export default function PartnerMobileApp() {
     if (!identity?.subjectId) return;
     let cancelled = false;
     const version = sessionVersion.current;
-    fetch(`/api/partner-grooming-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
+    fetch(`/api/partner-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as JobsResponse;
         if (!response.ok) throw new Error(body.error || "Unable to load provider jobs");
@@ -218,21 +221,33 @@ export default function PartnerMobileApp() {
   // from the roster the switch loaded, so the greeting shows who the session is.
   const providerName = selected?.providerName || uatProviders?.find((provider) => provider.id === identity?.subjectId)?.name || "PawSpace Partner";
   const travelState = selected ? (selected.workOrderStatus || selected.status) : "";
-  const canTrack = Boolean(selected && activeTravelStates.has(travelState));
+  const isTraining = selected?.serviceCode === "dog_training";
+  const canTrack = Boolean(selected && !isTraining && activeTravelStates.has(travelState));
 
   const nextAction = selected
-    ? selected.status === "confirmed" || selected.status === "awaiting_acceptance" ? "accept"
-      : selected.status === "assigned" ? "on_the_way"
-        : selected.status === "on_the_way" ? "arrived"
-          : selected.status === "arrived" ? "start_service"
-            : selected.status === "in_service" && !selected.proof?.beforePhotoRef ? "add_proof"
-              : selected.status === "in_service" ? "complete"
-                : null
+    ? isTraining
+      ? selected.status === "scheduled" ? "training_accept"
+        : selected.status === "accepted" ? "training_on_the_way"
+          : null
+      : selected.status === "confirmed" || selected.status === "awaiting_acceptance" ? "accept"
+        : selected.status === "assigned" ? "on_the_way"
+          : selected.status === "on_the_way" ? "arrived"
+            : selected.status === "arrived" ? "start_service"
+              : selected.status === "in_service" && !selected.proof?.beforePhotoRef ? "add_proof"
+                : selected.status === "in_service" ? "complete"
+                  : null
     : null;
-  const actionLabel = nextAction === "accept" ? "Accept job" : nextAction === "on_the_way" ? "Start journey" : nextAction === "arrived" ? "Mark arrived" : nextAction === "start_service" ? "Start service" : nextAction === "add_proof" ? "Add service proof" : nextAction === "complete" ? "Complete job" : "No action";
+  const actionLabel = nextAction === "training_accept" ? "Accept training session"
+    : nextAction === "training_on_the_way" ? "Start journey"
+      : nextAction === "accept" ? "Accept job"
+        : nextAction === "on_the_way" ? "Start journey"
+          : nextAction === "arrived" ? "Mark arrived"
+            : nextAction === "start_service" ? "Start service"
+              : nextAction === "add_proof" ? "Add service proof"
+                : nextAction === "complete" ? "Complete job" : "No action";
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
 
-  useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
+  useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId || selected.serviceCode === "dog_training") return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
   useEffect(() => { if (!paymentRequest?.collectable || SETTLED_PAYMENT_STATUSES.includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
   useEffect(() => {
     if (tab !== "earnings" || sessionState !== "verified") return;
@@ -264,10 +279,11 @@ export default function PartnerMobileApp() {
     return () => { active = false; };
   }, [tab, refreshKey, sessionState]);
 
+
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
   const [mediaPollKey, setMediaPollKey] = useState(0);
-  const proofStage = Boolean(selected && selected.status === "in_service" && !selected.proof?.beforePhotoRef);
+  const proofStage = Boolean(selected && selected.serviceCode !== "dog_training" && selected.status === "in_service" && !selected.proof?.beforePhotoRef);
   const bothApproved = describeProof(mediaAssets, "before_service").state === "approved" && describeProof(mediaAssets, "after_service").state === "approved";
   useEffect(() => {
     if (!proofStage || !selected?.bookingId) { queueMicrotask(() => setMediaAssets([])); return; }
@@ -358,13 +374,19 @@ export default function PartnerMobileApp() {
     }
   };
 
-  const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete") => {
+  const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete" | "training_accept" | "training_on_the_way") => {
     if (!selected || busy || lifecycleLock.current) return;
     lifecycleLock.current = true;
     setBusy(true);
     setError("");
     try {
-      if ((action === "accept" || action === "decline") && selected.providerModel === "commission") {
+      if (action === "training_accept" || action === "training_on_the_way") {
+        if (!selected.trainingSessionId) throw new Error("Canonical Training session is missing");
+        const trainingAction = action === "training_accept" ? "accept" : "on_the_way";
+        const response = await fetch("/api/training-sessions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: selected.trainingSessionId, action: trainingAction, idempotencyKey: `partner-app:${selected.trainingSessionId}:${trainingAction}:${Date.now()}` }) });
+        const body = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(body.error || "Unable to update Training session");
+      } else if ((action === "accept" || action === "decline") && selected.providerModel === "commission") {
         const response = await fetch("/api/provider-assignment-recovery", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, providerId: selected.providerId, action, reason: action === "accept" ? "Accepted in mobile Partner app" : "Declined in mobile Partner app" }) });
         const body = await response.json() as { error?: string };
         if (!response.ok) throw new Error(body.error || "Unable to respond to assignment");
@@ -510,7 +532,7 @@ export default function PartnerMobileApp() {
               <div className={styles.heroMeta}><span>◷ {when(selected.scheduledStart)}</span><span>◉ {selected.customer.name}</span></div>
               <div className={styles.primaryActions}>
                 {nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
-                <button className={styles.secondary} onClick={() => openJob(selected, canTrack ? "tracking" : "jobs")}>{canTrack ? "Open GPS" : "View job"}</button>
+                <button className={styles.secondary} onClick={() => openJob(selected, "jobs")}>{isTraining ? "Open training session" : canTrack ? "Open GPS" : "View job"}</button>
               </div>
             </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
           </section>
@@ -534,7 +556,7 @@ export default function PartnerMobileApp() {
 
         {tab === "jobs" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>My jobs</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
-          {jobs.length === 0 && !error && <div className={styles.empty}>No canonical Grooming jobs assigned yet.</div>}
+          {jobs.length === 0 && !error && <div className={styles.empty}>No canonical jobs assigned to this provider yet.</div>}
           <div className={styles.jobList}>{jobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.bookingId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>
           {selected && <section className={styles.detailCard}>
             <div className={styles.detailHead}><div><small>BOOKING {selected.bookingId}</small><h2>{selected.packageName}</h2></div><span>{label(selected.status)}</span></div>
@@ -559,13 +581,14 @@ export default function PartnerMobileApp() {
                 its timestamp are shown: detail_json is filtered server-side, but there is no reason to
                 render free-form detail on a partner's phone at all. */}
             {!!selected.events.length && <section className={styles.notice} aria-label="Job activity"><b>Recent activity</b><ul>{selected.events.slice(0, 5).map((event, index) => <li key={`${event.occurredAt}-${index}`}>{label(event.eventType)}{whenMs(event.occurredAt) ? ` · ${whenMs(event.occurredAt)}` : ""}</li>)}</ul></section>}
-            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>
+            {isTraining ? <section className={styles.notice}><b>Training session</b><p>Session {selected.training?.sequenceNo ?? 1} of {selected.training?.totalSessions ?? 1} · {selected.training?.completedSessions ?? 0} completed · programme {label(selected.training?.programmeStatus || selected.status)}</p>{Boolean(selected.training?.requirements?.length) && <small>Goals: {selected.training?.requirements.join(", ")}</small>}<p>Trainer-specific session report, owner handover and secure evidence remain governed by the Training lifecycle before completion.</p></section> : <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>}
+
             {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
               {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
               {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
               {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
-            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
+            {!isTraining && selected.status === "completed" && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
               <b>Payment due after service</b>
               {!paymentRequest ? <>
                 <p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p>
@@ -592,6 +615,7 @@ export default function PartnerMobileApp() {
               </>}
             </section>}
             <section className={styles.notice}>
+
               <b>Live order impact</b>
               <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
               <label>Expected delay
@@ -606,7 +630,7 @@ export default function PartnerMobileApp() {
                 <button disabled={operationBusy} onClick={() => void reportOperation("vehicle_issue")}>Bike issue</button>
               </div>
               {operationResult && <p><b>✓ Order timeline updated</b> — {operationResult.notificationsQueued} push/WhatsApp message{operationResult.notificationsQueued === 1 ? "" : "s"} queued · {operationResult.impactedBookings.length} later booking{operationResult.impactedBookings.length === 1 ? "" : "s"} affected.{operationResult.rebookingAvailable && <> Delay is 30+ minutes, so protected customer rebooking is available. <button disabled={operationBusy} onClick={() => void reportOperation("rebook_requested")}>Open protected rebooking</button></>}</p>}
-            </section>
+            </section>}
             <div className={styles.primaryActions}>{nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}{canTrack && <button className={styles.secondary} onClick={() => setTab("tracking")}>GPS & route</button>}{canDecline && <button className={styles.danger} disabled={busy} onClick={() => void act("decline")}>Decline</button>}</div>
           </section>}
         </>}
@@ -616,7 +640,8 @@ export default function PartnerMobileApp() {
           {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.bookingId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
           {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
           {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
-          {selected && canTrack && <><section className={styles.trackingSummary}><span>Tracking booking</span><h2>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.packageName}</h2><p>{selected.customer.name} · {selected.zoneId}</p></section><GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} /></>}
+          {selected && isTraining && <section className={styles.notice}><b>Training GPS uses the Training lifecycle</b><p>Open the Training job to accept the session and start the journey. Arrival geofence and session evidence are enforced by the Training session API; the Grooming route card is intentionally not used for trainers.</p><button onClick={() => setTab("jobs")}>Open training session</button></section>}
+          {selected && !isTraining && canTrack && <><section className={styles.trackingSummary}><span>Tracking booking</span><h2>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.packageName}</h2><p>{selected.customer.name} · {selected.zoneId}</p></section><GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} /></>}
         </>}
 
         {tab === "earnings" && <>
