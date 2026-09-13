@@ -104,6 +104,12 @@ cfg.vars = {
   PAWSPACE_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
   PAWSPACE_PAYMENT_ENV: "sandbox",
+  // Customer checkout (lib/customer-checkout-server.ts) opens the Razorpay TEST modal only when all
+  // three sandbox locks are declared explicitly. Staging pinned PAWSPACE_PAYMENT_ENV but never declared
+  // the other two, so /api/customer-checkout answered "not enabled for this environment" on every UAT
+  // payment. Declared here rather than defaulted in code: an absent lock must stay a refusal.
+  FORBID_PRODUCTION: "true",
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
   PAWSPACE_RAZORPAYX_ENV: "sandbox",
   PAWSPACE_RAZORPAYX_LIVE_APPROVED: "false",
   PAWSPACE_UAT_LOGIN: "on",
@@ -137,7 +143,7 @@ if (leaked.length) {
 
 writeFileSync(path, JSON.stringify(cfg));
 
-console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
+console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, FORBID_PRODUCTION=true, PAWSPACE_PAYMENT_LIVE_APPROVED=false, UAT_LOGIN=on, UAT integrations locked`);
 console.log(`Workers AI binding: configured as AI; voice self-test mode: uat; Exotel host: api.exotel.com`);
 console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
 console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
