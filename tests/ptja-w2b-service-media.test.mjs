@@ -268,3 +268,55 @@ test("W2B-M04: the actor who created a service-media asset cannot scan-approve i
   assert.equal(selfScan.status, 403,
     `the submitter must not scan-approve their own asset: ${JSON.stringify(selfScan).slice(0, 250)}`);
 });
+
+// =====================================================================================================
+// Listing readiness mirrors the proof gate. [PTJA-W3-SC follow-up]
+//
+// MEASURED in UAT (no scanner, PAWSPACE_MEDIA_ENV=uat): register -> confirm_upload -> record_scan clean
+// left the row at scan_status='pending' (reviewMedia stopped writing a human's approval into the
+// scanner's column), assertServiceProofRef ACCEPTED the ref, but GET /api/service-media still reported
+// proofReady:false because it required scan_status='clean'. The Partner app filters on proofReady, so
+// "Add service proof" refused every job. The listing now reads the gate's own rule.
+// =====================================================================================================
+
+test("listing readiness is the proof gate's answer, not a stale scan-column check", async () => {
+  const { db, call } = await mediaWorld();
+  const route = await import("../app/api/service-media/route.ts");
+  const { assertServiceProofRef } = await import("../lib/service-media-security.ts");
+  const list = async () => { const response = await route.GET(new Request("https://uat.pawspace.in/api/service-media?bookingId=BK-GROOM-1", { headers: STAFF })); return { status: response.status, body: await response.json() }; };
+  const slot = (assets, purpose) => assets.filter(asset => asset.purpose === purpose).at(-1);
+
+  const before = await call.upload({ bookingId: "BK-GROOM-1", purpose: "before_service", mimeType: "image/jpeg", sizeBytes: 4096, sha256: "d".repeat(64) });
+  assert.equal(before.confirmed.status, 200, JSON.stringify(before.confirmed.body).slice(0, 200));
+  let listing = await list();
+  assert.equal(listing.status, 200, JSON.stringify(listing.body).slice(0, 200));
+  let asset = slot(listing.body.assets, "before_service");
+  assert.equal(asset.proofReady, false);
+  assert.equal(asset.proofState, "awaiting_verification", "confirmed but unreviewed media is waiting for a second person");
+  assert.match(String(asset.blockedReason), /not been reviewed|not been released/);
+
+  const approved = await call("PATCH", { id: before.id, action: "record_scan", scanResult: "clean", reason: "UAT reviewer checked the before photo" }, call.checker);
+  assert.equal(approved.status, 200, JSON.stringify(approved.body).slice(0, 200));
+  listing = await list();
+  asset = slot(listing.body.assets, "before_service");
+  assert.equal(asset.scan_status, "pending", "no scanner ran, so the scanner's column still says so");
+  assert.equal(asset.proofReady, true, "the listing must say what the gate will accept");
+  assert.equal(asset.proofState, "released");
+  assert.equal(asset.blockedReason, null);
+  await assert.doesNotReject(assertServiceProofRef(db, { ref: asset.ref, bookingId: "BK-GROOM-1", providerId: "PRV-GROOMER-1", purpose: "before_service" }), "and the gate agrees");
+
+  const after = await call.upload({ bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/jpeg", sizeBytes: 4096, sha256: "e".repeat(64) });
+  const rejected = await call("PATCH", { id: after.id, action: "record_scan", scanResult: "rejected", reason: "Photo does not show the pet" }, call.checker);
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body).slice(0, 200));
+  listing = await list();
+  asset = slot(listing.body.assets, "after_service");
+  assert.equal(asset.proofReady, false);
+  assert.equal(asset.proofState, "rejected");
+  await assert.rejects(assertServiceProofRef(db, { ref: asset.ref, bookingId: "BK-GROOM-1", providerId: "PRV-GROOMER-1", purpose: "after_service" }));
+
+  const registeredOnly = await call("POST", { bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/png", sizeBytes: 100, sha256: "f".repeat(64), fileName: "after.png" });
+  assert.equal(registeredOnly.status, 201);
+  listing = await list();
+  asset = slot(listing.body.assets, "after_service");
+  assert.equal(asset.proofState, "awaiting_upload_confirmation", "a grant that was never redeemed is visible as such, not as ready");
+});
