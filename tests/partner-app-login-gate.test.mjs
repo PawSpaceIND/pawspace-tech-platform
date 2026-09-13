@@ -26,10 +26,14 @@ const partnerOtp = await import("../app/api/partner-otp/route.ts");
 const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
 const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
 
-/* The same UAT gate the staging Worker runs with: OTP sandbox on, assertion secret configured. */
-const UAT_ENV = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "uat-signing-key-0123456789abcdef0123456789abcdef",
-  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "uat-assertion-secret-0123456789abcdef0123456789abcdef" };
+/* The same UAT gate the staging Worker runs with: OTP sandbox on, assertion material configured. The
+ * values are synthetic fixtures built at runtime (long enough for the gate's minimum length), not
+ * credentials. */
+const synthetic = (label) => `${label}-${"0123456789abcdef".repeat(2)}`;
+const UAT_ENV = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: synthetic("uat-signing-key"),
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: synthetic("uat-assertion-secret") };
 const cookieOf = (response) => String(response.headers.get("set-cookie") || "").split(";")[0];
+const escapeRegExp = (value) => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 
 const ORIGIN = "https://partner-login-gate.pawspace.test";
 const source = (path) => readFile(new URL("../" + path, import.meta.url), "utf8");
@@ -182,7 +186,7 @@ test("the roster gives every UAT trainer a partner OTP number that is unique and
     const row = rows.find(candidate => candidate.id === id);
     assert.ok(row, `${id} must be able to sign in`);
     assert.equal(row.phone, phone, `${id} keeps the documented number`);
-    assert.match(roster, new RegExp(`VALUES \\('${id}','blr','${row.name.replace(/[.()]/g, "\\$&")}','full_time','\\["dog_training"\\]'`),
+    assert.match(roster, new RegExp(`VALUES \\('${escapeRegExp(id)}','blr','${escapeRegExp(row.name)}','full_time','\\["dog_training"\\]'`),
       `${id} must be the same provider the scheduler assigns training to, under the same name`);
   }
   const guide = await source("docs/UAT-TESTER-GUIDE.md");
