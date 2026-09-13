@@ -15,9 +15,9 @@ on:
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
       service_date:
-        description: 'Requested service date (YYYY-MM-DD, IST)'
-        required: true
-        default: '2026-09-14'
+        description: 'Requested service date (YYYY-MM-DD, IST); blank = the day after tomorrow, so repeated proofs do not consume the date manual testers are using'
+        required: false
+        default: ''
 
 jobs:
   e2e:
