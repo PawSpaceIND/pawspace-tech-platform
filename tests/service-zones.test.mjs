@@ -73,7 +73,7 @@ test("address-picker component derives pincode from Google Places and resolves z
   assert.match(page,/"use client"/);
   assert.match(page,/\/api\/service-zone/);
   assert.match(page,/function pinFrom\(value:string\)/);
-  assert.match(page,/value\.match\(\/\\b\[1-9\]\\d\{5\}\\b\//);
+  assert.match(page,/place\.pincode\|\|pinFrom\(mapped\)/);
   assert.match(page,/onZoneResolved/);
   assert.match(page,/searchAddresses\(/);
   assert.match(page,/resolveServiceCoverage\(pincode\)/);

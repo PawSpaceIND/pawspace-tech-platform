@@ -1,6 +1,6 @@
 export type AddressSuggestion={placeId:string;mainText:string;secondaryText:string;fullText:string};
 export type AutocompleteResult={status:"configured"|"configuration_required"|"provider_error";suggestions:AddressSuggestion[];error?:string};
-export type ResolvedAddress={status:"configured"|"configuration_required"|"provider_error";address?:string;latitude?:number;longitude?:number;error?:string};
+export type ResolvedAddress={status:"configured"|"configuration_required"|"provider_error";address?:string;pincode?:string;latitude?:number;longitude?:number;error?:string};
 
 async function mapsCredentials(){
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
@@ -47,14 +47,15 @@ export async function searchAddressSuggestions(input:{query:string;sessionToken?
 export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:string}):Promise<ResolvedAddress>{
   const creds=await mapsCredentials();
   if(!creds.ok)return{status:"configuration_required",error:creds.error};
-  if(creds.fixture)return{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356};
+  if(creds.fixture)return{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",pincode:"560038",latitude:12.9783692,longitude:77.6408356};
   try{
     const url=new URL(`https://places.googleapis.com/v1/places/${encodeURIComponent(input.placeId)}`);
     if(input.sessionToken)url.searchParams.set("sessionToken",input.sessionToken);
-    const response=await fetch(url.toString(),{headers:{"X-Goog-Api-Key":creds.key,"X-Goog-FieldMask":"formattedAddress,location"}});
-    const body=await response.json() as{formattedAddress?:string;location?:{latitude?:number;longitude?:number};error?:{message?:string}};
+    const response=await fetch(url.toString(),{headers:{"X-Goog-Api-Key":creds.key,"X-Goog-FieldMask":"formattedAddress,location,addressComponents"}});
+    const body=await response.json() as{formattedAddress?:string;location?:{latitude?:number;longitude?:number};addressComponents?:Array<{longText?:string;types?:string[]}>;error?:{message?:string}};
     if(!response.ok)return{status:"provider_error",error:body.error?.message||`Places API returned ${response.status}`};
-    return{status:"configured",address:body.formattedAddress,latitude:body.location?.latitude,longitude:body.location?.longitude};
+    const pincode=body.addressComponents?.find(component=>component.types?.includes("postal_code"))?.longText?.trim();
+    return{status:"configured",address:body.formattedAddress,pincode,latitude:body.location?.latitude,longitude:body.location?.longitude};
   }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to resolve place details"};}
 }
 
