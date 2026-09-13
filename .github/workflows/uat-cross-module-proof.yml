@@ -1,0 +1,76 @@
+name: UAT cross-module proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact main SHA already deployed to staging
+        required: true
+        type: string
+      staging_url:
+        description: Certified isolated staging origin
+        required: true
+        default: https://pawspace-staging.karthik-fce.workers.dev
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uat-cross-module-proof-staging
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 15
+    env:
+      PW_BASE_URL: ${{ inputs.staging_url }}
+      PW_STAFF_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      CI: '1'
+    steps:
+      - name: Checkout exact deployed main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "$ACTUAL_SHA" = "${{ inputs.expected_sha }}"
+          git merge-base --is-ancestor "$ACTUAL_SHA" origin/main
+          echo "Exact deployed SHA verified: $ACTUAL_SHA"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Choose deterministic service date
+        shell: bash
+        run: echo "PW_UAT_SERVICE_DATE=$(date -u -d '+5 days' +%F)" >> "$GITHUB_ENV"
+
+      - name: Prove customer to partner to founder canonical booking
+        run: npx playwright test e2e/uat-cross-module-wiring.spec.ts --project=chromium --reporter=line,html
+
+      - name: Upload UAT proof screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-cross-module-proof-${{ inputs.expected_sha }}
+          path: |
+            test-results/**
+            playwright-report/**
+          if-no-files-found: warn
+          retention-days: 14
