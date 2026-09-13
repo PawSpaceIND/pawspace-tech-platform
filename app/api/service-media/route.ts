@@ -1,4 +1,5 @@
 import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{ensureServiceMediaTable,serviceProofRefusal,serviceProofReleased,serviceProofState}from"../../../lib/service-media-security";
 import{deleteMedia,ensureMediaBoundaryTables,issueMediaReadGrant,issueMediaUploadGrant,redeemMediaUploadGrant,replaceMedia,resolveMediaReadGrant,reviewMedia}from"../../../lib/media-upload-boundary";
 
 type Db=Awaited<ReturnType<typeof database>>;
@@ -24,7 +25,10 @@ async function mediaEvent(db:Db,mediaId:string,bookingId:string,eventType:string
 export async function GET(request:Request){try{const db=await database();await ensureTables(db);await ensureMediaBoundaryTables(db);
   const grantToken=(new URL(request.url).searchParams.get("grant")||"").trim();
   if(grantToken){const read=await resolveMediaReadGrant(db,grantToken);return json({data:{mediaId:read.mediaId,mimeType:read.mimeType,expiresAt:read.expiresAt,audience:read.audience,adapterConnected:false,objectDelivered:false}});}
-  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const url=new URL(request.url),bookingId=(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:String(row.scan_status)==="clean"&&String(row.access_status)==="ready"&&String(row.retention_status)==="active"&&Number(row.synthetic||0)===0}))});}catch(error){return authError(error,"Unable to load service media");}}
+  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const url=new URL(request.url),bookingId=(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));await ensureServiceMediaTable(db);const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,review_status,review_reason,release_basis,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();
+  // proofReady is the answer assertServiceProofRef will give for this row - the same rule, not a local
+  // re-derivation. proofState and blockedReason let the Partner app say WHY a slot is not ready yet.
+  return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:serviceProofReleased(row),proofState:serviceProofState(row),blockedReason:serviceProofRefusal(row)}))});}catch(error){return authError(error,"Unable to load service media");}}
 
 /**
  * Steps 1-3 of the approved signed-upload rule. This route used to answer

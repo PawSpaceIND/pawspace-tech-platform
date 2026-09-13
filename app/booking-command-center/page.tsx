@@ -4,6 +4,7 @@ import Link from "next/link";
 import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
+import ServiceProofReview from "./service-proof-review";
 
 type Row = Record<string, unknown>;
 type Booking = Row & { pets: Row[]; lifecycle: Row[]; operations: Row[]; notifications: Row[]; rebooking: Row[]; refunds: Row[]; tickets: Row[]; adminActions: Row[] };
@@ -121,6 +122,7 @@ export default function BookingCommandCenter() {
 
           {tab === "Overview" && <div className={styles.tabBody}>
             <section className={styles.identity}><span>{initials(selected.customer_name)}</span><div><small>CUSTOMER</small><b>{String(selected.customer_name)}</b><p>{String(selected.primary_phone || "Phone unavailable")} · {String(selected.customer_email || "Email not added")}</p></div><Link href="/crm">Customer 360 →</Link></section>
+            <ServiceProofReview bookingId={String(selected.id)} />
             <div className={styles.cards}>
               <article><span>PET & CARE</span><b>{selected.pets.map(pet => pet.name).join(", ")}</b>{selected.pets.map(pet => <p key={String(pet.id)}>{pretty(pet.species)} · {String(pet.breed || "Breed not recorded")} · Vaccine {pretty(pet.vaccination_status)}</p>)}</article>
               <article><span>SERVICE & PACKAGE</span><b>{String(selected.package_name)}</b><p>{pretty(selected.service_code)} · {Number(selected.occurrence_count || 1)} occurrence(s)</p><p>Booking source: {pretty(selected.channel)}</p></article>
