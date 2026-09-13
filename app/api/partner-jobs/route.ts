@@ -10,11 +10,11 @@ const parse = <T,>(value: unknown, fallback: T): T => { try { return JSON.parse(
 
 export async function GET(request: Request) {
   try {
+    const actor = await resolveActor(request);
+    requirePermission(actor, "bookings.view");
     const providerId = String(new URL(request.url).searchParams.get("providerId") || "").trim();
     if (!providerId) return json({ error: "Provider ID is required" }, 400);
     const db = await database();
-    const actor = await resolveActor(request);
-    requirePermission(actor, "bookings.view");
     await requireProviderOwnership(db, actor, providerId);
 
     const profile = await db.prepare("SELECT name,services_json FROM provider_capacity_profiles WHERE id=? AND status='active' AND live=1").bind(providerId).first<Row>().catch(() => null);

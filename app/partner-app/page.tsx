@@ -614,8 +614,7 @@ export default function PartnerMobileApp() {
                 <small>Razorpay ref {paymentRequest.providerReference}. {paymentRequest.liveCapture ? "Capture is live." : "Sandbox only - no live capture."} Payment remains unpaid until a signature-verified gateway capture is reconciled.</small>
               </>}
             </section>}
-            <section className={styles.notice}>
-
+            {!isTraining && <section className={styles.notice}>
               <b>Live order impact</b>
               <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
               <label>Expected delay
