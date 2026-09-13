@@ -36,6 +36,13 @@ type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;vali
 const services=new Set(["grooming","dog_training","boarding","pet_sitting","vet_consult"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
+async function projectCanonicalCustomerToCrm(db:D1Database,input:LifecycleInput,packageName:string,now:number){
+  await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, primary_phone TEXT NOT NULL, secondary_phone TEXT, email TEXT, area TEXT, pet_names TEXT, pet_summary TEXT, stage TEXT NOT NULL DEFAULT 'New lead', owner TEXT DEFAULT 'Unassigned', source TEXT DEFAULT 'Website', lifetime_value REAL DEFAULT 0, next_action TEXT, opportunity TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
+  const petNames=input.pets.map(p=>p.name).join(", ")||"Pet";
+  const petSummary=input.pets.map(p=>[p.breed,p.species].filter(Boolean).join(" · ")).filter(Boolean).join(", ")||"Canonical pet profile";
+  await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'Active customer','Unassigned','canonical_booking',0,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=COALESCE(excluded.secondary_phone,crm_contacts.secondary_phone),email=COALESCE(excluded.email,crm_contacts.email),area=excluded.area,pet_names=excluded.pet_names,pet_summary=excluded.pet_summary,next_action=excluded.next_action,opportunity=excluded.opportunity,updated_at=excluded.updated_at")
+    .bind(input.customer.id,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,input.cityId==="blr"?"Bengaluru":input.cityId,petNames,petSummary,"Post-booking care follow-up",packageName,now,now).run();
+}
 // Live UNLESS sandbox is explicitly declared. The verify-first exemption - recording a client-asserted
 // {status:"captured"} as collected money - is a sandbox CAPABILITY, and an absent variable is not a
 // declaration. Credential and webhook-secret selection keep their documented "unset -> sandbox" default
@@ -541,6 +548,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
    * ledger failure is contained: the booking is already committed and the customer is not told their
    * confirmed booking failed because a journal line did not write.
    */
+  await projectCanonicalCustomerToCrm(db,input,governed.packageName,now).catch(error=>{console.warn("[crm-projection] canonical customer projection deferred",error instanceof Error?error.message:String(error));});
   if(String(paymentStatusPersisted)==="captured"){
     await postCollectionEvent(db,{
       event:String(input.payment.method).toLowerCase()==="cash"?"cash_collected_confirmed":"online_payment_captured",

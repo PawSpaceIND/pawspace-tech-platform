@@ -72,3 +72,16 @@
 .slotAvailable b { color: #14724c; }
 
 .accessError{min-height:100svh;display:grid;place-items:center;padding:24px;background:#f5f3f9;color:#20242b}.accessError section{width:100%;max-width:480px;background:#fff;border:1px solid #e3dfea;border-radius:20px;padding:28px}.accessError h1{font-size:24px;font-weight:700;line-height:1.2;margin:0 0 16px}.accessError p{font-size:16px;line-height:1.5;margin:12px 0}.accessError a{text-decoration:underline}
+
+/* UAT desktop density correction: operational tables must remain scan-readable on desktop. */
+@media (min-width: 721px) {
+  .adminShell { font-size: 14px; }
+  .schedule th, .schedule td { padding: 10px; }
+  .crmTableHead, .crmRows > button, .trainingTableHead, .trainingCases > button,
+  .workforceHead, .workforceTable > button { padding: 12px; }
+  .trainingMetrics span, .trainingTableHead, .trainingCases small,
+  .workforceHead, .workforceTable small, .boardingKpis span,
+  .boardingTableHead, .boardingRows small { font-size: 12px; }
+  .trainingMetrics strong, .trainingCases strong, .workforceTable strong,
+  .boardingKpis strong, .boardingRows strong { font-size: 13px; }
+}
