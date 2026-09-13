@@ -55,9 +55,21 @@ export async function POST(request: Request) {
     }
     if (body.action === "status") {
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId, false);
-      const stage = await paymentStageAmount(db, bookingId);
-      if (!stage) return json({ error: "Payment record was not found." }, 404);
-      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status: stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation" } });
+      const [stage, projection] = await Promise.all([
+        paymentStageAmount(db, bookingId),
+        db.prepare(`SELECT b.id booking_id,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,
+          w.provider_name,w.provider_model,w.status work_order_status,p.status payment_status
+          FROM canonical_bookings b
+          JOIN provider_work_orders w ON w.booking_id=b.id
+          JOIN booking_payments p ON p.booking_id=b.id
+          WHERE b.id=? AND b.customer_id=?`).bind(bookingId, session.subjectId).first<Record<string, unknown>>(),
+      ]);
+      if (!stage || !projection) return json({ error: "Payment record was not found." }, 404);
+      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status: stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation", confirmation: {
+        bookingStatus: String(projection.booking_status), paymentStatus: String(projection.payment_status), providerId: String(projection.provider_id),
+        providerName: String(projection.provider_name), providerModel: String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
+        scheduledStart: String(projection.scheduled_start), scheduledEnd: String(projection.scheduled_end),
+      } } });
     }
     if (body.action === "confirm") {
       if (![body.orderId, body.paymentId, body.signature].every(value => typeof value === "string")) return json({ error: "Invalid payment receipt." }, 400);
