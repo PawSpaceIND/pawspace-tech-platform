@@ -42,8 +42,18 @@ Settings → Variables and Secrets → *Secret*):
 | `RAZORPAY_KEY_SECRET_SANDBOX` | test secret | same |
 | `RAZORPAY_WEBHOOK_SECRET_SANDBOX` | webhook secret | Razorpay → Test Mode → Webhooks (below) |
 
-Register the webhook in Razorpay (**Test Mode**):
-- **URL:** `https://staging.<yourdomain>/api/razorpay-webhook`
+Register the webhook in Razorpay (**Test Mode**, Dashboard → Settings → Webhooks → Add New Webhook):
+- **URL:** `https://<staging-worker-origin>/api/razorpay-webhook`
+  - For the certified `pawspace-staging` Worker this is exactly
+    `https://pawspace-staging.karthik-fce.workers.dev/api/razorpay-webhook`
+    (the origin is printed by the *Deploy staging* workflow run; the path is always `/api/razorpay-webhook`).
+  - The receiver answers `503` until `RAZORPAY_WEBHOOK_SECRET_SANDBOX` is set as a Worker secret, and
+    `401` when the dashboard secret and the Worker secret differ. Use the dashboard's *Send test webhook*
+    and expect a `2xx`/`4xx` from PawSpace, never a timeout.
+  - Nothing else confirms a booking. The customer checkout only records a *receipt*; the canonical
+    booking moves `payment_pending → confirmed` (and the partner work order is released) when the
+    signed `payment.captured` / `order.paid` event is processed, or when the five-minute capture
+    reconciliation sweep reads the capture from the Razorpay API using the sandbox key pair.
 - **Payment/refund events:** `payment.authorized`, `payment.captured`, `payment.failed`, `order.paid`,
   `refund.created`, `refund.processed`, `refund.failed`
 - **Recurring subscription events:** `subscription.authenticated`, `subscription.activated`,
@@ -64,8 +74,14 @@ payment webhooks alone.
 2. The app calls `POST /api/payment-order` → a **real Razorpay test order** is created and linked;
    the booking payment is `awaiting_payment` (it is **not** captured yet).
 3. Open Razorpay Checkout with the returned `orderId`/`keyId`; pay with a **test card/UPI**.
+   Checkout is opened with both the in-page `handler` and a same-origin `callback_url`
+   (`/api/razorpay-checkout-return?bookingId=…`). When Checkout.js falls back to its full-page
+   redirect mode (in-app browsers, WebViews, some bank/UPI flows) Razorpay POSTs the receipt there and
+   the customer is sent on to `/mobile-app/booking-confirmation`, which verifies the receipt through
+   `POST /api/customer-checkout {action:"confirm"}`. No `callback_url` means the customer is left on
+   an `api.razorpay.com` JSON page after paying.
 4. Razorpay fires the webhook → PawSpace verifies the signature, matches the order id, verifies
-   amount/currency, and **only then** marks the payment `captured`.
+   amount/currency, and **only then** marks the payment `captured` and confirms the booking.
 5. Confirm on the Finance screen (`GET /api/payment-reconciliation`) that it reconciled cleanly.
 
 **Also test the exceptions** (this is what the Finance action closes):
