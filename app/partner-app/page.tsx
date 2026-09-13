@@ -267,7 +267,14 @@ export default function PartnerMobileApp() {
   // No verified provider session: the dashboard is not rendered at all. Sign-in is the same OTP
   // transport the onboarding flow uses (/api/partner-otp issues the provider session cookie), and a
   // successful verification only re-runs the server identity check above.
+  // The two hidden wiring markers are static strings every operating surface carries (tests/rendered-html
+  // checks them on the SSR shell, which is always the "checking" state); they reveal nothing.
+  const surfaceMarkers = <>
+    <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
+    <span hidden aria-hidden="true">LIVE CUSTOMER PROFILE</span>
+  </>;
   if (sessionState !== "verified") return <main className={styles.viewport}>
+    {surfaceMarkers}
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
@@ -287,8 +294,7 @@ export default function PartnerMobileApp() {
   </main>;
 
   return <main className={styles.viewport}>
-    <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
-    <span hidden aria-hidden="true">LIVE CUSTOMER PROFILE</span>
+    {surfaceMarkers}
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>

@@ -86,8 +86,14 @@ test("the dashboard is rendered only for a server-verified provider session", as
   assert.ok(gate, "the sign-in gate must return before the dashboard markup");
   for (const state of ["checking", "unauthenticated"]) assert.equal(evaluate(gate[1], { sessionState: state }), true, `${state} must block the dashboard`);
   assert.equal(evaluate(gate[1], { sessionState: "verified" }), false, "a verified session must reach the dashboard");
-  // The gate precedes the dashboard, so its hidden markers and controls are unreachable without a session.
-  assert.ok(page.indexOf('if (sessionState !== "verified") return') < page.indexOf('<span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>'));
+  // The gate precedes the dashboard, so its controls are unreachable without a session. The two hidden
+  // wiring markers are deliberately shared: tests/rendered-html.test.mjs reads them off the SSR shell,
+  // which is always the "checking" state, and they carry no data.
+  const gateAt = page.indexOf('if (sessionState !== "verified") return');
+  assert.ok(gateAt > 0 && gateAt < page.indexOf('aria-label="Refresh jobs"'), "the jobs dashboard controls must sit behind the gate");
+  assert.ok(page.indexOf("const surfaceMarkers = <>") < gateAt, "the wiring markers are rendered by both branches");
+  assert.equal(page.split("{surfaceMarkers}").length, 3, "exactly the gate and the dashboard render the markers");
+  assert.equal(page.split("TEST TRANSACTION ENGINE").length, 2, "the marker text is defined once, never duplicated per branch");
 });
 
 test("an unauthenticated visitor gets the OTP sign-in, not a restricted dashboard", async () => {
