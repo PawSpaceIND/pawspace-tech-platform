@@ -81,17 +81,16 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
   await page.getByRole("button", { name: /Choose a package/i }).click();
   await page.getByRole("button", { name: "Choose address and requested time", exact: true }).click();
 
-  // Address step: line 1 required, line 2 optional. main keeps the "Use this address" button.
-  const line1 = page.getByLabel("Complete doorstep address", { exact: true });
-  await line1.fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
-  const line2 = page.getByLabel("Address line 2", { exact: true });
+  // Address step on the current picker (post #821): line 1 takes the typed text, a Places suggestion
+  // verifies the doorstep, line 2 stays optional.
+  const line1 = page.locator("#grooming-address-line-1");
+  await line1.fill("42 Indiranagar Double Road");
+  await page.getByRole("region", { name: "Google address suggestions", exact: true }).getByRole("button", { name: /42.*Indiranagar Double Road/ }).first().click();
+  const line2 = page.locator("#grooming-address-line-2");
   await expect(line2, "optional address line 2 must be present").toBeVisible();
   await expect(line2, "address line 2 must be optional").not.toHaveAttribute("required", /.*/);
   if (opts.line2) await line2.fill(opts.line2);
-  await page.getByLabel("Pincode", { exact: true }).fill("560038");
-  await page.getByRole("button", { name: "Use this address", exact: true }).click();
-  await page.getByRole("region", { name: "Matching map addresses", exact: true }).getByRole("button", { name: /42.*Indiranagar Double Road/ }).first().click();
-  await expect(page.getByText("Service doorstep ready", { exact: true })).toBeVisible();
+  await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible();
   // Address 1 is populated from the verified Places selection.
   await expect(line1).toHaveValue(MAPPED_ADDRESS);
 
@@ -102,14 +101,16 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
 
 async function payAfterAndConfirm(page: Page) {
   await page.getByRole("button", { name: /^Pay after service/ }).click();
+  // main's sequence: "Confirm booking" on the review step creates the server-authoritative booking, then the
+  // BookingPaymentPage confirms pay-after with a second "Confirm booking".
+  const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
+  await expect(confirm, "a blank alternative phone must not hold Confirm back").toBeEnabled();
   const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST");
-  await page.getByRole("button", { name: "Continue to payment", exact: true }).click();
+  await confirm.click();
   const response = await created;
   expect(response.status(), await response.text()).toBe(201);
-  // main routes to the server-authoritative BookingPaymentPage; pay-after confirms there.
-  const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
-  await expect(confirm).toBeEnabled();
-  await confirm.click();
+  await expect(page.getByRole("heading", { name: "Review payment", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm booking", exact: true }).click();
   await expect(page.getByText("Your groomer is reserved.", { exact: true })).toBeVisible();
 }
 
@@ -119,7 +120,7 @@ test("optional address line 2, alternative phone and special instructions are pr
   await reachReview(page, { line2: "Near the corner park" });
 
   // Alternative phone (optional): present, not required, accepts a value.
-  const altPhone = page.getByLabel("Alternative phone number", { exact: true });
+  const altPhone = page.getByLabel("Alternative Phone Number", { exact: true });
   await expect(altPhone).toBeVisible();
   await expect(altPhone, "alternative phone must be optional").not.toHaveAttribute("required", /.*/);
   await altPhone.fill("9123456780");
@@ -141,7 +142,7 @@ test("leaving every optional field empty never blocks grooming checkout", async 
   await reachReview(page); // no line 2
 
   // Alt phone and instructions left empty on purpose.
-  await expect(page.getByLabel("Alternative phone number", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Alternative Phone Number", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("Special instructions to groomer", { exact: true })).toHaveValue("");
 
   await payAfterAndConfirm(page);
