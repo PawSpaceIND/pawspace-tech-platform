@@ -4,6 +4,7 @@ import {boundedFetch} from "../../lib/bounded-fetch";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
+import PartnerLogin from "../partner/partner-login";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
 import { discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
@@ -61,6 +62,12 @@ const when = (value: string) => {
 export default function PartnerMobileApp() {
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
+  // The auth gate. Until the session probe answers, the shell says "Checking"; once it answers without a
+  // verified provider, the OTP sign-in is mounted HERE. Before this, an unauthenticated visitor was dropped
+  // straight into the dashboard with only a "Verified provider session required" banner and no way in -
+  // the sole partner login lived on /partner/onboarding, which a tester opening /partner-app never sees.
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [identityKey, setIdentityKey] = useState(0);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState("");
   // Live order impact: the retired /groomer prototype was the only surface that reached the governed
@@ -87,9 +94,10 @@ export default function PartnerMobileApp() {
         return body.data;
       })
       .then((data) => { if (!cancelled) { setIdentity(data); setError(""); } })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); });
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); })
+      .finally(() => { if (!cancelled) setSessionChecked(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [identityKey]);
 
   useEffect(() => {
     if (!identity?.subjectId) return;
@@ -259,6 +267,19 @@ export default function PartnerMobileApp() {
   };
 
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
+
+  if (sessionChecked && !identity) return <main className={styles.viewport}>
+    <section className={styles.phoneShell}>
+      <header className={styles.appHeader}>
+        <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
+        <div className={styles.identityPill}><i>•</i><span>Signed out</span></div>
+      </header>
+      <section className={styles.content} aria-label="Partner sign-in">
+        {/* The session probe's "not signed in" answer is the expected state here, not an error to show. */}
+        <PartnerLogin eyebrow="🐾 Verified provider access" title="Sign in to your Partner workspace" subtitle="Use the mobile number registered on your PawSpace partner profile. The OTP is shown on screen in UAT; no real SMS is sent." onLoggedIn={() => { setError(""); setSessionChecked(false); setIdentityKey((value) => value + 1); }} />
+      </section>
+    </section>
+  </main>;
 
   return <main className={styles.viewport}>
     <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
