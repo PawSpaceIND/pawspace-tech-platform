@@ -116,6 +116,7 @@ async function signedInPartnerActor(db, { phone, name = "Asha Partner", cityId =
   assert.ok(resolved, "the OTP session must resolve; the rest of this test is meaningless otherwise");
 
   return {
+    request,
     providerId: verified.providerId,
     bindingId: String(bound.id),
     actor: {
@@ -132,58 +133,59 @@ async function signedInPartnerActor(db, { phone, name = "Asha Partner", cityId =
   };
 }
 
-test("an OTP Partner-app session carries no mailbox, so email-only provider resolution finds nothing", async () => {
+test("an OTP Partner-app session carries no mailbox, only a synthetic audit id", async () => {
   const { db } = fresh();
-  const workspace = await mod.workspace();
   const { actor, providerId } = await signedInPartnerActor(db, { phone: "9000000101" });
 
   // This is the shape the defect turned on: the actor's "email" is an audit id, not an address.
   assert.equal(actor.email, `provider:${providerId}`);
   assert.equal(actor.subjectType, "provider");
   assert.equal(actor.roleCode, "service_provider");
-
-  assert.equal(await workspace.resolveProviderForActor(db, actor.email), null,
-    "email-only resolution cannot match a synthetic audit id - this is the bug being fixed");
+  assert.doesNotMatch(actor.email, /@/, "no mailbox exists anywhere in the OTP flow");
 });
 
-test("resolveProviderForIdentity resolves the provider from the verified identity binding", async () => {
+test("a Partner-app session resolves to its own provider, driven through the real OTP chain", async () => {
   const { db } = fresh();
   const workspace = await mod.workspace();
   const { actor, providerId } = await signedInPartnerActor(db, { phone: "9000000102" });
 
-  assert.equal(await workspace.resolveProviderForIdentity(db, actor), providerId,
+  // provider_identity_links is never written by this flow, so an email-only lookup matched nothing
+  // and every Partner-app session read as unlinked - a silent zero on Earnings, a redacted 403 on POST.
+  assert.equal(await workspace.resolveProviderForActor(db, actor.email), providerId,
     "the Partner app's own session must resolve to its own provider record");
 });
 
-test("resolveProviderForIdentity still honours the legacy provider_identity_links email link", async () => {
+test("the legacy provider_identity_links address still resolves, case-insensitively", async () => {
   const { sqlite, db } = fresh();
   const workspace = await mod.workspace();
-  const binding = await mod.binding();
-  await binding.ensureIdentityBindingTables(db);
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES (?,?,'active',1,1)")
     .run("groomer.arun@pawspace.in", "groom_arun");
 
-  const staffActor = {
-    email: "groomer.arun@pawspace.in",
-    identitySource: "workspace",
-    principalType: "email",
-    principalKey: "groomer.arun@pawspace.in",
-  };
-  assert.equal(await workspace.resolveProviderForIdentity(db, staffActor), "groom_arun",
-    "a workspace sign-in with no identity binding must keep working through the legacy link");
+  assert.equal(await workspace.resolveProviderForActor(db, "groomer.arun@pawspace.in"), "groom_arun",
+    "a workspace sign-in with no platform session must keep working through the legacy link");
+  assert.equal(await workspace.resolveProviderForActor(db, "Groomer.Arun@PawSpace.in"), "groom_arun");
 });
 
-test("a revoked identity binding stops resolving, so revocation stays authoritative", async () => {
-  const { db } = fresh();
+test("revocation is enforced at the session, so a revoked binding yields no actor at all", async () => {
+  // The guard lives in resolvePlatformSession, which JOINs identity_bindings on EVERY request and
+  // revokes the session unless the binding is still active, verified, unexpired and still pointing at
+  // the same subject and principal. So by the time an actor exists its binding has just been
+  // re-verified, and the session's own subject id cannot outlive a revoked binding. An earlier version
+  // of this file claimed the opposite and guarded it a second time in the resolver; that was wrong,
+  // and the duplicate guard is gone. This test pins the real boundary instead.
+  const { db, sqlite } = fresh();
   const workspace = await mod.workspace();
-  const binding = await mod.binding();
-  const { actor, bindingId, providerId } = await signedInPartnerActor(db, { phone: "9000000103" });
+  const [binding, session] = await Promise.all([mod.binding(), mod.session()]);
+  const { actor, request, bindingId, providerId } = await signedInPartnerActor(db, { phone: "9000000103" });
 
-  assert.equal(await workspace.resolveProviderForIdentity(db, actor), providerId);
+  assert.equal(await workspace.resolveProviderForActor(db, actor.email), providerId);
+  assert.ok(await session.resolvePlatformSession(db, request), "the session resolves while the binding is good");
 
   await binding.revokeIdentityBinding(db, { id: bindingId, actorId: "ops.one@pawspace.in", reason: "Partner offboarded" });
 
-  assert.equal(await workspace.resolveProviderForIdentity(db, actor), null,
-    "a revoked binding must not resolve, and must not fall back to the session's own subject id");
+  assert.equal(await session.resolvePlatformSession(db, request), null,
+    "a revoked binding must stop resolving the session, so no actor is ever built from it");
+  assert.equal(sqlite.prepare("SELECT status FROM platform_identity_sessions WHERE binding_id=?").get(bindingId).status, "revoked",
+    "the session must be marked revoked, not merely refused for this one request");
 });
