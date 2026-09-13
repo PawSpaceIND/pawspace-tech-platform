@@ -19,15 +19,24 @@ export async function queueProviderProof(input: Omit<QueuedProviderProof, "id" |
   const item: QueuedProviderProof = { ...input, id: `${input.bookingId}:${input.purpose}:${input.sha256}`, attempts: 0, nextAttemptAt: Date.now(), createdAt: Date.now() };
   await tx("readwrite", store => store.put(item)); return item;
 }
+/** Drop a queued proof that the server has refused for good (a 4xx that a retry can never fix). */
+export async function discardProviderProof(id: string) { if (typeof indexedDB === "undefined") return; await tx("readwrite", store => store.delete(id)); }
+/** An error carrying `permanent: true` tells the flush loop to discard the item instead of retrying it. */
+export const isPermanentProofError = (error: unknown): error is Error & { permanent: true } => Boolean(error && typeof error === "object" && (error as { permanent?: unknown }).permanent === true);
 export async function flushProviderProofQueue(register: (item: QueuedProviderProof) => Promise<void>) {
-  if (typeof indexedDB === "undefined" || (typeof navigator !== "undefined" && !navigator.onLine)) return { uploaded: 0, pending: 0 };
+  if (typeof indexedDB === "undefined" || (typeof navigator !== "undefined" && !navigator.onLine)) return { uploaded: 0, pending: 0, discarded: 0 };
   const db = await openDb(); let items: QueuedProviderProof[] = [];
   try { items = await request(db.transaction(STORE, "readonly").objectStore(STORE).getAll()) as QueuedProviderProof[]; } finally { db.close(); }
-  let uploaded = 0, pending = 0;
+  let uploaded = 0, pending = 0, discarded = 0;
   for (const item of items) {
     if (item.nextAttemptAt > Date.now()) { pending++; continue; }
     try { await register(item); await tx("readwrite", store => store.delete(item.id)); uploaded++; }
-    catch { const attempts = item.attempts + 1; const retry = { ...item, attempts, nextAttemptAt: Date.now() + Math.min(60_000, 2 ** Math.min(attempts, 6) * 1_000) }; await tx("readwrite", store => store.put(retry)); pending++; }
+    catch (error) {
+      // A permanent refusal (grant mismatch, ownership, unsupported type) would otherwise re-register a
+      // fresh asset every cycle for ever; only transport-class failures earn the exponential retry.
+      if (isPermanentProofError(error)) { await tx("readwrite", store => store.delete(item.id)); discarded++; continue; }
+      const attempts = item.attempts + 1; const retry = { ...item, attempts, nextAttemptAt: Date.now() + Math.min(60_000, 2 ** Math.min(attempts, 6) * 1_000) }; await tx("readwrite", store => store.put(retry)); pending++;
+    }
   }
-  return { uploaded, pending };
+  return { uploaded, pending, discarded };
 }
