@@ -7,7 +7,9 @@ const baseURL = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: ["automated-human-sweep.spec.ts"],
+  // The BTM Layout end-to-end proof rides the same workflow (a new workflow file cannot be dispatched
+  // until it exists on the default branch); it runs after the sweep, serially, sharing nothing.
+  testMatch: ["automated-human-sweep.spec.ts", "uat-btm-e2e.spec.ts"],
   timeout: 180_000,
   expect: { timeout: 20_000 },
   retries: 0,
