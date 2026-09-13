@@ -148,7 +148,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/booking-command-center")return "bookings.manage";
   if(url.pathname==="/api/ops-work-queue")return "bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
-  if(url.pathname==="/api/service-media")return "bookings.view";
+  // /api/service-media/upload carries the proof bytes for a grant the partner already holds; the route
+  // enforces provider ownership and the single-use grant itself. Without this line the path fell through
+  // to the default "dashboard.view", which a service_provider session does not have, so every partner
+  // photo upload was refused "Permission denied" at the gateway before the route ran.
+  if(url.pathname==="/api/service-media"||url.pathname==="/api/service-media/upload")return "bookings.view";
   if(url.pathname==="/api/customer-grooming-summary")return "scheduling.book";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
   if(url.pathname==="/api/grooming-finance")return "finance.view";
