@@ -84,7 +84,7 @@ test("the dashboard is rendered only for a server-verified provider session", as
   const page = await source("app/partner-app/page.tsx");
   const gate = page.match(/if \((sessionState !== "verified")\) return <main className=\{styles\.viewport\}>/);
   assert.ok(gate, "the sign-in gate must return before the dashboard markup");
-  for (const state of ["checking", "unauthenticated"]) assert.equal(evaluate(gate[1], { sessionState: state }), true, `${state} must block the dashboard`);
+  for (const state of ["checking", "revoking", "revocation_failed", "unauthenticated"]) assert.equal(evaluate(gate[1], { sessionState: state }), true, `${state} must block the dashboard`);
   assert.equal(evaluate(gate[1], { sessionState: "verified" }), false, "a verified session must reach the dashboard");
   // The gate precedes the dashboard, so its hidden markers and controls are unreachable without a session.
   assert.ok(page.indexOf('if (sessionState !== "verified") return') < page.indexOf('<span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>'));
@@ -93,14 +93,25 @@ test("the dashboard is rendered only for a server-verified provider session", as
 test("an unauthenticated visitor gets the OTP sign-in, not a restricted dashboard", async () => {
   const page = await source("app/partner-app/page.tsx");
   assert.match(page, /import PartnerLogin from "\.\.\/partner\/partner-login";/);
-  assert.match(page, /sessionState === "checking"\s*\?\s*<p role="status"[^>]*>Checking your partner session…<\/p>/, "a session still being resolved shows a status line, never the sign-in form nor the dashboard");
+  assert.match(page, /Checking your partner session…/, "a session still being resolved shows a status line, never the sign-in form nor the dashboard");
   assert.match(page, /<PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"/);
-  assert.match(page, /onLoggedIn=\{\(\) => \{ setError\(""\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\); \}\}/,
+  assert.match(page, /onLoggedIn=\{\(\) => \{ sessionVersion\.current\+=1;setError\(""\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\); \}\}/,
     "a successful OTP only re-runs the server identity check");
   assert.match(page, /\}, \[identityKey\]\);/, "the identity effect must re-run when the sign-in completes");
-  assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled\) \{ setIdentity\(null\); setSessionState\("unauthenticated"\); \} \}\);/,
+  assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled && version === sessionVersion\.current\) \{ setIdentity\(null\); setSessionState\("unauthenticated"\); \} \}\);/,
     "a refused or missing session clears the identity and opens the gate");
   assert.match(page, /setSessionState\("verified"\)/);
+});
+
+test("both sign-out controls revoke the backend session and purge provider-owned client state before another login", async () => {
+  const [page, queue] = await Promise.all([source("app/partner-app/page.tsx"), source("lib/provider-proof-offline-queue.ts")]);
+  assert.ok((page.match(/onClick=\{\(\) => void signOut\(\)\}/g) || []).length >= 2, "header and More tab must share the same sign-out path");
+  assert.match(page, /setSessionState\("revoking"\)/, "the authenticated workspace unmounts before revocation waits on the network");
+  assert.ok(page.indexOf('setSessionState("revoking")') < page.indexOf('fetch("/api/identity-session", { method: "DELETE"'), "client state is gated before DELETE resolves");
+  for (const wipe of [/setIdentity\(null\)/, /setJobs\(\[\]\)/, /setEarnings\(null\)/, /setMediaAssets\(\[\]\)/, /setPaymentRequest\(null\)/, /clearProviderProofQueue\(\)/]) assert.match(page, wipe);
+  assert.match(page, /method: "DELETE", credentials:"same-origin"/);
+  assert.match(queue, /export async function clearProviderProofQueue\(\)/);
+  assert.match(page, /sessionState === "revocation_failed"/, "a failed revocation must block a new login until the user retries it");
 });
 
 test("identity is still resolved by the server alone", async () => {
