@@ -85,7 +85,7 @@ test("wires the synthetic transaction engine into every operating surface", asyn
   const { default: worker } = await import(workerUrl.href);
   // /admin, /ops and /account were fabricated dashboards and now redirect; the engine is checked
   // on the real surfaces that replaced them.
-  for (const path of ["/", "/team", "/crm", "/partner-app"]) {
+  for (const path of ["/", "/team", "/crm"]) {
     const response = await worker.fetch(
       new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
@@ -94,6 +94,18 @@ test("wires the synthetic transaction engine into every operating surface", asyn
     assert.equal(response.status, 200, path);
     assert.match(await response.text(), /TEST TRANSACTION ENGINE/i, path);
   }
+
+  // The Partner app now has an authentication gate, so anonymous SSR must not expose the
+  // synthetic transaction surface before the verified provider session resolves.
+  const partnerResponse = await worker.fetch(
+    new Request("http://localhost/partner-app", { headers: { accept: "text/html" } }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+  assert.equal(partnerResponse.status, 200, "/partner-app");
+  const partnerHtml = await partnerResponse.text();
+  assert.doesNotMatch(partnerHtml, /TEST TRANSACTION ENGINE/i, "/partner-app");
+  assert.match(partnerHtml, /Checking your partner session|Partner sign-in/i, "/partner-app");
 });
 
 test("renders the 100-customer regression command centre", async () => {

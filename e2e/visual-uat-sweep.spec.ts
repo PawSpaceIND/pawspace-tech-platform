@@ -82,13 +82,13 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
     .getByRole("button", { name: /42.*Indiranagar Double Road/ })
     .click();
   await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Preferred groomer" })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(PROVIDER_NAME) })).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(PROVIDER_NAME) }).click();
   const serviceDay = Number(serviceDate.slice(-2));
   const serviceMonth = new Intl.DateTimeFormat("en-IN", { month: "short", timeZone: "Asia/Kolkata" }).format(new Date(`${serviceDate}T12:00:00+05:30`));
   await page.getByRole("button", { name: new RegExp(`${serviceDay} ${serviceMonth}$`) }).click();
   await page.getByRole("button", { name: new RegExp(`^${slot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).click();
+  await expect(page.getByRole("region", { name: "Preferred groomer" })).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(PROVIDER_NAME) })).toBeVisible();
+  await page.getByRole("button", { name: new RegExp(PROVIDER_NAME) }).click();
   await page.getByRole("button", { name: "Review booking" }).click();
   await page.getByLabel("Alternative Phone Number").fill("9876543210");
 }

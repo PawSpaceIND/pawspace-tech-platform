@@ -113,11 +113,10 @@ const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value
 export default function PartnerMobileApp() {
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
-  // The auth gate. Until the session probe answers, the shell says "Checking"; once it answers without a
-  // verified provider, the OTP sign-in is mounted HERE. Before this, an unauthenticated visitor was dropped
-  // straight into the dashboard with only a "Verified provider session required" banner and no way in -
-  // the sole partner login lived on /partner/onboarding, which a tester opening /partner-app never sees.
-  const [sessionChecked, setSessionChecked] = useState(false);
+  // The dashboard is gated on the SERVER's answer only. "checking" avoids flashing the sign-in form at
+  // a partner whose session is still being resolved; "unauthenticated" mounts the OTP sign-in in place
+  // of the dashboard. A successful OTP never becomes an identity here: it only re-asks the server.
+  const [sessionState, setSessionState] = useState<"checking" | "verified" | "unauthenticated">("checking");
   const [identityKey, setIdentityKey] = useState(0);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -147,9 +146,8 @@ export default function PartnerMobileApp() {
         if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
         return body.data;
       })
-      .then((data) => { if (!cancelled) { setIdentity(data); setError(""); } })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); })
-      .finally(() => { if (!cancelled) setSessionChecked(true); });
+      .then((data) => { if (!cancelled) { setIdentity(data); setSessionState("verified"); setError(""); } })
+      .catch(() => { if (!cancelled) { setIdentity(null); setSessionState("unauthenticated"); } });
     return () => { cancelled = true; };
   }, [identityKey]);
 
@@ -352,15 +350,42 @@ export default function PartnerMobileApp() {
 
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
-  if (sessionChecked && !identity) return <main className={styles.viewport}>
+  // Sign out / switch partner. DELETE /api/identity-session revokes the server-side platform session
+  // (platform_identity_sessions -> revoked, audited) and clears the HttpOnly cookie; nothing about the
+  // identity lives in the browser, so afterwards the page simply has no identity and the auth gate
+  // renders the OTP sign-in for the next partner. Every job/payment/media state is dropped so a
+  // second account never sees the first one's data flash before its own probe answers.
+  const [signingOut, setSigningOut] = useState(false);
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true); setError("");
+    try {
+      const response = await fetch("/api/identity-session", { method: "DELETE", headers: { "content-type": "application/json" } });
+      if (!response.ok && response.status !== 401) { const body = await response.json().catch(() => ({})) as { error?: string }; throw new Error(body.error || "Unable to sign out"); }
+      setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setPaymentRequest(null); setEarnings(null); setMediaMessage(""); setMediaAssets([]);
+      setSessionState("unauthenticated");
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to sign out"); }
+    finally { setSigningOut(false); }
+  };
+
+  // No verified provider session: the dashboard is not rendered at all. Sign-in is the same OTP
+  // transport the onboarding flow uses (/api/partner-otp issues the provider session cookie), and a
+  // successful verification only re-runs the server identity check above.
+  if (sessionState !== "verified") return <main className={styles.viewport}>
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <div className={styles.identityPill}><i>•</i><span>Signed out</span></div>
+        <div className={styles.identityPill}><i>{sessionState === "checking" ? "…" : "!"}</i><span>{sessionState === "checking" ? "Checking" : "Sign in"}</span></div>
       </header>
       <section className={styles.content} aria-label="Partner sign-in">
-        {/* The session probe's "not signed in" answer is the expected state here, not an error to show. */}
-        <PartnerLogin eyebrow="🐾 Verified provider access" title="Sign in to your Partner workspace" subtitle="Use the mobile number registered on your PawSpace partner profile. The OTP is shown on screen in UAT; no real SMS is sent." onLoggedIn={() => { setError(""); setSessionChecked(false); setIdentityKey((value) => value + 1); }} />
+        {sessionState === "checking"
+          ? <p role="status" className={styles.empty}>Checking your partner session…</p>
+          : <>
+            <PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"
+              description="Verify your registered phone number to open your jobs, GPS and earnings. Nothing on this screen is available without a verified provider session."
+              onLoggedIn={() => { setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
+            <p className={styles.empty}>New to PawSpace? <Link href="/partner/onboarding">Start your caregiver application</Link> first; the same phone number signs you in here once your profile exists.</p>
+          </>}
       </section>
     </section>
   </main>;
@@ -371,7 +396,10 @@ export default function PartnerMobileApp() {
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
         <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
-        <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+          {identity?.subjectId && <button type="button" className={styles.secondary} onClick={() => void signOut()} disabled={signingOut} aria-label="Sign out" style={{ padding: "6px 10px", fontSize: 12 }}>{signingOut ? "Signing out…" : "Sign out"}</button>}
+        </div>
       </header>
 
       <section className={styles.content}>
@@ -522,7 +550,7 @@ export default function PartnerMobileApp() {
         {tab === "more" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
-          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link></div>
+          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={signingOut}><i>⎋</i><span><b>Sign out / switch partner</b><small>Ends this session; the next partner enters their own phone and OTP</small></span><em>›</em></button></div>
           <section className={styles.safetyCard}><b>UAT boundary</b><p>This mobile app uses verified provider identity and canonical work orders. It cannot self-activate a provider, expose unmasked customer phone numbers, make live payouts, or enable background GPS.</p></section>
         </>}
       </section>
