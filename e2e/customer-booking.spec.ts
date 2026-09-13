@@ -149,16 +149,26 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   expect(saved.ok()).toBeTruthy();const savedBody=await saved.json();
   const rows=savedBody.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);
   expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("grooming");expect(rows[0].status).toBe("confirmed");
-  // Exercise the authenticated reschedule transaction against the real local D1 worker.
-  const newStart=new Date(new Date(rows[0].scheduledStart).getTime()+4*3600000).toISOString();
-  const newEnd=new Date(new Date(rows[0].scheduledEnd).getTime()+4*3600000).toISOString();
-  const terms=await page.context().request.get(`/api/grooming-booking-change?bookingId=${encodeURIComponent(bookingId)}`);expect(terms.status()).toBe(200);const termsBody=await terms.json();expect(termsBody.data.consentRevision).toMatch(/^[a-f0-9]{64}$/);
-  const changed=await page.context().request.post("/api/grooming-booking-change",{data:{expectedConsentRevision:termsBody.data.consentRevision,bookingId,customerId:savedBody.data.customerId,action:"reschedule",reason:"Customer requested a later afternoon slot",scheduledStart:newStart,scheduledEnd:newEnd}});
-  expect(changed.status(),await changed.text()).toBe(200);
+  // Exercise the authenticated reschedule transaction against the real staging D1 worker.
+  // Do not assume "+4 hours" is available: provider-authored roster windows are authoritative.
+  // Probe later days at the SAME known-valid service time until the assigned provider accepts one.
+  const originalStart=String(rows[0].scheduledStart),originalEnd=String(rows[0].scheduledEnd);
+  let newStart="",newEnd="",changed:import("@playwright/test").APIResponse|null=null;
+  for(let dayOffset=1;dayOffset<=7;dayOffset++){
+    const candidateStart=new Date(new Date(originalStart).getTime()+dayOffset*86400000).toISOString();
+    const candidateEnd=new Date(new Date(originalEnd).getTime()+dayOffset*86400000).toISOString();
+    const terms=await page.context().request.get(`/api/grooming-booking-change?bookingId=${encodeURIComponent(bookingId)}`);expect(terms.status()).toBe(200);const termsBody=await terms.json();expect(termsBody.data.consentRevision).toMatch(/^[a-f0-9]{64}$/);
+    const attempt=await page.context().request.post("/api/grooming-booking-change",{data:{expectedConsentRevision:termsBody.data.consentRevision,bookingId,customerId:savedBody.data.customerId,action:"reschedule",reason:"Customer requested another available day",scheduledStart:candidateStart,scheduledEnd:candidateEnd}});
+    if(attempt.status()===200){newStart=candidateStart;newEnd=candidateEnd;changed=attempt;break;}
+    const failure=await attempt.text();
+    expect(attempt.status(),failure).toBe(409);
+    expect(failure).toContain("assigned provider is no longer available");
+  }
+  expect(changed,"an available reschedule day must exist in the UAT roster").not.toBeNull();
   const refreshed=await page.context().request.get("/api/customer-account");
   expect(refreshed.ok()).toBeTruthy();const refreshedBody=await refreshed.json();
   const changedBooking=refreshedBody.data.bookings.find((booking:{id:string})=>booking.id===bookingId);
-  expect(changedBooking.scheduledStart).toBe(newStart);expect(changedBooking.status).toBe("assigned");
+  expect(changedBooking.scheduledStart).toBe(newStart);expect(changedBooking.scheduledEnd).toBe(newEnd);expect(changedBooking.status).toBe("assigned");
 
   await page.locator("nav").getByRole("button",{name:/Activity/}).last().click();
   const activity=page.locator("article").filter({hasText:bookingId});
@@ -176,8 +186,9 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.screenshot({path:test.info().outputPath("customer-grooming-persisted.png"),fullPage:true});
   const rescheduleForm=page.getByRole("form",{name:"Reschedule booking",exact:true});
   await expect(rescheduleForm.getByRole("button",{name:"Confirm new appointment",exact:true})).toBeDisabled();
-  await rescheduleForm.getByLabel("New appointment date",{exact:true}).fill(newStart.slice(0,10));await rescheduleForm.getByLabel("New appointment time (IST)",{exact:true}).fill("11:00");await rescheduleForm.getByLabel("Reason for changing the appointment",{exact:true}).fill("Please move our appointment back to late morning.");await rescheduleForm.getByRole("checkbox").check();
-  const movedResponse=page.waitForResponse(response=>response.url().endsWith("/api/grooming-booking-change")&&response.request().method()==="POST");await rescheduleForm.getByRole("button",{name:"Confirm new appointment",exact:true}).click();const moved=await movedResponse;expect(moved.status()).toBe(200);const movedBody=await moved.json();expect(movedBody.data.rescheduleFeeAmount).toBe(0);expect(movedBody.data.scheduledStart).toBe(new Date(`${newStart.slice(0,10)}T11:00:00+05:30`).toISOString());expect(Date.parse(movedBody.data.scheduledEnd)-Date.parse(movedBody.data.scheduledStart)).toBe(120*60000);
+  const originalIstDate=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(originalStart));
+  await rescheduleForm.getByLabel("New appointment date",{exact:true}).fill(originalIstDate);await rescheduleForm.getByLabel("New appointment time (IST)",{exact:true}).fill("11:00");await rescheduleForm.getByLabel("Reason for changing the appointment",{exact:true}).fill("Please move our appointment back to the original late-morning slot.");await rescheduleForm.getByRole("checkbox").check();
+  const movedResponse=page.waitForResponse(response=>response.url().endsWith("/api/grooming-booking-change")&&response.request().method()==="POST");await rescheduleForm.getByRole("button",{name:"Confirm new appointment",exact:true}).click();const moved=await movedResponse;expect(moved.status(),await moved.text()).toBe(200);const movedBody=await moved.json();expect(movedBody.data.rescheduleFeeAmount).toBe(0);expect(movedBody.data.scheduledStart).toBe(originalStart);expect(movedBody.data.scheduledEnd).toBe(originalEnd);expect(Date.parse(movedBody.data.scheduledEnd)-Date.parse(movedBody.data.scheduledStart)).toBe(120*60000);
   await expect(page.getByRole("status").filter({hasText:"Booking rescheduled"})).toBeVisible();await page.reload();await expect(page.getByRole("region",{name:"Booking details",exact:true})).toContainText("11:00");
   const cancelForm=page.getByRole("form",{name:"Cancel or review booking",exact:true});
   const confirm=cancelForm.getByRole("button",{name:"Confirm cancellation",exact:true});

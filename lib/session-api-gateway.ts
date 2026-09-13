@@ -23,7 +23,10 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/grooming-service-location"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")};}
   if(url.pathname==="/api/customer-grooming-summary"&&method==="GET")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/grooming-booking-change"&&method==="GET")return{permission:"scheduling.book",subjectType:"customer"};
-  if(url.pathname==="/api/grooming-booking-change"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")};}
+  // The route performs authoritative booking/customer ownership checks itself. Do not consume a
+  // cloned browser request body here: on streamed browser POSTs this can stall the downstream body
+  // reader before the route can answer. Session auth still requires a customer with scheduling.book.
+  if(url.pathname==="/api/grooming-booking-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/partner-grooming-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/grooming-route"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/grooming-route"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
