@@ -12,9 +12,12 @@ on:
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
       reseed:
-        description: 'Reload staff directory + provider roster (with the partner identity link) before sweeping'
+        # LOCKED after the 2026-09-13 Bengaluru UAT handover: reseeding is opt-in. The staff directory and
+        # provider roster (with the partner identity link) are already loaded on staging; leave this at
+        # 'false' so a sweep never rewrites seed rows under live testers unless ops explicitly asks.
+        description: 'Reload staff directory + provider roster before sweeping (opt-in; leave false during live UAT)'
         required: true
-        default: 'true'
+        default: 'false'
         type: choice
         options: ['true', 'false']
 
