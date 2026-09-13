@@ -158,13 +158,15 @@ export default function PartnerMobileApp() {
     if (!response.ok) throw proofFailure(response.status, body.error || "Unable to register proof media");
     const mediaId = body.data?.id, grant = body.data?.upload;
     if (!mediaId || !grant?.token || !grant.objectKey) throw proofFailure(500, "Proof registration did not return an upload grant");
-    // Step 2 - confirm the upload against that grant. This call was missing: without it the asset stayed
-    // pending_upload for ever, Ops could never review it and "Complete job" always refused. No object store
-    // is bound in UAT (the server answers adapterConnected:false), so the observed facts are the file's own
-    // size, checksum and type, which the server verifies against what was declared at registration.
-    const confirm = await boundedFetch("/api/service-media", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: mediaId, action: "confirm_upload", uploadToken: grant.token, storageReference: grant.objectKey, observedSizeBytes: item.sizeBytes, observedSha256: item.sha256, observedMimeType: item.mimeType }) });
-    const confirmed = await confirm.json() as { error?: string };
-    if (!confirm.ok) throw proofFailure(confirm.status, confirmed.error || "Unable to confirm proof upload");
+    // Step 2 - carry the bytes to the server. /api/service-media/upload hashes what actually arrived, checks
+    // size, checksum and type against the grant, stores the object when a private bucket is bound, and only
+    // then confirms the asset (the confirm_upload redemption happens server-side, after verification). The
+    // confirmation used to be made from the file's SELF-DECLARED size and checksum - the uploader's own claim
+    // about bytes the server never saw. That held only while no bucket was bound, and would have failed the
+    // moment one was (redeem then HEADs the bucket for an object that nobody had written).
+    const upload = await boundedFetch("/api/service-media/upload", { method: "PUT", headers: { "content-type": item.mimeType, "x-pawspace-media-id": mediaId, "x-pawspace-upload-token": grant.token }, body: item.file }, 60_000);
+    const uploaded = await upload.json().catch(() => ({})) as { error?: string };
+    if (!upload.ok) throw proofFailure(upload.status, uploaded.error || "Unable to upload proof media");
   };
 
   useEffect(() => {

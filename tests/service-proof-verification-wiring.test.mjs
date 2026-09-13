@@ -34,8 +34,9 @@ test("the media listing answers with the gate's rule and the Partner app confirm
   assert.match(route, /proofState:serviceProofState\(row\),blockedReason:serviceProofRefusal\(row\)/, "callers are told why a slot is not ready");
   assert.doesNotMatch(route, /proofReady:String\(row\.scan_status\)==="clean"/, "the stale scan-column formula must not come back");
   const partner = read("app/partner-app/page.tsx");
-  assert.match(partner, /action: "confirm_upload"/, "registration must be followed by confirmation");
-  assert.match(partner, /uploadToken: grant\.token/, "confirmation redeems the grant registration issued");
+  assert.match(partner, /boundedFetch\("\/api\/service-media\/upload", \{ method: "PUT"/, "registration must be followed by the upload that confirms it (server-side, after the bytes are verified)");
+  assert.match(partner, /"x-pawspace-upload-token": grant\.token/, "the upload presents the grant registration issued");
+  assert.match(read("app/api/service-media/upload/route.ts"), /redeemMediaUploadGrant\(db,\{token,objectKey:grant\.objectKey,observed:\{sizeBytes:bytes\.byteLength,sha256,mimeType:grant\.mimeType\}/, "confirmation is made from what the server measured, never from the uploader's claim");
   assert.match(partner, /describeProof\(/, "the partner is told the state of each proof slot from the server's own answer");
   const queue = read("lib/provider-proof-offline-queue.ts");
   assert.match(queue, /export async function discardProviderProof/, "a permanently refused proof is dropped instead of re-registered for ever");
