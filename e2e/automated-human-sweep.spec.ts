@@ -178,7 +178,9 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     await reachReview(page, { line2: "Near the corner park" });
 
     await page.getByRole("button", { name: /^Pay after service/ }).click();
-    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST");
+    // A reservation is a real scheduler evaluation on remote D1 (40 s+ once the roster carries several groomers
+    // per zone), so this wait gets its own budget instead of the 45 s action timeout.
+    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
     const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
     await expect(confirm, "Confirm booking enabled once mandatory fields are valid").toBeEnabled();
     await confirm.click();
@@ -212,7 +214,7 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     try {
       await reachReview(p2, { preferGroomer: false });
       await p2.getByRole("button", { name: /^Pay online/ }).click();
-      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 60_000 });
+      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
       await p2.getByRole("button", { name: "Confirm booking", exact: true }).click();
       const onlineRes = await createdOnline;
       const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string } };
