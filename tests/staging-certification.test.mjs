@@ -46,6 +46,11 @@ function world(over = {}) {
     rollbackReference: async () => "version 0f1e2d3c",
     d1: async (sql) => {
       calls.d1.push(sql);
+      if (sql.includes("has_home_base")) return [
+        { id: "uatcap_groom_south", updated_by: "founder_seed", seeded: 1, radius_gated: 1, has_home_base: 1 },
+        { id: "uatcap_host_cm", updated_by: "founder_seed", seeded: 1, radius_gated: 0, has_home_base: 0 },
+        { id: "PROV-REAL-1", updated_by: "ops@pawspace.in", seeded: 0, radius_gated: 1, has_home_base: 0 },
+      ];
       if (sql.includes("provider_capacity_profiles")) return HUMAN_UAT_SERVICES.flatMap(service => HUMAN_UAT_ZONES.map(zone => ({ service_code: service, zone_id: zone, provider_count: 1 })));
       const email = /email='([^']+)'/.exec(sql)?.[1];
       const row = email ? seeded.get(email) : undefined;
@@ -183,6 +188,34 @@ test("certification fails before handoff when any human-UAT service-zone provide
   assert.equal(report.ok, false);
   assert.equal(failed(report, "provider roster").length, 1);
   assert.match(failed(report, "provider roster")[0].detail, /grooming:blr-south/);
+});
+
+test("certification fails when a seeded roster row carries a provenance the scheduler drops before evaluation", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ d1: async sql => {
+    if (sql.includes("has_home_base")) return [
+      { id: "uatcap_groom_south", updated_by: "uat_staging_seed", seeded: 1, radius_gated: 1, has_home_base: 1 },
+    ];
+    return base.d1(sql);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "founder_seed provenance").length, 1);
+  assert.match(failed(report, "founder_seed provenance")[0].detail, /uatcap_groom_south \(uat_staging_seed\)/);
+});
+
+test("certification fails when a seeded grooming or training provider has no current home base", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ d1: async sql => {
+    if (sql.includes("has_home_base")) return [
+      { id: "uatcap_groom_south", updated_by: "founder_seed", seeded: 1, radius_gated: 1, has_home_base: 0 },
+      { id: "uatcap_host_cm", updated_by: "founder_seed", seeded: 1, radius_gated: 0, has_home_base: 0 },
+    ];
+    return base.d1(sql);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "home base").length, 1);
+  assert.match(failed(report, "home base")[0].detail, /uatcap_groom_south/);
+  assert.doesNotMatch(failed(report, "home base")[0].detail, /uatcap_host_cm/);
 });
 
 test("certification fails before handoff when Razorpay TEST or Maps UAT is not configured", async () => {
