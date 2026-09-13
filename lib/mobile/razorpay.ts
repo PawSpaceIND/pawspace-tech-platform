@@ -121,13 +121,15 @@ export async function openMobileRazorpayCheckout(options: MobileRazorpayCheckout
   if (checkoutOpen) return failure("CHECKOUT_ALREADY_OPEN", "Finish or close the current checkout before opening another");
   checkoutOpen = true;
   const win = window as unknown as SdkWindow;
-  // redirect:false keeps the in-page modal + handler as the primary path. callback_url is consumed only
-  // when Checkout.js itself falls back to a full-page redirect; it then POSTs the same receipt fields to
-  // PawSpace instead of leaving the customer on a Razorpay-hosted JSON page.
+  // The in-page modal + handler stays the primary path, so `redirect` is deliberately NOT set: forcing it
+  // true would reload the page after every payment, and an explicit false must never be read as a veto on
+  // Checkout.js's own redirect/hosted fallback. Whenever Checkout.js does leave the page (in-app browsers,
+  // WebViews, some bank/UPI flows) it POSTs the same receipt fields to callback_url instead of stranding
+  // the customer on a Razorpay-hosted JSON page.
   const payload = { key: options.keyId.trim(), order_id: options.orderId, amount: options.amountPaise,
     currency: "INR", name: options.name || "PawSpace (Sandbox)", description: options.description || "PawSpace Service Booking",
     prefill: options.prefill || {}, notes: { ...options.notes, environment: "sandbox", platform: "pawspace_mobile" },
-    theme: { color: options.themeColor || "#4b168c" }, redirect: false,
+    theme: { color: options.themeColor || "#4b168c" },
     ...(options.callbackUrl ? { callback_url: options.callbackUrl } : {}) };
   try {
     if (win.RazorpayCheckout && typeof win.RazorpayCheckout.open === "function") {

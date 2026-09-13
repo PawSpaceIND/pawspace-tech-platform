@@ -55,7 +55,9 @@ function BookingConfirmationInner(props: Props) {
     controller.current = instance;
     // A receipt carried back by the Razorpay redirect is verified server-side exactly like the modal
     // handler's. Without one, only the persisted server status is read; nothing is charged here.
-    if (!failedReturn) void instance.resume(receipt ?? undefined);
+    // A failed return still probes that status once, so a retry is never offered for money Razorpay
+    // already took, without parking a genuinely failed attempt in the waiting state.
+    if (failedReturn) void instance.probeStatus(); else void instance.resume(receipt ?? undefined);
     return () => { active = false; controller.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, props.orderId, props.paymentId, props.signature, failedReturn]);

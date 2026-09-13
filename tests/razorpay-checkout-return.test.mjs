@@ -102,7 +102,7 @@ function browser(t, win, document) {
 }
 const opts = { keyId: "rzp_test_returnFixture", orderId: "order_ReturnFixture1", amountPaise: 49950, currency: "INR" };
 
-test("Checkout.js receives callback_url alongside the modal handler, with redirect kept false", async t => {
+test("Checkout.js receives callback_url alongside the modal handler without forcing redirect mode either way", async t => {
   const constructed = [];
   const win = { location: { origin }, Razorpay: class { constructor(options) { constructed.push(options); this.options = options; } on() {} open() { this.options.handler({ razorpay_order_id: opts.orderId, razorpay_payment_id: "pay_ReturnFixture1", razorpay_signature: signature }); } } };
   browser(t, win);
@@ -110,7 +110,7 @@ test("Checkout.js receives callback_url alongside the modal handler, with redire
   assert.equal(result.success, true);
   assert.equal(constructed.length, 1);
   assert.equal(constructed[0].callback_url, `${origin}${CHECKOUT_RETURN_PATH}?bookingId=BK-RETURN-1`);
-  assert.equal(constructed[0].redirect, false, "the in-page modal stays primary; callback_url only serves the redirect fallback");
+  assert.equal("redirect" in constructed[0], false, "neither forced (would reload after every payment) nor explicitly false (must not veto Checkout.js's own redirect/hosted fallback)");
   assert.equal(typeof constructed[0].handler, "function");
   assert.equal(typeof constructed[0].modal?.ondismiss, "function");
 });
@@ -181,4 +181,18 @@ test("resume() rejects a receipt for another booking or a malformed one", async 
   assert.equal(c.requests.length, 0); assert.equal(c.states.at(-1).phase, "error");
   await c.controller.resume({ bookingId: "BK-RETURN-1", orderId: opts.orderId, paymentId: "pay_ReturnFixture1", signature: "short" });
   assert.equal(c.requests.length, 0); assert.equal(c.states.at(-1).phase, "error");
+});
+
+test("probeStatus() after a failed return publishes only a verified capture and never charges", async () => {
+  const c = client();
+  assert.equal(await c.controller.probeStatus(), "awaiting_confirmation");
+  assert.deepEqual(c.requests, [{ action: "status", bookingId: "BK-RETURN-1" }]);
+  assert.equal(c.states.length, 0, "an unverified status leaves the failed-return UI (and its retry) untouched");
+  assert.equal(c.opened.length, 0);
+  c.setStatus("captured");
+  assert.equal(await c.controller.probeStatus(), "captured");
+  assert.equal(c.states.at(-1).phase, "captured", "money Razorpay already took is surfaced instead of a second payment");
+  assert.equal(await c.controller.probeStatus(), "captured");
+  assert.equal(c.requests.length, 2, "a verified capture stops further calls");
+  await c.controller.start(); assert.equal(c.opened.length, 0, "a verified booking cannot open another checkout");
 });
