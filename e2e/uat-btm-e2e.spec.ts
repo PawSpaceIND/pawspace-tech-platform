@@ -23,7 +23,16 @@ import { dirname } from "node:path";
 
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
-const SERVICE_DATE = process.env.PW_SERVICE_DATE || "2026-09-14";
+/**
+ * Requested service date (IST). Default: the day after tomorrow. Every booking this proof makes holds a
+ * groomer for its window plus the travel-buffer neighbours, so running it repeatedly on the date manual
+ * testers are using starves them (2026-09-14 at BTM was exhausted this way); pass PW_SERVICE_DATE to
+ * prove a specific date.
+ */
+const SERVICE_DATE = process.env.PW_SERVICE_DATE || (() => {
+  const ist = new Date(Date.now() + 5.5 * 3_600_000 + 2 * 86_400_000);
+  return ist.toISOString().slice(0, 10);
+})();
 const PHONE = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
 // The partner app shows only the customer's FIRST name on job cards (partnerFirstName in
 // app/api/partner-grooming-jobs), so the first name must be distinctive on its own.
@@ -44,6 +53,10 @@ const PROVIDER_PHONES: Record<string, string> = {
   uatcap_groom_east_4: "9000000921", uatcap_groom_east_5: "9000000922", uatcap_groom_south_4: "9000000923", uatcap_groom_south_5: "9000000924",
   uatcap_groom_north_4: "9000000925", uatcap_groom_north_5: "9000000926", uatcap_groom_west_4: "9000000927", uatcap_groom_west_5: "9000000928",
   uatcap_groom_central_4: "9000000929", uatcap_groom_central_5: "9000000930",
+  uatcap_groom_east_6: "9000000931", uatcap_groom_east_7: "9000000932", uatcap_groom_east_8: "9000000933", uatcap_groom_south_6: "9000000934",
+  uatcap_groom_south_7: "9000000935", uatcap_groom_south_8: "9000000936", uatcap_groom_north_6: "9000000937", uatcap_groom_north_7: "9000000938",
+  uatcap_groom_north_8: "9000000939", uatcap_groom_west_6: "9000000940", uatcap_groom_west_7: "9000000941", uatcap_groom_west_8: "9000000942",
+  uatcap_groom_central_6: "9000000943", uatcap_groom_central_7: "9000000944", uatcap_groom_central_8: "9000000945",
 };
 /**
  * Slot order for the proof: the LATE windows first. Every booking the proof makes holds one groomer for that
