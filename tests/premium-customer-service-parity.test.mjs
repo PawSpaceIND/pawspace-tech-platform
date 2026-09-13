@@ -85,7 +85,7 @@ test("boarding and sitting premium presentation still uses governed quotes, capa
     /loadBoardingCommercial/,
     /quoteBoarding/,
     /createSittingQuote/,
-    /captureSittingQuoteSandbox/,
+    /BookingPaymentPage/,
     /createCanonicalSittingBooking/,
     /reserveUatSchedule/,
     /createCanonicalLifecycle/,
@@ -113,5 +113,5 @@ test("food premium presentation still uses catalogue quote order and subscriptio
 test("relocation remains a governed enquiry flow with no invented payment path", () => {
   const source = read("app/mobile-app/relocation-flow.tsx");
   hasAll(source, [/\/api\/relocation-enquiry/, /fetch\(/], "Relocation");
-  assert.doesNotMatch(source, /createCanonicalLifecycle|payment-link|payment_link|captureSittingQuoteSandbox|createTestTransaction/);
+  assert.doesNotMatch(source, /createCanonicalLifecycle|payment-link|payment_link|BookingPaymentPage|createTestTransaction/);
 });

@@ -20,13 +20,9 @@ export async function createCanonicalTrainingBooking(input:{
 }){
  const quote=input.trainingQuote;
  /*
-  * Routed through createCanonicalLifecycle rather than posting /api/canonical-bookings directly. This
-  * function used to do its own fetch, declaring payment.status:"captured" with a marker string it
-  * wrote itself, and so never passed through the sandbox capture that lib/training-commercial-
-  * governance.ts requires. Measured in a browser: the booking was refused with "Training quote
-  * requires server-confirmed sandbox capture before programme booking" and no request to
-  * /api/training-payment-sandbox was made at any point. One booking path, with the attestation on it,
-  * is the only arrangement in which the two cannot drift apart again. [PTJA-P1-F32]
+  * Customer checkout is verify-first. This creates the canonical payment-pending hold only; it never
+  * calls the legacy Training sandbox-capture endpoint and never promotes its own payment claim. A
+  * signed Razorpay/provider capture is the authority that later advances the booking to confirmed.
   */
  const data=await createCanonicalLifecycle({
   idempotencyKey:input.idempotencyKey,
@@ -43,7 +39,7 @@ export async function createCanonicalTrainingBooking(input:{
   provider:{id:input.provider.id,name:input.provider.name,model:input.provider.model},
   totalAmount:quote.totalAmount,
   amountDueNow:quote.amountDueNow,
-  payment:{method:"internal_uat",mode:quote.paymentMode,status:"created",detail:"Training UAT sandbox capture pending server attestation; live money disabled"},
+  payment:{method:"internal_uat",mode:quote.paymentMode,status:"created",detail:"Training checkout awaiting verified provider capture"},
   pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId},
  });
  return{...data,liveMoney:false} satisfies TrainingBookingResult;

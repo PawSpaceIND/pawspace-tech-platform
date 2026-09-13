@@ -102,3 +102,5 @@
 :global(html:not([data-paw-style="cartoon"])) .home .media nav{position:absolute;bottom:12px;right:12px;margin:0}
 :global(html:not([data-paw-style="cartoon"])) .home .media>button{margin-top:6px;max-width:calc(100% - 140px)}
 @media(max-width:370px){:global(html:not([data-paw-style="cartoon"])) .home .welcomeHero>div{flex-wrap:wrap}:global(html:not([data-paw-style="cartoon"])) .home .media nav{position:static}:global(html:not([data-paw-style="cartoon"])) .home .media>button{max-width:100%}}
+
+.ticker{overflow:hidden;border:1px solid var(--paw-line);border-radius:16px;background:var(--paw-raised);padding:10px 0}.ticker>div{display:flex;width:max-content;gap:34px;animation:pawTicker 24s linear infinite}.ticker span{font-size:13px;font-weight:700;color:var(--paw-text);white-space:nowrap}.ticker span:before{content:"•";color:var(--paw-primary);margin:0 10px}@keyframes pawTicker{to{transform:translateX(-50%)}}@media(prefers-reduced-motion:reduce){.ticker>div{animation:none;flex-wrap:wrap;width:auto;padding:0 12px}}

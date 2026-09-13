@@ -182,8 +182,10 @@ test("Pet Sitting Gate 1 refuses a booking whose body disagrees with the server 
   })));
   assert.match(otherWindow.message, /window changed after quote|does not match/);
 
-  const unpaid = await refusal(governance.governSittingBooking(db, validBooking(quote, { paymentStatus: "pending" })));
-  assert.match(unpaid.message, /captured in sandbox before confirmation|sandbox capture/);
+  const pending = await governance.governSittingBooking(db, validBooking(quote, { paymentStatus: "created" }));
+  assert.equal(pending.quoteId, quote.quoteId, "a created payment can establish a payment-pending booking hold");
+  const invalidPayment = await refusal(governance.governSittingBooking(db, validBooking(quote, { paymentStatus: "pending" })));
+  assert.match(invalidPayment.message, /payment state is invalid/);
 
   for (const reservationCount of [0, 2]) {
     const refused = await refusal(governance.governSittingBooking(db, validBooking(quote, { reservationCount })));

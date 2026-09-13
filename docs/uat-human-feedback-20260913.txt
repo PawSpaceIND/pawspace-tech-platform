@@ -1,0 +1,173 @@
+﻿PROFILE SECTION
+
+
+Form Box
+  
+
+
+1) Change: Canonical profile to PawParent Profile 
+2) Save profile option is great but edit pencil icon should be there so people know thats how they can update/edit details
+
+Address Box
+  
+
+After the address was updated - it is getting recorded twice. 
+Appearance Option Box
+
+
+  
+
+This is Excellent - Just alignment issue - Keep all options uniform in 3 by 2 buttons layout. Ocean premium is non aligned
+
+
+  
+
+Nice option - Lets keep this as well.
+
+
+
+
+Layout Appearance Option
+1. Professional
+  
+
+
+1) The upper section can be shown as an ad banner section - this needs to be more engaging and attractive in terms of the running offer of the day. Carousel - 4 options
+2) The search bar is not needed as the icons offering all services are just a scroll down. It takes up unnecessary space.
+3) What maya need today can be like in 1 line (your family pet) is not needed and space also not be wasted. 
+Example 
+  
+
+1. Placement of Oak B1504 Ad sponsored - we can have Maya’s Home
+2. Just search icon function
+3. Message inbox (to connect with more pet parents)
+4. Pic for profile
+
+
+  
+
+
+
+1. The payout needs rework - looks boring and too plain for this professional version.
+2. At home Vet services should be last option (9th service)
+3. Care for little need - instead of this - Highlight everything your pet needs, in one happy place. 
+4. Service        Supporting content
+Grooming        Professional grooming at home
+Training        Positive training at home
+Boarding        Home stays, never kennels
+Pet Sitting        Trusted care in your home
+Pet Taxi        Safe & comfy pet rides
+Dog Walking        Fun, safe daily walks
+Fresh Meals        Healthy meals, freshly made
+Pet Relocation        National & international relocation
+
+
+Care Guide Section
+  
+
+1. This section is not great in utility terms 
+2. We need to make the section interactive and engagement oriented 
+Ad post banner - to show 4 options
+3. Ticker section banner - moving to show 4 options
+4. View your bookings banner to be shown
+
+
+Bottom Navigation Tabs
+  
+
+
+
+Home 
+My Bookings  
+Community (for parents to share posts/blogs/awareness) and ads to increase DAU/MAU (Stickiness) (daily or monthly active users)
+Chat 
+Profile
+
+
+GROOMING SECTION
+  
+
+Rather than pet type - Pet names must be shown for multiple pets 
+For single pet - no need to show this part
+
+
+  
+
+Similarly this seems repetitive and taking space.. We can avoid additional steps 
+
+Keep it simple 
+1) Select Pet name (pet profile can be added separately)
+2) Choose a plan
+Let try to keep minimal steps 
+A) Pet B) Plan C) Slot and Date - BOOK
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+PLAN LAYOUT
+  
+
+
+Can we have a better way to show
+  
+
+
+
+  
+
+
+
+Inclusions and not inclusion tab is good for plan preview
+
+Quick comparison doesnt give exact comparison so we need better comparison or not have that section all together
+
+SUbscription plan - TOO Boarding and attractive 
+Way to much content with out any direction or clarity.
+
+
+
+
+
+
+  
+
+
+
+
+
+  
+
+Pets Back button not needed - customer should be able to slide the screen back completely back and forth
+
+
+FUNCTIONALITY TEST
+
+
+   1. If pet details ae added post selecting plan, the page revisits to select plan once again.
+   2. Pet detailed added in plan is not added in pet module - example i added Evy But it was not showing under my pets.
+   3. The pet DOB selection to adjust the Age in years which is not the case. Example i mentioned pet age to be 1 years and then selected DOB 2 years back - this should have updated the correct age rather than accepting
+   4. Address map should be there - should auto locate geo location than the verify option.
+   5. Date and Time slot need better UI
+   6. Preferred groomer option must be shown in respective area and then date time slot should be shared so that people can select as per groomer preference.
+   7. Verify Map and then verify address again both options are not working - bug
+   8. Groomer selection should also reflect in 1st booking else customers wont discover this comfort.
+   9. No of bookings and reviews can be added with service pics for people to check and book
+   10. When selecting the pet - Evy option is only displaying and not other pets… 
+   11. When u click on home screen and then pet grooming - only Evy pet name showing that was added under plans not pets updated in pet module
+   12. Multiple times asking to select plan and verify address again - this should not happen
+   13. The oage is going on circle between plan selection and pet selection but going to payment page. True for all plans
+   14. Subscription plns also same.

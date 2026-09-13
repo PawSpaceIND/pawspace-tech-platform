@@ -246,19 +246,19 @@ test("canonical Pet Sitting derives money and package truth from the governed qu
   const bookingId = created.data.data.bookingId;
   assert.ok(bookingId);
 
-  const booking = sqlite.prepare("SELECT package_code,package_name,total_amount,pricing_json FROM canonical_bookings WHERE id=?").get(bookingId);
+  const booking = sqlite.prepare("SELECT package_code,package_name,total_amount,status,pricing_json FROM canonical_bookings WHERE id=?").get(bookingId);
+  assert.equal(booking.status, "payment_pending");
   assert.equal(booking.package_code, quote.packageCode);
   assert.equal(booking.package_name, quote.packageName);
   assert.equal(Number(booking.total_amount), quote.totalAmount);
   const pricing = JSON.parse(booking.pricing_json);
   assert.equal(pricing.sittingQuoteId, quote.quoteId);
   assert.equal(pricing.sittingCommercial.quoteId, quote.quoteId);
-  assert.equal(pricing.sittingPaymentReference, capture.reference);
 
   const payment = sqlite.prepare("SELECT amount,amount_due_now,status,detail_json FROM booking_payments WHERE booking_id=?").get(bookingId);
   assert.equal(Number(payment.amount), quote.totalAmount);
   assert.equal(Number(payment.amount_due_now), quote.amountDueNow);
-  assert.equal(payment.status, "captured");
+  assert.equal(payment.status, "created");
   assert.equal(JSON.parse(payment.detail_json).sittingQuoteId, quote.quoteId);
 
   const used = quoteState(sqlite, quote.quoteId);

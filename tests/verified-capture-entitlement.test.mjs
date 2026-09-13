@@ -220,18 +220,18 @@ test("a verified payment failure leaves no usable subscription credits", async (
   );
 });
 
-test("sandbox/UAT behaviour is unchanged and explicitly environment-gated", async () => {
+test("sandbox/UAT subscription purchase is also verify-first", async () => {
   const { sqlite } = freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox" });
   seedScheduling(sqlite, "SG-SUB-1");
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   const response = await POST(subscriptionRequest());
   assert.equal(response.status, 201);
-  // In sandbox no money exists, so the UAT capture stands and the entitlement is active immediately —
-  // exactly the behaviour testers rely on, and it must not regress into pending.
-  assert.equal(payment(sqlite).status, "captured");
-  assert.equal(sub(sqlite).status, "active");
-  assert.equal(Number(sub(sqlite).sessions_reserved), 1);
-  assert.equal(usage(sqlite).status, "reserved");
+  // Sandbox is not payment authority. A customer-declared capture is demoted until verified
+  // Razorpay/provider evidence arrives, so no subscription credits are usable yet.
+  assert.equal(payment(sqlite).status, "created");
+  assert.equal(sub(sqlite).status, "pending_payment");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 0);
+  assert.equal(usage(sqlite).status, "pending_payment");
 
   // The gate is the environment variable and nothing else.
   // W2-07-PAY-003: still environment-gated, now through lib/payment-environment.ts, which requires an

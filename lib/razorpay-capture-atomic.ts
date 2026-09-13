@@ -277,7 +277,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
   try {
     const bookingId = text(payload.bookingId), paymentId = text(payload.paymentId), eventId = text(payload.eventId), captureReference = text(payload.gatewayPaymentId) || text(payload.gatewayOrderId) || text(payload.captureKey) || eventId;
     const sourceActor=text(payload.captureAuthority)==="provider_api"?"razorpay_provider_api":"razorpay_webhook";
-    const payment = await db.prepare("SELECT customer_id,method FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
+    const payment = await db.prepare("SELECT * FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
     if (!payment) throw new Error("Capture post-commit payment is missing");
     const booking = await db.prepare("SELECT city_id,service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
     await postCollectionEvent(db, {
@@ -303,6 +303,20 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     await ensureCaptureTimeline(db);
     await captureTimelineStatement(db, { environment: text(source.environment), paymentId,
       gatewayPaymentId: text(payload.gatewayPaymentId), gatewayOrderId: text(payload.gatewayOrderId), eventId }).run();
+    const confirmationServices=new Set(["grooming","dog_training","boarding","pet_sitting"]);
+    if(confirmationServices.has(text(booking?.service_code))&&text(booking?.status)==="payment_pending") {
+      const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
+      const captured=Number(recon?.captured_amount||0),dueNow=Number(payment.amount_due_now||0);
+      if(dueNow>0&&captured+0.009>=dueNow) {
+        const work=await db.prepare("SELECT provider_model FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+        const nextWork=text(work?.provider_model)==="commission"?"awaiting_acceptance":"assigned";
+        const changed=await db.prepare("UPDATE canonical_bookings SET status='confirmed',updated_at=? WHERE id=? AND status='payment_pending'").bind(now,bookingId).run();
+        if(Number(changed.meta?.changes||0)===1){
+          await db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=? AND status='payment_pending'").bind(nextWork,now,bookingId).run();
+          await db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'booking_confirmed_after_verified_payment','booking',?,?,?,?)").bind(`payment-confirm:${bookingId}`,bookingId,bookingId,sourceActor,JSON.stringify({serviceCode:text(booking?.service_code),amountDueNow:dueNow,capturedAmount:captured,verifiedGatewayCapture:true,captureAuthority:text(payload.captureAuthority)||"webhook_signature"}),now).run();
+        }
+      }
+    }
     if(text(booking?.service_code)==="pet_taxi") {
       const taxiSchedule=await db.prepare("SELECT booking_fee_amount,balance_amount,status,booking_fee_paid_at FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
       const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);

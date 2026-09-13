@@ -72,6 +72,26 @@ export const VALID = {
   weight: asSet(WEIGHT_BANDS),
 };
 
+
+export function ageBandFromDateOfBirth(dateOfBirth: string, now = new Date()): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOfBirth);
+  if (!match) return "";
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const dob = new Date(Date.UTC(year, month - 1, day));
+  if (dob.getUTCFullYear() !== year || dob.getUTCMonth() !== month - 1 || dob.getUTCDate() !== day) return "";
+  const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  if (dob.getTime() > today.getTime()) return "";
+  let years = today.getUTCFullYear() - dob.getUTCFullYear();
+  const beforeBirthday = today.getUTCMonth() < dob.getUTCMonth() ||
+    (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() < dob.getUTCDate());
+  if (beforeBirthday) years -= 1;
+  if (years >= 20) return "20+ years";
+  if (years >= 1) return `${years} year${years === 1 ? "" : "s"}`;
+  let months = (today.getUTCFullYear() - dob.getUTCFullYear()) * 12 + today.getUTCMonth() - dob.getUTCMonth();
+  if (today.getUTCDate() < dob.getUTCDate()) months -= 1;
+  return months < 6 ? "< 6 months" : "6–12 months";
+}
+
 export function validatePetProfile(species: PetSpecies, p: Partial<PetProfile>): string | null {
   const breedSet = species === "cat" ? VALID.catBreed : VALID.dogBreed;
   if (!p.breed || !breedSet.has(String(p.breed).toLowerCase())) return "Select the pet's breed";
@@ -89,6 +109,9 @@ export function validatePetProfile(species: PetSpecies, p: Partial<PetProfile>):
     const date = new Date(Date.UTC(year, month - 1, day));
     if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "Date of birth must be a valid date";
     if (date.getTime() > Date.now()) return "Date of birth can't be in the future";
+    const derivedAgeBand = ageBandFromDateOfBirth(p.dateOfBirth);
+    if (!derivedAgeBand) return "Date of birth must be a valid date";
+    if (p.ageBand && p.ageBand !== derivedAgeBand) return "Age must match the pet's date of birth";
   }
   return null;
 }

@@ -82,6 +82,7 @@ test("foreground sender is serialized, cancellable and latest-fix wins",async()=
 test("normal booking address path cannot persist a NULL active doorstep",async()=>{
  const picker=await source("app/mobile-app/address-picker.tsx"),service=await source("app/api/grooming-service-location/route.ts");
  assert.match(picker,/latitude:Number\(place\.latitude\)/);assert.match(picker,/longitude:Number\(place\.longitude\)/);
+ assert.match(service,/latitude:input\.latitude,longitude:input\.longitude/);assert.match(service,/governed\.addressId/);
  assert.match(service,/verifiedCoordinates/);assert.match(service,/coordinates\.latitude/);assert.match(service,/coordinates\.longitude/);
  assert.doesNotMatch(service,/hasCoords\s*\?\s*lat\s*:\s*null/);
 });

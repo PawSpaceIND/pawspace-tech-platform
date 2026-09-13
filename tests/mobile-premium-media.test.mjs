@@ -11,7 +11,7 @@ test("UI-MEDIA-01: customer home keeps the reviewed illustrated unified design",
   assert.doesNotMatch(source, /data-home-design="option-5-premium-visual"/);
   assert.match(source, /Welcome to your/);
   assert.match(source, /Petter half/);
-  assert.match(source, />Care for every little need</);
+  assert.match(source, />Everything your pet needs, in one happy place\.</);
   assert.match(source, /className=\{styles\.cards\}/);
   assert.match(source, /className=\{styles\.cardPhoto\}/);
   assert.match(source, /aria-label="Care with confidence"/);

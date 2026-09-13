@@ -23,7 +23,12 @@ test("Training customer booking consumes a server quote and records only UAT san
  // file's own fix. That is the same weakness that let this case pin the defect in the first place.
  assert.match(client,/payment:\{method:"internal_uat",mode:quote\.paymentMode,status:"created"/,"the client sends an unproven payment as 'created'");
  const lifecycle=await read("lib/canonical-lifecycle-client.ts");
- assert.equal(lifecycle.includes("/api/training-payment-sandbox"),true,"the single booking path performs the server sandbox capture");
+ assert.equal(lifecycle.includes("/api/training-payment-sandbox"),false,"booking creation must not manufacture a Training capture");
+ const mobile=await read("app/mobile-app/training-flow.tsx");
+ assert.equal(mobile.includes("BookingPaymentPage"),true,"the customer is sent through the shared payment page");
+ assert.equal(mobile.includes('bookingId={pendingPayment.bookingId}'),true,"Razorpay checkout is tied to the canonical pending booking");
+ const direct=await read("app/training/page.tsx");
+ assert.equal(direct.includes("BookingPaymentPage"),true,"the direct Training route also requires the payment page");
 });
 
 test("Training customer programme reserves the server-governed number of sessions",async()=>{const page=await read("app/training/page.tsx");for(const token of["occurrences:quote.meetAndGreet?1:quote.sessions","cadenceDays:7","quote.minutesPerSession","currentQuote.amountDueNow"])assert.equal(page.includes(token),true,token)});

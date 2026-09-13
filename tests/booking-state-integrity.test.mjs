@@ -54,15 +54,15 @@ test("mobile Training checkout uses the displayed quote and dynamic pet identity
  assert.match(flow,/primaryPet\?\.name/);
 });
 
-test("Training programme confirmation attests sandbox payment before canonical booking while Meet & Greet stays pending",async()=>{
+test("Training programme and Meet & Greet both enter verify-first payment pending checkout",async()=>{
  const originalFetch=globalThis.fetch,calls=[];
- globalThis.fetch=async(url,init={})=>{calls.push({url:String(url),init});if(String(url)==="/api/training-payment-sandbox")return Response.json({data:{quoteId:"TQ-1",status:"captured",amount:6000,currency:"INR",environment:"sandbox",reference:"TRN-UAT-PAY-1",duplicatePrevented:false,liveMoney:false,synthetic:true}},{status:201});return Response.json({data:{bookingId:"B-1",customerId:"CUS-A",petIds:["PET-A"],scheduleGroupId:"G-1",workOrderId:"WO-1",paymentId:"PAY-1",status:"confirmed",duplicatePrevented:false}},{status:201});};
+ globalThis.fetch=async(url,init={})=>{calls.push({url:String(url),init});return Response.json({data:{bookingId:"B-1",customerId:"CUS-A",petIds:["PET-A"],scheduleGroupId:"G-1",workOrderId:"WO-1",paymentId:"PAY-1",status:"payment_pending",duplicatePrevented:false}},{status:201});};
  try{
-  const common={idempotencyKey:"training-key",scheduleGroupId:"G-1",customer:{id:"CUS-A",name:"A",primaryPhone:"9999999999"},pets:[{sourceId:"PET-A",name:"Dog",species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageName:"P",scheduledStart:"2026-09-01T09:30:00.000Z",scheduledEnd:"2026-09-01T10:30:00.000Z",provider:{id:"P-1",name:"Trainer",model:"commission"},totalAmount:12000,amountDueNow:6000,payment:{method:"payment_link",mode:"split",status:"created",detail:"Awaiting verified payment"},pricing:{discount:0,trainingQuoteId:"TQ-1"}};
+  const common={idempotencyKey:"training-key",scheduleGroupId:"G-1",customer:{id:"CUS-A",name:"A",primaryPhone:"9999999999"},pets:[{sourceId:"PET-A",name:"Dog",species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageName:"P",scheduledStart:"2026-09-01T09:30:00.000Z",scheduledEnd:"2026-09-01T10:30:00.000Z",provider:{id:"P-1",name:"Trainer",model:"commission"},totalAmount:12000,amountDueNow:6000,payment:{method:"payment_link",mode:"split",status:"created",detail:"Awaiting verified Razorpay payment"},pricing:{discount:0,trainingQuoteId:"TQ-1"}};
   await createCanonicalLifecycle({...common,packageCode:"training-8-basic"});
-  assert.equal(calls.length,2);assert.equal(calls[0].url,"/api/training-payment-sandbox");assert.equal(JSON.parse(String(calls[0].init.body)).amount,6000);assert.equal(calls[1].url,"/api/canonical-bookings");const programmePayload=JSON.parse(String(calls[1].init.body));assert.equal(programmePayload.payment.status,"captured");assert.match(programmePayload.payment.detail,/TRN-UAT-PAY-1/);
+  assert.equal(calls.length,1);assert.equal(calls[0].url,"/api/canonical-bookings");const programmePayload=JSON.parse(String(calls[0].init.body));assert.equal(programmePayload.payment.status,"created");assert.match(programmePayload.payment.detail,/verified Razorpay payment/i);
   calls.length=0;
-  await createCanonicalLifecycle({...common,packageCode:"trainer-meet-greet",amountDueNow:500,totalAmount:500,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting verified payment"}});
+  await createCanonicalLifecycle({...common,packageCode:"trainer-meet-greet",amountDueNow:500,totalAmount:500,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting verified Razorpay payment"}});
   assert.equal(calls.length,1);assert.equal(calls[0].url,"/api/canonical-bookings");assert.equal(JSON.parse(String(calls[0].init.body)).payment.status,"created");
  }finally{globalThis.fetch=originalFetch;}
 });

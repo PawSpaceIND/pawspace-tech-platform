@@ -17,8 +17,8 @@ import BoardingCustomerStayPanel from "./boarding-customer-stay-panel";
 import BoardingCustomerStayStatus from "./boarding-customer-stay-status";
 import AddressPicker, { type ZoneResult } from "./address-picker";
 import { createSittingQuote, type SittingQuote } from "../../lib/sitting-commercial-client";
-import { captureSittingQuoteSandbox } from "../../lib/sitting-payment-client";
 import { createCanonicalSittingBooking } from "../../lib/sitting-booking-client";
+import BookingPaymentPage from "./booking-payment-page";
 
 // Unique per-booking nonce. Kept as a module-scope helper so the impure Date.now()
 // call lives outside component render (matching istDate in the taxi/walking flows).
@@ -165,7 +165,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     [boardingQuote, setBoardingQuote] = useState<BoardingQuote | null>(null),
     [chatOpen, setChatOpen] = useState(false),
     [view, setView] = useState<View>("stay"),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(""),
+    [pendingPayment,setPendingPayment]=useState<{bookingId:string;serviceName:string;total:number;dueNow:number;mode:"prepaid"|"split_50_50"}|null>(null);
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -283,9 +284,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${bookingNonce()}`,decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",cityId:serviceLocation.assignment.cityId,zoneId,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:selectedSitter?.providerId});
     let canonicalBookingId:string;
     if(mode==="sitting"){
-      const quote=governedSittingQuote!;await captureSittingQuoteSandbox({quoteId:quote.quoteId,amount:quote.amountDueNow});const result=await createCanonicalSittingBooking({idempotencyKey:`sitting:${quote.quoteId}:${customer.customerId}`,groupId:decision.groupId,sittingQuoteId:quote.quoteId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other",vaccinationStatus:"not_provided"})),cityId:serviceLocation.assignment.cityId,zoneId,packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:quote.paymentMode,detail:"Server-attested Sitting UAT sandbox capture"}});canonicalBookingId=result.bookingId;
+      const quote=governedSittingQuote!;const result=await createCanonicalSittingBooking({idempotencyKey:`sitting:${quote.quoteId}:${customer.customerId}`,groupId:decision.groupId,sittingQuoteId:quote.quoteId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other",vaccinationStatus:"not_provided"})),cityId:serviceLocation.assignment.cityId,zoneId,packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:quote.paymentMode,detail:"Awaiting verified Razorpay payment"}});canonicalBookingId=result.bookingId;
     }else{
-      const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"captured",detail:"UAT Boarding sandbox payment from server quote"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
+      const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"created",detail:"Awaiting verified Razorpay payment"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
     }
     const plan=mode==="boarding"?boardingCareDraft(careDraft,selectedNeeds,selectedBenefits,foodType):{...careDraft,specialInstructions:[careDraft.specialInstructions,selectedNeeds.length?`Care requests: ${selectedNeeds.join(', ')}`:''].filter(Boolean).join('\n')};setConfirmedCarePlan(plan);
     try{if(mode==="boarding")await saveCustomerBoardingCare(canonicalBookingId,plan,`initial-boarding-care:${canonicalBookingId}`);else await saveSittingCustomerPlan(canonicalBookingId,plan,`initial-sitting-care:${canonicalBookingId}`);setCareSaveError("");}catch(problem){setCareSaveError(`Booking saved, but care instructions were not confirmed. Review and save them below. ${problem instanceof Error?problem.message:''}`);if(mode==="boarding")setView("care");}
@@ -325,10 +326,12 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
       reminder: "Review the saved care plan before check-in",
     },canonicalBookingId);
     setConfirmedTotal(governedBoardingQuote?.totalAmount ?? governedSittingQuote?.totalAmount ?? total);
-    setBookingId(booking.id);
-    setConfirmed(true);
+    setBookingId(canonicalBookingId);
+    const paymentQuote=governedBoardingQuote??governedSittingQuote!;setPendingPayment({bookingId:canonicalBookingId,serviceName:mode==="boarding"?"Boarding":"Pet Sitting",total:paymentQuote.totalAmount,dueNow:paymentQuote.amountDueNow,mode:paymentQuote.paymentMode});
     } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {actionLock.current=false;setScheduling(false);}
+
   };
+  if(pendingPayment)return <BookingPaymentPage serviceName={pendingPayment.serviceName} totalAmount={pendingPayment.total} amountDueNow={pendingPayment.dueNow} mode={pendingPayment.mode} bookingId={pendingPayment.bookingId} onVerified={()=>{setPendingPayment(null);setConfirmed(true);}} onBack={()=>setPendingPayment(null)}/>;
   if (confirmed)
     return (
       <>

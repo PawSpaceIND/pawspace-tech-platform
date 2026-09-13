@@ -70,12 +70,14 @@ test("provider preview never reserves capacity before confirmation", () => {
   assert.equal((code.match(/reserveUatSchedule\(/g) || []).length, 1);
 });
 
-test("pay-now state is explicitly pending and cannot fall through to pay-after-service", () => {
-  assert.match(source, /initialPaymentStatus:pay==="online"\?"payment_pending":"due_after_service"/);
-  assert.match(source, /UAT sandbox authorization pending/);
+test("pay-now is gated by the shared payment page and cannot self-confirm", () => {
+  assert.match(source, /import BookingPaymentPage/);
+  assert.match(source, /mode:pay==="online"\?"prepaid":"pay_after_service"/);
+  assert.match(source, /setPendingPayment\(\{bookingId:canonical\.bookingId/);
+  assert.match(source, /<BookingPaymentPage serviceName="Grooming"/);
+  assert.match(source, /onVerified=\{\(\)=>\{/);
   assert.doesNotMatch(code, /Paid in UAT sandbox/);
   assert.match(transactionSource, /"payment_pending"/);
-  assert.match(transactionSource, /initialPaymentStatus\?\?\(/);
 });
 
 test("mutable persisted booking inputs participate in the idempotency fingerprint", () => {

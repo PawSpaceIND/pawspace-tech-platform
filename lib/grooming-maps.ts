@@ -5,10 +5,10 @@ export type ProviderPoint={lat:number;lng:number;accuracyMeters?:number;captured
 export type RouteResult={status:"configured"|"configuration_required"|"route_unavailable";distanceMeters?:number;durationSeconds?:number;polyline?:string;provider?:"google_routes";error?:string};
 
 export async function ensureGroomingMapTables(db:Db){await db.batch([
-  db.prepare("CREATE TABLE IF NOT EXISTS booking_service_locations (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,provider_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'customer_booking',status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_service_locations (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,provider_id TEXT NOT NULL,address_id TEXT,address_text TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'customer_booking',status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS provider_location_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,accuracy_meters REAL,captured_at INTEGER NOT NULL,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_route_snapshots (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,origin_latitude REAL NOT NULL,origin_longitude REAL NOT NULL,destination_address TEXT NOT NULL,distance_meters INTEGER,duration_seconds INTEGER,route_status TEXT NOT NULL,provider TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);await db.prepare("ALTER TABLE booking_service_locations ADD COLUMN address_id TEXT").run().catch(()=>{});}
 
 export function mapsNavigationUrl(destinationAddress:string,origin?:ProviderPoint){const params=new URLSearchParams({api:"1",destination:destinationAddress,travelmode:"driving"});if(origin)params.set("origin",`${origin.lat},${origin.lng}`);return `https://www.google.com/maps/dir/?${params.toString()}`;}
 
