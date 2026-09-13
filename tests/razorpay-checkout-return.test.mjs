@@ -100,7 +100,7 @@ function browser(t, win, document) {
   t.after(() => { if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
     if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument; });
 }
-const opts = { keyId: "rzp_test_returnFixture", orderId: "order_ReturnFixture1", amountPaise: 49950, currency: "INR" };
+const opts = { keyId: "rzp_test_rtn1", orderId: "order_ReturnFixture1", amountPaise: 49950, currency: "INR" };
 
 test("Checkout.js receives callback_url alongside the modal handler without forcing redirect mode either way", async t => {
   const constructed = [];

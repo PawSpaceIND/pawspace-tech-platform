@@ -24,7 +24,7 @@ const { createBookingPaymentOrder } = await import("../lib/payment-order-intent.
 const env = {
   PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", FORBID_PRODUCTION: "true",
   PAWSPACE_DEPLOYMENT_ENV: "e2e", NODE_ENV: "test", APP_ENV: "staging",
-  RAZORPAY_KEY_ID_SANDBOX: "rzp_test_confirmFixture",
+  RAZORPAY_KEY_ID_SANDBOX: "rzp_test_cfm1",
   RAZORPAY_KEY_SECRET_SANDBOX: "synthetic-checkout-secret-not-a-credential",
   RAZORPAY_WEBHOOK_SECRET_SANDBOX: "synthetic-webhook-secret-not-a-credential",
 };
