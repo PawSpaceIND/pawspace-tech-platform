@@ -221,6 +221,40 @@ test("every route that gates on requireProviderOwnership is covered by providerS
   assert.deepEqual(missed, [], "these provider routes are not in PROVIDER_SCOPED_API_PATHS");
 });
 
+test("providerScopedRequest claims nothing that does not gate on requireProviderOwnership", async () => {
+  // The converse of the test above, and the one that matters more. Under-coverage only re-breaks the
+  // route that was missed; over-coverage silently swaps the actor on a route that never asked for it.
+  // An earlier revision matched /api/provider- and /api/partner- as prefixes and caught twelve such
+  // routes — /api/provider-workspace resolves its provider from actor.email and would have been
+  // handed the synthetic "provider:<id>" a platform session carries, and /api/partner-otp is the
+  // login surface. Checking the set against the real gate in both directions is what rules that out.
+  // Driven through the predicate against every route on disk, so it constrains whatever matching
+  // strategy the predicate uses rather than just the literal set behind it.
+  const { providerScopedRequest, PROVIDER_SCOPED_API_PATHS } = await import("../lib/server-auth.ts");
+  const overreach = [];
+  const gated = new Set();
+  for (const file of routeFiles("app/api")) {
+    const path = `/${file.replace(/^app\//, "").replace(/\/route\.ts$/, "")}`;
+    if (readFileSync(file, "utf8").includes("requireProviderOwnership")) { gated.add(path); continue; }
+    if (providerScopedRequest(new Request(`${ORIGIN}${path}`))) overreach.push(path);
+  }
+  assert.deepEqual(overreach.sort(), [], "these routes take precedence over staff but never call the gate");
+  // And nothing unreachable is parked in the set.
+  assert.deepEqual([...PROVIDER_SCOPED_API_PATHS].filter(path => !gated.has(path)).sort(), [], "stale entries in PROVIDER_SCOPED_API_PATHS");
+});
+
+test("the provider-named routes that do not gate on ownership are left alone", async () => {
+  // Named explicitly so a future prefix shortcut fails here rather than in production.
+  const { providerScopedRequest } = await import("../lib/server-auth.ts");
+  for (const path of [
+    "/api/provider-workspace", "/api/partner-otp", "/api/provider-capacity-control",
+    "/api/provider-commercial-terms", "/api/provider-onboarding", "/api/provider-public-profile",
+    "/api/provider-service-rates", "/api/provider-verification", "/api/partner-finance",
+  ]) {
+    assert.equal(providerScopedRequest(new Request(`${ORIGIN}${path}`)), false, `${path} must keep staff precedence`);
+  }
+});
+
 test("providerScopedRequest does not claim routes that are not provider-scoped", async () => {
   const { providerScopedRequest } = await import("../lib/server-auth.ts");
   for (const path of ["/api/admin/sales-targets", "/api/me", "/api/razorpay-webhook", "/api/customer-checkout"]) {

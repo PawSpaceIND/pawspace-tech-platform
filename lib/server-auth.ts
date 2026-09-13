@@ -43,16 +43,22 @@ export function authFailure(message:string,status:number){return governedJsonErr
  * redacted 403, with no way to make the binding count. Here the explicit binding wins instead.
  * Staff who can actually manage providers keep precedence, so ops/admin behaviour is unchanged,
  * and the effect is confined to these paths so no permission changes anywhere else.
- * tests/provider-scope-precedence.test.mjs keeps this in sync with the routes that call the gate.
+ *
+ * Every entry is a route that calls requireProviderOwnership, listed one by one on purpose. An
+ * earlier revision matched the /api/provider- and /api/partner- prefixes instead, which also caught
+ * twelve routes that do not gate on ownership at all -- among them /api/provider-workspace, which
+ * resolves its provider from actor.email and would have seen the synthetic "provider:<id>" address a
+ * platform session carries, and /api/partner-otp, the login surface itself. Prefixes are not safe
+ * here: a route's name does not say how it authorises. tests/provider-scope-precedence.test.mjs
+ * pins this set in BOTH directions against the routes that really call the gate.
  */
-export const PROVIDER_SCOPED_API_PREFIXES=["/api/partner-","/api/provider-"] as const;
-export const PROVIDER_SCOPED_API_PATHS=new Set(["/api/boarding-proof","/api/boarding-stays","/api/booking-operations","/api/food-proof","/api/grooming-lifecycle","/api/grooming-payment-sandbox","/api/grooming-route","/api/location-recovery","/api/service-media","/api/service-media/upload","/api/sitting-lifecycle","/api/sitting-proof","/api/taxi-adjustments","/api/taxi-lifecycle","/api/taxi-proof","/api/taxi-recovery","/api/training-provider-earnings","/api/training-session-media","/api/training-sessions","/api/walking-lifecycle","/api/walking-proof","/api/walking-recovery"]);
+export const PROVIDER_SCOPED_API_PATHS=new Set(["/api/boarding-proof","/api/boarding-stays","/api/booking-operations","/api/food-proof","/api/grooming-lifecycle","/api/grooming-payment-sandbox","/api/grooming-route","/api/location-recovery","/api/partner-grooming-jobs","/api/partner-job-feed","/api/provider-assignment-recovery","/api/provider-availability","/api/provider-chat","/api/provider-lms","/api/provider-safety-flag","/api/service-media","/api/service-media/upload","/api/sitting-lifecycle","/api/sitting-proof","/api/taxi-adjustments","/api/taxi-lifecycle","/api/taxi-proof","/api/taxi-recovery","/api/training-provider-earnings","/api/training-session-media","/api/training-sessions","/api/walking-lifecycle","/api/walking-proof","/api/walking-recovery"]);
 
 export function providerScopedRequest(request:Request){
   let pathname:string;
   try{pathname=new URL(request.url).pathname;}catch{return false;}
   const path=pathname.length>1&&pathname.endsWith("/")?pathname.slice(0,-1):pathname;
-  return PROVIDER_SCOPED_API_PATHS.has(path)||PROVIDER_SCOPED_API_PREFIXES.some(prefix=>path.startsWith(prefix));
+  return PROVIDER_SCOPED_API_PATHS.has(path);
 }
 
 export async function resolvePrimaryActor(request:Request):Promise<AuthenticatedActor>{
