@@ -84,6 +84,8 @@ const when = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(date);
 };
+/** expiresAt, dueAt and friends arrive as epoch milliseconds rather than as a date string. */
+const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
 export default function PartnerMobileApp() {
   const [tab, setTab] = useState<Tab>("home");
@@ -309,6 +311,11 @@ export default function PartnerMobileApp() {
     }
   };
 
+  // paymentRequestView reports a settled payment through paymentStatus and an elapsed link through
+  // status==="expired". They need different copy: one is finished, the other needs a replacement link.
+  const paymentSettled = Boolean(paymentRequest && ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus));
+  const paymentExpired = Boolean(paymentRequest && paymentRequest.status === "expired");
+
   // Both engagement shapes set the top-level totals; `computed` carries netPayout for contract and
   // commissionAmount for commission, so it is only ever a fallback here.
   const isCommission = engagement === "commission";
@@ -394,7 +401,32 @@ export default function PartnerMobileApp() {
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
               {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
               {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
-            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}><b>Payment due after service</b>{!paymentRequest ? <><p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p><button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button></> : <><p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>{paymentRequest.collectable ? <><p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p><p><code>{paymentRequest.qrPayload}</code></p></> : <p>This payment request is no longer collectable. Refresh or create a governed replacement request.</p>}<small>Razorpay ref {paymentRequest.providerReference}. Payment remains unpaid until a signature-verified gateway capture is reconciled.</small></>}</section>}
+            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}>
+              <b>Payment due after service</b>
+              {!paymentRequest ? <>
+                <p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p>
+                <button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button>
+              </> : <>
+                <p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>
+                {paymentRequest.collectable ? <>
+                  <p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p>
+                  <p><code>{paymentRequest.qrPayload}</code></p>
+                  {whenMs(paymentRequest.expiresAt) && <small>Collectable until {whenMs(paymentRequest.expiresAt)}.</small>}
+                </> : paymentSettled ? <p>This payment is already {label(paymentRequest.paymentStatus)} against the canonical payment record, so no further collection is due.</p>
+                  : <>
+                    {/* The expired branch used to say "create a governed replacement request" while the
+                        only create button lived in the !paymentRequest branch above - so the instruction
+                        named an action the screen did not offer. createPostServicePaymentRequest already
+                        issues a replacement once the old link has expired; this is that call. */}
+                    <p>{paymentExpired ? `This payment link expired${whenMs(paymentRequest.expiresAt) ? ` on ${whenMs(paymentRequest.expiresAt)}` : ""}.` : "This payment request is no longer collectable."} A governed replacement link can be issued for the same booking.</p>
+                    <div className={styles.primaryActions}>
+                      <button disabled={busy} onClick={() => void requestPayment()}>{busy ? "Working…" : "Create replacement payment request"}</button>
+                      <button type="button" disabled={busy} onClick={() => setPaymentPollKey(current => current + 1)}>Refresh payment status</button>
+                    </div>
+                  </>}
+                <small>Razorpay ref {paymentRequest.providerReference}. {paymentRequest.liveCapture ? "Capture is live." : "Sandbox only - no live capture."} Payment remains unpaid until a signature-verified gateway capture is reconciled.</small>
+              </>}
+            </section>}
             <section className={styles.notice}>
               <b>Live order impact</b>
               <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
@@ -433,8 +465,8 @@ export default function PartnerMobileApp() {
             {(earnings.incentives ?? []).map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
             {/* The commission ledger and its payout states: returned by providerWorkspace for every
                 commission partner and, until now, rendered nowhere at all. */}
-            {(earnings.commissionOrders ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.serviceCode)} · {label(item.status)}</b><p>Commission {money(item.commissionAmount)} on an order of {money(item.orderAmount)}</p><small>{label(item.commissionMode)} rate{item.dueAt ? ` · due ${when(new Date(item.dueAt).toISOString())}` : ""}</small></section>)}
-            {(earnings.payouts ?? []).map(item => <section key={item.id} className={styles.notice}><b>Payout {money(item.amount)} · {label(item.status)}</b><p>Booking {item.bookingId}{item.dueAt ? ` · due ${when(new Date(item.dueAt).toISOString())}` : ""}</p>{item.providerReference && <small>Reference {item.providerReference}</small>}</section>)}
+            {(earnings.commissionOrders ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.serviceCode)} · {label(item.status)}</b><p>Commission {money(item.commissionAmount)} on an order of {money(item.orderAmount)}</p><small>{label(item.commissionMode)} rate{item.dueAt ? ` · due ${whenMs(item.dueAt)}` : ""}</small></section>)}
+            {(earnings.payouts ?? []).map(item => <section key={item.id} className={styles.notice}><b>Payout {money(item.amount)} · {label(item.status)}</b><p>Booking {item.bookingId}{item.dueAt ? ` · due ${whenMs(item.dueAt)}` : ""}</p>{item.providerReference && <small>Reference {item.providerReference}</small>}</section>)}
             {earnings.note && <p className={styles.note}>{earnings.note}</p>}
           </>}
           <p className={styles.note}>Booking value is deliberately not shown as partner earnings. Payout instructions remain sandbox-only in this UAT candidate.</p>
