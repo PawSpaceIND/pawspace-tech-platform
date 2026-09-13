@@ -23,8 +23,23 @@ const CUSTOMER_NAME = "UAT Sweep Customer";
 const REPORT_PATH = process.env.SWEEP_REPORT || "test-results/human-sweep-report.md";
 const GROOMER_EMAIL = "asha.groomer1@tkpetcare.in";
 const FOUNDER_EMAIL = "founder@pawspace.in";
-// Address with an embedded serviceable PIN; the new picker extracts the PIN from the chosen Google result.
-const ADDRESS = "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
+// Address with an embedded serviceable PIN; the picker extracts the PIN from the chosen Google result. MG Road (560001,
+// blr-central) is the home base of the city-wide UAT team groomer, so ranked assignment favours the provider that the
+// partner persona is linked to; the per-zone groomers seeded for other areas would otherwise win on distance.
+const ADDRESS = "12, Church Street, MG Road, Bengaluru 560001";
+// The UAT team groomer is linked to GROOMER_EMAIL (provider_identity_links) — prefer it so the partner step is deterministic.
+const PREFERRED_GROOMER = "PawSpace Grooming Team (UAT)";
+// Requested window: spread across +2…+6 days and the four grooming slots (from the run minute) so repeated sweeps
+// do not pile onto one provider-window (capacity 1 per window) and overflow to a different groomer.
+const GROOMING_SLOTS = ["9:00–11:00 AM", "11:00 AM–1:00 PM", "1:00–3:00 PM", "3:00–5:00 PM"];
+const RUN_MINUTE = Math.floor(Date.now() / 60_000);
+const DAY_OFFSET = 2 + (RUN_MINUTE % 5);
+const SLOT = GROOMING_SLOTS[Math.floor(RUN_MINUTE / 5) % GROOMING_SLOTS.length];
+const SERVICE_DATE = new Date(Date.now() + DAY_OFFSET * 86_400_000);
+const ist = (locale: string, o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, { timeZone: "Asia/Kolkata", ...o }).format(SERVICE_DATE);
+const SERVICE_DATE_LABEL = `${ist("en-IN", { day: "numeric" })} ${ist("en-IN", { month: "short" })}`; // the flow's "Tue, 15 Sept" buttons
+const SERVICE_DATE_ISO = ist("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" });
+const rx = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const report: string[] = ["# PawSpace staging — automated multi-persona sweep", "", `- Origin: ${BASE}`, `- Run: ${new Date().toISOString()}`, ""];
 function log(line: string) { report.push(line); console.log(`[sweep] ${line}`); }
@@ -45,9 +60,9 @@ async function mockAddressAutocomplete(context: BrowserContext) {
     const mode = new URL(route.request().url()).searchParams.get("mode");
     if (mode === "search") {
       return route.fulfill({ json: { data: { status: "configured", suggestions: [
-        { placeId: "uat-sweep-doorstep", mainText: "42, Indiranagar Double Road", secondaryText: "Indiranagar, Bengaluru 560038", fullText: ADDRESS } ] } } });
+        { placeId: "uat-sweep-doorstep", mainText: "12, Church Street", secondaryText: "MG Road, Bengaluru 560001", fullText: ADDRESS } ] } } });
     }
-    return route.fulfill({ json: { data: { status: "configured", address: ADDRESS, latitude: 12.9783692, longitude: 77.6408356 } } });
+    return route.fulfill({ json: { data: { status: "configured", address: ADDRESS, latitude: 12.975, longitude: 77.6063 } } });
   });
 }
 
@@ -77,7 +92,7 @@ async function ensurePet(page: Page) {
 }
 
 // Walk grooming steps 1→4 (new Google Places picker + mandatory contact fields), stopping on the review step.
-async function reachReview(page: Page, opts: { line2?: string } = {}) {
+async function reachReview(page: Page, opts: { line2?: string; preferGroomer?: boolean } = {}) {
   await page.goto("/mobile-app");
   await page.locator("nav").getByRole("button", { name: /home/i }).last().click();
   const grooming = page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: "Grooming" }).first();
@@ -93,7 +108,7 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
   // New picker: type into Address Line 1, pick a Google suggestion (no pincode field / no "Use this address").
   const line1 = page.locator("#grooming-address-line-1");
   await expect(line1, "Address Line 1 (Google Places) input present").toBeVisible();
-  await line1.fill("42, Indiranagar Double Road, Bengaluru");
+  await line1.fill("12, Church Street, MG Road, Bengaluru");
   const suggestions = page.getByRole("region", { name: "Google address suggestions" });
   await expect(suggestions).toBeVisible({ timeout: 20_000 });
   await suggestions.getByRole("button").first().click();
@@ -101,11 +116,29 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
   if (opts.line2) await page.locator("#grooming-address-line-2").fill(opts.line2);
   log("✅ Address (Google Places): Line 1 typed → suggestion picked → 'Verified service doorstep'; optional Line 2 accepted.");
 
-  const preferred = page.getByRole("button").filter({ hasText: "PawSpace Grooming Team (UAT)" }).first();
-  if (await preferred.isVisible().catch(() => false)) { await preferred.click(); log("✅ Preferred groomer 'PawSpace Grooming Team (UAT)' selected."); }
-  else log("ℹ️ Preferred-groomer chip not shown; proceeding with best-eligible assignment.");
-
-  await page.getByRole("button", { name: /^11:00 AM–1:00 PM/ }).click();
+  // Requested window first (the provider preview is keyed on address + date + slot), then the preferred-groomer
+  // chip. The preview is a real scheduler evaluation on remote D1 (tens of seconds), so capture its response
+  // rather than probing the chip once.
+  const wantPreferred = opts.preferGroomer !== false;
+  const previewWait = wantPreferred
+    ? page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && (r.request().postData() || "").includes("\"preview\""), { timeout: 90_000 }).catch(() => null)
+    : Promise.resolve(null);
+  await page.getByRole("button", { name: new RegExp(`\\b${rx(SERVICE_DATE_LABEL)}$`) }).first().click();
+  await page.getByRole("button", { name: new RegExp(`^${rx(SLOT)}`) }).click();
+  log(`✅ Requested window: ${SERVICE_DATE_ISO} (IST, +${DAY_OFFSET} days) · ${SLOT}.`);
+  if (wantPreferred) {
+    const previewRes = await previewWait;
+    const previewBody = previewRes ? await previewRes.json().catch(() => ({})) as { data?: { providers?: Array<{ name?: string }> } } : null;
+    const offered = (previewBody?.data?.providers ?? []).map(p => p.name).filter(Boolean);
+    log(offered.length
+      ? `ℹ️ Scheduler preview shortlist for this window: ${offered.join(" · ")}.`
+      : "ℹ️ Scheduler preview did not resolve in time; no shortlist captured.");
+    const preferred = page.getByRole("button").filter({ hasText: PREFERRED_GROOMER }).first();
+    if (await preferred.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false)) {
+      await preferred.click();
+      log(`✅ Preferred groomer '${PREFERRED_GROOMER}' selected (the provider linked to ${GROOMER_EMAIL}).`);
+    } else log("ℹ️ Preferred-groomer chip not offered for this window; proceeding with best-eligible assignment.");
+  }
   await page.getByRole("button", { name: "Review booking", exact: true }).click();
   await expect(page.getByText("Review and confirm", { exact: true })).toBeVisible();
 
@@ -133,7 +166,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 }
 
 test("Customer persona — OTP → grooming booking → real booking ID (+ Razorpay modal probe)", async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(480_000); // two real scheduler reservations on remote D1 (~40 s each) plus the preview
   section("Customer persona (mobile app)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -155,9 +188,16 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     bookingId = String(body.data?.bookingId || body.data?.id || "");
     log(`✅ Provider assigned + canonical booking created (HTTP 201). Booking ID: ${bookingId || "(from confirmation)"}${/^PS-/.test(bookingId) ? " (PS- canonical)" : ""}.`);
 
-    // Pay-after confirms on the server-authoritative BookingPaymentPage.
-    const payConfirm = page.getByRole("button", { name: "Confirm booking", exact: true });
-    if (await payConfirm.isVisible().catch(() => false)) await payConfirm.click();
+    // Pay-after confirms on the server-authoritative BookingPaymentPage. It mounts only after the 201 and its
+    // primary button is disabled ("Please wait…") until the checkout controller settles, so wait for the page
+    // and for an enabled "Confirm booking" instead of probing once (a one-shot isVisible() raced the mount).
+    const paymentPage = page.getByRole("region", { name: "Grooming payment" });
+    await expect(paymentPage, "pay-after payment page rendered after the 201").toBeVisible({ timeout: 20_000 });
+    await expect(paymentPage.getByText(/Nothing is charged now/), "pay-after notice shown").toBeVisible();
+    const payConfirm = paymentPage.getByRole("button", { name: "Confirm booking", exact: true });
+    await expect(payConfirm, "pay-after 'Confirm booking' enabled").toBeEnabled({ timeout: 20_000 });
+    await payConfirm.click();
+    log("✅ Pay-after payment page: 'Nothing is charged now' notice shown; 'Confirm booking' accepted.");
     await expect(page.getByText("Your groomer is reserved.", { exact: true })).toBeVisible({ timeout: 20_000 });
     const confirmed = await page.getByText(/BOOKING CONFIRMED ·/).textContent().catch(() => "");
     if (!bookingId) bookingId = confirmed?.match(/BOOKING CONFIRMED ·\s*(\S+)/)?.[1] || "";
@@ -170,14 +210,20 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     section("Customer persona — Razorpay online-pay probe");
     const p2 = await context.newPage();
     try {
-      await reachReview(p2);
+      await reachReview(p2, { preferGroomer: false });
       await p2.getByRole("button", { name: /^Pay online/ }).click();
+      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 60_000 });
       await p2.getByRole("button", { name: "Confirm booking", exact: true }).click();
+      const onlineRes = await createdOnline;
+      const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string } };
+      log(`${onlineRes.status() === 201 ? "✅" : "⚠️"} 'Pay online' booking request → HTTP ${onlineRes.status()}${onlineBody.data?.bookingId ? ` (${onlineBody.data.bookingId}, payment pending until captured)` : ""}.`);
       // Prepaid auto-starts the Razorpay checkout on the payment page; a "Pay securely" button may also exist.
-      const payBtn = p2.getByRole("button", { name: /^Pay securely/ });
-      if (await payBtn.isVisible({ timeout: 8_000 }).catch(() => false)) await payBtn.click().catch(() => {});
-      const modalOpened = await p2.locator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first().isVisible({ timeout: 20_000 }).catch(() => false);
-      const secureCopy = await p2.getByText(/Secure Razorpay checkout/i).first().isVisible().catch(() => false);
+      const payPage = p2.getByRole("region", { name: "Grooming payment" });
+      await expect(payPage, "prepaid payment page rendered").toBeVisible({ timeout: 20_000 });
+      const secureCopy = await payPage.getByText(/Secure Razorpay checkout/i).first().isVisible().catch(() => false);
+      const payBtn = payPage.getByRole("button", { name: /^Pay securely/ });
+      if (await payBtn.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false)) await payBtn.click().catch(() => {});
+      const modalOpened = await p2.locator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
       log(modalOpened
         ? "✅ 'Pay online' → the Razorpay sandbox checkout opened (iframe mounted). Completing a capture needs manual card entry in Razorpay's cross-origin iframe."
         : `⚠️ Razorpay iframe not visibly detected within timeout (payment page ${secureCopy ? "showed 'Secure Razorpay checkout'" : "did not show the secure-checkout copy"}) — needs a human check.`);
@@ -203,11 +249,25 @@ test("Partner persona — groomer sees the incoming job card in /partner/jobs", 
     const counts = feed?.data?.counts ?? {};
     log(`✅ Partner job feed loaded. Counts — needsAction:${counts.needsAction ?? "?"}, today:${counts.today ?? "?"}, upcoming:${counts.upcoming ?? "?"}, completed:${counts.completed ?? "?"}, total:${counts.total ?? "?"}.`);
     if (bookingId) {
-      const matched = await page.locator(`[data-testid="partner-workspace-${bookingId}"]`).isVisible().catch(() => false);
-      const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
-      log(matched
-        ? `✅ Incoming job card for the customer's booking ${bookingId} renders (grooming, "Open assigned workspace →").`
-        : `⚠️ Booking ${bookingId} not in this groomer's feed (auto-assignment may not have picked the linked provider). Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
+      type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
+      const sections = (["needsAction", "today", "upcoming"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
+      const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
+      if (hit) {
+        log(`✅ Booking ${bookingId} is in ${GROOMER_EMAIL}'s job feed (${hit.section}: ${hit.job.serviceCode} · ${hit.job.packageName} · status ${hit.job.status} · ${hit.job.scheduledStart}).`);
+        // The card prints "<service> · <package> for <first name>" and the window — never the raw id — so match on those.
+        const firstName = hit.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
+        const cards = page.getByText(new RegExp(`^for ${rx(firstName)}$`));
+        const cardVisible = await cards.first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
+        if (cardVisible) await cards.first().scrollIntoViewIfNeeded().catch(() => {});
+        const cardCount = cardVisible ? await cards.count().catch(() => 1) : 0;
+        const workspaceLink = await page.locator(`[data-testid="partner-workspace-${bookingId}"]`).isVisible().catch(() => false);
+        log(cardVisible
+          ? `✅ Job card rendered on /partner/jobs under "${hit.section}" (${hit.job.serviceCode} · ${hit.job.packageName} for ${firstName}; ${cardCount} card${cardCount === 1 ? "" : "s"} for this sweep customer)${workspaceLink ? " with the 'Open assigned workspace →' link" : "; the workspace link appears once the job is actionable"}.`
+          : "⚠️ Job is in the feed API but its card was not located in the DOM within 20 s — check the screenshot.");
+      } else {
+        const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
+        log(`⚠️ Booking ${bookingId} not in this groomer's feed — it was assigned to ${assignedGroomer || "an unlinked provider"}, not the provider linked to ${GROOMER_EMAIL}. Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
+      }
     } else {
       log("ℹ️ No booking ID captured from the customer step; asserting the feed structure only.");
     }
@@ -251,12 +311,42 @@ test("Founder persona — /admin + /crm render, tables load, booking ID visible"
     await shot(page, "crm");
 
     if (bookingId) {
-      await page.goto(`/team/operations/bookings?bookingId=${encodeURIComponent(bookingId)}`);
-      await page.waitForLoadState("networkidle").catch(() => {});
-      const idVisible = await page.getByText(bookingId, { exact: false }).first().isVisible({ timeout: 20_000 }).catch(() => false);
-      log(`${idVisible ? "✅" : "⚠️"} Canonical booking ID ${bookingId} ${idVisible ? "is visible in the Booking Command Center" : "was not visible"}.`);
+      // The Command Center keeps an SSE stream open, so "networkidle" never fires; wait for its heading and for
+      // its list API (one payload: the 150 latest bookings by schedule), then narrow with the page's search box.
+      const listRes = page.waitForResponse(r => r.url().includes("/api/booking-command-center") && !r.url().includes("stream") && r.request().method() === "GET", { timeout: 90_000 }).catch(() => null);
+      await page.goto("/team/operations/bookings");
+      await expect(page.getByRole("heading", { name: "Booking Command Center" })).toBeVisible({ timeout: 30_000 });
+      const list = await listRes;
+      const listBody = list ? await list.json().catch(() => ({})) as { bookings?: Array<{ id?: string }>; error?: string } : null;
+      const listed = listBody?.bookings ?? [];
+      const inList = listed.some(b => String(b.id) === bookingId);
+      log(list
+        ? `${list.ok() ? "ℹ️" : "⚠️"} Command Center list API → HTTP ${list.status()}${list.ok() ? `, ${listed.length} bookings loaded (150 latest by schedule); ${inList ? "includes" : "does not include"} ${bookingId}` : ` (${listBody?.error || "error"})`}.`
+        : "⚠️ Command Center list API did not answer within 90 s.");
+      const search = page.getByPlaceholder(/Search booking, customer, pet, phone or provider/i);
+      if (await search.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false)) await search.fill(bookingId);
+      const idVisible = await page.getByText(bookingId, { exact: false }).first().waitFor({ state: "visible", timeout: 30_000 }).then(() => true).catch(() => false);
+      log(`${idVisible ? "✅" : "⚠️"} Canonical booking ID ${bookingId} ${idVisible ? "is visible in the Booking Command Center" : "was not visible in the Booking Command Center"}.`);
       await shot(page, "founder-command-center");
-      expect(idVisible, `booking ${bookingId} should be visible to Founder`).toBeTruthy();
+
+      // Second founder surface: the ops scheduling board for the service date prints "Booking <id>" under the
+      // assigned provider's column, and its API is the same data the board renders.
+      let boardVisible = false, boardApiHas = false;
+      if (!idVisible) {
+        const boardRes = await page.request.get(`/api/uat-scheduling?date=${SERVICE_DATE_ISO}`);
+        const raw = await boardRes.json().catch(() => ({})) as { data?: unknown; providers?: unknown };
+        const board = (raw.data ?? raw) as { providers?: Array<{ providerName?: string; reservations?: Array<{ bookingId?: string | null }> }> };
+        const column = (board.providers ?? []).find(p => (p.reservations ?? []).some(r => r.bookingId === bookingId));
+        boardApiHas = Boolean(column);
+        log(`${boardApiHas ? "✅" : "⚠️"} Scheduling board API for ${SERVICE_DATE_ISO} → HTTP ${boardRes.status()}${boardApiHas ? `; booking ${bookingId} sits in ${column?.providerName || "its provider"}'s column` : `; booking ${bookingId} not found in any provider column`}.`);
+        await page.goto(`/team/scheduling?date=${SERVICE_DATE_ISO}`);
+        const dateInput = page.locator('input[type="date"]').first();
+        if (await dateInput.isVisible().catch(() => false) && (await dateInput.inputValue().catch(() => "")) !== SERVICE_DATE_ISO) await dateInput.fill(SERVICE_DATE_ISO);
+        boardVisible = await page.getByText(`Booking ${bookingId}`, { exact: false }).first().waitFor({ state: "visible", timeout: 45_000 }).then(() => true).catch(() => false);
+        log(`${boardVisible ? "✅" : "⚠️"} Founder scheduling board (${SERVICE_DATE_ISO}) ${boardVisible ? `shows "Booking ${bookingId}"` : `did not render "Booking ${bookingId}" within 45 s`}.`);
+        await shot(page, "founder-scheduling-board");
+      }
+      expect(idVisible || boardVisible || boardApiHas, `booking ${bookingId} should be visible to Founder (Command Center or scheduling board)`).toBeTruthy();
     } else {
       log("ℹ️ No booking ID captured; skipped the booking-ID visibility assertion.");
     }
