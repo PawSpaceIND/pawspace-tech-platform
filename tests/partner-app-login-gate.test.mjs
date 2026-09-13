@@ -22,8 +22,18 @@ import { d1 } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__PARTNER_LOGIN_GATE_DB__", "__PARTNER_LOGIN_GATE_ENV__");
 const identitySession = await import("../app/api/identity-session/route.ts");
+const partnerOtp = await import("../app/api/partner-otp/route.ts");
 const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
 const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
+
+/* The same UAT gate the staging Worker runs with: OTP sandbox on, assertion material configured. The
+ * values are synthetic fixtures built at runtime (long enough for the gate's minimum length), not
+ * credentials. */
+const synthetic = (label) => `${label}-${"0123456789abcdef".repeat(2)}`;
+const UAT_ENV = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: synthetic("uat-signing-key"),
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: synthetic("uat-assertion-secret") };
+const cookieOf = (response) => String(response.headers.get("set-cookie") || "").split(";")[0];
+const escapeRegExp = (value) => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 
 const ORIGIN = "https://partner-login-gate.pawspace.test";
 const source = (path) => readFile(new URL("../" + path, import.meta.url), "utf8");
@@ -125,3 +135,137 @@ test("the shared OTP sign-in keeps the transport and selectors the browser journ
   assert.match(onboarding, /<PartnerLogin onLoggedIn=/);
   assert.doesNotMatch(onboarding, /<PartnerLogin[^>]*title=/);
 });
+
+/* ------------------------------------------------------------------------------------------------
+ * Sign out. The page has no local notion of "signed out": it asks the server to revoke the session and
+ * then re-runs the identity check, so the server's refusal is what opens the gate.
+ * ---------------------------------------------------------------------------------------------- */
+test("sign out revokes the session on the server, so the old cookie is refused and the gate opens", async t => {
+  const { db } = world(t);
+  const cookie = await sessionCookie(db, "provider", "UAT-PROVIDER-2", "partner_otp");
+  assert.equal((await readIdentity(cookie)).status, 200, "precondition: the session is valid");
+  const signedOut = await identitySession.DELETE(new Request(`${ORIGIN}/api/identity-session`, { method: "DELETE", headers: { cookie, origin: ORIGIN } }));
+  assert.equal(signedOut.status, 200);
+  assert.deepEqual(await signedOut.json(), { data: { loggedOut: true } });
+  assert.match(String(signedOut.headers.get("set-cookie")), new RegExp(`^${PLATFORM_SESSION_COOKIE}=`), "the browser is told to drop the cookie");
+  const after = await readIdentity(cookie);
+  assert.equal(after.status, 401, "a revoked session is refused even if the browser kept the cookie");
+  const { refuses } = await pageGuard();
+  assert.equal(refuses(after), true);
+});
+
+test("sign out is a same-origin write: a cross-site DELETE cannot end a partner's session", async t => {
+  const { db } = world(t);
+  const cookie = await sessionCookie(db, "provider", "UAT-PROVIDER-3", "partner_otp");
+  const blocked = await identitySession.DELETE(new Request(`${ORIGIN}/api/identity-session`, { method: "DELETE", headers: { cookie, origin: "https://evil.example" } }));
+  assert.equal(blocked.status, 403);
+  assert.equal((await readIdentity(cookie)).status, 200, "the session is untouched");
+});
+
+/* ------------------------------------------------------------------------------------------------
+ * Trainer sign-in. The staging roster is the only thing that decides which phone numbers can open
+ * /partner-app, so its canonical_providers statements are executed here verbatim and a trainer is then
+ * signed in through the REAL partner OTP route.
+ * ---------------------------------------------------------------------------------------------- */
+const TRAINERS = { uatcap_train_ft: "9000000931", uatcap_train_east: "9000000932", uatcap_train_south: "9000000933",
+  uatcap_train_north: "9000000934", uatcap_train_west: "9000000935", uatcap_train_central: "9000000936" };
+async function rosterIdentityStatements() {
+  const roster = await source("scripts/uat-staging-provider-capacity.sql");
+  const create = roster.match(/^CREATE TABLE IF NOT EXISTS canonical_providers[^\n]*;$/m);
+  const insert = roster.match(/^INSERT OR IGNORE INTO canonical_providers[\s\S]*?\);$/m);
+  assert.ok(create && insert, "the roster must keep its canonical_providers identity block");
+  return { roster, statements: [create[0], insert[0]] };
+}
+
+test("the roster gives every UAT trainer a partner OTP number that is unique and tied to a live training profile", async () => {
+  const { roster, statements } = await rosterIdentityStatements();
+  const rows = [...statements[1].matchAll(/\('([a-z_]+)','blr','([^']*)','(\d{10})'/g)].map(([, id, name, phone]) => ({ id, name, phone }));
+  const phones = rows.map(row => row.phone);
+  assert.equal(new Set(phones).size, phones.length, "no two providers may share a sign-in number");
+  for (const [id, phone] of Object.entries(TRAINERS)) {
+    const row = rows.find(candidate => candidate.id === id);
+    assert.ok(row, `${id} must be able to sign in`);
+    assert.equal(row.phone, phone, `${id} keeps the documented number`);
+    assert.match(roster, new RegExp(`VALUES \\('${escapeRegExp(id)}','blr','${escapeRegExp(row.name)}','full_time','\\["dog_training"\\]'`),
+      `${id} must be the same provider the scheduler assigns training to, under the same name`);
+  }
+  const guide = await source("docs/UAT-TESTER-GUIDE.md");
+  for (const phone of Object.values(TRAINERS)) assert.match(guide, new RegExp(phone), "testers are told the number");
+});
+
+test("a seeded UAT trainer signs in through the real partner OTP route and the gate opens as that provider", async t => {
+  const { sqlite, db } = world(t);
+  globalThis.__PARTNER_LOGIN_GATE_ENV__ = { DB: db, ...UAT_ENV };
+  for (const statement of (await rosterIdentityStatements()).statements) sqlite.exec(statement);
+  const post = (body) => partnerOtp.POST(new Request(`${ORIGIN}/api/partner-otp`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify(body) }));
+  const requested = await post({ action: "request", phone: TRAINERS.uatcap_train_south });
+  const challenge = await requested.json();
+  assert.equal(requested.status, 200, JSON.stringify(challenge));
+  assert.match(String(challenge.data?.sandboxCode), /^\d{6}$/, "sandbox OTP is shown on screen");
+  const verified = await post({ action: "verify", challengeId: challenge.data.challengeId, code: challenge.data.sandboxCode, cityId: "blr" });
+  const session = await verified.json();
+  assert.equal(verified.status, 200, JSON.stringify(session));
+  assert.equal(session.data.providerId, "uatcap_train_south", "the phone resolves to the seeded trainer, not a fresh onboarding identity");
+  assert.equal(session.data.providerName, "Kavya R. (UAT South)");
+  const identity = await readIdentity(cookieOf(verified));
+  assert.equal(identity.status, 200);
+  assert.equal(identity.body.data.subjectType, "provider");
+  assert.equal(identity.body.data.subjectId, "uatcap_train_south");
+  const { refuses } = await pageGuard();
+  assert.equal(refuses(identity), false, "the trainer reaches the Partner app dashboard");
+  // An unseeded number still takes the onboarding path: a new provider, never a roster provider.
+  const stranger = await post({ action: "request", phone: "9000000999" });
+  const strangerChallenge = await stranger.json();
+  const strangerVerified = await post({ action: "verify", challengeId: strangerChallenge.data.challengeId, code: strangerChallenge.data.sandboxCode, name: "Stranger", cityId: "blr" });
+  const strangerSession = await strangerVerified.json();
+  assert.equal(strangerVerified.status, 200, JSON.stringify(strangerSession));
+  assert.doesNotMatch(String(strangerSession.data.providerId), /^uatcap_/, "a number outside the roster cannot become a roster provider");
+});
+
+/* ------------------------------------------------------------------------------------------------
+ * Page wiring for both.
+ * ---------------------------------------------------------------------------------------------- */
+test("the Partner app offers Sign out and only ever re-asks the server after it", async () => {
+  const page = await source("app/partner-app/page.tsx");
+  assert.match(page, /fetch\("\/api\/identity-session", \{ method: "DELETE" \}\)/, "sign out is the server's revoke, not a cookie trick");
+  assert.match(page, /finally \{\s*setSigningOut\(false\); setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);\s*\}/,
+    "after the revoke (or its failure) the identity check runs again and decides");
+  assert.equal(page.split('setSessionState("unauthenticated")').length, 2, "only the server-refusal path opens the gate");
+  assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out \/ switch partner"\}<\/b>/, "Sign out is in the More menu, named for what a tester looks for");
+  assert.match(page, /\{identity\?\.subjectId && <button type="button" className=\{styles\.headerSignOut\} onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}>/, "and in the header of a signed-in shell");
+  // Every per-account state is dropped when the session changes hands (sign-out and switch alike).
+  // Asserted as "each of these setters is present" rather than as the exact body: the reset is the
+  // right home for any new per-account state, and pinning the literal list made ADDING to it a test
+  // failure. PR #847 added three fields here (earningsNotice, engagement, workspaceState - the last
+  // naming the previous partner's booking ids), which is the behaviour this assertion wants.
+  const resetBody = page.match(/const resetAccountState = \(\) => \{([\s\S]*?)\n  \};/);
+  assert.ok(resetBody, "resetAccountState must exist as one shared reset");
+  for (const setter of ['setJobs([])', 'setSelectedId("")', 'setTab("home")', 'setOperationResult(null)',
+                        'setPaymentRequest(null)', 'setEarnings(null)', 'setMediaMessage("")', 'setMediaAssets([])']) {
+    assert.ok(resetBody[1].includes(setter), `resetAccountState must drop ${setter}`);
+  }
+  assert.equal(page.split("resetAccountState();").length, 3, "sign-out and the switch both reset the account state");
+  // One busy guard for both account actions: a sign-out and a switch can never be in flight together.
+  assert.match(page, /const accountBusy = signingOut \|\| switching;/);
+  assert.equal(page.split("if (accountBusy) return;").length, 3, "both handlers refuse to start while the other is in flight");
+  assert.match(page, /onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}/);
+  assert.match(page, /onClick=\{\(\) => void switchUatProvider\(\)\} disabled=\{accountBusy \|\| !uatProviderId \|\| !uatCode\}/);
+  assert.match(page, /<button type="button" className=\{styles\.identityPill\} onClick=\{\(\) => setTab\("more"\)\}/, "the header pill leads to it");
+});
+
+test("the UAT provider switch is rendered only when the gated roster answers, and it also just re-asks the server", async () => {
+  const page = await source("app/partner-app/page.tsx");
+  assert.match(page, /if \(sessionState !== "verified"\) return;\s*let cancelled = false;\s*fetch\("\/api\/uat-provider-switch", \{ cache: "no-store" \}\)/, "the roster is only requested for a verified session");
+  assert.match(page, /if \(response\.status === 404\) return null;/, "outside UAT the switch does not exist");
+  assert.match(page, /\.catch\(\(err\) => \{ if \(!cancelled\) \{ setUatProviders\(null\); setUatRosterError\(err instanceof Error \? err\.message : "Unable to load the UAT provider roster"\); \} \}\);/,
+    "a roster failure other than the shut gate is surfaced, not swallowed");
+  assert.match(page, /\{!uatProviders && uatRosterError && <p role="status" className=\{styles\.empty\}>Switch UAT provider is unavailable right now: \{uatRosterError\}<\/p>\}/);
+  assert.match(page, /const providerName = selected\?\.providerName \|\| uatProviders\?\.find\(\(provider\) => provider\.id === identity\?\.subjectId\)\?\.name \|\| "PawSpace Partner";/,
+    "a switched-to provider with no grooming job is still named from the roster");
+  assert.match(page, /\{uatProviders && <section className=\{styles\.uatSwitch\}/);
+  assert.match(page, /body: JSON\.stringify\(\{ providerId: uatProviderId, code: uatCode \}\)/, "the shared UAT access code is required");
+  assert.match(page, /setUatCode\(""\); resetAccountState\(\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
+    "a successful switch clears the old provider's state and re-runs the identity check");
+  assert.doesNotMatch(page, /setIdentity\(\{/, "the switch response never becomes a client-side identity");
+});
+

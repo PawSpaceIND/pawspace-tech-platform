@@ -179,6 +179,17 @@ test("the Partner app consumes the three workspace fields it used to drop", () =
   assert.match(page, /Service proof still outstanding/);
 });
 
+test("the shared account reset drops the workspace state on sign-out AND on a provider switch", () => {
+  // resetAccountState() backs both transitions. Switching partners is the cross-account case:
+  // workspaceState.pendingProof names the PREVIOUS partner's booking ids, so it must not survive.
+  const reset = page.match(/const resetAccountState = \(\) => \{([\s\S]*?)\n  \};/);
+  assert.ok(reset, "resetAccountState must exist");
+  assert.match(reset[1], /setEarningsNotice\(""\)/);
+  assert.match(reset[1], /setEngagement\(""\)/);
+  assert.match(reset[1], /setWorkspaceState\(\{ onboardingStatus: "", liveness: null, pendingProof: \[\] \}\)/);
+  assert.equal(page.split("resetAccountState();").length, 3, "sign-out and the switch both call it");
+});
+
 test("an unlinked identity clears the derived workspace state instead of keeping a stale gate", () => {
   const unlinked = page.slice(page.indexOf("linked === false"), page.indexOf("linked === false") + 400);
   assert.match(unlinked, /setWorkspaceState\(\{ onboardingStatus: "", liveness: null, pendingProof: \[\] \}\)/);
