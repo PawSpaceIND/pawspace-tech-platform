@@ -21,6 +21,8 @@ export async function queueProviderProof(input: Omit<QueuedProviderProof, "id" |
 }
 /** Drop a queued proof that the server has refused for good (a 4xx that a retry can never fix). */
 export async function discardProviderProof(id: string) { if (typeof indexedDB === "undefined") return; await tx("readwrite", store => store.delete(id)); }
+/** A provider session boundary owns its offline proof queue. Never carry one partner's bytes into the next session. */
+export async function clearProviderProofQueue() { if (typeof indexedDB === "undefined") return; await tx("readwrite", store => store.clear()); }
 /** An error carrying `permanent: true` tells the flush loop to discard the item instead of retrying it. */
 export const isPermanentProofError = (error: unknown): error is Error & { permanent: true } => Boolean(error && typeof error === "object" && (error as { permanent?: unknown }).permanent === true);
 export async function flushProviderProofQueue(register: (item: QueuedProviderProof) => Promise<void>) {
