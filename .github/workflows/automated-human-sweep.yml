@@ -57,6 +57,10 @@ jobs:
         run: |
           echo "===== HUMAN SWEEP REPORT ====="
           cat test-results/human-sweep-report.md 2>/dev/null || echo "(no report file produced)"
+          echo "===== UAT BTM END-TO-END REPORT ====="
+          cat test-results/uat-btm-report.md 2>/dev/null || echo "(no BTM report file produced)"
+          echo "===== PLAYWRIGHT ERROR CONTEXT (page outline at each failure) ====="
+          find test-results -name 'error-context.md' -print -exec cat {} \; 2>/dev/null || true
       - name: Upload report + screenshots
         if: always()
         uses: actions/upload-artifact@v4

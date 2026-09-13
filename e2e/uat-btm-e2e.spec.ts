@@ -35,7 +35,11 @@ const DOORSTEP = { latitude: 12.9166, longitude: 77.6101 };
 const PROVIDER_PHONES: Record<string, string> = {
   uatcap_groom_ft: "9000000901", uatcap_groom_cm: "9000000902", uatcap_groom_east: "9000000903",
   uatcap_groom_south: "9000000904", uatcap_groom_north: "9000000905", uatcap_groom_west: "9000000906", uatcap_groom_central: "9000000907",
+  uatcap_groom_east_2: "9000000911", uatcap_groom_east_3: "9000000912", uatcap_groom_south_2: "9000000913", uatcap_groom_south_3: "9000000914",
+  uatcap_groom_north_2: "9000000915", uatcap_groom_north_3: "9000000916", uatcap_groom_west_2: "9000000917", uatcap_groom_west_3: "9000000918",
+  uatcap_groom_central_2: "9000000919", uatcap_groom_central_3: "9000000920",
 };
+const CUSTOMER_EMAIL = "uat.btm.customer@example.com";
 
 const report: string[] = ["# PawSpace staging — BTM Layout (560068) end-to-end proof", "", `- Origin: ${BASE}`, `- Requested date: ${SERVICE_DATE}`, `- Run: ${new Date().toISOString()}`, ""];
 function log(line: string) { report.push(line); console.log(`[e2e] ${line}`); }
@@ -239,49 +243,107 @@ async function bookWithSlotFallback(page: Page, preferred: RegExp[], payMode: "o
   return last;
 }
 
+/** Bounded, log-friendly outline of what a frame shows right now (ARIA snapshot, else its text). Evidence for the report. */
+async function frameOutline(scope: FrameLocator | Page, label: string, limit = 3_500) {
+  try {
+    const body = scope.locator("body");
+    let text = "";
+    try { text = await body.ariaSnapshot({ timeout: 5_000 }); } catch { text = await body.innerText({ timeout: 5_000 }); }
+    text = text.replace(/[ \t]+\n/g, "\n").trim();
+    log(`🔍 ${label} (${text.length} chars):\n${text.slice(0, limit)}${text.length > limit ? "\n…(truncated)" : ""}`);
+  } catch (e) { log(`🔍 ${label}: not readable (${errText(e)})`); }
+}
+function logFrames(page: Page, label: string) {
+  log(`🔍 ${label}: ${page.frames().map(f => f.url() || "(about:blank)").join(" | ")}`);
+}
+
 /**
- * Drive Razorpay's sandbox checkout with the standard test card. The modal is Razorpay's own cross-origin
- * iframe, so every step is best-effort with screenshots; the OUTCOME is read from PawSpace's server via
- * the checkout status endpoint, never from what the modal appeared to show.
+ * Drive Razorpay's sandbox checkout (checkout.js v1, opened by lib/mobile/razorpay.ts with no prefill) with the
+ * standard test card. The modal is Razorpay's own cross-origin iframe, so every step is best-effort and logs
+ * what the frame showed; the OUTCOME is read from PawSpace's server via the checkout status endpoint, never
+ * from what the modal appeared to show.
  */
-async function completeRazorpayTestPayment(page: Page): Promise<string[]> {
-  const notes: string[] = [];
-  const iframe = page.locator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first();
-  await iframe.waitFor({ state: "visible", timeout: 45_000 });
-  notes.push("Razorpay sandbox checkout iframe mounted.");
+async function completeRazorpayTestPayment(page: Page): Promise<void> {
+  const selector = "iframe.razorpay-checkout-frame, iframe[src*='razorpay']";
+  await page.locator(selector).first().waitFor({ state: "visible", timeout: 45_000 });
+  log("ℹ️ Razorpay sandbox checkout iframe mounted.");
   await shot(page, "razorpay-modal");
-  const frame: FrameLocator = page.frameLocator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first();
-  const clickIfVisible = async (label: string, ...locators: Array<ReturnType<FrameLocator["locator"]>>) => {
-    for (const loc of locators) { const first = loc.first(); if (await first.isVisible({ timeout: 4_000 }).catch(() => false)) { await first.click({ timeout: 10_000 }).catch(() => {}); notes.push(`Clicked ${label}.`); return true; } }
+  const frame: FrameLocator = page.frameLocator(selector).first();
+  const visible = async (loc: ReturnType<FrameLocator["locator"]>, timeout = 3_000) => loc.first().isVisible({ timeout }).catch(() => false);
+  await page.waitForTimeout(2_500);
+  await frameOutline(frame, "Razorpay checkout as opened");
+
+  // A. Contact screen. The app sends no prefill, so the modal asks for a phone number (and email) first.
+  const contact = frame.locator("#contact, input[name='contact'], input[type='tel']");
+  if (await visible(contact, 8_000)) {
+    await contact.first().fill(PHONE);
+    const email = frame.locator("#email, input[name='email'], input[type='email']");
+    if (await visible(email)) await email.first().fill(CUSTOMER_EMAIL);
+    log("ℹ️ Contact screen: phone number (and email) entered.");
+    const proceed = frame.getByRole("button", { name: /continue|proceed|next/i });
+    if (await visible(proceed, 5_000)) { await proceed.first().click({ timeout: 10_000 }); log("ℹ️ Contact screen: Continue pressed."); }
+    await page.waitForTimeout(2_000);
+    await frameOutline(frame, "Razorpay checkout after the contact step");
+  }
+
+  // B. Payment method: Card.
+  const cardTiles = [
+    frame.locator("[data-value='card'], [data-method='card'], .method[data-value='card']"),
+    frame.getByRole("button", { name: /^cards?(\s|$)/i }),
+    frame.getByRole("button", { name: /credit|debit/i }),
+    frame.getByText(/^cards?$/i),
+    frame.getByText(/credit \/ debit|credit\/debit|credit or debit/i),
+  ];
+  let picked = false;
+  for (const tile of cardTiles) { if (await visible(tile)) { await tile.first().click({ timeout: 10_000 }).catch(() => {}); picked = true; break; } }
+  log(picked ? "ℹ️ Payment method: Card chosen." : "ℹ️ Payment method: no Card tile found (the card form may already be showing).");
+  const addCard = frame.getByText(/add (a )?new card/i);
+  if (await visible(addCard)) { await addCard.first().click({ timeout: 10_000 }).catch(() => {}); log("ℹ️ 'Add new card' chosen."); }
+
+  // C. Card form.
+  const number = frame.locator("#card_number, input[name='card[number]'], input[autocomplete='cc-number'], input[placeholder*='card number' i]");
+  if (!(await visible(number, 20_000))) {
+    await frameOutline(frame, "Razorpay checkout (card number field not found)");
+    logFrames(page, "Frames");
+    throw new Error("card number field not found in the Razorpay checkout");
+  }
+  await number.first().fill("4111111111111111");
+  await frame.locator("#card_expiry, input[name='card[expiry]'], input[autocomplete='cc-exp'], input[placeholder*='MM' i]").first().fill("12/29");
+  await frame.locator("#card_cvv, input[name='card[cvv]'], input[autocomplete='cc-csc'], input[placeholder*='CVV' i]").first().fill("123");
+  const holder = frame.locator("#card_name, input[name='card[name]'], input[autocomplete='cc-name'], input[placeholder*='name' i]");
+  if (await visible(holder)) await holder.first().fill("UAT BTM Customer");
+  log("ℹ️ Test card 4111 1111 1111 1111 entered.");
+  await shot(page, "razorpay-card");
+  await frameOutline(frame, "Razorpay checkout with the card entered");
+
+  // D. Pay.
+  const popupPromise = page.context().waitForEvent("page", { timeout: 25_000 }).catch(() => null);
+  const pay = frame.getByRole("button", { name: /^pay\b|pay ₹|pay now|continue/i }).last();
+  await pay.click({ timeout: 10_000 });
+  log("ℹ️ Pay pressed.");
+
+  // E. Razorpay's test bank page (Success / Failure): inside the checkout, in a nested frame, or as a popup.
+  const popup = await popupPromise;
+  const successIn = async (scope: { getByRole: FrameLocator["getByRole"] }, timeout: number) => {
+    const b = scope.getByRole("button", { name: /^success$/i }).first();
+    if (await b.isVisible({ timeout }).catch(() => false)) { await b.click({ timeout: 10_000 }); return true; }
     return false;
   };
-  // Some checkout versions ask for contact details first.
-  await clickIfVisible("contact continue", frame.getByRole("button", { name: /^(continue|proceed)/i }));
-  await clickIfVisible("Card payment method", frame.getByText(/^Card$/i), frame.getByText(/^Cards$/i), frame.getByText(/Credit \/ Debit/i), frame.locator("[data-method='card'], .method[data-value='card']"));
-  const number = frame.locator("input[name='card[number]'], #card_number, input[placeholder*='Card Number' i], input[autocomplete='cc-number']").first();
-  await number.waitFor({ state: "visible", timeout: 20_000 });
-  await number.fill("4111111111111111");
-  await frame.locator("input[name='card[expiry]'], #card_expiry, input[placeholder*='MM' i], input[autocomplete='cc-exp']").first().fill("12/29");
-  await frame.locator("input[name='card[cvv]'], #card_cvv, input[placeholder*='CVV' i], input[autocomplete='cc-csc']").first().fill("123");
-  const holder = frame.locator("input[name='card[name]'], #card_name, input[placeholder*='Name' i]").first();
-  if (await holder.isVisible().catch(() => false)) await holder.fill("UAT BTM Customer");
-  notes.push("Test card 4111 1111 1111 1111 entered.");
-  await shot(page, "razorpay-card");
-  const popupPromise = page.context().waitForEvent("page", { timeout: 25_000 }).catch(() => null);
-  const pay = frame.getByRole("button", { name: /^pay\b|pay ₹|pay now/i }).last();
-  await pay.click({ timeout: 10_000 });
-  notes.push("Pay pressed.");
-  // Razorpay's test bank page offers Success / Failure, either inside the checkout or in a popup.
-  const popup = await popupPromise;
-  const targets: Array<{ name: string; click: () => Promise<boolean> }> = [];
-  if (popup) targets.push({ name: "popup", click: async () => { const b = popup.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 15_000 }).catch(() => false)) { await b.click(); return true; } return false; } });
-  targets.push({ name: "checkout iframe", click: async () => { const b = frame.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 15_000 }).catch(() => false)) { await b.click(); return true; } return false; } });
-  targets.push({ name: "nested bank frame", click: async () => { for (const f of page.frames()) { const b = f.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 3_000 }).catch(() => false)) { await b.click(); return true; } } return false; } });
   let bankDone = false;
-  for (const target of targets) { if (await target.click()) { notes.push(`Test-bank "Success" pressed (${target.name}).`); bankDone = true; break; } }
-  if (!bankDone) notes.push("No test-bank Success button was found; the card may have been captured directly or the bank step did not render.");
+  const deadline = Date.now() + 60_000;
+  while (!bankDone && Date.now() < deadline) {
+    if (popup && await successIn(popup, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (popup)."); break; }
+    if (await successIn(frame, 3_000)) { bankDone = true; log("ℹ️ Test-bank \"Success\" pressed (checkout iframe)."); break; }
+    for (const f of page.frames()) { if (await successIn(f, 1_000)) { bankDone = true; log(`ℹ️ Test-bank "Success" pressed (frame ${f.url()}).`); break; } }
+    if (!bankDone) await page.waitForTimeout(2_000);
+  }
   await shot(page, "razorpay-after-pay");
-  return notes;
+  if (!bankDone) {
+    log("ℹ️ No test-bank Success button was found within 60 s; the card may have been captured directly, or the bank step did not render.");
+    logFrames(page, "Frames after Pay");
+    await frameOutline(frame, "Razorpay checkout after Pay");
+    if (popup) await frameOutline(popup, "Popup after Pay");
+  }
 }
 
 async function serverPaymentStatus(page: Page, id: string) {
@@ -353,7 +415,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 // ---------------------------------------------------------------------------------------------------
 
 test("1. Customer — BTM Layout 560068 on the requested date, pay online through the Razorpay sandbox", async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   section("1. Customer persona — BTM Layout checkout (online)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -372,8 +434,7 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
 
     section("2. Razorpay sandbox payment");
     try {
-      const notes = await completeRazorpayTestPayment(page);
-      for (const note of notes) log(`ℹ️ ${note}`);
+      await completeRazorpayTestPayment(page);
       const verified = page.getByText(/Payment verified by PawSpace/i).first();
       const reserved = page.getByText("Your groomer is reserved.", { exact: true });
       await Promise.race([verified.waitFor({ timeout: 60_000 }), reserved.waitFor({ timeout: 60_000 })]).catch(() => {});
@@ -382,11 +443,12 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
     }
     // The truth comes from the server, not from the modal.
     let status = await serverPaymentStatus(page, bookingId);
-    for (let i = 0; i < 12 && status.body?.data?.status !== "captured"; i += 1) { await page.waitForTimeout(5_000); status = await serverPaymentStatus(page, bookingId); }
+    for (let i = 0; i < 10 && status.body?.data?.status !== "captured"; i += 1) { await page.waitForTimeout(5_000); status = await serverPaymentStatus(page, bookingId); }
     paymentCaptured = status.body?.data?.status === "captured";
     log(paymentCaptured
       ? `✅ Server checkout status for ${bookingId}: "captured" (signed receipt verified by PawSpace). Post-payment saga engaged.`
-      : `❌ Server checkout status for ${bookingId}: HTTP ${status.http}, ${JSON.stringify(status.body).slice(0, 300)}. The sandbox capture did not complete under automation; see screenshots.`);
+      : `❌ Server checkout status for ${bookingId}: HTTP ${status.http}, ${JSON.stringify(status.body)}. The sandbox capture did not complete under automation; see the checkout outlines above and the screenshots.`);
+    await frameOutline(page, "Customer payment page after the checkout attempt", 2_000);
     if (paymentCaptured) {
       if (await page.getByText("Your groomer is reserved.", { exact: true }).isVisible({ timeout: 20_000 }).catch(() => false)) log("✅ Confirmation screen: \"Your groomer is reserved.\"");
     }
