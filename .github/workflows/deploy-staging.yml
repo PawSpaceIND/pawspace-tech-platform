@@ -125,6 +125,25 @@ jobs:
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ github.event.inputs.razorpay_relay_target_origin }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: ${{ github.event.inputs.razorpay_relay_target_sha }}
         run: node scripts/stage-config.mjs
+      # The 45 files in drizzle/ reached no deployed environment: the only `d1 migrations apply` in
+      # the repository targets a throwaway preview database, so ten tables that no ensure*Tables()
+      # creates — dpdp_consent_records, gst_documents, tax_rule_versions, gateway_refunds among them
+      # — depended on a step that never ran. This applies them before the Worker that uses them ships.
+      #
+      # NOT `wrangler d1 migrations apply`, deliberately. Migrations 0000-0016 carry 62 CREATE TABLE
+      # and 7 CREATE INDEX statements with no IF NOT EXISTS, which abort against a database that
+      # already holds those tables, and 0038 adds columns through `-- @add-column-if-missing`
+      # comment directives that wrangler cannot read. The runner below normalises both, and
+      # tests/d1-migration-pipeline.test.mjs proves the whole set applies and re-applies cleanly.
+      - name: Apply D1 migrations to staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node scripts/schema/apply-remote-migrations.mjs \
+            --binding DB \
+            --config dist/server/wrangler.json
       # Captured BEFORE the deploy, so a rollback target exists even when this deploy is the bad one.
       # Certification requires it: a deploy with no recorded predecessor has no way back, and the moment
       # that matters is after it has already gone wrong.
