@@ -454,9 +454,47 @@ async function openPartnerJob(page: Page): Promise<boolean> {
   return selectJobCard(page);
 }
 
+/** Re-open this booking's card after a refresh (the list re-renders and drops the selection). */
+async function reselectJobCard(page: Page): Promise<boolean> {
+  const cards = jobCards(page);
+  const n = await cards.count();
+  for (let i = 0; i < n; i += 1) {
+    await cards.nth(i).click().catch(() => {});
+    if (await page.getByText(`BOOKING ${bookingId}`, { exact: true }).waitFor({ state: "visible", timeout: 3_000 }).then(() => true, () => false)) return true;
+  }
+  return false;
+}
+
+/**
+ * Wait for a job action to become available. Right after a sandbox capture the booking can still read
+ * "payment pending" for a few seconds while the post-payment saga confirms it and creates the partner's
+ * work order; the partner app only offers "Accept job" once the status is confirmed. Refresh the list
+ * (↻) between polls and log the last status seen, so a slow saga is evidence rather than a mystery.
+ */
+async function awaitPartnerAction(page: Page, label: RegExp, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = "";
+  let polls = 0;
+  while (Date.now() < deadline) {
+    if (await page.getByRole("button", { name: label }).first().isVisible().catch(() => false)) {
+      if (polls) log(`ℹ️ ${String(label)} became available after ${polls} refresh(es) (last status seen: "${lastStatus}").`);
+      return true;
+    }
+    lastStatus = (await page.locator("main").getByText(/^(payment pending|confirmed|assigned|on the way|arrived|in service|completed|awaiting acceptance)$/).first().textContent().catch(() => "")) || lastStatus;
+    polls += 1;
+    await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
+    await page.waitForTimeout(6_000);
+    await reselectJobCard(page);
+  }
+  log(`⚠️ ${String(label)} did not appear within ${Math.round(timeoutMs / 1000)} s; last job status seen: "${lastStatus}".`);
+  await frameOutline(page, `Partner job while waiting for ${String(label)}`, 2_500);
+  return false;
+}
+
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const button = page.getByRole("button", { name: label }).first();
-  await expect(button, `partner action ${label}`).toBeVisible({ timeout: 20_000 });
+  await awaitPartnerAction(page, label, 30_000);
+  await expect(button, `partner action ${label}`).toBeVisible({ timeout: 5_000 });
   // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
   // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
   const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
@@ -587,6 +625,7 @@ test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, sta
 async function partnerLifecycle(page: Page) {
   log(`✅ Job ${bookingId} visible in the partner app (customer ${CUSTOMER_NAME}).`);
   await shot(page, "partner-job");
+  expect(await awaitPartnerAction(page, /^Accept job$/, 150_000), "Accept job must become available once the post-payment saga confirms the booking").toBeTruthy();
   await partnerAct(page, /^Accept job$/, /assigned/i); log("✅ Accept job → assigned.");
   await partnerAct(page, /^Start journey$/, /on the way/i); log("✅ Start journey → on the way.");
 
