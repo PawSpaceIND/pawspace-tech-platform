@@ -25,7 +25,10 @@ const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.wo
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
 const SERVICE_DATE = process.env.PW_SERVICE_DATE || "2026-09-14";
 const PHONE = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
-const CUSTOMER_NAME = "UAT BTM Customer";
+// The partner app shows only the customer's FIRST name on job cards (partnerFirstName in
+// app/api/partner-grooming-jobs), so the first name must be distinctive on its own.
+const CUSTOMER_NAME = "Uatbtm Customer";
+const CUSTOMER_FIRST = CUSTOMER_NAME.split(" ")[0];
 const REPORT_PATH = process.env.E2E_REPORT || "test-results/uat-btm-report.md";
 const FOUNDER_EMAILS = ["founder@pawspace.in", "sunita.manager37@tkpetcare.in"];
 const PINCODE = "560068";
@@ -415,8 +418,9 @@ async function openPartnerJob(page: Page): Promise<boolean> {
   await page.goto("/partner-app");
   await expect(page.getByText("Verified", { exact: true })).toBeVisible({ timeout: 20_000 });
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
-  const cards = page.locator("button").filter({ hasText: CUSTOMER_NAME });
-  await expect.poll(async () => cards.count(), { timeout: 30_000 }).toBeGreaterThan(0);
+  const cards = page.locator("button").filter({ hasText: new RegExp(`\\b${CUSTOMER_FIRST}\\b|${bookingId}`) });
+  const listed = await expect.poll(async () => cards.count(), { timeout: 45_000 }).toBeGreaterThan(0).then(() => true, () => false);
+  if (!listed) { await frameOutline(page, `Partner Jobs tab (no card for "${CUSTOMER_FIRST}" or ${bookingId})`, 3_000); return false; }
   const n = await cards.count();
   for (let i = 0; i < n; i += 1) {
     await cards.nth(i).click();
