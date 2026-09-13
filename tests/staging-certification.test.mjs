@@ -29,7 +29,7 @@ const PRODUCTION_D1_ID = "99999999-8888-4777-8666-555555555555";
 const goodConfig = () => ({
   name: "pawspace-staging",
   d1_databases: [{ binding: "DB", database_name: "pawspace-staging", database_id: STAGING_D1_ID }],
-  vars: { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" },
+  vars: { PAWSPACE_PAYMENT_ENV: "sandbox", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", PAWSPACE_UAT_LOGIN: "on" },
 });
 const goodEnv = () => ({ EXPECTED_SHA: SHA, WORKER_NAME: "pawspace-staging", STAGING_D1_ID, PRODUCTION_D1_ID, PRODUCTION_WORKER_NAME: "pawspace-production", ACCESS_CODE });
 
@@ -148,6 +148,8 @@ test("the deployed config and SHA come from the same active version resource", a
     resources: { bindings: [
       { type: "d1", name: "DB", id: STAGING_D1_ID },
       { type: "plain_text", name: "PAWSPACE_PAYMENT_ENV", text: "sandbox" },
+      { type: "plain_text", name: "FORBID_PRODUCTION", text: "true" },
+      { type: "plain_text", name: "PAWSPACE_PAYMENT_LIVE_APPROVED", text: "false" },
       { type: "plain_text", name: "PAWSPACE_UAT_LOGIN", text: "on" },
     ] },
   };
@@ -251,7 +253,8 @@ test("a live version that cannot be read FAILS rather than being skipped", async
 // Environment mode
 // ---------------------------------------------------------------------------
 test("staging must be in sandbox payment mode with UAT sign-in on", async () => {
-  for (const [name, bad] of [["PAWSPACE_PAYMENT_ENV", "live"], ["PAWSPACE_UAT_LOGIN", "off"], ["PAWSPACE_PAYMENT_ENV", ""]]) {
+  for (const [name, bad] of [["PAWSPACE_PAYMENT_ENV", "live"], ["PAWSPACE_UAT_LOGIN", "off"], ["PAWSPACE_PAYMENT_ENV", ""],
+    ["FORBID_PRODUCTION", ""], ["FORBID_PRODUCTION", "false"], ["PAWSPACE_PAYMENT_LIVE_APPROVED", ""], ["PAWSPACE_PAYMENT_LIVE_APPROVED", "true"]]) {
     const vars = { ...goodConfig().vars, [name]: bad };
     const report = await runStagingCertification(world({ deployedConfig: async () => ({ ...goodConfig(), vars }) }));
     assert.equal(report.ok, false, `${name}=${bad} certified`);

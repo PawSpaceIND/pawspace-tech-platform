@@ -49,7 +49,14 @@ export const FORBIDDEN_ON_STAGING = {
 };
 
 /** Required staging modes, as name → the only accepted value. */
-export const REQUIRED_STAGING_VARS = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" };
+export const REQUIRED_STAGING_VARS = {
+  PAWSPACE_PAYMENT_ENV: "sandbox",
+  // Customer checkout refuses unless all three sandbox locks are declared; certify them so a staging
+  // deploy that cannot open the Razorpay TEST modal is caught here, not by a tester.
+  FORBID_PRODUCTION: "true",
+  PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+  PAWSPACE_UAT_LOGIN: "on",
+};
 
 /**
  * The staff identities /staging-login advertises. Each must be an ACTIVE app_users row whose role has
