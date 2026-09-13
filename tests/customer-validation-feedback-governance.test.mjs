@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, globSync } from "node:fs";
 import * as nodeModule from "node:module";
 
 // ---------------------------------------------------------------------------
@@ -86,16 +86,30 @@ test("a 5xx is redacted whether or not anyone marked it", async () => {
   assert.equal(body.error, "Unable to open payment", "internal failures must never describe themselves");
 });
 
-test("the four customer routes now throw a governed identity refusal", () => {
-  for (const path of [
-    "app/api/payment-order/route.ts",
-    "app/api/customer-account/route.ts",
-    "app/api/service-review/route.ts",
-    "app/api/customer-support-case/route.ts",
-  ]) {
+test("NO customer route throws the identity refusal ungoverned any more", () => {
+  // Swept by directory rather than by a list, because the first pass fixed only the four routes the
+  // frontend audit reached and left seven more carrying the identical defect - including
+  // pet-emergency, where a signed-out customer was told "Unable to raise emergency request".
+  const routes = globSync("app/api/**/route.ts", { cwd: new URL("../", import.meta.url) });
+  assert.ok(routes.length > 100, `expected the api route tree, found ${routes.length}`);
+
+  const ungoverned = routes.filter((path) => /throw new Response\("Verified customer identity is required"/.test(read(path)));
+  assert.deepEqual(ungoverned, [],
+    `these still redact the sign-in reason behind a generic failure: ${ungoverned.join(", ")}`);
+
+  const governed = routes.filter((path) => /throw authFailure\("A verified customer sign-in is required/.test(read(path)));
+  assert.ok(governed.length >= 11,
+    `expected every customer-identity refusal to be governed, found ${governed.length}: ${governed.join(", ")}`);
+});
+
+test("a refusal on a shared GET/POST helper does not claim a write happened", () => {
+  // ownedContext backs both verbs in these routes, so "before this can be saved" was wrong on a read.
+  for (const path of ["app/api/customer-account/route.ts", "app/api/service-review/route.ts", "app/api/customer-support-case/route.ts"]) {
     const source = read(path);
-    assert.match(source, /throw authFailure\("A verified customer sign-in is required/, path);
-    assert.doesNotMatch(source, /throw new Response\("Verified customer identity is required"/, path);
+    assert.match(source, /export async function GET/, path);
+    assert.match(source, /export async function POST/, path);
+    assert.doesNotMatch(source, /sign-in is required before this can be saved/,
+      `${path} serves GET from the same helper, so it must not say the read could not be saved`);
   }
 });
 

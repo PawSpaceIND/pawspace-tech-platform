@@ -4,7 +4,7 @@ import{ServiceReviewError,requestServiceReview,submitServiceReview,claimPublicRe
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin review write blocked",{status:403});}
-async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request),session=requestedCustomerId?null:await resolvePlatformSession(db,request);const customerId=String(requestedCustomerId||(session?.subjectType==="customer"?session.subjectId:"")).trim();if(!customerId)throw authFailure("A verified customer sign-in is required before this can be saved. Sign in and try again.",401);await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
+async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request),session=requestedCustomerId?null:await resolvePlatformSession(db,request);const customerId=String(requestedCustomerId||(session?.subjectType==="customer"?session.subjectId:"")).trim();if(!customerId)throw authFailure("A verified customer sign-in is required. Sign in and try again.",401);await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
 
 // Customer's own active review reward coupons.
 export async function GET(request:Request){
