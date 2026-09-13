@@ -414,19 +414,31 @@ async function partnerOtpLogin(context: BrowserContext, phone: string): Promise<
   return page;
 }
 
-async function openPartnerJob(page: Page): Promise<boolean> {
-  await page.goto("/partner-app");
-  await expect(page.getByText("Verified", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
-  const cards = page.locator("button").filter({ hasText: new RegExp(`\\b${CUSTOMER_FIRST}\\b|${bookingId}`) });
+/**
+ * Job cards read "14 Sept, 9:30 am Essential Bath Bruno · Uatbtm confirmed" in the accessibility tree, but
+ * their text nodes are adjacent (no whitespace between them), so match on the accessible NAME, not on text.
+ */
+function jobCards(page: Page) { return page.getByRole("button", { name: new RegExp(`${CUSTOMER_FIRST}|${bookingId}`) }); }
+
+/** On the Jobs tab: click through the cards for this customer until the detail shows BOOKING <id>. */
+async function selectJobCard(page: Page): Promise<boolean> {
+  const cards = jobCards(page);
   const listed = await expect.poll(async () => cards.count(), { timeout: 45_000 }).toBeGreaterThan(0).then(() => true, () => false);
   if (!listed) { await frameOutline(page, `Partner Jobs tab (no card for "${CUSTOMER_FIRST}" or ${bookingId})`, 3_000); return false; }
   const n = await cards.count();
   for (let i = 0; i < n; i += 1) {
     await cards.nth(i).click();
-    if (await page.getByText(`BOOKING ${bookingId}`, { exact: true }).isVisible({ timeout: 3_000 }).catch(() => false)) return true;
+    if (await page.getByText(`BOOKING ${bookingId}`, { exact: true }).waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false)) return true;
   }
+  await frameOutline(page, `Partner Jobs tab (${n} card(s) for "${CUSTOMER_FIRST}", none showing BOOKING ${bookingId})`, 3_000);
   return false;
+}
+
+async function openPartnerJob(page: Page): Promise<boolean> {
+  await page.goto("/partner-app");
+  await expect(page.getByText("Verified", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
+  return selectJobCard(page);
 }
 
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
@@ -583,7 +595,7 @@ async function partnerLifecycle(page: Page) {
   log(`${gpsRes.ok() ? "✅" : "❌"} GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
   await shot(page, "partner-gps");
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
-  await page.locator("button").filter({ hasText: CUSTOMER_NAME }).first().click();
+  expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
   await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
   await partnerAct(page, /^Start service$/, /in service/i); log("✅ Start service → in service.");
   await shot(page, "partner-in-service");
