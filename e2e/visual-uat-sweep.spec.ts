@@ -76,10 +76,12 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
   await grooming.getByRole("button", { name: /book now/i }).click();
   await page.getByRole("button", { name: /Choose a package/i }).click();
   await page.getByRole("button", { name: "Choose address and requested time" }).click();
-  await page.getByLabel("Complete doorstep address").fill("42, Indiranagar Double Road, Bengaluru");
-  await page.getByLabel("Pincode").fill("560038");
-  await page.getByRole("button", { name: "Use this address" }).click();
-  await page.getByRole("region", { name: "Matching map addresses" }).getByRole("button", { name: /42.*Indiranagar Double Road/ }).click();
+  await page.getByLabel(/Address Line 1/).fill("42, Indiranagar Double Road, Bengaluru");
+  await page
+    .getByRole("region", { name: "Google address suggestions" })
+    .getByRole("button", { name: /42.*Indiranagar Double Road/ })
+    .click();
+  await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Preferred groomer" })).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(PROVIDER_NAME) })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(PROVIDER_NAME) }).click();
