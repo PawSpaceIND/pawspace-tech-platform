@@ -4,6 +4,7 @@ import {boundedFetch} from "../../lib/bounded-fetch";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
+import PartnerLogin from "../partner/partner-login";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
 import { discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
@@ -61,6 +62,11 @@ const when = (value: string) => {
 export default function PartnerMobileApp() {
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
+  // The dashboard is gated on the SERVER's answer only. "checking" avoids flashing the sign-in form at
+  // a partner whose session is still being resolved; "unauthenticated" mounts the OTP sign-in in place
+  // of the dashboard. A successful OTP never becomes an identity here: it only re-asks the server.
+  const [sessionState, setSessionState] = useState<"checking" | "verified" | "unauthenticated">("checking");
+  const [identityKey, setIdentityKey] = useState(0);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState("");
   // Live order impact: the retired /groomer prototype was the only surface that reached the governed
@@ -86,10 +92,10 @@ export default function PartnerMobileApp() {
         if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
         return body.data;
       })
-      .then((data) => { if (!cancelled) { setIdentity(data); setError(""); } })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); });
+      .then((data) => { if (!cancelled) { setIdentity(data); setSessionState("verified"); setError(""); } })
+      .catch(() => { if (!cancelled) { setIdentity(null); setSessionState("unauthenticated"); } });
     return () => { cancelled = true; };
-  }, []);
+  }, [identityKey]);
 
   useEffect(() => {
     if (!identity?.subjectId) return;
@@ -257,6 +263,28 @@ export default function PartnerMobileApp() {
   };
 
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
+
+  // No verified provider session: the dashboard is not rendered at all. Sign-in is the same OTP
+  // transport the onboarding flow uses (/api/partner-otp issues the provider session cookie), and a
+  // successful verification only re-runs the server identity check above.
+  if (sessionState !== "verified") return <main className={styles.viewport}>
+    <section className={styles.phoneShell}>
+      <header className={styles.appHeader}>
+        <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
+        <div className={styles.identityPill}><i>{sessionState === "checking" ? "…" : "!"}</i><span>{sessionState === "checking" ? "Checking" : "Sign in"}</span></div>
+      </header>
+      <section className={styles.content} aria-label="Partner sign-in">
+        {sessionState === "checking"
+          ? <p role="status" className={styles.empty}>Checking your partner session…</p>
+          : <>
+            <PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"
+              description="Verify your registered phone number to open your jobs, GPS and earnings. Nothing on this screen is available without a verified provider session."
+              onLoggedIn={() => { setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
+            <p className={styles.empty}>New to PawSpace? <Link href="/partner/onboarding">Start your caregiver application</Link> first; the same phone number signs you in here once your profile exists.</p>
+          </>}
+      </section>
+    </section>
+  </main>;
 
   return <main className={styles.viewport}>
     <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
