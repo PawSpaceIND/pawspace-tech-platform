@@ -14,10 +14,16 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { makeD1 } from "./helpers/taxi-harness.mjs";
 import {
   applyIdempotentMigrationFile,
   normalizeReplaySafeDdl,
 } from "../scripts/schema/apply-idempotent-drizzle.mjs";
+
+installWorkersHooks("__MIGRATION_DB__", "__MIGRATION_ENV__");
+
+const capacity = await import("../lib/provider-capacity-governance.ts");
 
 const DIR = "drizzle";
 const FILES = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
@@ -25,15 +31,17 @@ const FILES = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 /*
  * Migration 0025 attaches triggers to provider_capacity_profiles, a table created at runtime by
  * lib/provider-capacity-governance.ts and by no migration. Staging and production have had it for
- * weeks; a brand-new database would not. Seeding it here reproduces the real deployment target
- * rather than a hypothetical empty one.
+ * weeks; a brand-new database would not.
+ *
+ * The prerequisite is created by calling the REAL owning module rather than by copying its DDL in
+ * here. A hand-written copy would drift the moment that module changes a column, and this test
+ * would then prove the migrations apply against a table shape that no longer exists anywhere.
  */
-const RUNTIME_PREREQUISITE = `CREATE TABLE IF NOT EXISTS provider_capacity_profiles (
-  id TEXT PRIMARY KEY, city_id TEXT, name TEXT, provider_model TEXT, services_json TEXT,
-  zones_json TEXT, live INTEGER, rating REAL, quality_score REAL, capacity INTEGER,
-  travel_buffer_minutes INTEGER, max_daily_jobs INTEGER, acceptance_timeout_minutes INTEGER,
-  status TEXT, version INTEGER, effective_from TEXT, effective_to TEXT, updated_by TEXT,
-  updated_at INTEGER)`;
+async function deploymentShapedDatabase() {
+  const sqlite = new DatabaseSync(":memory:");
+  await capacity.ensureProviderCapacityTables(makeD1(sqlite));
+  return sqlite;
+}
 
 function applyAll(db) {
   const failures = [];
@@ -47,11 +55,10 @@ const count = (db, type) =>
   Number(db.prepare(`SELECT count(*) AS n FROM sqlite_master WHERE type='${type}'`).get().n);
 
 // ---------------------------------------------------------------------------------------------
-test("the whole migration set applies to a deployment-shaped database with no failures", () => {
+test("the whole migration set applies to a deployment-shaped database with no failures", async () => {
   assert.equal(FILES.length, 45, "the suite covers every migration file in drizzle/");
 
-  const db = new DatabaseSync(":memory:");
-  db.exec(RUNTIME_PREREQUISITE);
+  const db = await deploymentShapedDatabase();
 
   const failures = applyAll(db);
   assert.deepEqual(failures, [], "every migration applies cleanly in sequence");
@@ -62,9 +69,8 @@ test("the whole migration set applies to a deployment-shaped database with no fa
 });
 
 // ---------------------------------------------------------------------------------------------
-test("re-applying the set on every deploy changes nothing and fails nothing", () => {
-  const db = new DatabaseSync(":memory:");
-  db.exec(RUNTIME_PREREQUISITE);
+test("re-applying the set on every deploy changes nothing and fails nothing", async () => {
+  const db = await deploymentShapedDatabase();
   assert.deepEqual(applyAll(db), []);
 
   const after = [count(db, "table"), count(db, "index"), count(db, "trigger")];
@@ -129,9 +135,8 @@ test("normalisation makes every create replay-safe, which is what lets the deplo
 });
 
 // ---------------------------------------------------------------------------------------------
-test("the objects only a migration can create are the ones the deploy step exists for", () => {
-  const db = new DatabaseSync(":memory:");
-  db.exec(RUNTIME_PREREQUISITE);
+test("the objects only a migration can create are the ones the deploy step exists for", async () => {
+  const db = await deploymentShapedDatabase();
   assert.deepEqual(applyAll(db), []);
 
   const tables = new Set(
