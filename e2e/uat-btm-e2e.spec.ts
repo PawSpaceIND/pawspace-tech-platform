@@ -452,7 +452,8 @@ async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
   log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
   if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
-  const shown = page.locator(".detailHead, [class*='detailHead']").getByText(expectStatus).first().or(page.getByText(expectStatus).first());
+  // The status shows on the job card (<em>) and in the detail (<span>); any visible occurrence will do.
+  const shown = page.getByText(expectStatus).first();
   if (!(await shown.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) await frameOutline(page, `Partner job after ${String(label)} (expected ${String(expectStatus)})`, 2_500);
   await expect(shown, `status after ${String(label)}`).toBeVisible();
 }
