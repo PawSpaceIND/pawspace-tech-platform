@@ -133,8 +133,14 @@ test("handling requirements, add-ons and the amount to collect are rendered, not
   assert.match(page, /selected\.safetyRequirements\.length/, "declaring a field is not showing it");
   assert.match(page, /Handling requirements/);
   assert.match(page, /selected\.addOns\.length/);
-  assert.match(page, /selected\.payment\.amountDueNow > 0/);
-  assert.match(page, /collect \$\{money\(selected\.payment\.amountDueNow\)\}/);
+  // The two amounts must not be conflated. amount_due_now is what was owed ONLINE at booking and the
+  // grooming flow sets it to 0 for pay_after_service, which is precisely when the partner collects -
+  // so labelling amountDueNow "collect" was backwards and showed nothing on the one job that needs it.
+  assert.match(page, /const collectAtDoor = selected && selected\.payment\.mode === "pay_after_service"/);
+  assert.match(page, /collect \$\{money\(collectAtDoor\)\}/, "the door figure comes from the booked amount");
+  assert.match(page, /money\(selected\.payment\.amountDueNow\)\} due online/, "amountDueNow is a prepaid note, not a collection");
+  assert.doesNotMatch(page, /collect \$\{money\(selected\.payment\.amountDueNow\)\}/,
+    "amountDueNow is 0 for pay_after_service, so it can never be the collection figure");
   assert.match(page, /selected\.occurrenceCount > 1/, "a multi-visit package must not read as a single visit");
 });
 

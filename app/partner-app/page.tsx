@@ -18,10 +18,14 @@ type JobEvent = { eventType: string; entityType: string; actorId: string; detail
 /**
  * Every field /api/partner-grooming-jobs actually returns for a job.
  *
- * The route projects safetyRequirements and addOns out of the booking's pricing_json and returns
- * payment.amountDueNow alongside the mode - none of which were declared here, so all of them were
- * dropped on arrival. A partner therefore drove to a job without the handling requirements recorded
- * against the pet and without the figure they are meant to collect at the door.
+ * The route projects safetyRequirements and addOns out of the booking's pricing_json and returns the
+ * payment amounts alongside the mode - none of which were declared here, so all of them were dropped
+ * on arrival. A partner therefore drove to a job without the handling requirements recorded against
+ * the pet and without any of the money on it.
+ *
+ * amount and amountDueNow are not interchangeable: amountDueNow is what the customer owed ONLINE at
+ * booking, which the flow sets to 0 for pay_after_service - exactly the case where the partner is the
+ * one collecting. The door figure is therefore `amount`, and the render keeps them apart.
  *
  * occurrenceCount matters for the same reason: a multi-visit package rendered as if it were one visit.
  */
@@ -336,6 +340,12 @@ export default function PartnerMobileApp() {
     }
   };
 
+  // What this partner actually collects in cash/UPI at the door: the booked total, and only while the
+  // booking is pay-after-service and nothing has been captured yet.
+  const collectAtDoor = selected && selected.payment.mode === "pay_after_service" && !["captured", "refunded", "partially_refunded"].includes(selected.payment.status)
+    ? Number(selected.payment.amount || selected.totalAmount || 0)
+    : 0;
+
   // paymentRequestView reports a settled payment through paymentStatus and an elapsed link through
   // status==="expired". They need different copy: one is finished, the other needs a replacement link.
   const paymentSettled = Boolean(paymentRequest && ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus));
@@ -452,8 +462,11 @@ export default function PartnerMobileApp() {
               <div><small>Customer</small><b>{selected.customer.name}</b><span>{selected.customer.maskedPhone}</span></div>
               <div><small>Pets</small><b>{selected.pets.map((pet) => pet.name).join(", ")}</b><span>{selected.pets.map((pet) => pet.breed).filter(Boolean).join(", ")}</span></div>
               <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}{selected.occurrenceCount > 1 ? ` · visit 1 of ${selected.occurrenceCount}` : ""}</span></div>
-              {/* amountDueNow is what this partner collects at the door; the mode alone never said how much. */}
-              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}{selected.payment.amountDueNow > 0 ? ` · collect ${money(selected.payment.amountDueNow)}` : ""}</span></div>
+              {/* The mode alone never said how much money was involved. The two amounts are NOT
+                  interchangeable: amount_due_now is what the customer owed ONLINE at booking, which the
+                  flow sets to 0 for pay_after_service - precisely the case where the partner collects.
+                  So the door figure is payment.amount, and amountDueNow is only ever a prepaid note. */}
+              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}{collectAtDoor > 0 ? ` · collect ${money(collectAtDoor)}` : selected.payment.amountDueNow > 0 ? ` · ${money(selected.payment.amountDueNow)} due online` : ""}</span></div>
               <div><small>Where</small><b>{selected.zoneId}</b><span>{selected.cityId}</span></div>
               <div><small>Package</small><b>{selected.packageName}</b><span>{selected.subscription ? `${label(selected.subscription)} plan` : money(selected.totalAmount)}</span></div>
             </div>
