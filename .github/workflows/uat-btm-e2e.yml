@@ -1,0 +1,61 @@
+name: UAT end-to-end (BTM Layout checkout, partner proof, completion)
+
+# Manual only. Drives a real browser against the DEPLOYED staging origin to prove the resolved booking
+# flow for BTM Layout & Bommanahalli (560068): customer sandbox OTP -> grooming booking on the requested
+# date -> provider assigned (no "No provider is available") -> Razorpay sandbox checkout -> partner OTP
+# login as the assigned UAT groomer -> accept, GPS, arrive, start service, upload before/after photos ->
+# founder approves in Control -> partner adds proof and completes. Uploads a step-by-step report and
+# screenshots. Never touches production; sandbox payments only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Staging origin to test'
+        required: true
+        default: 'https://pawspace-staging.karthik-fce.workers.dev'
+      service_date:
+        description: 'Requested service date (YYYY-MM-DD, IST)'
+        required: true
+        default: '2026-09-14'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-sweep
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run the BTM end-to-end proof
+        env:
+          PW_BASE_URL: ${{ github.event.inputs.base_url }}
+          PW_SERVICE_DATE: ${{ github.event.inputs.service_date }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          E2E_REPORT: test-results/uat-btm-report.md
+        run: npx playwright test --config playwright.uat-btm.config.ts
+      - name: Print the human-readable report
+        if: always()
+        run: |
+          echo "===== UAT BTM END-TO-END REPORT ====="
+          cat test-results/uat-btm-report.md 2>/dev/null || echo "(no report file produced)"
+      - name: Upload report + screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-btm-e2e-evidence
+          path: |
+            test-results/**
+            playwright-report-uat-btm/**
+          if-no-files-found: warn

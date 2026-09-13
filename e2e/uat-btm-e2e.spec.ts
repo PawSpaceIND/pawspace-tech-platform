@@ -1,0 +1,503 @@
+import { test, expect, type BrowserContext, type Page, type FrameLocator } from "@playwright/test";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+/**
+ * End-to-end proof against the DEPLOYED staging origin for the resolved BTM Layout booking flow.
+ *
+ *   1. Customer (sandbox OTP) books grooming at BTM Layout & Bommanahalli (560068) on the requested
+ *      date, pays online: the reserve call must assign a provider (no NO_SCHEDULE_AVAILABLE), the
+ *      canonical booking must be created, and the Razorpay sandbox checkout is driven with the test
+ *      card. Whether the capture completes is REPORTED from the server's own status, never assumed.
+ *   2. If the online capture could not be completed by automation, a pay-after booking is created so
+ *      the partner lifecycle can still be proved on a confirmed job.
+ *   3. Partner (OTP as the ASSIGNED UAT groomer's seeded number) accepts, starts the journey, reports
+ *      GPS at the booking's own doorstep coordinates, marks arrived, starts service and uploads the
+ *      before/after photos through the server-verified upload route.
+ *   4. Founder approves both photos in Control -> Customer booking lifecycle (maker/checker).
+ *   5. Partner adds service proof and completes the job.
+ *
+ * Address autocomplete is mocked so the Google Places picker resolves deterministically to a BTM
+ * doorstep (the picker UI is still exercised); everything else runs for real against staging.
+ */
+
+const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
+const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
+const SERVICE_DATE = process.env.PW_SERVICE_DATE || "2026-09-14";
+const PHONE = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
+const CUSTOMER_NAME = "UAT BTM Customer";
+const REPORT_PATH = process.env.E2E_REPORT || "test-results/uat-btm-report.md";
+const FOUNDER_EMAILS = ["founder@pawspace.in", "sunita.manager37@tkpetcare.in"];
+const PINCODE = "560068";
+const ADDRESS = "12, 16th Main Road, BTM Layout 2nd Stage, Bengaluru 560068";
+const DOORSTEP = { latitude: 12.9166, longitude: 77.6101 };
+/** Seeded UAT groomer numbers (scripts/uat-staging-provider-capacity.sql canonical_providers). */
+const PROVIDER_PHONES: Record<string, string> = {
+  uatcap_groom_ft: "9000000901", uatcap_groom_cm: "9000000902", uatcap_groom_east: "9000000903",
+  uatcap_groom_south: "9000000904", uatcap_groom_north: "9000000905", uatcap_groom_west: "9000000906", uatcap_groom_central: "9000000907",
+};
+
+const report: string[] = ["# PawSpace staging — BTM Layout (560068) end-to-end proof", "", `- Origin: ${BASE}`, `- Requested date: ${SERVICE_DATE}`, `- Run: ${new Date().toISOString()}`, ""];
+function log(line: string) { report.push(line); console.log(`[e2e] ${line}`); }
+function section(title: string) { report.push("", `## ${title}`, ""); console.log(`\n[e2e] === ${title} ===`); }
+async function shot(page: Page, name: string) { try { await page.screenshot({ path: `test-results/btm-${name}.png`, fullPage: true }); report.push(`  ↳ screenshot: test-results/btm-${name}.png`); } catch { /* best effort */ } }
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300);
+
+// Shared across the serial tests.
+let bookingId = "";
+let bookingMode: "online" | "pay_after" | "" = "";
+let paymentCaptured = false;
+let assignedProviderId = "";
+let assignedProviderName = "";
+let providerPhone = "";
+const uploadedPurposes: string[] = [];
+
+test.describe.configure({ mode: "serial" });
+test.afterAll(() => { try { mkdirSync(dirname(REPORT_PATH), { recursive: true }); writeFileSync(REPORT_PATH, report.join("\n") + "\n"); } catch { /* best effort */ } });
+
+function serviceDateLabel() {
+  // The date chips read "<weekday>, <d> <Mon>" (or "Today, <d> <Mon>") in IST; match on the day + month part.
+  const [y, m, d] = SERVICE_DATE.split("-").map(Number);
+  const value = new Date(Date.UTC(y, m - 1, d, 12));
+  const date = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" }).format(value);
+  return new RegExp(date.replace(".", "\\.").replace(/\s+/g, "\\s+"));
+}
+
+/** A tiny but real JPEG (1x1, baseline) with a per-call suffix so before/after differ. */
+function jpegBytes(seed: string) {
+  const base = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKpgA//Z", "base64");
+  // Trailing bytes after EOI are ignored by decoders; they make each upload's checksum unique.
+  return Buffer.concat([base, Buffer.from(`\n${seed}:${Date.now()}`)]);
+}
+
+async function mockAddressAutocomplete(context: BrowserContext) {
+  await context.route("**/api/address-autocomplete?*", async route => {
+    const mode = new URL(route.request().url()).searchParams.get("mode");
+    if (mode === "search") {
+      return route.fulfill({ json: { data: { status: "configured", suggestions: [
+        { placeId: "uat-btm-doorstep", mainText: "12, 16th Main Road, BTM Layout 2nd Stage", secondaryText: `BTM Layout, Bengaluru ${PINCODE}`, fullText: ADDRESS } ] } } });
+    }
+    return route.fulfill({ json: { data: { status: "configured", address: ADDRESS, latitude: DOORSTEP.latitude, longitude: DOORSTEP.longitude } } });
+  });
+}
+
+async function customerOtpLogin(page: Page) {
+  await page.goto("/mobile-app");
+  await page.locator("nav").getByRole("button", { name: /account/i }).last().click();
+  await page.getByPlaceholder("10-digit phone number").fill(PHONE);
+  await page.getByRole("button", { name: "Send OTP" }).click();
+  const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+  await expect(sandbox, "sandbox OTP must be shown on screen (staging sandbox mode)").toBeVisible({ timeout: 20_000 });
+  const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+  expect(code, "a 6-digit sandbox OTP must render").toMatch(/^\d{6}$/);
+  await page.getByPlaceholder("6-digit code").fill(code!);
+  const name = page.getByPlaceholder("Your name (first time only)");
+  if (await name.isVisible().catch(() => false)) await name.fill(CUSTOMER_NAME);
+  const verify = page.waitForResponse(r => r.url().includes("/api/customer-otp") && r.request().method() === "POST" && r.ok());
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  await verify;
+  await expect.poll(() => page.evaluate(async () => (await fetch("/api/identity-session", { cache: "no-store", credentials: "include" })).status)).toBe(200);
+}
+
+async function ensurePet(page: Page) {
+  const acct = await (await page.context().request.get("/api/customer-account")).json().catch(() => ({})) as { data?: { customerId?: string; pets?: unknown[] } };
+  if (acct.data?.pets?.length) return;
+  const res = await page.context().request.post("/api/customer-account", { data: { action: "upsert_pet", idempotencyKey: `uat-btm:${acct.data?.customerId}`, pet: { name: "Bruno", species: "dog", breed: "Labrador Retriever", vaccinationStatus: "not_provided" } } });
+  expect(res.ok(), `pet seed (${res.status()})`).toBeTruthy();
+}
+
+/** Walk grooming steps 1→4 for the BTM doorstep on SERVICE_DATE, stopping on the review step. Returns the slot used. */
+async function reachReview(page: Page, preferredSlots: RegExp[]) {
+  await page.goto("/mobile-app");
+  await page.locator("nav").getByRole("button", { name: /home/i }).last().click();
+  const grooming = page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: "Grooming" }).first();
+  const loc = page.getByRole("button", { name: "Choose your service location" });
+  if (await loc.isVisible().catch(() => false)) {
+    await loc.click();
+    await page.getByRole("dialog", { name: "Choose your service area" }).getByRole("button", { name: "Browse without location", exact: true }).click();
+  }
+  await grooming.getByRole("button", { name: /book now/i }).click();
+  await page.getByRole("button", { name: /Choose a package/i }).click();
+  await page.getByRole("button", { name: "Choose address and requested time", exact: true }).click();
+
+  const line1 = page.locator("#grooming-address-line-1");
+  await expect(line1, "Address Line 1 (Google Places) input present").toBeVisible();
+  await line1.fill("12, 16th Main Road, BTM Layout");
+  const suggestions = page.getByRole("region", { name: "Google address suggestions" });
+  await expect(suggestions).toBeVisible({ timeout: 20_000 });
+  await suggestions.getByRole("button").first().click();
+  await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.locator("#grooming-address-line-2").fill("2nd floor, opposite the park");
+  log(`✅ Address: "${ADDRESS}" picked through the Places picker → "Verified service doorstep" (pincode ${PINCODE}, zone blr-south).`);
+
+  const dateChip = page.locator("button[aria-pressed]").filter({ hasText: serviceDateLabel() }).first();
+  await expect(dateChip, `a date chip for ${SERVICE_DATE} must be offered`).toBeVisible({ timeout: 20_000 });
+  await dateChip.click();
+  log(`✅ Date ${SERVICE_DATE} selected ("${(await dateChip.textContent())?.trim()}").`);
+
+  let slotUsed = "";
+  for (const slot of preferredSlots) {
+    const chip = page.getByRole("button", { name: slot }).first();
+    if (await chip.isVisible().catch(() => false) && await chip.isEnabled().catch(() => false)) { await chip.click(); slotUsed = (await chip.textContent())?.trim() || String(slot); break; }
+  }
+  expect(slotUsed, "an available slot must exist on the requested date").not.toEqual("");
+  log(`✅ Slot "${slotUsed}" selected.`);
+  await page.getByRole("button", { name: "Review booking", exact: true }).click();
+  await expect(page.getByText("Review and confirm", { exact: true })).toBeVisible();
+  await page.getByLabel("Customer Name", { exact: true }).fill(CUSTOMER_NAME);
+  await page.getByLabel("Customer Phone Number", { exact: true }).fill(PHONE);
+  // Alternative phone deliberately left blank: it is optional and must not hold Confirm back.
+  await page.getByLabel("Special instructions to groomer", { exact: true }).fill("Bruno is nervous with clippers - go slow.");
+  log("✅ Review step: name + phone filled, alternative phone left blank (optional), instructions added.");
+  return slotUsed;
+}
+
+type ReserveOutcome = { status: number; body: Record<string, unknown> };
+async function confirmBooking(page: Page): Promise<{ reserve: ReserveOutcome | null; created: { status: number; body: Record<string, unknown> } }> {
+  const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST", { timeout: 60_000 }).catch(() => null);
+  const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 90_000 });
+  const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
+  await expect(confirm, "Confirm booking must be enabled with the alternative phone blank").toBeEnabled();
+  await confirm.click();
+  const reserveRes = await reservePromise;
+  const reserve = reserveRes ? { status: reserveRes.status(), body: await reserveRes.json().catch(() => ({})) as Record<string, unknown> } : null;
+  if (reserve) {
+    const data = (reserve.body.data ?? {}) as Record<string, unknown>;
+    const provider = (data.provider ?? {}) as Record<string, unknown>;
+    if (reserve.status === 200 && provider.id) {
+      assignedProviderId = String(provider.id); assignedProviderName = String(provider.name ?? "");
+      log(`✅ Capacity: reserve returned HTTP 200, status "${String(data.status)}", provider assigned: ${assignedProviderName || assignedProviderId} (${assignedProviderId}). The "No provider is available" refusal did NOT occur.`);
+    } else {
+      log(`❌ Capacity: reserve returned HTTP ${reserve.status} ${JSON.stringify(reserve.body).slice(0, 400)}`);
+    }
+  } else {
+    log("ℹ️ The reserve call was not observed separately (it may have been folded into the booking call); relying on the booking result.");
+  }
+  const createdRes = await createdPromise;
+  const created = { status: createdRes.status(), body: await createdRes.json().catch(() => ({})) as Record<string, unknown> };
+  return { reserve, created };
+}
+
+/**
+ * Drive Razorpay's sandbox checkout with the standard test card. The modal is Razorpay's own cross-origin
+ * iframe, so every step is best-effort with screenshots; the OUTCOME is read from PawSpace's server via
+ * the checkout status endpoint, never from what the modal appeared to show.
+ */
+async function completeRazorpayTestPayment(page: Page): Promise<string[]> {
+  const notes: string[] = [];
+  const iframe = page.locator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first();
+  await iframe.waitFor({ state: "visible", timeout: 45_000 });
+  notes.push("Razorpay sandbox checkout iframe mounted.");
+  await shot(page, "razorpay-modal");
+  const frame: FrameLocator = page.frameLocator("iframe.razorpay-checkout-frame, iframe[src*='razorpay']").first();
+  const clickIfVisible = async (label: string, ...locators: Array<ReturnType<FrameLocator["locator"]>>) => {
+    for (const loc of locators) { const first = loc.first(); if (await first.isVisible({ timeout: 4_000 }).catch(() => false)) { await first.click({ timeout: 10_000 }).catch(() => {}); notes.push(`Clicked ${label}.`); return true; } }
+    return false;
+  };
+  // Some checkout versions ask for contact details first.
+  await clickIfVisible("contact continue", frame.getByRole("button", { name: /^(continue|proceed)/i }));
+  await clickIfVisible("Card payment method", frame.getByText(/^Card$/i), frame.getByText(/^Cards$/i), frame.getByText(/Credit \/ Debit/i), frame.locator("[data-method='card'], .method[data-value='card']"));
+  const number = frame.locator("input[name='card[number]'], #card_number, input[placeholder*='Card Number' i], input[autocomplete='cc-number']").first();
+  await number.waitFor({ state: "visible", timeout: 20_000 });
+  await number.fill("4111111111111111");
+  await frame.locator("input[name='card[expiry]'], #card_expiry, input[placeholder*='MM' i], input[autocomplete='cc-exp']").first().fill("12/29");
+  await frame.locator("input[name='card[cvv]'], #card_cvv, input[placeholder*='CVV' i], input[autocomplete='cc-csc']").first().fill("123");
+  const holder = frame.locator("input[name='card[name]'], #card_name, input[placeholder*='Name' i]").first();
+  if (await holder.isVisible().catch(() => false)) await holder.fill("UAT BTM Customer");
+  notes.push("Test card 4111 1111 1111 1111 entered.");
+  await shot(page, "razorpay-card");
+  const popupPromise = page.context().waitForEvent("page", { timeout: 25_000 }).catch(() => null);
+  const pay = frame.getByRole("button", { name: /^pay\b|pay ₹|pay now/i }).last();
+  await pay.click({ timeout: 10_000 });
+  notes.push("Pay pressed.");
+  // Razorpay's test bank page offers Success / Failure, either inside the checkout or in a popup.
+  const popup = await popupPromise;
+  const targets: Array<{ name: string; click: () => Promise<boolean> }> = [];
+  if (popup) targets.push({ name: "popup", click: async () => { const b = popup.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 15_000 }).catch(() => false)) { await b.click(); return true; } return false; } });
+  targets.push({ name: "checkout iframe", click: async () => { const b = frame.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 15_000 }).catch(() => false)) { await b.click(); return true; } return false; } });
+  targets.push({ name: "nested bank frame", click: async () => { for (const f of page.frames()) { const b = f.getByRole("button", { name: /^success$/i }).first(); if (await b.isVisible({ timeout: 3_000 }).catch(() => false)) { await b.click(); return true; } } return false; } });
+  let bankDone = false;
+  for (const target of targets) { if (await target.click()) { notes.push(`Test-bank "Success" pressed (${target.name}).`); bankDone = true; break; } }
+  if (!bankDone) notes.push("No test-bank Success button was found; the card may have been captured directly or the bank step did not render.");
+  await shot(page, "razorpay-after-pay");
+  return notes;
+}
+
+async function serverPaymentStatus(page: Page, id: string) {
+  return page.evaluate(async (bookingId) => {
+    const r = await fetch("/api/customer-checkout", { method: "POST", credentials: "include", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "status", bookingId }) });
+    return { http: r.status, body: await r.json().catch(() => null) as { data?: { status?: string } } | null };
+  }, id);
+}
+
+async function partnerOtpLogin(context: BrowserContext, phone: string): Promise<Page> {
+  const page = await context.newPage();
+  await page.goto("/partner/onboarding");
+  await page.getByPlaceholder("10-digit phone number").fill(phone);
+  await page.getByRole("button", { name: "Send OTP" }).click();
+  const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+  await expect(sandbox, "partner sandbox OTP must be shown on screen").toBeVisible({ timeout: 20_000 });
+  const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+  expect(code, "a 6-digit partner OTP must render").toMatch(/^\d{6}$/);
+  await page.getByPlaceholder("6-digit code").fill(code!);
+  const verify = page.waitForResponse(r => r.url().includes("/api/partner-otp") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  const res = await verify;
+  const body = await res.json().catch(() => ({})) as { data?: { providerId?: string; providerName?: string }; error?: string };
+  expect(res.status(), `partner OTP verify for ${phone}: ${JSON.stringify(body).slice(0, 200)}`).toBe(200);
+  log(`✅ Partner OTP login as ${phone} → provider ${body.data?.providerName ?? ""} (${body.data?.providerId ?? "?"}).`);
+  return page;
+}
+
+async function openPartnerJob(page: Page): Promise<boolean> {
+  await page.goto("/partner-app");
+  await expect(page.getByText("Verified", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
+  const cards = page.locator("button").filter({ hasText: CUSTOMER_NAME });
+  await expect.poll(async () => cards.count(), { timeout: 30_000 }).toBeGreaterThan(0);
+  const n = await cards.count();
+  for (let i = 0; i < n; i += 1) {
+    await cards.nth(i).click();
+    if (await page.getByText(`BOOKING ${bookingId}`, { exact: true }).isVisible({ timeout: 3_000 }).catch(() => false)) return true;
+  }
+  return false;
+}
+
+async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
+  const button = page.getByRole("button", { name: label }).first();
+  await expect(button, `partner action ${label}`).toBeVisible({ timeout: 20_000 });
+  const lifecycle = page.waitForResponse(r => r.url().includes("/api/grooming-lifecycle") && r.request().method() === "POST", { timeout: 30_000 });
+  await button.click();
+  const res = await lifecycle;
+  const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
+  if (!res.ok()) throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`);
+  await expect(page.locator(".detailHead, [class*='detailHead']").getByText(expectStatus).first().or(page.getByText(expectStatus).first())).toBeVisible({ timeout: 20_000 });
+}
+
+async function staffSignIn(context: BrowserContext, email: string): Promise<Page> {
+  const page = await context.newPage();
+  await page.goto("/staging-login");
+  const codeField = page.getByPlaceholder("shared UAT access code");
+  await expect(codeField, "staging-login must be enabled on this environment").toBeVisible({ timeout: 20_000 });
+  await codeField.fill(ACCESS_CODE);
+  await page.getByPlaceholder(/seeded staff email/i).fill(email);
+  const signed = page.waitForResponse(r => r.url().endsWith("/api/staging-login") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const res = await signed;
+  expect(res.status(), `staging-login for ${email}`).toBe(200);
+  await page.waitForURL("**/me", { timeout: 20_000 });
+  return page;
+}
+
+// ---------------------------------------------------------------------------------------------------
+
+test("1. Customer — BTM Layout 560068 on the requested date, pay online through the Razorpay sandbox", async ({ browser }) => {
+  test.setTimeout(240_000);
+  section("1. Customer persona — BTM Layout checkout (online)");
+  const context = await browser.newContext();
+  await mockAddressAutocomplete(context);
+  const page = await context.newPage();
+  try {
+    await customerOtpLogin(page);
+    log(`✅ Login: sandbox OTP for ${PHONE} accepted (identity-session 200).`);
+    await ensurePet(page);
+    await reachReview(page, [/^11:00 AM–1:00 PM/, /^1:00–3:00 PM/, /^3:00–5:00 PM/, /^9:00–11:00 AM/]);
+    await page.getByRole("button", { name: /^Pay online/ }).click();
+    const { created } = await confirmBooking(page);
+    expect(created.status, `canonical booking: ${JSON.stringify(created.body).slice(0, 400)}`).toBe(201);
+    const data = (created.body.data ?? {}) as Record<string, unknown>;
+    bookingId = String(data.bookingId || data.id || "");
+    bookingMode = "online";
+    log(`✅ Canonical booking created (HTTP 201): ${bookingId}, status "${String(data.status ?? "")}". Checkout progressed to the payment step.`);
+    await shot(page, "customer-payment-step");
+
+    section("2. Razorpay sandbox payment");
+    try {
+      const notes = await completeRazorpayTestPayment(page);
+      for (const note of notes) log(`ℹ️ ${note}`);
+      const verified = page.getByText(/Payment verified by PawSpace/i).first();
+      const reserved = page.getByText("Your groomer is reserved.", { exact: true });
+      await Promise.race([verified.waitFor({ timeout: 60_000 }), reserved.waitFor({ timeout: 60_000 })]).catch(() => {});
+    } catch (e) {
+      log(`⚠️ Razorpay automation stopped: ${errText(e)}`);
+    }
+    // The truth comes from the server, not from the modal.
+    let status = await serverPaymentStatus(page, bookingId);
+    for (let i = 0; i < 12 && status.body?.data?.status !== "captured"; i += 1) { await page.waitForTimeout(5_000); status = await serverPaymentStatus(page, bookingId); }
+    paymentCaptured = status.body?.data?.status === "captured";
+    log(paymentCaptured
+      ? `✅ Server checkout status for ${bookingId}: "captured" (signed receipt verified by PawSpace). Post-payment saga engaged.`
+      : `❌ Server checkout status for ${bookingId}: HTTP ${status.http}, ${JSON.stringify(status.body).slice(0, 300)}. The sandbox capture did not complete under automation; see screenshots.`);
+    if (paymentCaptured) {
+      if (await page.getByText("Your groomer is reserved.", { exact: true }).isVisible({ timeout: 20_000 }).catch(() => false)) log("✅ Confirmation screen: \"Your groomer is reserved.\"");
+    }
+    await shot(page, "customer-after-payment");
+  } finally { await context.close(); }
+});
+
+test("2. Fallback — pay-after booking for the partner lifecycle when the online capture did not complete", async ({ browser }) => {
+  test.setTimeout(180_000);
+  if (paymentCaptured) { log("ℹ️ Online capture succeeded; no fallback booking needed."); return; }
+  section("2b. Fallback booking (pay after service) for the partner lifecycle");
+  const context = await browser.newContext();
+  await mockAddressAutocomplete(context);
+  const page = await context.newPage();
+  try {
+    await customerOtpLogin(page);
+    await ensurePet(page);
+    await reachReview(page, [/^1:00–3:00 PM/, /^3:00–5:00 PM/, /^11:00 AM–1:00 PM/, /^9:00–11:00 AM/]);
+    await page.getByRole("button", { name: /^Pay after service/ }).click();
+    const { created } = await confirmBooking(page);
+    expect(created.status, `canonical booking: ${JSON.stringify(created.body).slice(0, 400)}`).toBe(201);
+    const data = (created.body.data ?? {}) as Record<string, unknown>;
+    bookingId = String(data.bookingId || data.id || "");
+    bookingMode = "pay_after";
+    const payConfirm = page.getByRole("button", { name: "Confirm booking", exact: true });
+    if (await payConfirm.isVisible().catch(() => false)) await payConfirm.click();
+    await expect(page.getByText("Your groomer is reserved.", { exact: true })).toBeVisible({ timeout: 20_000 });
+    log(`✅ Pay-after booking ${bookingId} confirmed on the same BTM doorstep and date; provider ${assignedProviderName || assignedProviderId}.`);
+    await shot(page, "customer-fallback-confirmation");
+  } finally { await context.close(); }
+});
+
+test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, start service, upload photos", async ({ browser }) => {
+  test.setTimeout(240_000);
+  section("3. Partner persona (/partner-app)");
+  expect(bookingId, "a booking must exist from the customer step").not.toEqual("");
+  providerPhone = PROVIDER_PHONES[assignedProviderId] || "9000000904";
+  log(`ℹ️ Assigned provider ${assignedProviderId || "(unknown)"} → partner phone ${providerPhone}.`);
+  const context = await browser.newContext({ permissions: ["geolocation"], geolocation: { ...DOORSTEP, accuracy: 8 } });
+  try {
+    const page = await partnerOtpLogin(context, providerPhone);
+    const opened = await openPartnerJob(page);
+    if (!opened && providerPhone !== "9000000901") {
+      log(`⚠️ Booking ${bookingId} not in ${providerPhone}'s job list; retrying with the city-wide team 9000000901.`);
+      providerPhone = "9000000901";
+      const alt = await partnerOtpLogin(await browser.newContext({ permissions: ["geolocation"], geolocation: { ...DOORSTEP, accuracy: 8 } }), providerPhone);
+      expect(await openPartnerJob(alt), `booking ${bookingId} must be in the assigned groomer's job list`).toBeTruthy();
+      return await partnerLifecycle(alt);
+    }
+    expect(opened, `booking ${bookingId} must be in the assigned groomer's job list`).toBeTruthy();
+    await partnerLifecycle(page);
+  } finally { await context.close(); }
+});
+
+async function partnerLifecycle(page: Page) {
+  log(`✅ Job ${bookingId} visible in the partner app (customer ${CUSTOMER_NAME}).`);
+  await shot(page, "partner-job");
+  await partnerAct(page, /^Accept job$/, /assigned/i); log("✅ Accept job → assigned.");
+  await partnerAct(page, /^Start journey$/, /on the way/i); log("✅ Start journey → on the way.");
+
+  // GPS at the booking's own doorstep: ask the server where that is, then report a fix there.
+  const route = await page.evaluate(async ({ bookingId, providerId }) => {
+    const r = await fetch(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`, { cache: "no-store", credentials: "include" });
+    return { http: r.status, body: await r.json().catch(() => null) as unknown };
+  }, { bookingId, providerId: assignedProviderId });
+  const found = (function find(value: unknown): { lat: number; lng: number } | null {
+    if (!value || typeof value !== "object") return null;
+    const v = value as Record<string, unknown>;
+    if (typeof v.lat === "number" && typeof v.lng === "number") return { lat: v.lat, lng: v.lng };
+    if (typeof v.latitude === "number" && typeof v.longitude === "number") return { lat: v.latitude, lng: v.longitude };
+    for (const key of Object.keys(v)) { const hit = find(v[key]); if (hit) return hit; }
+    return null;
+  })((route.body as { data?: unknown })?.data ?? route.body);
+  const target = found ? { latitude: found.lat, longitude: found.lng } : DOORSTEP;
+  log(`${found ? "✅" : "ℹ️"} Doorstep coordinates ${found ? "from the route API" : "not exposed by the route API; using the mocked doorstep"}: ${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}.`);
+  await page.context().setGeolocation({ ...target, accuracy: 8 });
+  await page.locator("nav").getByRole("button", { name: /gps/i }).last().click();
+  const gpsPost = page.waitForResponse(r => r.url().includes("/api/grooming-route") && r.request().method() === "POST", { timeout: 30_000 });
+  await page.getByRole("button", { name: /Update once/ }).click();
+  const gpsRes = await gpsPost;
+  const gpsBody = await gpsRes.json().catch(() => ({})) as { error?: string };
+  log(`${gpsRes.ok() ? "✅" : "❌"} GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
+  await shot(page, "partner-gps");
+  await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
+  await page.locator("button").filter({ hasText: CUSTOMER_NAME }).first().click();
+  await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
+  await partnerAct(page, /^Start service$/, /in service/i); log("✅ Start service → in service.");
+  await shot(page, "partner-in-service");
+
+  for (const [purpose, label] of [["before_service", "Before photo"], ["after_service", "After photo"]] as const) {
+    const input = page.getByLabel(label, { exact: true });
+    await expect(input, `${label} file input`).toBeAttached({ timeout: 20_000 });
+    const uploaded = page.waitForResponse(r => r.url().includes("/api/service-media/upload") && r.request().method() === "PUT", { timeout: 60_000 });
+    await input.setInputFiles({ name: `${purpose}.jpg`, mimeType: "image/jpeg", buffer: jpegBytes(purpose) });
+    const res = await uploaded;
+    const body = await res.json().catch(() => ({})) as { data?: { accessStatus?: string; sha256?: string; adapterConnected?: boolean; objectStored?: boolean }; error?: string; code?: string };
+    if (res.ok()) { uploadedPurposes.push(purpose); log(`✅ ${label}: bytes uploaded and verified by the server (HTTP 200, ${body.data?.accessStatus}, sha256 ${String(body.data?.sha256).slice(0, 12)}…, bucket ${body.data?.adapterConnected ? "bound, object stored" : "not bound in staging"}).`); }
+    else log(`❌ ${label}: upload refused (HTTP ${res.status()}): ${body.error ?? body.code ?? ""}`);
+  }
+  await expect.poll(async () => (await page.getByText(/awaiting Ops approval/i).count()), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  log("✅ Partner app shows the photos as uploaded and awaiting Ops approval.");
+  const premature = page.getByRole("button", { name: /^Add service proof$/ });
+  if (await premature.isVisible().catch(() => false)) {
+    await premature.click();
+    const refusal = await page.locator("[class*='error']").first().textContent({ timeout: 10_000 }).catch(() => "");
+    log(refusal ? `✅ Premature "Add service proof" refused with the per-photo reason: ${refusal.slice(0, 200)}` : "ℹ️ Premature \"Add service proof\" did not surface a refusal message.");
+  }
+  await shot(page, "partner-photos-uploaded");
+}
+
+test("4. Founder — approves both photos in Control → Customer booking lifecycle", async ({ browser }) => {
+  test.setTimeout(180_000);
+  section("4. Founder persona (maker/checker approval)");
+  expect(ACCESS_CODE, "PAWSPACE_UAT_ACCESS_CODE must be provided (CI secret)").not.toEqual("");
+  expect(uploadedPurposes.length, "both photos must have uploaded").toBe(2);
+  const context = await browser.newContext();
+  try {
+    let page: Page | null = null, who = "";
+    for (const email of FOUNDER_EMAILS) { try { page = await staffSignIn(context, email); who = email; break; } catch (e) { log(`⚠️ Staff sign-in as ${email} failed: ${errText(e)}`); } }
+    expect(page, "a staff identity must sign in").not.toBeNull();
+    log(`✅ Staff sign-in as ${who}.`);
+    await page!.goto("/control");
+    await page!.getByRole("button", { name: "Customer booking lifecycle" }).click();
+    const queue = page!.getByRole("region", { name: "Service proof awaiting review" });
+    await expect(queue).toBeVisible({ timeout: 20_000 });
+    await queue.getByRole("button", { name: "Refresh" }).click().catch(() => {});
+    const mine = queue.locator("article").filter({ hasText: bookingId });
+    await expect.poll(async () => mine.count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
+    for (const label of ["before service", "after service"]) {
+      const article = mine.filter({ hasText: new RegExp(`^${label} photo`, "i") }).first();
+      await article.getByLabel(`Review reason for ${label} photo`).fill("UAT: clear photo, pet identifiable, matches booking");
+      const decided = page!.waitForResponse(r => r.url().includes("/api/service-media") && r.request().method() === "PATCH", { timeout: 30_000 });
+      await article.getByRole("button", { name: `Approve ${label} photo` }).click();
+      const res = await decided;
+      const body = await res.json().catch(() => ({})) as { data?: { proofReady?: boolean; releaseBlockedReason?: string | null }; error?: string };
+      log(`${res.ok() && body.data?.proofReady ? "✅" : "❌"} ${label} photo: approve → HTTP ${res.status()}, proofReady ${String(body.data?.proofReady)}${body.error ? `, ${body.error}` : ""}${body.data?.releaseBlockedReason ? `, held: ${body.data.releaseBlockedReason}` : ""}.`);
+      expect(res.ok(), `approval of ${label}: ${JSON.stringify(body).slice(0, 200)}`).toBeTruthy();
+    }
+    const listing = await page!.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ purpose: string; proofReady: boolean }> };
+    const ready = (listing.assets ?? []).filter(a => a.proofReady).map(a => a.purpose);
+    log(`${ready.length >= 2 ? "✅" : "❌"} Media listing for ${bookingId}: proofReady for ${ready.join(", ") || "none"}.`);
+    await shot(page!, "founder-approval");
+  } finally { await context.close(); }
+});
+
+test("5. Partner — adds service proof and completes the job", async ({ browser }) => {
+  test.setTimeout(180_000);
+  section("5. Partner persona — completion");
+  const context = await browser.newContext({ permissions: ["geolocation"], geolocation: { ...DOORSTEP, accuracy: 8 } });
+  try {
+    const page = await partnerOtpLogin(context, providerPhone || "9000000904");
+    expect(await openPartnerJob(page), `booking ${bookingId} must still be in the job list`).toBeTruthy();
+    await page.getByRole("button", { name: /Refresh proof status/ }).click().catch(() => {});
+    await expect(page.getByText(/Both photos approved/i)).toBeVisible({ timeout: 30_000 });
+    log("✅ Partner app: \"Both photos approved.\"");
+    await partnerAct(page, /^Add service proof$/, /in service/i); log("✅ Add service proof recorded (approved before/after references, checklist).");
+    await partnerAct(page, /^Complete job$/, /completed/i); log("✅ Complete job → completed.");
+    await shot(page, "partner-completed");
+    const invoice = await page.getByText(/Invoice /).first().textContent().catch(() => "");
+    if (invoice) log(`✅ ${invoice.trim()}`);
+    if (bookingMode === "pay_after") {
+      const request = page.getByRole("button", { name: "Create payment request" });
+      if (await request.isVisible({ timeout: 10_000 }).catch(() => false)) {
+        await request.click();
+        const link = await page.getByRole("link", { name: /Open sandbox checkout/ }).isVisible({ timeout: 20_000 }).catch(() => false);
+        log(`${link ? "✅" : "⚠️"} Pay-after: Razorpay sandbox payment request ${link ? "created (checkout link + QR payload shown)" : "did not surface a checkout link"}.`);
+        await shot(page, "partner-payment-request");
+      }
+    } else {
+      log("✅ Prepaid booking: nothing further to collect after completion.");
+    }
+  } finally { await context.close(); }
+});
