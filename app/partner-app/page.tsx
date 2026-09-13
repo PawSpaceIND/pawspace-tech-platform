@@ -1,10 +1,12 @@
 "use client";
+import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
+import { flushProviderProofQueue, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -53,6 +55,7 @@ export default function PartnerMobileApp() {
   const [operationResult, setOperationResult] = useState<BookingOperationResult | null>(null);
   const [operationBusy, setOperationBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const lifecycleLock = useRef(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [paymentPollKey, setPaymentPollKey] = useState(0);
@@ -116,10 +119,31 @@ export default function PartnerMobileApp() {
   useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
   useEffect(() => { if (tab !== "earnings") return; void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); setEarnings(body.data?.earnings ?? null); }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings")); }, [tab, refreshKey]);
 
+  const registerQueuedProof = async (item: QueuedProviderProof) => {
+    const response = await boundedFetch("/api/service-media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: item.bookingId, purpose: item.purpose, mimeType: item.mimeType, sizeBytes: item.sizeBytes, sha256: item.sha256, fileName: item.fileName }) });
+    const body = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(body.error || "Unable to register proof media");
+  };
+
+  useEffect(() => {
+    const flush = () => void flushProviderProofQueue(registerQueuedProof).then(result => {
+      if (result.uploaded) { setMediaMessage(`${result.uploaded} queued proof image${result.uploaded === 1 ? "" : "s"} synced.`); setRefreshKey(value => value + 1); }
+    });
+    flush();
+    window.addEventListener("online", flush);
+    const timer = window.setInterval(flush, 15_000);
+    return () => { window.removeEventListener("online", flush); window.clearInterval(timer); };
+  }, []);
+
   const prepareMedia = async (file: File, purpose: "before_service" | "after_service") => {
     if (!selected) return; setBusy(true); setError(""); setMediaMessage("");
-    try { const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map(value => value.toString(16).padStart(2, "0")).join(""); const response = await fetch("/api/service-media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, purpose, mimeType: file.type, sizeBytes: file.size, sha256: digest }) }); const body = await response.json() as { data?: { storage?: { uploadReady?: boolean } }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to prepare proof media"); setMediaMessage(body.data?.storage?.uploadReady ? "Secure upload grant prepared." : "File registered, but private storage and malware scanning are not connected. An operations adapter must upload and approve it before completion."); }
-    catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to prepare proof media"); } finally { setBusy(false); }
+    try {
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map(value => value.toString(16).padStart(2, "0")).join("");
+      const queued = await queueProviderProof({ bookingId: selected.bookingId, purpose, file, fileName: file.name, mimeType: file.type, sizeBytes: file.size, sha256: digest });
+      if (!navigator.onLine) { setMediaMessage("Proof saved on this device and queued for automatic sync when connectivity returns."); return; }
+      try { await registerQueuedProof(queued); await flushProviderProofQueue(registerQueuedProof); setMediaMessage("Proof registered; the image remains retry-safe until canonical upload and scan approval complete."); }
+      catch { setMediaMessage("Network interrupted. Proof is safely queued and will retry automatically."); }
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to queue proof media"); } finally { setBusy(false); }
   };
 
   const requestPayment = async () => { if (!selected) return; setBusy(true); setError(""); try { const response = await fetch("/api/grooming-payment-sandbox", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, action: "request_after_service" }) }); const body = await response.json() as { data?: PaymentRequest; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to create payment request"); setPaymentRequest(body.data ?? null); setPaymentPollKey(current=>current+1); } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to create payment request"); } finally { setBusy(false); } };
@@ -149,7 +173,8 @@ export default function PartnerMobileApp() {
   };
 
   const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete") => {
-    if (!selected || busy) return;
+    if (!selected || busy || lifecycleLock.current) return;
+    lifecycleLock.current = true;
     setBusy(true);
     setError("");
     try {
@@ -161,7 +186,7 @@ export default function PartnerMobileApp() {
         if (action === "decline") throw new Error("Only commission-provider offers can be declined");
         const input: Record<string, unknown> = { bookingId: selected.bookingId, action, actorId: selected.providerId };
         if (action === "add_proof") {
-          const mediaResponse = await fetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }); const mediaBody = await mediaResponse.json() as { assets?: MediaAsset[]; error?: string }; if (!mediaResponse.ok) throw new Error(mediaBody.error || "Unable to load approved proof media"); const before = mediaBody.assets?.find(asset => asset.purpose === "before_service" && asset.proofReady), after = mediaBody.assets?.find(asset => asset.purpose === "after_service" && asset.proofReady); if (!before || !after) throw new Error("Approved before and after images are required. Register both files, then wait for private storage confirmation and malware-scan approval.");
+          const mediaResponse = await boundedFetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }); const mediaBody = await mediaResponse.json() as { assets?: MediaAsset[]; error?: string }; if (!mediaResponse.ok) throw new Error(mediaBody.error || "Unable to load approved proof media"); const before = mediaBody.assets?.find(asset => asset.purpose === "before_service" && asset.proofReady), after = mediaBody.assets?.find(asset => asset.purpose === "after_service" && asset.proofReady); if (!before || !after) throw new Error("Approved before and after images are required. Register both files, then wait for private storage confirmation and malware-scan approval.");
           input.beforePhotoRef = before.ref;
           input.afterPhotoRef = after.ref;
           input.checklist = ["Pet identity confirmed", "Service checklist completed", "Customer handover ready"];
@@ -176,6 +201,7 @@ export default function PartnerMobileApp() {
       setError(err instanceof Error ? err.message : "Unable to update job");
     } finally {
       setBusy(false);
+      lifecycleLock.current = false;
     }
   };
 

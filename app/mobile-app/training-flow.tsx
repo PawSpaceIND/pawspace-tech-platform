@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import baseStyles from "./training.module.css";
 import extraStyles from "./training-extra.module.css";
 import planStyles from "./training-plans.module.css";
@@ -16,6 +16,7 @@ import { requestTrainingCancellation, requestTrainingSessionReschedule } from ".
 import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/training-session-preview";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 import { trainingProgrammeRequestId } from "../../lib/booking-state-integrity";
+import { useFlowHistory } from "../../lib/use-flow-history";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
   packageCode: string;
@@ -74,6 +75,7 @@ function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flat
 function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 import type { LoggedInCustomer } from "./customer-login";
 export default function TrainingFlow({ customer }: { customer: LoggedInCustomer }) {
+  const actionLock=useRef(false);
   const [plans,setPlans]=useState<Plan[]>([]);
   const [trainers,setTrainers]=useState<TrainingTrainer[]>([]);
   const [trainerId,setTrainerId]=useState("");
@@ -122,7 +124,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
-  useEffect(() => {
+  useFlowHistory("training",stage,setStage);
+ useEffect(() => {
     void fetch("/api/training-requirements")
       .then((response) => response.json())
       .then((body: { data?: Array<{ label: string; active: number }> }) => {
@@ -197,9 +200,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       setAddingGoal(false);
     },
     confirmMeetFirst = async () => {
+      if(actionLock.current)return;
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       if(pincode.length!==6){setScheduleError("Enter the six-digit service PIN code before booking a Meet & Greet.");return;}
-      setScheduling(true);setScheduleError("");
+      actionLock.current=true;setScheduling(true);setScheduleError("");
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const meetTrainers=await loadTrainingTrainers({cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,at:meetSlot});
@@ -210,12 +214,13 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:meetTrainer.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);
-      } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
+      } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {actionLock.current=false;setScheduling(false);}
     },
     confirm = async () => {
+      if(actionLock.current)return;
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       if(!checkoutQuote){setScheduleError("Refresh the Training quote before confirming.");return;}
-      setScheduling(true);setScheduleError("");
+      actionLock.current=true;setScheduling(true);setScheduleError("");
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const linkedMeetBookingId=meetLinked?meetBookingId:"";
@@ -226,7 +231,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         setConfirmedTrainerName(decision.provider.name);
         const booking=createTestTransaction({customerId:customer.customerId,customerName:customer.customerName,primary:customer.phone,secondary:"",pets:selectedPetNames.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:quote.packageName,area:`${serviceCoverage.area}, ${serviceCoverage.city}`,slot:`${frequency} · ${time}`,duration:`${quote.sessions} sessions · ${quote.minutesPerSession} min/session · ${quote.validityDays} days`,amount:quote.totalAmount,offerCode:couponCode||undefined,discount:quote.discount,payment:`${mode==="prepaid"?"Full payment pending verification":"Split payment pending verification"}${linkedMeetBookingId?` · Meet booking ${linkedMeetBookingId}`:""}`,provider:decision.provider.name,providerModel:"Commission",subscription:`${quote.packageName} · ${quote.sessions} sessions`,creditsBefore:quote.sessions,crmOwner:"Unassigned",crmNextAction:attendanceMode==="parent"?"Trainer acceptance; parent/caretaker coaching required":"Trainer acceptance; confirm package allows trainer-led outdoor practice",reminder:"In-app reminders queued; external delivery not active"},canonical.bookingId);
         setBookingId(booking.id);setConfirmed(true);
-      } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {setScheduling(false);}
+      } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {actionLock.current=false;setScheduling(false);}
     };
   if (confirmed)
     return (

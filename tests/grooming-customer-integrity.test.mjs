@@ -59,7 +59,10 @@ test("confirmation proof is derived from the public provider profile", () => {
 });
 
 test("booking submission is guarded against concurrent double clicks", () => {
-  assert.match(source, /confirm=async\(\)=>\{if\(scheduling\)return;/);
+  assert.match(source, /const actionLock=useRef\(false\);/);
+  assert.match(source, /confirm=async\(\)=>\{if\(actionLock\.current\|\|scheduling\)return;/);
+  assert.match(source, /actionLock\.current=true;setScheduling\(true\)/);
+  assert.match(source, /finally\{actionLock\.current=false;setScheduling\(false\);\}/);
   assert.match(source, /disabled=\{scheduling\|\|!serviceLocation\}/);
 });
 

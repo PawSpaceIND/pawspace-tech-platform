@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./food-flow.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import PetManager from "./pet-manager";
@@ -15,6 +15,7 @@ import {
 } from "../../lib/food-client";
 import { createFoodSubscription } from "../../lib/food-subscription-client";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
+import { useFlowHistory } from "../../lib/use-flow-history";
 
 // Species drives per-pet food suggestions; the pets are the customer's own, loaded at runtime.
 const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
@@ -40,6 +41,7 @@ const renewalDate = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { d
 type SubscriptionCreated = { subscriptionId: string; nextRenewalAt: number; renewalIntervalDays: number; sourceOrderId: string };
 
 export default function FoodFlow({ customer, onCompleted }: { customer: LoggedInCustomer; onCompleted?: (orderIds: string[]) => void }) {
+  const actionLock=useRef(false);
   const [step, setStep] = useState(1);
   const [catalogue, setCatalogue] = useState<FoodCatalogueItem[]>([]);
   const [catalogueError, setCatalogueError] = useState("");
@@ -82,7 +84,8 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     } finally { setCatalogueLoading(false); }
   };
 
-  useEffect(() => {
+  useFlowHistory("food",step,setStep);
+ useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (active) setPetsLoading(true);
@@ -158,7 +161,8 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   };
 
   const confirm = async () => {
-    setConfirming(true);
+    if(actionLock.current)return;
+    actionLock.current=true; setConfirming(true);
     setFlowError("");
     try {
       const resolved = await resolveServiceCoverage(pincode);
@@ -183,6 +187,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     } catch (error) {
       setFlowError(error instanceof Error ? error.message : "Unable to place the Food order");
     } finally {
+      actionLock.current=false;
       setConfirming(false);
     }
   };
