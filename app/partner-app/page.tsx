@@ -13,6 +13,18 @@ type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
 type Pet = { id: string; name: string; species: string; breed: string; vaccinationStatus: string };
 type Proof = { beforePhotoRef: string | null; afterPhotoRef: string | null; checklist: string[]; completionNotes: string | null };
+/** Already sanitized server-side by projectProviderLifecycleEvent: operational state, never contact data. */
+type JobEvent = { eventType: string; entityType: string; actorId: string; detail: Record<string, unknown>; occurredAt: number };
+/**
+ * Every field /api/partner-grooming-jobs actually returns for a job.
+ *
+ * The route projects safetyRequirements and addOns out of the booking's pricing_json and returns
+ * payment.amountDueNow alongside the mode - none of which were declared here, so all of them were
+ * dropped on arrival. A partner therefore drove to a job without the handling requirements recorded
+ * against the pet and without the figure they are meant to collect at the door.
+ *
+ * occurrenceCount matters for the same reason: a multi-visit package rendered as if it were one visit.
+ */
 type Job = {
   bookingId: string;
   workOrderId: string;
@@ -21,16 +33,24 @@ type Job = {
   providerModel: string;
   status: string;
   workOrderStatus: string;
+  occurrenceCount: number;
+  packageCode: string;
   packageName: string;
   zoneId: string;
+  cityId: string;
   scheduledStart: string;
   scheduledEnd: string;
   totalAmount: number;
+  currency: string;
   customer: { id: string; name: string; maskedPhone: string };
   pets: Pet[];
-  payment: { mode: string; status: string };
-  proof: Proof | null;
-  invoice: { invoiceNumber: string; status: string; netAmount: number } | null;
+  payment: { method: string; mode: string; status: string; amount: number; amountDueNow: number };
+  subscription: string | null;
+  addOns: string[];
+  safetyRequirements: string[];
+  proof: (Proof & { updatedAt: number }) | null;
+  invoice: { invoiceNumber: string; status: string; netAmount: number; issuedAt: number } | null;
+  events: JobEvent[];
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
 type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number };
@@ -392,10 +412,22 @@ export default function PartnerMobileApp() {
             <div className={styles.detailGrid}>
               <div><small>Customer</small><b>{selected.customer.name}</b><span>{selected.customer.maskedPhone}</span></div>
               <div><small>Pets</small><b>{selected.pets.map((pet) => pet.name).join(", ")}</b><span>{selected.pets.map((pet) => pet.breed).filter(Boolean).join(", ")}</span></div>
-              <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}</span></div>
-              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
+              <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}{selected.occurrenceCount > 1 ? ` · visit 1 of ${selected.occurrenceCount}` : ""}</span></div>
+              {/* amountDueNow is what this partner collects at the door; the mode alone never said how much. */}
+              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}{selected.payment.amountDueNow > 0 ? ` · collect ${money(selected.payment.amountDueNow)}` : ""}</span></div>
+              <div><small>Where</small><b>{selected.zoneId}</b><span>{selected.cityId}</span></div>
+              <div><small>Package</small><b>{selected.packageName}</b><span>{selected.subscription ? `${label(selected.subscription)} plan` : money(selected.totalAmount)}</span></div>
             </div>
-            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
+            {/* Projected by the route out of the booking's pricing_json and, until now, discarded by the
+                client: the handling requirements recorded against this pet and the add-ons the partner is
+                expected to perform. Driving to a job without either is the gap this closes. */}
+            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{label(item)}</li>)}</ul></section>}
+            {!!selected.addOns.length && <div className={styles.proof}><b>Add-ons booked</b><span>{selected.addOns.map(label).join(" · ")}</span></div>}
+            {/* The lifecycle timeline the route already sanitizes for providers. Only the event type and
+                its timestamp are shown: detail_json is filtered server-side, but there is no reason to
+                render free-form detail on a partner's phone at all. */}
+            {!!selected.events.length && <section className={styles.notice} aria-label="Job activity"><b>Recent activity</b><ul>{selected.events.slice(0, 5).map((event, index) => <li key={`${event.occurredAt}-${index}`}>{label(event.eventType)}{whenMs(event.occurredAt) ? ` · ${whenMs(event.occurredAt)}` : ""}</li>)}</ul></section>}
+            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>
             {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
               {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
