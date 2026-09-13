@@ -5,12 +5,13 @@ import { readFile } from 'node:fs/promises';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('Google Places autocomplete is bounded and map selection is required', async () => {
-  const [client, picker] = await Promise.all([read('lib/address-autocomplete-client.ts'), read('app/mobile-app/address-picker.tsx')]);
+  const [client, picker, schema] = await Promise.all([read('lib/address-autocomplete-client.ts'), read('app/mobile-app/address-picker.tsx'), read('lib/grooming-checkout-schema.ts')]);
   assert.match(client, /AbortController/);
   assert.match(client, /8_000/);
   assert.match(client, /Address lookup timed out/);
   assert.match(picker, /Google address suggestions/);
-  assert.match(picker, /addressLine1/);
+  assert.match(picker, /required aria-required="true"/);
+  assert.match(schema, /addressLine1: z\.string\(\)\.trim\(\)\.min\(5, "Address Line 1 is required"\)/);
   assert.doesNotMatch(picker, /Continue with manual address/);
   assert.match(picker, /sessionStorage\.getItem\(SELECTED_SERVICE_ADDRESS_KEY\)/);
 });
