@@ -66,6 +66,17 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
   five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
   on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
+- **Partner app as a UAT trainer**: the six training providers have partner OTP numbers too — `9000000931`
+  (city-wide Training Team), `9000000933` (Kavya R., South), `9000000932` (Arjun T., East), `9000000934`
+  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). A partner identity is
+  the phone number, so "switching from groomer to trainer" means signing out and signing in with a trainer's
+  number. Note that `/partner-app` lists and works **grooming** work orders only; a trainer signs in and sees
+  the shell, but training sessions are not yet worked from this app.
+- **Switching provider without a phone number** (`/partner-app` → More → *Switch UAT provider*): staging-only.
+  Pick any live provider in the seeded roster (groomer, trainer, host, sitter, walker, taxi) and enter the same
+  UAT access code used at `/staging-login`; the app re-checks the session and opens as that provider.
+- **Sign out** (`/partner-app` → More → *Sign out*, or tap the green identity pill in the header): ends the
+  partner session on this device and returns to the OTP sign-in.
 - **Partner job lifecycle** (`/partner-app`, signed in as the assigned groomer): Accept job → Start journey →
   Mark arrived → Start service → upload before/after photos → Add service proof → Complete job.
   - **Mark arrived is GPS-gated**: the server only accepts it with a fresh GPS fix within 250 m of the customer's
