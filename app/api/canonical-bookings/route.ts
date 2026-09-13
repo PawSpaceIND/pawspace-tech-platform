@@ -170,8 +170,8 @@ const PET_UPSERT=`INSERT INTO canonical_pets (id,customer_id,name,species,breed,
 const canonicalBookingSchemaReady=new WeakSet<Awaited<ReturnType<typeof database>>>();
 const canonicalBookingSchemaEnsuring=new WeakMap<Awaited<ReturnType<typeof database>>,Promise<void>>();
 async function canonicalBookingSchemaIsReady(db:Awaited<ReturnType<typeof database>>){
-  const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('canonical_customers','canonical_pets','canonical_bookings','provider_work_orders','booking_payments','booking_lifecycle_events','booking_subscription_usage','customer_grooming_subscriptions','grooming_subscription_purchase_snapshots','idx_booking_lifecycle_events_booking','idx_canonical_pets_customer')").all<Record<string,unknown>>();
-  return new Set(rows.results.map(row=>String(row.name))).size===11;
+  const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('canonical_customers','canonical_pets','canonical_bookings','provider_work_orders','booking_payments','booking_lifecycle_events','booking_subscription_usage','customer_grooming_subscriptions','grooming_subscription_purchase_snapshots','idx_booking_lifecycle_events_booking','idx_canonical_pets_customer','idx_canonical_bookings_scheduled_start_zone','idx_canonical_bookings_updated_at_zone')").all<Record<string,unknown>>();
+  return new Set(rows.results.map(row=>String(row.name))).size===13;
 }
 async function ensureTables(db:Awaited<ReturnType<typeof database>>){
  if(canonicalBookingSchemaReady.has(db))return;
@@ -190,6 +190,8 @@ async function ensureTables(db:Awaited<ReturnType<typeof database>>){
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_subscription_purchase_snapshots (subscription_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,city_id TEXT NOT NULL,zone_id TEXT,plan_code TEXT NOT NULL,catalogue_version TEXT NOT NULL,config_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_lifecycle_events_booking ON booking_lifecycle_events(booking_id,occurred_at)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_pets_customer ON canonical_pets(customer_id)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_bookings_scheduled_start_zone ON canonical_bookings(scheduled_start,zone_id)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_bookings_updated_at_zone ON canonical_bookings(updated_at,zone_id)"),
   ]);
   canonicalBookingSchemaReady.add(db);
  })().finally(()=>{canonicalBookingSchemaEnsuring.delete(db);});

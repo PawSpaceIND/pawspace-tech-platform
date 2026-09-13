@@ -2,13 +2,10 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CriticalErrorBoundary from "../../components/critical-error-boundary";
-import { CustomerCheckoutController, type CheckoutReceipt, type CheckoutState } from "../../../lib/customer-checkout-client";
-import { loadCustomerAccount } from "../../../lib/customer-account-client";
-import type { CustomerAccountRecord } from "../../../lib/customer-account";
+import { CustomerCheckoutController, loadCustomerConfirmationProjection, type CheckoutReceipt, type CheckoutState, type CustomerConfirmationProjection } from "../../../lib/customer-checkout-client";
 import { customerBookingManageHref } from "../../../lib/customer-activity";
 import styles from "./booking-confirmation.module.css";
 
-type Booking = CustomerAccountRecord["bookings"][number];
 type Props = { bookingId: string; orderId: string; paymentId: string; signature: string; payment: string; code: string };
 const SERVICE_LABEL: Record<string, string> = { grooming: "Grooming", dog_training: "Dog Training", boarding: "Boarding", pet_sitting: "Pet Sitting", pet_taxi: "Pet Taxi", dog_walking: "Dog Walking", food: "Fresh Food", vet_consult: "Vet Consultation" };
 const money = (value: number, currency = "INR") => new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
@@ -22,8 +19,8 @@ function BookingConfirmationInner(props: Props) {
   const receipt = receiptOf(props);
   const failedReturn = props.payment === "failed";
   const [state, setState] = useState<CheckoutState>({ phase: "ready", message: "", canCheck: false });
-  const [booking, setBooking] = useState<Booking | null>(null);
-  const [accountError, setAccountError] = useState("");
+  const [projection, setProjection] = useState<CustomerConfirmationProjection | null>(null);
+  const [projectionError, setProjectionError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const controller = useRef<CustomerCheckoutController | null>(null);
@@ -32,13 +29,12 @@ function BookingConfirmationInner(props: Props) {
     if (!bookingId) return;
     let active = true;
     const abort = new AbortController();
-    void loadCustomerAccount(undefined, { signal: abort.signal }).then(account => {
+    void loadCustomerConfirmationProjection(bookingId, abort.signal).then(value => {
       if (!active) return;
-      setBooking(account.bookings.find(item => item.id === bookingId) || null);
-      setAccountError(""); setLoaded(true);
+      setProjection(value); setProjectionError(""); setLoaded(true);
     }).catch(problem => {
       if (!active || abort.signal.aborted) return;
-      setAccountError(problem instanceof Error ? problem.message : "Unable to load your booking"); setLoaded(true);
+      setProjectionError(problem instanceof Error ? problem.message : "Unable to load your booking"); setLoaded(true);
     });
     return () => { active = false; abort.abort(); };
   }, [bookingId, refresh]);
@@ -49,7 +45,8 @@ function BookingConfirmationInner(props: Props) {
     const instance = new CustomerCheckoutController(bookingId, value => {
       if (!active) return;
       setState(value);
-      // Once PawSpace verifies the capture, re-read the canonical booking so the confirmed status shows.
+      // Once PawSpace verifies the capture, re-read the customer-owned projection. The callback receipt
+      // never supplies success-screen details.
       if (value.phase === "captured" || value.phase === "settled") setRefresh(current => current + 1);
     });
     controller.current = instance;
@@ -69,33 +66,46 @@ function BookingConfirmationInner(props: Props) {
     return () => window.clearInterval(timer);
   }, [state.phase]);
 
+  // Payment capture and booking/work-order writes can settle a few moments apart. Keep the success
+  // screen closed until one server projection contains the exact canonical slot, provider and payment.
+  useEffect(() => {
+    if (!bookingId || projection?.ready) return;
+    const timer = window.setInterval(() => setRefresh(value => value + 1), 2500);
+    return () => window.clearInterval(timer);
+  }, [bookingId, projection?.ready]);
+
   const busy = ["starting", "checkout", "confirming"].includes(state.phase);
-  const canPayAgain = !verified && !busy && state.phase !== "pending" && (failedReturn || state.phase === "error" || state.phase === "ready") && (!booking || booking.status === "payment_pending");
-  const manageHref = booking ? customerBookingManageHref(booking) : null;
-  const serviceName = booking ? SERVICE_LABEL[booking.serviceCode] || booking.serviceCode.replaceAll("_", " ") : "PawSpace";
-  const bookingConfirmed = booking ? ["confirmed", "assigned", "in_progress", "completed"].includes(booking.status) : false;
+  const canPayAgain = loaded && !verified && !busy && state.phase !== "pending" && (failedReturn || state.phase === "error" || state.phase === "ready") && (!projection || projection.bookingStatus === "payment_pending");
+  const manageHref = projection ? customerBookingManageHref({id:projection.bookingId,serviceCode:projection.serviceCode,scheduledStart:projection.scheduledStart,status:projection.bookingStatus}) : null;
+  const serviceName = projection ? SERVICE_LABEL[projection.serviceCode] || projection.serviceCode.replaceAll("_", " ") : "PawSpace";
+  const canonicalReady = Boolean(projection?.ready);
+  const success = verified && canonicalReady;
 
   return <main className={styles.page} data-pawspace-mobile="true"><div className={styles.content}>
     <Link href="/mobile-app">← Back to PawSpace</Link>
-    <header><p className={styles.eyebrow}>{verified || bookingConfirmed ? "BOOKING CONFIRMED" : failedReturn ? "PAYMENT NOT COMPLETED" : "PAYMENT RETURN"}</p><h1>{verified || bookingConfirmed ? `Your ${serviceName} booking is confirmed` : `Your ${serviceName} booking`}</h1></header>
+    <header><p className={styles.eyebrow}>{success ? "BOOKING CONFIRMED" : failedReturn ? "PAYMENT NOT COMPLETED" : "PAYMENT RETURN"}</p><h1>{success ? `Your ${serviceName} booking is confirmed` : `Your ${serviceName} booking`}</h1></header>
     {!bookingId ? <section className={styles.card}><p>Open a booking from your Activity to view its confirmation.</p></section> : <>
-      {verified && <section className={`${styles.card} ${styles.success}`} aria-label="Payment verified"><i>✓</i><h2>Payment verified by PawSpace</h2><p>{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
+      {success && <section className={`${styles.card} ${styles.success}`} aria-label="Payment verified"><i>✓</i><h2>Payment verified by PawSpace</h2><p>{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
+      {verified && !canonicalReady && <section className={`${styles.card} ${styles.pending}`} aria-label="Confirmation synchronizing"><h2>Finalizing your confirmed booking</h2><p role="status">Payment is verified. PawSpace is reading the assigned provider, exact slot and transaction directly from the server before showing success.</p></section>}
       {!verified && state.phase === "pending" && <section className={`${styles.card} ${styles.pending}`} aria-label="Payment pending"><h2>Waiting for Razorpay confirmation</h2><p role="status">{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
       {!verified && failedReturn && state.phase === "ready" && <section className={`${styles.card} ${styles.failed}`} aria-label="Payment failed"><h2>The payment did not go through</h2><p role="alert">Razorpay reported {props.code || "PAYMENT_FAILED"}. Nothing has been confirmed and no money has moved. You can try the payment again below.</p></section>}
       {state.message && !verified && state.phase !== "pending" && !(failedReturn && state.phase === "ready") && <p role={state.phase === "error" ? "alert" : "status"} className={state.phase === "error" ? styles.error : styles.status}>{state.message}</p>}
-      {!loaded ? <p role="status" className={styles.status}>Loading your booking…</p> : accountError ? <section className={styles.card}><p role="alert">{accountError}</p><div className={styles.actions}><button type="button" className={styles.secondary} onClick={() => setRefresh(value => value + 1)}>Try again</button><Link className={styles.secondary} href="/mobile-app">Sign in to your account</Link></div></section>
-        : !booking ? <section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not on your account. Check that you are signed in to the account that made the booking.</p></section>
-        : <section className={styles.card} aria-label="Booking details"><h2>{booking.packageName}</h2><dl>
+      {!loaded ? <p role="status" className={styles.status}>Loading your booking…</p> : projectionError ? <section className={styles.card}><p role="alert">{projectionError}</p><div className={styles.actions}><button type="button" className={styles.secondary} onClick={() => { setProjectionError(""); setLoaded(false); setRefresh(value => value + 1); }}>Try again</button><Link className={styles.secondary} href="/mobile-app">Sign in to your account</Link></div></section>
+        : !projection ? <section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not on your account. Check that you are signed in to the account that made the booking.</p></section>
+        : <section className={styles.card} aria-label="Booking details"><h2>{projection.packageName}</h2><dl>
             <div><dt>Service</dt><dd>{serviceName}</dd></div>
-            <div><dt>Status</dt><dd>{booking.status.replaceAll("_", " ")}</dd></div>
-            <div><dt>Starts</dt><dd>{when(booking.scheduledStart)} IST</dd></div>
-            <div><dt>Booking total</dt><dd>{money(booking.totalAmount, booking.currency)}</dd></div>
-          </dl><p className={styles.reference}>Booking reference · {booking.id}</p></section>}
+            <div><dt>Status</dt><dd>{projection.bookingStatus.replaceAll("_", " ")}</dd></div>
+            <div><dt>Exact slot</dt><dd>{when(projection.scheduledStart)} – {when(projection.scheduledEnd)} IST</dd></div>
+            <div><dt>Assigned provider</dt><dd>{projection.providerName} · {projection.providerModel.replaceAll("_", " ")}</dd></div>
+            <div><dt>Payment</dt><dd>{projection.paymentStatus.replaceAll("_", " ")}</dd></div>
+            <div><dt>Transaction ID</dt><dd>{projection.transactionId || (projection.paymentMode === "pay_after_service" ? "Not applicable · pay after service" : "Synchronizing")}</dd></div>
+            <div><dt>Booking total</dt><dd>{money(projection.totalAmount, projection.currency)}</dd></div>
+          </dl><p className={styles.reference}>Booking reference · {projection.bookingId}</p></section>}
       <div className={styles.actions}>
         {canPayAgain && <button type="button" className={styles.primary} disabled={busy} onClick={() => void controller.current?.start()}>Pay securely with Razorpay</button>}
         {!verified && state.canCheck && !busy && state.phase !== "pending" && <button type="button" className={styles.secondary} onClick={() => void controller.current?.resume()}>Check payment status</button>}
         {manageHref && <Link className={styles.secondary} href={manageHref}>Manage this booking</Link>}
-        <Link className={verified || bookingConfirmed ? styles.primary : styles.secondary} href="/mobile-app">Continue to PawSpace</Link>
+        <Link className={success ? styles.primary : styles.secondary} href="/mobile-app">Continue to PawSpace</Link>
       </div>
       <small className={styles.foot}>The browser never self-confirms a payment. Signed gateway evidence remains authoritative; if Razorpay has taken the payment, this page updates once PawSpace verifies it.</small>
     </>}
