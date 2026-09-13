@@ -23,8 +23,10 @@ const CUSTOMER_NAME = "UAT Sweep Customer";
 const REPORT_PATH = process.env.SWEEP_REPORT || "test-results/human-sweep-report.md";
 const GROOMER_EMAIL = "asha.groomer1@tkpetcare.in";
 const FOUNDER_EMAIL = "founder@pawspace.in";
-// Address with an embedded serviceable PIN; the new picker extracts the PIN from the chosen Google result.
-const ADDRESS = "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
+// Address with an embedded serviceable PIN; the picker extracts the PIN from the chosen Google result. MG Road (560001,
+// blr-central) is the home base of the city-wide UAT team groomer, so ranked assignment favours the provider that the
+// partner persona is linked to; the per-zone groomers seeded for other areas would otherwise win on distance.
+const ADDRESS = "12, Church Street, MG Road, Bengaluru 560001";
 // The UAT team groomer is linked to GROOMER_EMAIL (provider_identity_links) — prefer it so the partner step is deterministic.
 const PREFERRED_GROOMER = "PawSpace Grooming Team (UAT)";
 // Requested window: spread across +2…+6 days and the four grooming slots (from the run minute) so repeated sweeps
@@ -58,9 +60,9 @@ async function mockAddressAutocomplete(context: BrowserContext) {
     const mode = new URL(route.request().url()).searchParams.get("mode");
     if (mode === "search") {
       return route.fulfill({ json: { data: { status: "configured", suggestions: [
-        { placeId: "uat-sweep-doorstep", mainText: "42, Indiranagar Double Road", secondaryText: "Indiranagar, Bengaluru 560038", fullText: ADDRESS } ] } } });
+        { placeId: "uat-sweep-doorstep", mainText: "12, Church Street", secondaryText: "MG Road, Bengaluru 560001", fullText: ADDRESS } ] } } });
     }
-    return route.fulfill({ json: { data: { status: "configured", address: ADDRESS, latitude: 12.9783692, longitude: 77.6408356 } } });
+    return route.fulfill({ json: { data: { status: "configured", address: ADDRESS, latitude: 12.975, longitude: 77.6063 } } });
   });
 }
 
@@ -90,7 +92,7 @@ async function ensurePet(page: Page) {
 }
 
 // Walk grooming steps 1→4 (new Google Places picker + mandatory contact fields), stopping on the review step.
-async function reachReview(page: Page, opts: { line2?: string } = {}) {
+async function reachReview(page: Page, opts: { line2?: string; preferGroomer?: boolean } = {}) {
   await page.goto("/mobile-app");
   await page.locator("nav").getByRole("button", { name: /home/i }).last().click();
   const grooming = page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: "Grooming" }).first();
@@ -106,7 +108,7 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
   // New picker: type into Address Line 1, pick a Google suggestion (no pincode field / no "Use this address").
   const line1 = page.locator("#grooming-address-line-1");
   await expect(line1, "Address Line 1 (Google Places) input present").toBeVisible();
-  await line1.fill("42, Indiranagar Double Road, Bengaluru");
+  await line1.fill("12, Church Street, MG Road, Bengaluru");
   const suggestions = page.getByRole("region", { name: "Google address suggestions" });
   await expect(suggestions).toBeVisible({ timeout: 20_000 });
   await suggestions.getByRole("button").first().click();
@@ -115,15 +117,28 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
   log("✅ Address (Google Places): Line 1 typed → suggestion picked → 'Verified service doorstep'; optional Line 2 accepted.");
 
   // Requested window first (the provider preview is keyed on address + date + slot), then the preferred-groomer
-  // chip, which arrives asynchronously from the scheduling preview — wait for it instead of probing once.
+  // chip. The preview is a real scheduler evaluation on remote D1 (tens of seconds), so capture its response
+  // rather than probing the chip once.
+  const wantPreferred = opts.preferGroomer !== false;
+  const previewWait = wantPreferred
+    ? page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && (r.request().postData() || "").includes("\"preview\""), { timeout: 90_000 }).catch(() => null)
+    : Promise.resolve(null);
   await page.getByRole("button", { name: new RegExp(`\\b${rx(SERVICE_DATE_LABEL)}$`) }).first().click();
   await page.getByRole("button", { name: new RegExp(`^${rx(SLOT)}`) }).click();
   log(`✅ Requested window: ${SERVICE_DATE_ISO} (IST, +${DAY_OFFSET} days) · ${SLOT}.`);
-  const preferred = page.getByRole("button").filter({ hasText: PREFERRED_GROOMER }).first();
-  if (await preferred.waitFor({ state: "visible", timeout: 15_000 }).then(() => true).catch(() => false)) {
-    await preferred.click();
-    log(`✅ Preferred groomer '${PREFERRED_GROOMER}' selected (the provider linked to ${GROOMER_EMAIL}).`);
-  } else log("ℹ️ Preferred-groomer chip not offered for this window; proceeding with best-eligible assignment.");
+  if (wantPreferred) {
+    const previewRes = await previewWait;
+    const previewBody = previewRes ? await previewRes.json().catch(() => ({})) as { data?: { providers?: Array<{ name?: string }> } } : null;
+    const offered = (previewBody?.data?.providers ?? []).map(p => p.name).filter(Boolean);
+    log(offered.length
+      ? `ℹ️ Scheduler preview shortlist for this window: ${offered.join(" · ")}.`
+      : "ℹ️ Scheduler preview did not resolve in time; no shortlist captured.");
+    const preferred = page.getByRole("button").filter({ hasText: PREFERRED_GROOMER }).first();
+    if (await preferred.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false)) {
+      await preferred.click();
+      log(`✅ Preferred groomer '${PREFERRED_GROOMER}' selected (the provider linked to ${GROOMER_EMAIL}).`);
+    } else log("ℹ️ Preferred-groomer chip not offered for this window; proceeding with best-eligible assignment.");
+  }
   await page.getByRole("button", { name: "Review booking", exact: true }).click();
   await expect(page.getByText("Review and confirm", { exact: true })).toBeVisible();
 
@@ -151,7 +166,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 }
 
 test("Customer persona — OTP → grooming booking → real booking ID (+ Razorpay modal probe)", async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(480_000); // two real scheduler reservations on remote D1 (~40 s each) plus the preview
   section("Customer persona (mobile app)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -195,7 +210,7 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     section("Customer persona — Razorpay online-pay probe");
     const p2 = await context.newPage();
     try {
-      await reachReview(p2);
+      await reachReview(p2, { preferGroomer: false });
       await p2.getByRole("button", { name: /^Pay online/ }).click();
       const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 60_000 });
       await p2.getByRole("button", { name: "Confirm booking", exact: true }).click();
