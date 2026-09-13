@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
-import { flushProviderProofQueue, queueProviderProof, updateQueuedProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
+import { discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -32,22 +32,21 @@ type Job = {
   invoice: { invoiceNumber: string; status: string; netAmount: number } | null;
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
-type MediaAsset = { ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; proofState?: string; blockedReason?: string | null };
-const PROOF_STATE_LABEL: Record<string, string> = {
-  released: "verified ✓",
-  awaiting_upload_confirmation: "uploaded, confirmation pending (retries automatically)",
-  awaiting_verification: "uploaded, awaiting PawSpace verification",
-  rejected: "rejected, upload a replacement",
-  withdrawn: "withdrawn, upload a replacement",
-  blocked: "held by the scan boundary",
-};
-/** The latest asset in a proof slot, preferring one the gate already accepts. */
-const proofSlotStatus = (assets: MediaAsset[], purpose: MediaAsset["purpose"]) => {
-  const slot = assets.filter(asset => asset.purpose === purpose);
-  const asset = slot.find(asset => asset.proofReady) ?? slot[slot.length - 1];
-  if (!asset) return "not uploaded yet";
-  return PROOF_STATE_LABEL[asset.proofState ?? ""] ?? (asset.proofReady ? "verified ✓" : "not ready");
-};
+type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number };
+type ProofState = "missing" | "unconfirmed" | "pending" | "rejected" | "approved";
+/** What the partner should do next for one proof slot, from the server's own asset states. */
+function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_service"): { state: ProofState; text: string } {
+  const items = assets.filter(asset => asset.purpose === purpose).sort((a, b) => Number(b.created_at) - Number(a.created_at));
+  if (items.some(asset => asset.proofReady)) return { state: "approved", text: "approved by Ops · ready for service proof" };
+  const latest = items[0];
+  if (!latest) return { state: "missing", text: "not uploaded yet" };
+  if (latest.review_status === "pending_review") return { state: "pending", text: "uploaded and verified · awaiting Ops approval" };
+  if (latest.review_status === "rejected") return { state: "rejected", text: `rejected by Ops${latest.review_reason ? ` (${latest.review_reason})` : ""} · upload a replacement` };
+  if (latest.access_status === "pending_upload") return { state: "unconfirmed", text: "registered but never confirmed · choose the file again" };
+  return { state: "pending", text: `${label(latest.access_status)} · ${label(latest.review_status || latest.scan_status)}` };
+}
+/** A 4xx (other than timeout/rate-limit) will never succeed on retry; the offline queue drops it instead of re-registering for ever. */
+const proofFailure = (status: number, message: string) => Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && status !== 408 && status !== 429 });
 type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; providerReference: string; collectable: boolean; expiresAt: number; sandboxOnly: boolean; liveCapture: boolean };
 type WorkspaceEarnings = { visible: boolean; computed: { netPayout: number; orders: number; grossOrderValue: number }; settlements: Array<{ bookingId: string; payoutAmount: number | null; status: string; reason: string }>; incentives: Array<{ monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number }> };
 
@@ -75,7 +74,6 @@ export default function PartnerMobileApp() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [paymentPollKey, setPaymentPollKey] = useState(0);
   const [mediaMessage, setMediaMessage] = useState("");
-  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
 
@@ -133,35 +131,40 @@ export default function PartnerMobileApp() {
 
   useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
   useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
-  useEffect(() => { let active = true; if (!selected?.bookingId || selected.status !== "in_service") { queueMicrotask(() => { if (active) setMediaAssets([]); }); return () => { active = false; }; } void boundedFetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { assets?: MediaAsset[] }; if (active && response.ok) setMediaAssets(body.assets ?? []); }).catch(() => undefined); return () => { active = false; }; }, [selected?.bookingId, selected?.status, refreshKey, mediaMessage]);
   useEffect(() => { if (tab !== "earnings") return; void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); setEarnings(body.data?.earnings ?? null); }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings")); }, [tab, refreshKey]);
 
-  /*
-   * Two steps, both retry-safe. Registration mints a single-use upload grant; confirmation redeems it
-   * with the checksum, size and type observed on the exact file. Registration used to discard the grant
-   * and never confirm, so every proof stayed at pending_upload and could never be verified or attached.
-   * The grant is persisted on the queued item: a retry after a failed confirmation confirms the SAME
-   * asset instead of registering a duplicate, and a consumed or expired grant is dropped and re-issued.
-   */
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [mediaAssetsError, setMediaAssetsError] = useState("");
+  const [mediaPollKey, setMediaPollKey] = useState(0);
+  const proofStage = Boolean(selected && selected.status === "in_service" && !selected.proof?.beforePhotoRef);
+  const bothApproved = describeProof(mediaAssets, "before_service").state === "approved" && describeProof(mediaAssets, "after_service").state === "approved";
+  useEffect(() => {
+    if (!proofStage || !selected?.bookingId) { queueMicrotask(() => setMediaAssets([])); return; }
+    let active = true;
+    void boundedFetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => {
+      const body = await response.json() as { assets?: MediaAsset[]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to load proof status");
+      if (active) { setMediaAssets(body.assets ?? []); setMediaAssetsError(""); }
+    }).catch(problem => { if (active) setMediaAssetsError(problem instanceof Error ? problem.message : "Unable to load proof status"); });
+    return () => { active = false; };
+  }, [proofStage, selected?.bookingId, refreshKey, mediaPollKey]);
+  // While a photo waits for Ops, poll so the approval shows up without the partner leaving the screen.
+  useEffect(() => { if (!proofStage || !mediaAssets.some(asset => asset.review_status === "pending_review")) return; const timer = window.setInterval(() => setMediaPollKey(value => value + 1), 10_000); return () => window.clearInterval(timer); }, [proofStage, mediaAssets]);
+
   const registerQueuedProof = async (item: QueuedProviderProof) => {
-    let grant = item.grant && item.grant.expiresAt > Date.now() + 5_000 ? item.grant : null;
-    if (!grant) {
-      const response = await boundedFetch("/api/service-media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: item.bookingId, purpose: item.purpose, mimeType: item.mimeType, sizeBytes: item.sizeBytes, sha256: item.sha256, fileName: item.fileName }) });
-      const body = await response.json() as { data?: { id?: string; upload?: { token?: string; objectKey?: string; expiresAt?: number | string } }; error?: string };
-      if (!response.ok) throw new Error(body.error || "Unable to register proof media");
-      const { id, upload } = body.data ?? {};
-      if (!id || !upload?.token || !upload.objectKey) throw new Error("Proof registration did not issue an upload grant");
-      const expiresAt = typeof upload.expiresAt === "number" ? upload.expiresAt : Date.parse(String(upload.expiresAt ?? "")) || Date.now() + 10 * 60_000;
-      grant = { mediaId: id, token: upload.token, objectKey: upload.objectKey, expiresAt };
-      await updateQueuedProviderProof(item.id, { grant });
-    }
-    const confirmed = await boundedFetch("/api/service-media", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: grant.mediaId, action: "confirm_upload", uploadToken: grant.token, storageReference: grant.objectKey, observedSizeBytes: item.sizeBytes, observedSha256: item.sha256, observedMimeType: item.mimeType }) });
-    const outcome = await confirmed.json() as { error?: string; code?: string };
-    if (!confirmed.ok) {
-      // A grant that will never redeem (consumed, expired, mismatched) must not be retried forever.
-      if (confirmed.status === 400 || confirmed.status === 403 || confirmed.status === 409) await updateQueuedProviderProof(item.id, { grant: null });
-      throw new Error(outcome.error || "Unable to confirm proof upload");
-    }
+    // Step 1 - register the file and receive its single-use upload grant.
+    const response = await boundedFetch("/api/service-media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: item.bookingId, purpose: item.purpose, mimeType: item.mimeType, sizeBytes: item.sizeBytes, sha256: item.sha256, fileName: item.fileName }) });
+    const body = await response.json() as { error?: string; data?: { id?: string; upload?: { token?: string; objectKey?: string } } };
+    if (!response.ok) throw proofFailure(response.status, body.error || "Unable to register proof media");
+    const mediaId = body.data?.id, grant = body.data?.upload;
+    if (!mediaId || !grant?.token || !grant.objectKey) throw proofFailure(500, "Proof registration did not return an upload grant");
+    // Step 2 - confirm the upload against that grant. This call was missing: without it the asset stayed
+    // pending_upload for ever, Ops could never review it and "Complete job" always refused. No object store
+    // is bound in UAT (the server answers adapterConnected:false), so the observed facts are the file's own
+    // size, checksum and type, which the server verifies against what was declared at registration.
+    const confirm = await boundedFetch("/api/service-media", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: mediaId, action: "confirm_upload", uploadToken: grant.token, storageReference: grant.objectKey, observedSizeBytes: item.sizeBytes, observedSha256: item.sha256, observedMimeType: item.mimeType }) });
+    const confirmed = await confirm.json() as { error?: string };
+    if (!confirm.ok) throw proofFailure(confirm.status, confirmed.error || "Unable to confirm proof upload");
   };
 
   useEffect(() => {
@@ -180,8 +183,17 @@ export default function PartnerMobileApp() {
       const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map(value => value.toString(16).padStart(2, "0")).join("");
       const queued = await queueProviderProof({ bookingId: selected.bookingId, purpose, file, fileName: file.name, mimeType: file.type, sizeBytes: file.size, sha256: digest });
       if (!navigator.onLine) { setMediaMessage("Proof saved on this device and queued for automatic sync when connectivity returns."); return; }
-      try { await registerQueuedProof(queued); await flushProviderProofQueue(registerQueuedProof); setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and checksum-confirmed. It is queued for PawSpace verification; attach it once a reviewer approves it.`); }
-      catch { setMediaMessage("Network interrupted. Proof is safely queued and will retry automatically."); }
+      try {
+        await registerQueuedProof(queued);
+        // Registered and confirmed: take it out of the queue BEFORE flushing, or the flush re-registers it.
+        await discardProviderProof(queued.id);
+        await flushProviderProofQueue(registerQueuedProof);
+        setMediaPollKey(value => value + 1);
+        setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);
+      } catch (problem) {
+        if (isPermanentProofError(problem)) { await discardProviderProof(queued.id); setMediaMessage(""); setError(problem.message); }
+        else setMediaMessage("Network interrupted. Proof is safely queued and will retry automatically.");
+      }
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to queue proof media"); } finally { setBusy(false); }
   };
 
@@ -225,7 +237,7 @@ export default function PartnerMobileApp() {
         if (action === "decline") throw new Error("Only commission-provider offers can be declined");
         const input: Record<string, unknown> = { bookingId: selected.bookingId, action, actorId: selected.providerId };
         if (action === "add_proof") {
-          const mediaResponse = await boundedFetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }); const mediaBody = await mediaResponse.json() as { assets?: MediaAsset[]; error?: string }; if (!mediaResponse.ok) throw new Error(mediaBody.error || "Unable to load approved proof media"); const before = mediaBody.assets?.find(asset => asset.purpose === "before_service" && asset.proofReady), after = mediaBody.assets?.find(asset => asset.purpose === "after_service" && asset.proofReady); setMediaAssets(mediaBody.assets ?? []); if (!before || !after) throw new Error(`Approved before and after images are required. Before photo: ${proofSlotStatus(mediaBody.assets ?? [], "before_service")}. After photo: ${proofSlotStatus(mediaBody.assets ?? [], "after_service")}.`);
+          const mediaResponse = await boundedFetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }); const mediaBody = await mediaResponse.json() as { assets?: MediaAsset[]; error?: string }; if (!mediaResponse.ok) throw new Error(mediaBody.error || "Unable to load approved proof media"); const before = mediaBody.assets?.find(asset => asset.purpose === "before_service" && asset.proofReady), after = mediaBody.assets?.find(asset => asset.purpose === "after_service" && asset.proofReady); if (!before || !after) throw new Error(`Both photos must be approved by Ops before service proof can be added. Before photo: ${describeProof(mediaBody.assets ?? [], "before_service").text}. After photo: ${describeProof(mediaBody.assets ?? [], "after_service").text}.`);
           input.beforePhotoRef = before.ref;
           input.afterPhotoRef = after.ref;
           input.checklist = ["Pet identity confirmed", "Service checklist completed", "Customer handover ready"];
@@ -304,7 +316,11 @@ export default function PartnerMobileApp() {
               <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
             </div>
             <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
-            {selected.status === "in_service" && !selected.proof?.beforePhotoRef && <section className={styles.notice}><b>Secure before / after proof</b><p>Choose real UAT images. Registration never marks them complete: private storage confirmation and a clean malware scan are required first.</p><label>Before photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "before_service"); }} /></label><label>After photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "after_service"); }} /></label>{mediaMessage && <p>{mediaMessage}</p>}<p>Before photo: {proofSlotStatus(mediaAssets, "before_service")} · After photo: {proofSlotStatus(mediaAssets, "after_service")}</p></section>}
+            {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
+              {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
+              <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
+              {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
+              {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
             {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}><b>Payment due after service</b>{!paymentRequest ? <><p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p><button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button></> : <><p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>{paymentRequest.collectable ? <><p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p><p><code>{paymentRequest.qrPayload}</code></p></> : <p>This payment request is no longer collectable. Refresh or create a governed replacement request.</p>}<small>Razorpay ref {paymentRequest.providerReference}. Payment remains unpaid until a signature-verified gateway capture is reconciled.</small></>}</section>}
             <section className={styles.notice}>
               <b>Live order impact</b>

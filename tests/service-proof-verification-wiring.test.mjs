@@ -28,20 +28,18 @@ test("service proof state follows the gate's release rule, not the scanner colum
   assert.match(String(serviceProofRefusal({ ...base, access_status: "quarantined" })), /not ready/);
 });
 
-test("the media listing answers with the gate's rule and the Partner app reads it", () => {
+test("the media listing answers with the gate's rule and the Partner app confirms what it registers", () => {
   const route = read("app/api/service-media/route.ts");
-  assert.match(route, /proofReady:serviceProofReleased\(row\)/, "the listing must not re-derive readiness locally");
-  assert.match(route, /proofState:serviceProofState\(row\)/);
+  assert.match(route, /function isProofReady\(row:Row\)\{return serviceProofReleased\(row\);\}/, "the listing must not re-derive readiness locally");
+  assert.match(route, /proofState:serviceProofState\(row\),blockedReason:serviceProofRefusal\(row\)/, "callers are told why a slot is not ready");
   assert.doesNotMatch(route, /proofReady:String\(row\.scan_status\)==="clean"/, "the stale scan-column formula must not come back");
   const partner = read("app/partner-app/page.tsx");
   assert.match(partner, /action: "confirm_upload"/, "registration must be followed by confirmation");
-  for (const field of ["uploadToken: grant.token", "storageReference: grant.objectKey", "observedSizeBytes: item.sizeBytes", "observedSha256: item.sha256", "observedMimeType: item.mimeType"]) assert.ok(partner.includes(field), `confirmation must send ${field}`);
-  assert.match(partner, /updateQueuedProviderProof\(item\.id, \{ grant \}\)/, "the grant is persisted so a retry confirms the same asset");
-  assert.match(partner, /proofSlotStatus\(mediaBody\.assets \?\? \[\], "before_service"\)/, "a refusal names which slot is not ready and why");
-  assert.match(partner, /asset\.purpose === "before_service" && asset\.proofReady/);
+  assert.match(partner, /uploadToken: grant\.token/, "confirmation redeems the grant registration issued");
+  assert.match(partner, /describeProof\(/, "the partner is told the state of each proof slot from the server's own answer");
   const queue = read("lib/provider-proof-offline-queue.ts");
-  assert.match(queue, /grant\?: \{ mediaId: string; token: string; objectKey: string; expiresAt: number \} \| null/);
-  assert.match(queue, /export async function updateQueuedProviderProof/);
+  assert.match(queue, /export async function discardProviderProof/, "a permanently refused proof is dropped instead of re-registered for ever");
+  assert.match(queue, /isPermanentProofError/);
 });
 
 test("a founder can verify service proof from the Booking Command Center", () => {
