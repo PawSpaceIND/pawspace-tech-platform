@@ -4,7 +4,7 @@ import{getPetPassport,createPetPassportShare,revokePetPassportShare}from"../../.
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin pet passport write blocked",{status:403});}
-async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request),session=requestedCustomerId?null:await resolvePlatformSession(db,request);const customerId=String(requestedCustomerId||(session?.subjectType==="customer"?session.subjectId:"")).trim();if(!customerId)throw authFailure("A verified customer sign-in is required. Sign in and try again.",401);await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
+async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request),session=await resolvePlatformSession(db,request);const sessionCustomerId=session?.subjectType==="customer"?String(session.subjectId).trim():"",requested=String(requestedCustomerId??"").trim(),customerId=requested||sessionCustomerId;if(!customerId)throw authFailure("A verified customer sign-in is required. Sign in and try again.",401);if(requested&&sessionCustomerId&&requested!==sessionCustomerId)throw authFailure("Customer ownership denied",403);await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
 
 export async function GET(request:Request){
   try{
