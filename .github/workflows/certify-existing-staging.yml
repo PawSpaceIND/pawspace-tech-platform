@@ -97,7 +97,7 @@ jobs:
           PW_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
           PW_STAFF_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PW_VISUAL_UAT_ARTIFACT_DIR: visual-uat-evidence
-        run: npx playwright test e2e/visual-uat-sweep.spec.ts --project=chromium --workers=1
+        run: npx playwright test e2e/visual-uat-sweep.spec.ts --project=chromium --workers=1 --retries=0
       - name: Upload visual UAT evidence
         if: always()
         uses: actions/upload-artifact@v4
