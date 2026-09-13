@@ -210,3 +210,19 @@ INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,da
 SELECT 'uatseed_'||p.id||'_'||days.d||'_'||z.value,p.id,p.city_id,z.value,days.d,CASE WHEN p.services_json LIKE '%"boarding"%' THEN '["00:00-23:59"]' ELSE '["06:00-22:00"]' END,'roster',strftime('%s','now')*1000
 FROM provider_capacity_profiles p,json_each(p.zones_json) z,days
 WHERE p.id LIKE 'uatcap\_%' ESCAPE '\';
+
+-- ---------------------------------------------------------------------------------------------------
+-- 4. PUNCTUALITY / GPS TRACKING POLICY. The partner arrival gate ("Mark arrived") needs fresh trusted GPS
+--    evidence within 250 m of the doorstep, and GPS telemetry (POST /api/grooming-route) fails closed
+--    unless an approved, tracking-enabled punctuality policy exists for the service
+--    (lib/universal-location-recovery.ts activePunctualityPolicy): without one every fix is refused with
+--    "configuration_required: punctuality_policy:grooming" and no partner can ever mark arrival on
+--    staging. Publish the same UAT policy the local e2e seed uses (scripts/e2e/seed-identities.mjs),
+--    city-wide, for the two doorstep services. INSERT OR IGNORE: a policy authored through Ops
+--    (location-recovery save_policy) is never overridden. location_control_settings ('global',
+--    gps_ingestion_enabled=1) is created by the runtime itself.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS booking_punctuality_policies (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,city_id TEXT,provider_model TEXT,tracking_enabled INTEGER NOT NULL DEFAULT 0,eta_freshness_seconds INTEGER,allowed_accuracy_meters REAL,grace_minutes INTEGER,customer_alert_minutes INTEGER,ops_escalation_minutes INTEGER,reassignment_minutes INTEGER,evidence_requirements_json TEXT NOT NULL DEFAULT '[]',excluded_reasons_json TEXT NOT NULL DEFAULT '[]',raw_gps_retention_days INTEGER,approval_state TEXT NOT NULL DEFAULT 'draft',effective_from TEXT NOT NULL,effective_to TEXT,approved_by TEXT,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO booking_punctuality_policies (id,service_code,city_id,provider_model,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,grace_minutes,customer_alert_minutes,ops_escalation_minutes,reassignment_minutes,evidence_requirements_json,excluded_reasons_json,raw_gps_retention_days,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES
+ ('UAT-GPS-GROOMING','grooming',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000),
+ ('UAT-GPS-DOG-TRAINING','dog_training',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000);
