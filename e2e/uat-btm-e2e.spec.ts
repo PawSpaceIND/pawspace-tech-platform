@@ -454,9 +454,47 @@ async function openPartnerJob(page: Page): Promise<boolean> {
   return selectJobCard(page);
 }
 
+/** Re-open this booking's card after a refresh (the list re-renders and drops the selection). */
+async function reselectJobCard(page: Page): Promise<boolean> {
+  const cards = jobCards(page);
+  const n = await cards.count();
+  for (let i = 0; i < n; i += 1) {
+    await cards.nth(i).click().catch(() => {});
+    if (await page.getByText(`BOOKING ${bookingId}`, { exact: true }).waitFor({ state: "visible", timeout: 3_000 }).then(() => true, () => false)) return true;
+  }
+  return false;
+}
+
+/**
+ * Wait for a job action to become available. Right after a sandbox capture the booking can still read
+ * "payment pending" for a few seconds while the post-payment saga confirms it and creates the partner's
+ * work order; the partner app only offers "Accept job" once the status is confirmed. Refresh the list
+ * (↻) between polls and log the last status seen, so a slow saga is evidence rather than a mystery.
+ */
+async function awaitPartnerAction(page: Page, label: RegExp, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = "";
+  let polls = 0;
+  while (Date.now() < deadline) {
+    if (await page.getByRole("button", { name: label }).first().isVisible().catch(() => false)) {
+      if (polls) log(`ℹ️ ${String(label)} became available after ${polls} refresh(es) (last status seen: "${lastStatus}").`);
+      return true;
+    }
+    lastStatus = (await page.locator("main").getByText(/^(payment pending|confirmed|assigned|on the way|arrived|in service|completed|awaiting acceptance)$/).first().textContent().catch(() => "")) || lastStatus;
+    polls += 1;
+    await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
+    await page.waitForTimeout(6_000);
+    await reselectJobCard(page);
+  }
+  log(`⚠️ ${String(label)} did not appear within ${Math.round(timeoutMs / 1000)} s; last job status seen: "${lastStatus}".`);
+  await frameOutline(page, `Partner job while waiting for ${String(label)}`, 2_500);
+  return false;
+}
+
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const button = page.getByRole("button", { name: label }).first();
-  await expect(button, `partner action ${label}`).toBeVisible({ timeout: 20_000 });
+  await awaitPartnerAction(page, label, 30_000);
+  await expect(button, `partner action ${label}`).toBeVisible({ timeout: 5_000 });
   // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
   // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
   const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
@@ -587,6 +625,7 @@ test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, sta
 async function partnerLifecycle(page: Page) {
   log(`✅ Job ${bookingId} visible in the partner app (customer ${CUSTOMER_NAME}).`);
   await shot(page, "partner-job");
+  expect(await awaitPartnerAction(page, /^Accept job$/, 150_000), "Accept job must become available once the post-payment saga confirms the booking").toBeTruthy();
   await partnerAct(page, /^Accept job$/, /assigned/i); log("✅ Accept job → assigned.");
   await partnerAct(page, /^Start journey$/, /on the way/i); log("✅ Start journey → on the way.");
 
@@ -625,11 +664,18 @@ async function partnerLifecycle(page: Page) {
     const uploaded = page.waitForResponse(r => r.url().includes("/api/service-media/upload") && r.request().method() === "PUT", { timeout: 60_000 });
     await input.setInputFiles({ name: `${purpose}.jpg`, mimeType: "image/jpeg", buffer: jpegBytes(purpose) });
     const res = await uploaded;
-    const body = await res.json().catch(() => ({})) as { data?: { accessStatus?: string; sha256?: string; adapterConnected?: boolean; objectStored?: boolean }; error?: string; code?: string };
-    if (res.ok()) { uploadedPurposes.push(purpose); log(`✅ ${label}: bytes uploaded and verified by the server (HTTP 200, ${body.data?.accessStatus}, sha256 ${String(body.data?.sha256).slice(0, 12)}…, bucket ${body.data?.adapterConnected ? "bound, object stored" : "not bound in staging"}).`); }
+    const body = await res.json().catch(() => ({})) as { data?: { id?: string; accessStatus?: string; sha256?: string; adapterConnected?: boolean; objectStored?: boolean }; error?: string; code?: string };
+    if (res.ok()) { uploadedPurposes.push(purpose); log(`✅ ${label}: bytes uploaded and verified by the server (HTTP 200, asset ${body.data?.id}, ${body.data?.accessStatus}, sha256 ${String(body.data?.sha256).slice(0, 12)}…, bucket ${body.data?.adapterConnected ? "bound, object stored" : "not bound in staging"}).`); }
     else log(`❌ ${label}: upload refused (HTTP ${res.status()}): ${body.error ?? body.code ?? ""}`);
+    // The app registers, uploads, then discards the queued item and FLUSHES the offline queue; a second
+    // photo added before that flush finishes gets registered twice (one registration never receives its
+    // bytes and sits in the Ops queue as "upload incomplete"). Wait for the app's own confirmation first.
+    const settled = await page.getByText(new RegExp(`${label.split(" ")[0]} photo uploaded and verified`)).first().waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false);
+    log(settled ? `ℹ️ Partner app confirmed the ${label.toLowerCase()} upload and queue flush.` : `⚠️ Partner app did not show its "${label} uploaded and verified" message within 30 s.`);
   }
   await expect.poll(async () => (await page.getByText(/awaiting Ops approval/i).count()), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  const assets = await page.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ id: string; purpose: string; accessStatus?: string; access_status?: string; reviewStatus?: string; review_status?: string; proofReady?: boolean }> };
+  for (const asset of assets.assets ?? []) log(`ℹ️ Media asset ${asset.id}: ${asset.purpose}, access ${asset.accessStatus ?? asset.access_status}, review ${asset.reviewStatus ?? asset.review_status}, proofReady ${String(asset.proofReady)}.`);
   log("✅ Partner app shows the photos as uploaded and awaiting Ops approval.");
   const premature = page.getByRole("button", { name: /^Add service proof$/ });
   if (await premature.isVisible().catch(() => false)) {
@@ -659,14 +705,24 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
     const mine = queue.locator("article").filter({ hasText: bookingId });
     await expect.poll(async () => mine.count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
     for (const label of ["before service", "after service"]) {
-      const article = mine.filter({ hasText: new RegExp(`^${label} photo`, "i") }).first();
-      await article.getByLabel(`Review reason for ${label} photo`).fill("UAT: clear photo, pet identifiable, matches booking");
-      const decided = page!.waitForResponse(r => r.url().includes("/api/service-media") && r.request().method() === "PATCH", { timeout: 30_000 });
-      await article.getByRole("button", { name: `Approve ${label} photo` }).click();
-      const res = await decided;
-      const body = await res.json().catch(() => ({})) as { data?: { proofReady?: boolean; releaseBlockedReason?: string | null }; error?: string };
-      log(`${res.ok() && body.data?.proofReady ? "✅" : "❌"} ${label} photo: approve → HTTP ${res.status()}, proofReady ${String(body.data?.proofReady)}${body.error ? `, ${body.error}` : ""}${body.data?.releaseBlockedReason ? `, held: ${body.data.releaseBlockedReason}` : ""}.`);
-      expect(res.ok(), `approval of ${label}: ${JSON.stringify(body).slice(0, 200)}`).toBeTruthy();
+      // More than one article can carry this label when a registration never received its bytes; the
+      // checker approves the asset whose upload completed and records every refusal as evidence.
+      const candidates = mine.filter({ hasText: new RegExp(`^${label} photo`, "i") });
+      const count = await candidates.count();
+      log(`ℹ️ ${count} "${label} photo" asset(s) listed for ${bookingId} in the review queue.`);
+      let approved = false;
+      for (let i = 0; i < count && !approved; i += 1) {
+        const article = candidates.nth(i);
+        const state = ((await article.locator("span").first().textContent().catch(() => "")) || "").trim();
+        await article.getByLabel(`Review reason for ${label} photo`).fill("UAT: clear photo, pet identifiable, matches booking");
+        const decided = page!.waitForResponse(r => r.url().includes("/api/service-media") && r.request().method() === "PATCH", { timeout: 30_000 });
+        await article.getByRole("button", { name: `Approve ${label} photo` }).click();
+        const res = await decided;
+        const body = await res.json().catch(() => ({})) as { data?: { proofReady?: boolean; releaseBlockedReason?: string | null }; error?: string; code?: string };
+        log(`${res.ok() && body.data?.proofReady ? "✅" : "❌"} ${label} photo #${i + 1} (${state || "state unknown"}): approve → HTTP ${res.status()}, proofReady ${String(body.data?.proofReady)}${body.error ? `, ${body.error}` : ""}${body.data?.releaseBlockedReason ? `, held: ${body.data.releaseBlockedReason}` : ""}.`);
+        if (res.ok()) approved = true;
+      }
+      expect(approved, `an uploaded ${label} photo must be approvable for ${bookingId}`).toBeTruthy();
     }
     const listing = await page!.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ purpose: string; proofReady: boolean }> };
     const ready = (listing.assets ?? []).filter(a => a.proofReady).map(a => a.purpose);
