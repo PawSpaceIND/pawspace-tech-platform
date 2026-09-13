@@ -20,7 +20,7 @@ jobs:
           echo "Pre-UAT protocol PR is intentionally excluded from the GitHub production environment and production secrets."
 
   master-production-audit:
-    if: ${{ github.event_name == 'pull_request' && github.head_ref != 'fix/pre-uat-protocol-isolation' }}
+    if: ${{ (github.event_name == 'pull_request' && github.head_ref != 'fix/pre-uat-protocol-isolation') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
         run: node --test tests/production-readiness-enforcement.test.mjs tests/production-readiness-closure.test.mjs tests/bengaluru-production-remediation-wiring.test.mjs
 
   production-key-presence-audit:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: production
     steps:
