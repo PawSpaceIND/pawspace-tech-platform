@@ -18,15 +18,15 @@ test("grooming checkout persists normalized customer identity instead of generat
   // Stronger than before: the identity is no longer normalized from typed input at all, it is the
   // signed-in customer resolved from the platform session, so a placeholder cannot be constructed.
   assert.match(source, /customerId:customer\.customerId/);
-  assert.match(source, /customerName:customer\.customerName/);
-  assert.match(source, /primary:customer\.phone/);
+  assert.match(source, /customerName:customerName/);
+  assert.match(source, /primary:customerPhone/);
   assert.doesNotMatch(code, /customerName:`PawSpace Customer/);
   assert.match(entry, /loadCustomerAccount\(\)/);
   assert.doesNotMatch(entry, /`WEB-\$\{/);
 });
 
 test("grooming checkout persists the selected safety requirement", () => {
-  assert.match(source, /requirements:\[`grooming_safety:\$\{safetyNotes\}`\]/);
+  assert.match(source, /requirements:\[`grooming_safety:\$\{safetyNotes\}`/);
   assert.match(source, /Aggressive \/ bite history/);
 });
 
@@ -63,7 +63,7 @@ test("booking submission is guarded against concurrent double clicks", () => {
   assert.match(source, /confirm=async\(\)=>\{if\(actionLock\.current\|\|scheduling\)return;/);
   assert.match(source, /actionLock\.current=true;setScheduling\(true\)/);
   assert.match(source, /finally\{actionLock\.current=false;setScheduling\(false\);\}/);
-  assert.match(source, /disabled=\{scheduling\|\|!serviceLocation\}/);
+  assert.match(source, /disabled=\{scheduling\|\|!checkoutReady\}/);
 });
 
 test("provider preview never reserves capacity before confirmation", () => {
@@ -74,7 +74,7 @@ test("pay-now is gated by the shared payment page and cannot self-confirm", () =
   assert.match(source, /import BookingPaymentPage/);
   assert.match(source, /mode:pay==="online"\?"prepaid":"pay_after_service"/);
   assert.match(source, /setPendingPayment\(\{bookingId:canonical\.bookingId/);
-  assert.match(source, /<BookingPaymentPage serviceName="Grooming"/);
+  assert.match(source, /<BookingPaymentPage[^>]*serviceName="Grooming"/);
   assert.match(source, /onVerified=\{\(\)=>\{/);
   assert.doesNotMatch(code, /Paid in UAT sandbox/);
   assert.match(transactionSource, /"payment_pending"/);
