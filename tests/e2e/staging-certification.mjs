@@ -84,6 +84,22 @@ export function providerRosterCoverageQuery() {
   return `SELECT service.value service_code,zone.value zone_id,COUNT(DISTINCT p.id) provider_count FROM provider_capacity_profiles p,json_each(p.services_json) service,json_each(p.zones_json) zone WHERE p.city_id='blr' AND p.live=1 AND p.status='active' AND p.effective_from<=date('now') AND (p.effective_to IS NULL OR p.effective_to>=date('now')) AND service.value IN (${services}) AND zone.value IN (${zones}) GROUP BY service.value,zone.value`;
 }
 
+/**
+ * The gates lib/ applies to a roster row BEFORE it is evaluated as a candidate, so coverage alone is not
+ * proof a booking can assign. lib/provider-assignment-eligibility.ts drops any provider with no onboarding
+ * verification record unless updated_by is exactly 'founder_seed'; lib/service-discovery-address.ts
+ * matches grooming and dog_training within a service radius, which needs a current provider_home_base
+ * row. A seeded roster that fails either gate loads "successfully" and still yields NO_SCHEDULE_AVAILABLE
+ * with an empty evaluations list - exactly what blocked human UAT on 2026-09-13.
+ */
+export const RADIUS_GATED_SERVICES = ["grooming", "dog_training"];
+
+export function providerRosterAssignabilityQuery(now = Date.now()) {
+  const radius = RADIUS_GATED_SERVICES.map(value => `'${value}'`).join(",");
+  const at = Math.floor(Number(now));
+  return `SELECT p.id id,p.updated_by updated_by,CASE WHEN p.updated_by LIKE '%seed%' THEN 1 ELSE 0 END seeded,CASE WHEN EXISTS (SELECT 1 FROM json_each(p.services_json) s WHERE s.value IN (${radius})) THEN 1 ELSE 0 END radius_gated,CASE WHEN EXISTS (SELECT 1 FROM provider_home_base b WHERE b.provider_id=p.id AND b.effective_from<=${at} AND (b.effective_until IS NULL OR b.effective_until>${at})) THEN 1 ELSE 0 END has_home_base FROM provider_capacity_profiles p WHERE p.city_id='blr' AND p.live=1 AND p.status='active' AND p.effective_from<=date('now') AND (p.effective_to IS NULL OR p.effective_to>=date('now'))`;
+}
+
 /** Build the read-only staff probe against the canonical role_definitions(code) schema. */
 export function staffIdentityQuery(email) {
   const escaped = String(email).replaceAll("'", "''");
@@ -259,6 +275,21 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
       missing.length ? `missing ${missing.join(", ")}` : `${report.counts.providerRosterPairs}/${report.counts.providerRosterPairsExpected} service-zone pairs covered`);
   } catch (error) {
     unavailable("human-UAT provider roster covers every core service in every Bengaluru zone", `the provider roster could not be verified (${error?.message})`);
+  }
+
+  // ── human-UAT roster assignability (the gates applied before a candidate is even evaluated) ──
+  try {
+    const rows = await d1(providerRosterAssignabilityQuery());
+    const seeded = rows.filter(row => val(row, "seeded") === "1");
+    const badProvenance = seeded.filter(row => val(row, "updated_by") !== "founder_seed").map(row => `${val(row, "id")} (${val(row, "updated_by")})`);
+    check("human-UAT seeded roster rows carry founder_seed provenance so the scheduler may use them", badProvenance.length === 0,
+      badProvenance.length ? `dropped before evaluation: ${badProvenance.join(", ")}` : `${seeded.length} seeded rows assignable`);
+    const radiusGated = rows.filter(row => val(row, "radius_gated") === "1" && val(row, "seeded") === "1");
+    const noBase = radiusGated.filter(row => val(row, "has_home_base") !== "1").map(row => val(row, "id"));
+    check("radius-gated human-UAT providers (grooming, training) have a current home base", noBase.length === 0,
+      noBase.length ? `no geocoded home base: ${noBase.join(", ")}` : `${radiusGated.length} radius-gated seeded providers located`);
+  } catch (error) {
+    unavailable("human-UAT seeded roster rows carry founder_seed provenance so the scheduler may use them", `roster assignability could not be verified (${error?.message})`);
   }
 
   // ── seeds and staff identities ──────────────────────────────────────────────────────────────
