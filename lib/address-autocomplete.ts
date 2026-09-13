@@ -13,6 +13,8 @@ async function mapsCredentials(){
   return{ok:true as const,key,fixture:false as const};
 }
 
+export function extractPostalCode(addressComponents:Array<{longText?:string;types?:string[]}>|undefined){return addressComponents?.find(component=>component.types?.includes("postal_code"))?.longText?.trim()||"";}
+
 function validCoordinates(latitude:number,longitude:number){
   return Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180;
 }
@@ -54,7 +56,7 @@ export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:
     const response=await fetch(url.toString(),{headers:{"X-Goog-Api-Key":creds.key,"X-Goog-FieldMask":"formattedAddress,location,addressComponents"}});
     const body=await response.json() as{formattedAddress?:string;location?:{latitude?:number;longitude?:number};addressComponents?:Array<{longText?:string;types?:string[]}>;error?:{message?:string}};
     if(!response.ok)return{status:"provider_error",error:body.error?.message||`Places API returned ${response.status}`};
-    const pincode=body.addressComponents?.find(component=>component.types?.includes("postal_code"))?.longText?.trim();
+    const pincode=extractPostalCode(body.addressComponents);
     return{status:"configured",address:body.formattedAddress,pincode,latitude:body.location?.latitude,longitude:body.location?.longitude};
   }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to resolve place details"};}
 }
