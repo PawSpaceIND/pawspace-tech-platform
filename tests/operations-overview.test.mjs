@@ -144,7 +144,21 @@ test("today is the IST day, not the UTC day", async () => {
   assert.equal(overview.dayWindow.startUtc, new Date(`${DAY}T00:00:00+05:30`).toISOString());
   assert.equal(overview.metrics.bookingsToday, 1, "the 00:30 IST booking belongs to tomorrow");
   assert.equal(overview.metrics.recognizedRevenue, 500, "tomorrow's ₹9,000 must not be recognized today");
-  assert.deepEqual(overview.activity.map(row => row.bookingId), ["LATE"]);
+  assert.ok(overview.activity.some(row => row.bookingId === "LATE"));
+  assert.ok(overview.activity.some(row => row.bookingId === "TOMORROW"), "activity includes a future-service booking updated today while headline metrics remain service-date scoped");
+});
+
+test("today activity includes a booking confirmed today even when its service date is later", async () => {
+  const { sqlite, db } = fresh();
+  provider(sqlite, "PRV-1", "Rahul M.");
+  booking(sqlite, "FUTURE-CONFIRMED", { status: "confirmed", provider: "PRV-1", amount: 2399 });
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,updated_at=? WHERE id='FUTURE-CONFIRMED'")
+    .run(new Date("2026-08-10T09:00:00+05:30").toISOString(), new Date("2026-08-10T11:00:00+05:30").toISOString(), ASOF);
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  assert.equal(overview.metrics.bookingsToday, 0, "service-date headline remains scoped to today's appointments");
+  assert.equal(overview.activityTotal, 1);
+  assert.equal(overview.activity[0].bookingId, "FUTURE-CONFIRMED");
+  assert.equal(overview.activity[0].provider, null, "provider work-order projection is not fabricated when the fixture has none");
 });
 
 test("slots are placed by IST wall-clock time", async () => {

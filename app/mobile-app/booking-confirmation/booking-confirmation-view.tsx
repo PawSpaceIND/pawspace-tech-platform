@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CriticalErrorBoundary from "../../components/critical-error-boundary";
-import { CustomerCheckoutController, type CheckoutReceipt, type CheckoutState } from "../../../lib/customer-checkout-client";
+import { CustomerCheckoutController, type CheckoutConfirmation, type CheckoutReceipt, type CheckoutState } from "../../../lib/customer-checkout-client";
 import { loadCustomerAccount } from "../../../lib/customer-account-client";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
 import { customerBookingManageHref } from "../../../lib/customer-activity";
@@ -13,6 +13,7 @@ type Props = { bookingId: string; orderId: string; paymentId: string; signature:
 const SERVICE_LABEL: Record<string, string> = { grooming: "Grooming", dog_training: "Dog Training", boarding: "Boarding", pet_sitting: "Pet Sitting", pet_taxi: "Pet Taxi", dog_walking: "Dog Walking", food: "Fresh Food", vet_consult: "Vet Consultation" };
 const money = (value: number, currency = "INR") => new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 const when = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(date); };
+const appointment = (start: string, end: string) => `${when(start)} – ${when(end)} IST`;
 const receiptOf = (p: Props): CheckoutReceipt | null =>
   p.bookingId && /^order_[a-zA-Z0-9_]+$/.test(p.orderId) && /^pay_[a-zA-Z0-9_]+$/.test(p.paymentId) && /^[a-fA-F0-9]{64}$/.test(p.signature)
     ? { bookingId: p.bookingId, orderId: p.orderId, paymentId: p.paymentId, signature: p.signature } : null;
@@ -74,6 +75,11 @@ function BookingConfirmationInner(props: Props) {
   const manageHref = booking ? customerBookingManageHref(booking) : null;
   const serviceName = booking ? SERVICE_LABEL[booking.serviceCode] || booking.serviceCode.replaceAll("_", " ") : "PawSpace";
   const bookingConfirmed = booking ? ["confirmed", "assigned", "in_progress", "completed"].includes(booking.status) : false;
+  const confirmation:CheckoutConfirmation|undefined = state.confirmation;
+  const canonicalProvider = confirmation?.providerName || null;
+  const canonicalPets = confirmation?.pets || [];
+  const canonicalStart = confirmation?.scheduledStart || booking?.scheduledStart || "";
+  const canonicalEnd = confirmation?.scheduledEnd || booking?.scheduledEnd || "";
 
   return <main className={styles.page} data-pawspace-mobile="true"><div className={styles.content}>
     <Link href="/mobile-app">← Back to PawSpace</Link>
@@ -88,9 +94,17 @@ function BookingConfirmationInner(props: Props) {
         : <section className={styles.card} aria-label="Booking details"><h2>{booking.packageName}</h2><dl>
             <div><dt>Service</dt><dd>{serviceName}</dd></div>
             <div><dt>Status</dt><dd>{booking.status.replaceAll("_", " ")}</dd></div>
-            <div><dt>Starts</dt><dd>{when(booking.scheduledStart)} IST</dd></div>
-            <div><dt>Booking total</dt><dd>{money(booking.totalAmount, booking.currency)}</dd></div>
+            <div><dt>Appointment</dt><dd>{canonicalEnd ? appointment(canonicalStart, canonicalEnd) : `${when(canonicalStart)} IST`}</dd></div>
+            <div><dt>Booking total</dt><dd>{money(confirmation?.totalAmount ?? booking.totalAmount, confirmation?.currency || booking.currency)}</dd></div>
+            {canonicalPets.length > 0 && <div><dt>{canonicalPets.length === 1 ? "Pet" : "Pets"}</dt><dd>{canonicalPets.map(pet => `${pet.name}${pet.breed ? ` · ${pet.breed}` : ` · ${pet.species}`}`).join(", ")}</dd></div>}
+            {canonicalProvider && <div><dt>Assigned provider</dt><dd>{canonicalProvider}</dd></div>}
           </dl><p className={styles.reference}>Booking reference · {booking.id}</p></section>}
+      {confirmation && verified && <section className={styles.card} aria-label="Payment receipt"><h2>Payment receipt</h2><dl>
+        <div><dt>Status</dt><dd>{confirmation.paymentStatus || "captured"}</dd></div>
+        <div><dt>Amount</dt><dd>{money(confirmation.totalAmount, confirmation.currency)}</dd></div>
+        {confirmation.gatewayPaymentId && <div><dt>Razorpay payment</dt><dd>{confirmation.gatewayPaymentId}</dd></div>}
+        {confirmation.gatewayOrderId && <div><dt>Razorpay order</dt><dd>{confirmation.gatewayOrderId}</dd></div>}
+      </dl>{confirmation.paymentId && <p className={styles.reference}>PawSpace payment record · {confirmation.paymentId}</p>}</section>}
       <div className={styles.actions}>
         {canPayAgain && <button type="button" className={styles.primary} disabled={busy} onClick={() => void controller.current?.start()}>Pay securely with Razorpay</button>}
         {!verified && state.canCheck && !busy && state.phase !== "pending" && <button type="button" className={styles.secondary} onClick={() => void controller.current?.resume()}>Check payment status</button>}

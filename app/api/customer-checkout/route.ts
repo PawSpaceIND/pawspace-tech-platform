@@ -3,7 +3,7 @@ import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
 import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
 import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
-import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
+import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, readCustomerCheckoutConfirmation, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 export async function POST(request: Request) {
   try {
@@ -57,13 +57,17 @@ export async function POST(request: Request) {
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId, false);
       const stage = await paymentStageAmount(db, bookingId);
       if (!stage) return json({ error: "Payment record was not found." }, 404);
-      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status: stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation" } });
+      const status = stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation";
+      const confirmation = status === "captured" ? await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId) : undefined;
+      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation } });
     }
     if (body.action === "confirm") {
       if (![body.orderId, body.paymentId, body.signature].every(value => typeof value === "string")) return json({ error: "Invalid payment receipt." }, 400);
-      return json({ data: await verifyCustomerCheckoutReceipt(db, runtime, session.subjectId, {
+      const verified = await verifyCustomerCheckoutReceipt(db, runtime, session.subjectId, {
         bookingId, orderId: body.orderId as string, paymentId: body.paymentId as string, signature: body.signature as string,
-      }) });
+      });
+      const confirmation = verified.status === "captured" ? await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId) : undefined;
+      return json({ data: { ...verified, confirmation } });
     }
     return json({ error: "Unknown checkout action." }, 400);
   } catch (error) {

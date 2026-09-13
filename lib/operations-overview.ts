@@ -54,6 +54,20 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
          WHERE ${where} ORDER BY b.scheduled_start`).bind(...binds).all<Row>()).results
     : [];
 
+  const dayStartMs = new Date(dayStart).getTime(), dayEndMs = new Date(dayEnd).getTime();
+  const activityBinds: unknown[] = [dayStart, dayEnd, dayStartMs, dayEndMs];
+  let activityWhere = "((b.scheduled_start>=? AND b.scheduled_start<?) OR (b.updated_at>=? AND b.updated_at<?))";
+  if (zoneId) { activityWhere += " AND b.zone_id=?"; activityBinds.push(zoneId); }
+  const activityBookings = hasBookings
+    ? (await db.prepare(
+        `SELECT b.id,b.customer_id,b.service_code,b.package_name,b.zone_id,b.provider_id,b.status,b.total_amount,b.scheduled_start,b.scheduled_end,b.updated_at,
+                c.name customer_name, w.provider_name, w.status work_order_status
+         FROM canonical_bookings b
+         LEFT JOIN canonical_customers c ON c.id=b.customer_id
+         LEFT JOIN provider_work_orders w ON w.booking_id=b.id
+         WHERE ${activityWhere} ORDER BY b.updated_at DESC`).bind(...activityBinds).all<Row>()).results
+    : [];
+
   const revenueRows = bookings.filter(recognized);
   const completed = bookings.filter(row => text(row.status) === "completed");
   const cancelled = bookings.filter(row => text(row.status) === "cancelled");
@@ -157,7 +171,7 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
     capacityShown: capacity.length,
     capacityTotal: providersActive,
     slots: OVERVIEW_SLOTS.map(slot => slot.label),
-    activity: bookings.slice(0, ACTIVITY_LIMIT).map(row => ({
+    activity: activityBookings.slice(0, ACTIVITY_LIMIT).map(row => ({
       bookingId: text(row.id),
       customer: text(row.customer_name) || text(row.customer_id),
       service: text(row.service_code),
@@ -169,8 +183,8 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
       slot: slotOf(text(row.scheduled_start)),
       amount: Number(row.total_amount || 0),
     })),
-    activityShown: Math.min(bookings.length, ACTIVITY_LIMIT),
-    activityTotal: bookings.length,
+    activityShown: Math.min(activityBookings.length, ACTIVITY_LIMIT),
+    activityTotal: activityBookings.length,
     byService,
     sourceStatus: {
       bookings: hasBookings ? "canonical_bookings" : "not_connected",
