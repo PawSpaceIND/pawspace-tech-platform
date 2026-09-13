@@ -29,6 +29,40 @@ function syntheticProofAllowed(env:Record<string,unknown>|null|undefined){
   return String(env?.PAWSPACE_MEDIA_ENV??"").trim().toLowerCase()==="uat";
 }
 
+/** Where a registered asset stands on its way to being usable proof. Read by the media listing and the Partner app. */
+export type ServiceProofState="released"|"awaiting_upload_confirmation"|"awaiting_verification"|"rejected"|"withdrawn"|"blocked";
+
+/**
+ * The release rule as a question instead of a throw. assertServiceProofRef below is the gate that
+ * grooming add_proof/complete enforce; this is the SAME rule, so the media listing tells the Partner
+ * app exactly what that gate will accept. The listing used to compute its own answer - requiring
+ * scan_status="clean", which reviewMedia deliberately stopped writing on a human approval - so an asset
+ * the gate accepted was listed as not ready forever and "Add service proof" refused every UAT job.
+ * One rule, two readers; the messages are the gate's own. [PTJA-W3-SC]
+ */
+export function serviceProofRefusal(row:Row):string|null{
+  // A file a scanner condemned cannot be proof even if something else marked it ready.
+  if(["infected","unreadable","rejected"].includes(String(row.scan_status)))return "Service media asset was rejected by malware/content scanning";
+  if(String(row.review_status??"")&&String(row.review_status)!=="approved")return "Service media asset has not been reviewed and approved";
+  // release_basis is written only by the review step, and only when mediaReleaseVerdict permitted release.
+  if(!String(row.release_basis??"").trim())return "Service media asset has not been released by the scan/quarantine boundary";
+  if(String(row.access_status)!=="ready")return "Service media asset upload is not ready for service proof";
+  if(String(row.retention_status)!=="active")return "Service media asset is outside its active retention state";
+  if(Number(row.synthetic||0)!==0)return "Registered media asset is still marked synthetic";
+  return null;
+}
+export const serviceProofReleased=(row:Row)=>serviceProofRefusal(row)===null;
+export function serviceProofState(row:Row):ServiceProofState{
+  if(serviceProofRefusal(row)===null)return "released";
+  if(String(row.retention_status)!=="active")return "withdrawn";
+  if(["infected","unreadable","rejected"].includes(String(row.scan_status))||String(row.review_status??"")==="rejected")return "rejected";
+  if(String(row.access_status)==="pending_upload")return "awaiting_upload_confirmation";
+  // Approved by a person but not released: the scan/quarantine boundary is withholding it (no scanner in production).
+  if(String(row.review_status??"")==="approved")return "blocked";
+  if(String(row.access_status)==="quarantined")return "awaiting_verification";
+  return "blocked";
+}
+
 export async function assertServiceProofRef(db:Db,input:{ref:string|undefined;bookingId:string;providerId:string;purpose:"before_service"|"after_service"}){
   const value=input.ref?.trim();
   // An absent reference returns without objection ON PURPOSE: this function validates a reference that
@@ -66,13 +100,5 @@ export async function assertServiceProofRef(db:Db,input:{ref:string|undefined;bo
    * The scanner check stays as well, as a floor: a file a scanner condemned cannot be proof even if
    * something else marked it ready.
    */
-  if(["infected","unreadable","rejected"].includes(String(row.scan_status)))throw new Response("Service media asset was rejected by malware/content scanning",{status:409});
-  if(String(row.review_status??"")&&String(row.review_status)!=="approved")throw new Response("Service media asset has not been reviewed and approved",{status:409});
-  // THREE independent conditions, as before. release_basis is written only by the review step, and only
-  // when mediaReleaseVerdict actually permitted release - so a row whose access_status was set to
-  // 'ready' by any other means still fails here, exactly as an unscanned row used to.
-  if(!String(row.release_basis??"").trim())throw new Response("Service media asset has not been released by the scan/quarantine boundary",{status:409});
-  if(String(row.access_status)!=="ready")throw new Response("Service media asset upload is not ready for service proof",{status:409});
-  if(String(row.retention_status)!=="active")throw new Response("Service media asset is outside its active retention state",{status:409});
-  if(Number(row.synthetic||0)!==0)throw new Response("Registered media asset is still marked synthetic",{status:409});
+  const refusal=serviceProofRefusal(row);if(refusal)throw new Response(refusal,{status:409});
 }
