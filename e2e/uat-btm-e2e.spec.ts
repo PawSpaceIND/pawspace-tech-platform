@@ -444,12 +444,17 @@ async function openPartnerJob(page: Page): Promise<boolean> {
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const button = page.getByRole("button", { name: label }).first();
   await expect(button, `partner action ${label}`).toBeVisible({ timeout: 20_000 });
-  const lifecycle = page.waitForResponse(r => r.url().includes("/api/grooming-lifecycle") && r.request().method() === "POST", { timeout: 30_000 });
+  // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
+  // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
+  const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
   await button.click();
   const res = await lifecycle;
   const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
-  if (!res.ok()) throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`);
-  await expect(page.locator(".detailHead, [class*='detailHead']").getByText(expectStatus).first().or(page.getByText(expectStatus).first())).toBeVisible({ timeout: 20_000 });
+  log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
+  if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
+  const shown = page.locator(".detailHead, [class*='detailHead']").getByText(expectStatus).first().or(page.getByText(expectStatus).first());
+  if (!(await shown.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) await frameOutline(page, `Partner job after ${String(label)} (expected ${String(expectStatus)})`, 2_500);
+  await expect(shown, `status after ${String(label)}`).toBeVisible();
 }
 
 async function staffSignIn(context: BrowserContext, email: string): Promise<Page> {
