@@ -1,0 +1,68 @@
+name: Automated human sweep (staging)
+
+# Manual only. Drives a real browser against the DEPLOYED staging origin as three personas
+# (Customer via sandbox OTP, Partner + Founder via /staging-login with the injected UAT access code)
+# and uploads a module-by-module report + screenshots. Never touches production; sandbox payments only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Staging origin to sweep'
+        required: true
+        default: 'https://pawspace-staging.karthik-fce.workers.dev'
+      reseed:
+        description: 'Reload staff directory + provider roster (with the partner identity link) before sweeping'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-sweep
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Reseed staff directory + provider roster (with partner link)
+        if: ${{ github.event.inputs.reseed == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute pawspace-staging --remote --file=scripts/employee-seed.sql
+          npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-provider-capacity.sql
+      - name: Run the multi-persona sweep
+        env:
+          PW_BASE_URL: ${{ github.event.inputs.base_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          SWEEP_REPORT: test-results/human-sweep-report.md
+        run: npx playwright test --config playwright.sweep.config.ts
+      - name: Print the human-readable report
+        if: always()
+        run: |
+          echo "===== HUMAN SWEEP REPORT ====="
+          cat test-results/human-sweep-report.md 2>/dev/null || echo "(no report file produced)"
+      - name: Upload report + screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: human-sweep-evidence
+          path: |
+            test-results/**
+            playwright-report-sweep/**
+          if-no-files-found: warn
