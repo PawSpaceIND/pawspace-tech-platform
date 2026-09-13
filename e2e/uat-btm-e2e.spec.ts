@@ -195,8 +195,10 @@ type BookingAttempt = { reserve: ReserveOutcome | null; created: CreatedOutcome 
 async function confirmBooking(page: Page): Promise<BookingAttempt> {
   // The slot step also POSTs /api/uat-scheduling with action:"preview" (the "Preferred groomer" list); only the
   // reserve call, which carries no action, decides capacity.
-  const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 60_000 }).catch(() => null);
-  const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
+  const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 150_000 }).catch(() => null);
+  // A reserve is a real scheduler evaluation on remote D1 (about 8 s per candidate groomer); give both
+  // server calls their own generous budget rather than the action timeout.
+  const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 }).catch(() => null);
   const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
   await expect(confirm, "Confirm booking must be enabled with the alternative phone blank").toBeEnabled();
   await confirm.click();
@@ -443,7 +445,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 // ---------------------------------------------------------------------------------------------------
 
 test("1. Customer — BTM Layout 560068 on the requested date, pay online through the Razorpay sandbox", async ({ browser }) => {
-  test.setTimeout(480_000);
+  test.setTimeout(600_000);
   section("1. Customer persona — BTM Layout checkout (online)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
