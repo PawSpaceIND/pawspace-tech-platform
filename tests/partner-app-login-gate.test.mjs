@@ -240,6 +240,11 @@ test("the UAT provider switch is rendered only when the gated roster answers, an
   const page = await source("app/partner-app/page.tsx");
   assert.match(page, /if \(sessionState !== "verified"\) return;\s*let cancelled = false;\s*fetch\("\/api\/uat-provider-switch", \{ cache: "no-store" \}\)/, "the roster is only requested for a verified session");
   assert.match(page, /if \(response\.status === 404\) return null;/, "outside UAT the switch does not exist");
+  assert.match(page, /\.catch\(\(err\) => \{ if \(!cancelled\) \{ setUatProviders\(null\); setUatRosterError\(err instanceof Error \? err\.message : "Unable to load the UAT provider roster"\); \} \}\);/,
+    "a roster failure other than the shut gate is surfaced, not swallowed");
+  assert.match(page, /\{!uatProviders && uatRosterError && <p role="status" className=\{styles\.empty\}>Switch UAT provider is unavailable right now: \{uatRosterError\}<\/p>\}/);
+  assert.match(page, /const providerName = selected\?\.providerName \|\| uatProviders\?\.find\(\(provider\) => provider\.id === identity\?\.subjectId\)\?\.name \|\| "PawSpace Partner";/,
+    "a switched-to provider with no grooming job is still named from the roster");
   assert.match(page, /\{uatProviders && <section className=\{styles\.uatSwitch\}/);
   assert.match(page, /body: JSON\.stringify\(\{ providerId: uatProviderId, code: uatCode \}\)/, "the shared UAT access code is required");
   assert.match(page, /setUatCode\(""\); setJobs\(\[\]\); setSelectedId\(""\); setTab\("home"\);\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,

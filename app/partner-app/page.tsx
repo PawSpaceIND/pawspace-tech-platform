@@ -72,6 +72,7 @@ export default function PartnerMobileApp() {
   // who this session is, and the gate above renders whatever it answers.
   const [signingOut, setSigningOut] = useState(false);
   const [uatProviders, setUatProviders] = useState<UatProvider[] | null>(null);
+  const [uatRosterError, setUatRosterError] = useState("");
   const [uatProviderId, setUatProviderId] = useState("");
   const [uatCode, setUatCode] = useState("");
   const [switching, setSwitching] = useState(false);
@@ -117,8 +118,10 @@ export default function PartnerMobileApp() {
         if (!response.ok) throw new Error(body.error || "Unable to load the UAT provider roster");
         return body.data?.providers ?? [];
       })
-      .then((providers) => { if (!cancelled) setUatProviders(providers); })
-      .catch(() => { if (!cancelled) setUatProviders(null); });
+      .then((providers) => { if (!cancelled) { setUatProviders(providers); setUatRosterError(""); } })
+      // A 404 is the gate being shut (not UAT) and stays silent; any other failure is shown in the
+      // More tab so a tester knows the switch exists but could not be loaded, rather than hidden.
+      .catch((err) => { if (!cancelled) { setUatProviders(null); setUatRosterError(err instanceof Error ? err.message : "Unable to load the UAT provider roster"); } });
     return () => { cancelled = true; };
   }, [sessionState, identityKey]);
 
@@ -144,7 +147,9 @@ export default function PartnerMobileApp() {
   const selected = useMemo(() => jobs.find((job) => job.bookingId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId]);
   const activeJobs = jobs.filter((job) => !["completed", "cancelled"].includes(job.status));
   const completedJobs = jobs.filter((job) => job.status === "completed");
-  const providerName = selected?.providerName || "PawSpace Partner";
+  // A provider with no grooming work order yet (a trainer switched to in UAT, for one) is still named
+  // from the roster the switch loaded, so the greeting shows who the session is.
+  const providerName = selected?.providerName || uatProviders?.find((provider) => provider.id === identity?.subjectId)?.name || "PawSpace Partner";
   const travelState = selected ? (selected.workOrderStatus || selected.status) : "";
   const canTrack = Boolean(selected && activeTravelStates.has(travelState));
 
@@ -454,6 +459,7 @@ export default function PartnerMobileApp() {
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
           <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={accountBusy}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out"}</b><small>Ends this partner session on this device</small></span><em>›</em></button></div>
+          {!uatProviders && uatRosterError && <p role="status" className={styles.empty}>Switch UAT provider is unavailable right now: {uatRosterError}</p>}
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
             <b>Switch UAT provider</b>
             <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Job lists and lifecycle actions in this app are grooming work orders; other verticals sign in but see their jobs elsewhere.</p>
