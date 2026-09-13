@@ -66,6 +66,15 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
   five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
   on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
+- **Partner job lifecycle** (`/partner-app`, signed in as the assigned groomer): Accept job → Start journey →
+  Mark arrived → Start service → upload before/after photos → Add service proof → Complete job.
+  - **Mark arrived is GPS-gated**: the server only accepts it with a fresh GPS fix within 250 m of the customer's
+    doorstep. On a phone, open **GPS & route → Start GPS** first, and book the test job to the address you are
+    actually at. Without a fix the app now says so instead of failing silently.
+  - **Photos need Ops approval** (maker/checker): after both photos show "awaiting Ops approval", a *different*
+    person signs in at `/staging-login` (Founder or Manager), opens **Control → Customer booking lifecycle →
+    Service proof awaiting review**, writes a reason and approves each photo. The partner then taps **Refresh
+    proof status → Add service proof → Complete job**. The uploader can never approve their own photo.
 - **Scheduling board** (`/team/scheduling?date=YYYY-MM-DD`, manager): day columns per provider; try a reassign.
 - **Relocation triage** (`/team/relocation-enquiries`): your submitted enquiries appear with Domestic/Intl tags.
 
