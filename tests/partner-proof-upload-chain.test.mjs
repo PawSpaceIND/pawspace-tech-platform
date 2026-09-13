@@ -138,7 +138,8 @@ test("source contract: the Partner app confirms the upload it registers, and Ops
   const [partner, review, panel, queue] = await Promise.all([
     "app/partner-app/page.tsx", "app/control/service-proof-review.tsx", "app/control/booking-lifecycle-panel.tsx", "lib/provider-proof-offline-queue.ts",
   ].map(path => readFile(new URL("../" + path, import.meta.url), "utf8")));
-  assert.match(partner, /action: "confirm_upload", uploadToken: grant\.token, storageReference: grant\.objectKey, observedSizeBytes: item\.sizeBytes, observedSha256: item\.sha256, observedMimeType: item\.mimeType/);
+  assert.match(partner, /boundedFetch\("\/api\/service-media\/upload", \{ method: "PUT", headers: \{ "content-type": item\.mimeType, "x-pawspace-media-id": mediaId, "x-pawspace-upload-token": grant\.token \}, body: item\.file \}/, "the bytes themselves are carried to the server, which verifies them against the grant before confirming");
+  assert.doesNotMatch(partner, /observedSha256: item\.sha256/, "the confirmation is never made from the uploader's own claim about bytes the server never saw");
   assert.match(partner, /await discardProviderProof\(queued\.id\);\s*await flushProviderProofQueue/, "a directly registered item leaves the queue before the flush, or it is registered twice");
   assert.match(partner, /review_status === "rejected"/, "a rejected photo must be surfaced so it can be replaced");
   assert.match(review, /action: "record_scan", scanResult, reason/);

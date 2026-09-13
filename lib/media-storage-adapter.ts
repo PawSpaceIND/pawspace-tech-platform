@@ -25,16 +25,36 @@
 export const MEDIA_BUCKET_BINDING="PAWSPACE_MEDIA_BUCKET";
 
 /**
- * The narrow slice of an R2 bucket this adapter uses. Deliberately two read operations: the boundary
- * verifies what was stored, it does not need to write, list or delete, and a wider type would invite
- * somebody to use one.
+ * The narrow slice of an R2 bucket this adapter uses. Two read operations, because the boundary verifies
+ * what was stored, plus one write that exists for a single caller: the governed upload route, which has
+ * already verified the bytes against their grant before it stores them. No list, no delete; a wider type
+ * would invite somebody to use one.
  */
 export type MediaObjectBody={size?:number;httpMetadata?:{contentType?:string};body?:ReadableStream<Uint8Array>|null;arrayBuffer?:()=>Promise<ArrayBuffer>};
 export type MediaObjectStore={
   head(key:string):Promise<{size?:number;httpMetadata?:{contentType?:string}}|null>;
   /** Optional for backwards-compatible HEAD-only bindings; governed download routes require it. */
   get?(key:string):Promise<MediaObjectBody|null>;
+  /** Optional for HEAD-only bindings; the governed upload route requires it to store an object. */
+  put?(key:string,body:ArrayBuffer|Uint8Array,options?:{httpMetadata?:{contentType?:string}}):Promise<unknown>;
 };
+
+export type StoreObjectOutcome={stored:boolean;adapterConnected:boolean;reason:string|null};
+
+/**
+ * Step 4 of the signed-upload rule, server side: write bytes that an upload route has ALREADY verified
+ * against their grant (size, checksum, content type) under the grant's own object key. No URL is composed
+ * and the key never leaves the server. With no binding, or a binding that cannot write, nothing is stored
+ * and the outcome says so plainly; the caller decides whether that is acceptable for its environment. It is
+ * never acceptable to report stored:true for bytes that were not stored.
+ */
+export async function storeObject(objectKey:string,body:Uint8Array,contentType:string):Promise<StoreObjectOutcome>{
+  const store=await mediaObjectStore();
+  if(!store)return{stored:false,adapterConnected:false,reason:`No ${MEDIA_BUCKET_BINDING} binding is configured for this worker.`};
+  if(typeof store.put!=="function")return{stored:false,adapterConnected:true,reason:`The ${MEDIA_BUCKET_BINDING} binding cannot write objects.`};
+  try{await store.put(objectKey,body,{httpMetadata:{contentType}});return{stored:true,adapterConnected:true,reason:null};}
+  catch(error){return{stored:false,adapterConnected:true,reason:error instanceof Error?error.message:"Private storage refused the object"};}
+}
 
 export type MediaStorageStatus={
   connected:boolean;
