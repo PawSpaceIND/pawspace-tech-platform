@@ -70,9 +70,23 @@ async function assertOfferEligibility(db:Db,providerId:string,bookingId:string){
  return booking;
 }
 
-/** Resolve the provider bound to this identity (legacy provider_identity_links). Own-record only. */
+/**
+ * Resolve the provider bound to this identity. Own-record only.
+ *
+ * Two identities reach here. A staff login carries an address and is resolved through the legacy
+ * provider_identity_links table, which is seeded per environment. A provider-scoped platform session
+ * carries no address at all: resolvePrimaryActor sets its email to the session auditId, which is
+ * `${subject_type}:${subject_id}`. That binding was already proven active and verified by
+ * resolvePlatformSession before the actor existed, so for a provider session the subject IS the link
+ * and no table lookup can improve on it -- the seeded table holds staff addresses only, so such a
+ * session would otherwise read as unlinked and the Partner App workspace would 403 after a UAT
+ * provider switch. Matched before lowercasing, because a provider id is not case-folded.
+ */
 export async function resolveProviderForActor(db:Db,email:string):Promise<string|null>{
- const e=text(email).toLowerCase();if(!e)return null;
+ const raw=text(email);if(!raw)return null;
+ const session=/^provider:(.+)$/.exec(raw);
+ if(session)return text(session[1])||null;
+ const e=raw.toLowerCase();
  const link=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=? AND status='active'").bind(e).first<Row>().catch(()=>null);
  return link?text(link.provider_id):null;
 }
