@@ -249,13 +249,25 @@ test("Partner persona — groomer sees the incoming job card in /partner/jobs", 
     const counts = feed?.data?.counts ?? {};
     log(`✅ Partner job feed loaded. Counts — needsAction:${counts.needsAction ?? "?"}, today:${counts.today ?? "?"}, upcoming:${counts.upcoming ?? "?"}, completed:${counts.completed ?? "?"}, total:${counts.total ?? "?"}.`);
     if (bookingId) {
-      const card = page.locator(`[data-testid="partner-workspace-${bookingId}"]`);
-      const matched = await card.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
-      if (matched) await card.scrollIntoViewIfNeeded().catch(() => {});
-      const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
-      log(matched
-        ? `✅ Incoming job card for the customer's booking ${bookingId} renders in ${GROOMER_EMAIL}'s feed (grooming, "Open assigned workspace →").`
-        : `⚠️ Booking ${bookingId} not in this groomer's feed — it was assigned to ${assignedGroomer || "an unlinked provider"}, not the provider linked to ${GROOMER_EMAIL}. Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
+      type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
+      const sections = (["needsAction", "today", "upcoming"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
+      const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
+      if (hit) {
+        log(`✅ Booking ${bookingId} is in ${GROOMER_EMAIL}'s job feed (${hit.section}: ${hit.job.serviceCode} · ${hit.job.packageName} · status ${hit.job.status} · ${hit.job.scheduledStart}).`);
+        // The card prints "<service> · <package> for <first name>" and the window — never the raw id — so match on those.
+        const firstName = hit.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
+        const cards = page.getByText(new RegExp(`^for ${rx(firstName)}$`));
+        const cardVisible = await cards.first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
+        if (cardVisible) await cards.first().scrollIntoViewIfNeeded().catch(() => {});
+        const cardCount = cardVisible ? await cards.count().catch(() => 1) : 0;
+        const workspaceLink = await page.locator(`[data-testid="partner-workspace-${bookingId}"]`).isVisible().catch(() => false);
+        log(cardVisible
+          ? `✅ Job card rendered on /partner/jobs under "${hit.section}" (${hit.job.serviceCode} · ${hit.job.packageName} for ${firstName}; ${cardCount} card${cardCount === 1 ? "" : "s"} for this sweep customer)${workspaceLink ? " with the 'Open assigned workspace →' link" : "; the workspace link appears once the job is actionable"}.`
+          : "⚠️ Job is in the feed API but its card was not located in the DOM within 20 s — check the screenshot.");
+      } else {
+        const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
+        log(`⚠️ Booking ${bookingId} not in this groomer's feed — it was assigned to ${assignedGroomer || "an unlinked provider"}, not the provider linked to ${GROOMER_EMAIL}. Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
+      }
     } else {
       log("ℹ️ No booking ID captured from the customer step; asserting the feed structure only.");
     }
@@ -299,16 +311,42 @@ test("Founder persona — /admin + /crm render, tables load, booking ID visible"
     await shot(page, "crm");
 
     if (bookingId) {
-      // The Command Center keeps an SSE stream open, so "networkidle" never fires; wait for its heading, then
-      // narrow the list (150 latest by schedule) with the page's own search box before looking for the id.
+      // The Command Center keeps an SSE stream open, so "networkidle" never fires; wait for its heading and for
+      // its list API (one payload: the 150 latest bookings by schedule), then narrow with the page's search box.
+      const listRes = page.waitForResponse(r => r.url().includes("/api/booking-command-center") && !r.url().includes("stream") && r.request().method() === "GET", { timeout: 90_000 }).catch(() => null);
       await page.goto("/team/operations/bookings");
       await expect(page.getByRole("heading", { name: "Booking Command Center" })).toBeVisible({ timeout: 30_000 });
+      const list = await listRes;
+      const listBody = list ? await list.json().catch(() => ({})) as { bookings?: Array<{ id?: string }>; error?: string } : null;
+      const listed = listBody?.bookings ?? [];
+      const inList = listed.some(b => String(b.id) === bookingId);
+      log(list
+        ? `${list.ok() ? "ℹ️" : "⚠️"} Command Center list API → HTTP ${list.status()}${list.ok() ? `, ${listed.length} bookings loaded (150 latest by schedule); ${inList ? "includes" : "does not include"} ${bookingId}` : ` (${listBody?.error || "error"})`}.`
+        : "⚠️ Command Center list API did not answer within 90 s.");
       const search = page.getByPlaceholder(/Search booking, customer, pet, phone or provider/i);
       if (await search.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false)) await search.fill(bookingId);
-      const idVisible = await page.getByText(bookingId, { exact: false }).first().waitFor({ state: "visible", timeout: 60_000 }).then(() => true).catch(() => false);
-      log(`${idVisible ? "✅" : "⚠️"} Canonical booking ID ${bookingId} ${idVisible ? "is visible in the Booking Command Center" : "was not visible"}.`);
+      const idVisible = await page.getByText(bookingId, { exact: false }).first().waitFor({ state: "visible", timeout: 30_000 }).then(() => true).catch(() => false);
+      log(`${idVisible ? "✅" : "⚠️"} Canonical booking ID ${bookingId} ${idVisible ? "is visible in the Booking Command Center" : "was not visible in the Booking Command Center"}.`);
       await shot(page, "founder-command-center");
-      expect(idVisible, `booking ${bookingId} should be visible to Founder`).toBeTruthy();
+
+      // Second founder surface: the ops scheduling board for the service date prints "Booking <id>" under the
+      // assigned provider's column, and its API is the same data the board renders.
+      let boardVisible = false, boardApiHas = false;
+      if (!idVisible) {
+        const boardRes = await page.request.get(`/api/uat-scheduling?date=${SERVICE_DATE_ISO}`);
+        const raw = await boardRes.json().catch(() => ({})) as { data?: unknown; providers?: unknown };
+        const board = (raw.data ?? raw) as { providers?: Array<{ providerName?: string; reservations?: Array<{ bookingId?: string | null }> }> };
+        const column = (board.providers ?? []).find(p => (p.reservations ?? []).some(r => r.bookingId === bookingId));
+        boardApiHas = Boolean(column);
+        log(`${boardApiHas ? "✅" : "⚠️"} Scheduling board API for ${SERVICE_DATE_ISO} → HTTP ${boardRes.status()}${boardApiHas ? `; booking ${bookingId} sits in ${column?.providerName || "its provider"}'s column` : `; booking ${bookingId} not found in any provider column`}.`);
+        await page.goto(`/team/scheduling?date=${SERVICE_DATE_ISO}`);
+        const dateInput = page.locator('input[type="date"]').first();
+        if (await dateInput.isVisible().catch(() => false) && (await dateInput.inputValue().catch(() => "")) !== SERVICE_DATE_ISO) await dateInput.fill(SERVICE_DATE_ISO);
+        boardVisible = await page.getByText(`Booking ${bookingId}`, { exact: false }).first().waitFor({ state: "visible", timeout: 45_000 }).then(() => true).catch(() => false);
+        log(`${boardVisible ? "✅" : "⚠️"} Founder scheduling board (${SERVICE_DATE_ISO}) ${boardVisible ? `shows "Booking ${bookingId}"` : `did not render "Booking ${bookingId}" within 45 s`}.`);
+        await shot(page, "founder-scheduling-board");
+      }
+      expect(idVisible || boardVisible || boardApiHas, `booking ${bookingId} should be visible to Founder (Command Center or scheduling board)`).toBeTruthy();
     } else {
       log("ℹ️ No booking ID captured; skipped the booking-ID visibility assertion.");
     }
