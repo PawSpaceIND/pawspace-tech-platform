@@ -1,6 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import * as nodeModule from "node:module";
+
+// lib/* imports its siblings without a file extension, so resolution needs the retry hook the other
+// executed suites install. Static imports hoist above it, hence the dynamic import below.
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `export async function resolve(specifier, context, nextResolve) {
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
+
+const { projectProviderLifecycleEvent, sanitizeProviderEventDetail } = await import("../lib/grooming-provider-projection.ts");
 
 // ---------------------------------------------------------------------------
 // /api/partner-grooming-jobs -> the Partner app's Job type, field for field.
@@ -16,7 +42,6 @@ import { readFileSync } from "node:fs";
 // ---------------------------------------------------------------------------
 
 const route = readFileSync(new URL("../app/api/partner-grooming-jobs/route.ts", import.meta.url), "utf8");
-const projection = readFileSync(new URL("../lib/grooming-provider-projection.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
 
 const OPENERS = "{[(";
@@ -113,10 +138,44 @@ test("handling requirements, add-ons and the amount to collect are rendered, not
   assert.match(page, /selected\.occurrenceCount > 1/, "a multi-visit package must not read as a single visit");
 });
 
-test("the rendered timeline uses only the non-contact fields of the sanitized event", () => {
-  // projectProviderLifecycleEvent already filters detail_json and withholds the real actor, but detail
-  // is still a free-form shape and has no business on a partner's phone.
+test("the projection withholds contact data from the events the timeline now renders", () => {
+  // Run the real projection over a row carrying exactly what providers must never receive.
+  const projected = projectProviderLifecycleEvent({
+    event_type: "provider_on_the_way",
+    entity_type: "provider_work_order",
+    actor_id: "ops.one@pawspace.in",
+    occurred_at: 1_700_000_000_000,
+    detail_json: JSON.stringify({
+      action: "on_the_way",
+      status: "on_the_way",
+      staffNote: "called customer on 9876543210 about the gate code",
+      customerPhone: "+91 98765 43210",
+      customerEmail: "ananya@example.com",
+      doorstep: "12 Example Cross, Koramangala",
+      distanceMeters: 420,
+    }),
+  });
+
+  assert.equal(projected.actorId, "provider_or_system", "the real staff actor must never reach a provider");
+  assert.notEqual(projected.actorId, "ops.one@pawspace.in");
+  assert.equal(projected.eventType, "provider_on_the_way");
+  assert.equal(projected.occurredAt, 1_700_000_000_000);
+
+  // Operational state survives; every contact-shaped and free-text key is dropped.
+  assert.equal(projected.detail.distanceMeters, 420);
+  assert.equal(projected.detail.status, "on_the_way");
+  for (const leaked of ["staffNote", "customerPhone", "customerEmail", "doorstep"]) {
+    assert.ok(!(leaked in projected.detail), `${leaked} must not reach a provider surface`);
+  }
+
+  // Even an allow-listed key is dropped when its VALUE looks like contact data.
+  assert.deepEqual(sanitizeProviderEventDetail({ reason: "customer asked us to call 9876543210" }), {},
+    "the allow-list is not a bypass for a phone number hidden in a permitted field");
+  assert.deepEqual(sanitizeProviderEventDetail({ reason: "traffic delay" }), { reason: "traffic delay" });
+});
+
+test("the timeline renders only the event's non-contact fields", () => {
   assert.match(page, /selected\.events\.slice\(0, 5\)/);
-  assert.doesNotMatch(page, /event\.detail/, "sanitized or not, event detail is not rendered here");
-  assert.match(projection, /actorId: "provider_or_system"/, "the projection must keep withholding the real actor id");
+  assert.doesNotMatch(page, /event\.detail/,
+    "sanitized or not, free-form event detail is not rendered on a partner's phone");
 });
