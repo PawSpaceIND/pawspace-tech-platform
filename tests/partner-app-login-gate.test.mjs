@@ -228,6 +228,11 @@ test("the Partner app offers Sign out and only ever re-asks the server after it"
     "after the revoke (or its failure) the identity check runs again and decides");
   assert.equal(page.split('setSessionState("unauthenticated")').length, 2, "only the server-refusal path opens the gate");
   assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out"\}<\/b>/, "Sign out is in the More menu");
+  // One busy guard for both account actions: a sign-out and a switch can never be in flight together.
+  assert.match(page, /const accountBusy = signingOut \|\| switching;/);
+  assert.equal(page.split("if (accountBusy) return;").length, 3, "both handlers refuse to start while the other is in flight");
+  assert.match(page, /onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}/);
+  assert.match(page, /onClick=\{\(\) => void switchUatProvider\(\)\} disabled=\{accountBusy \|\| !uatProviderId \|\| !uatCode\}/);
   assert.match(page, /<button type="button" className=\{styles\.identityPill\} onClick=\{\(\) => setTab\("more"\)\}/, "the header pill leads to it");
 });
 

@@ -292,8 +292,12 @@ export default function PartnerMobileApp() {
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
   // Both handlers only ask the server to change the session, then re-run the identity check above.
-  // Nothing here decides locally that the partner is signed out or has become someone else.
+  // Nothing here decides locally that the partner is signed out or has become someone else. They
+  // share one busy guard: a sign-out and a switch in flight together could revoke the session the
+  // switch just issued, or leave the switch's new session behind after the sign-out.
+  const accountBusy = signingOut || switching;
   const signOut = async () => {
+    if (accountBusy) return;
     setSigningOut(true); setError("");
     try {
       const response = await fetch("/api/identity-session", { method: "DELETE" });
@@ -307,6 +311,7 @@ export default function PartnerMobileApp() {
     }
   };
   const switchUatProvider = async () => {
+    if (accountBusy) return;
     if (!uatProviderId) { setError("Choose the UAT provider to switch to"); return; }
     setSwitching(true); setError("");
     try {
@@ -448,7 +453,7 @@ export default function PartnerMobileApp() {
         {tab === "more" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
-          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={signingOut}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out"}</b><small>Ends this partner session on this device</small></span><em>›</em></button></div>
+          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={accountBusy}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out"}</b><small>Ends this partner session on this device</small></span><em>›</em></button></div>
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
             <b>Switch UAT provider</b>
             <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Job lists and lifecycle actions in this app are grooming work orders; other verticals sign in but see their jobs elsewhere.</p>
@@ -457,7 +462,7 @@ export default function PartnerMobileApp() {
               {uatProviders.map((provider) => <option key={provider.id} value={provider.id} disabled={provider.id === identity?.subjectId}>{provider.name} · {provider.services.map((service) => label(service)).join(", ")}{provider.id === identity?.subjectId ? " (current)" : ""}</option>)}
             </select></label>
             <label>UAT access code<input type="password" autoComplete="off" value={uatCode} onChange={(event) => setUatCode(event.target.value)} placeholder="Same code as /staging-login" /></label>
-            <button type="button" onClick={() => void switchUatProvider()} disabled={switching || !uatProviderId || !uatCode}>{switching ? "Switching…" : "Switch provider"}</button>
+            <button type="button" onClick={() => void switchUatProvider()} disabled={accountBusy || !uatProviderId || !uatCode}>{switching ? "Switching…" : "Switch provider"}</button>
           </section>}
           <section className={styles.safetyCard}><b>UAT boundary</b><p>This mobile app uses verified provider identity and canonical work orders. It cannot self-activate a provider, expose unmasked customer phone numbers, make live payouts, or enable background GPS.</p></section>
         </>}
