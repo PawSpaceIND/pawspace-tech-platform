@@ -49,7 +49,33 @@ function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_
 /** A 4xx (other than timeout/rate-limit) will never succeed on retry; the offline queue drops it instead of re-registering for ever. */
 const proofFailure = (status: number, message: string) => Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && status !== 408 && status !== 429 });
 type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; providerReference: string; collectable: boolean; expiresAt: number; sandboxOnly: boolean; liveCapture: boolean };
-type WorkspaceEarnings = { visible: boolean; computed: { netPayout: number; orders: number; grossOrderValue: number }; settlements: Array<{ bookingId: string; payoutAmount: number | null; status: string; reason: string }>; incentives: Array<{ monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number }> };
+/**
+ * Both engagement shapes, because providerWorkspace returns different keys for each and this one screen
+ * renders whichever arrives. A CONTRACT provider carries settlements + incentives and
+ * computed.netPayout; a COMMISSION provider carries commissionOrders + payouts and
+ * computed.commissionAmount, with no settlements or incentives key at all.
+ *
+ * Reading computed.netPayout therefore showed every commission partner zero while
+ * earnings.netPayout held the real figure, and mapping the settlements list threw outright on the
+ * missing key - an optional chain on `earnings` short-circuits one level too early to protect the list
+ * itself, so the Earnings tab hit the error boundary. Every per-engagement key is optional here, each
+ * list is defaulted before it is mapped, and the totals are read from the top-level fields, which both
+ * shapes always set.
+ */
+type WorkspaceSettlement = { bookingId: string; payoutAmount: number | null; status: string; reason: string };
+type WorkspaceIncentive = { monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number };
+type WorkspaceCommissionOrder = { bookingId: string; serviceCode: string; orderAmount: number; commissionAmount: number; commissionMode: string; status: string; dueAt: number };
+type WorkspaceCommissionPayout = { id: string; bookingId: string; amount: number; status: string; dueAt: number; providerReference: string | null };
+type WorkspaceEarnings = {
+  visible: boolean;
+  netPayout?: number; orders?: number; grossOrderValue?: number; note?: string;
+  computed?: { netPayout?: number; commissionAmount?: number; orders?: number; grossOrderValue?: number };
+  settlements?: WorkspaceSettlement[];
+  incentives?: WorkspaceIncentive[];
+  commissionOrders?: WorkspaceCommissionOrder[];
+  payouts?: WorkspaceCommissionPayout[];
+};
+type WorkspacePayload = { linked?: boolean; reason?: string; engagement?: string; earnings?: WorkspaceEarnings };
 
 const activeTravelStates = new Set(["assigned", "on_the_way", "arrived"]);
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -83,6 +109,8 @@ export default function PartnerMobileApp() {
   const [mediaMessage, setMediaMessage] = useState("");
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
+  const [earningsNotice, setEarningsNotice] = useState("");
+  const [engagement, setEngagement] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +167,22 @@ export default function PartnerMobileApp() {
 
   useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
   useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
-  useEffect(() => { if (tab !== "earnings") return; void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); setEarnings(body.data?.earnings ?? null); }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings")); }, [tab, refreshKey]);
+  useEffect(() => {
+    if (tab !== "earnings") return;
+    void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => {
+      const body = await response.json() as { data?: WorkspacePayload; error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to load earnings");
+      // linked:false is a 200 carrying no earnings key - an identity with no provider record bound to
+      // it. Rendering that as zero rupees was indistinguishable from having earned nothing, so say it.
+      if (body.data?.linked === false) { setEarnings(null); setEngagement(""); setEarningsNotice(body.data.reason || "No active provider record is linked to your identity."); return; }
+      const next = body.data?.earnings ?? null;
+      setEarnings(next);
+      setEngagement(body.data?.engagement ?? "");
+      setEarningsNotice(!next ? "Earnings are not available for this provider record yet."
+        : next.visible === false ? "Earnings are withheld for this provider record until Finance controls are satisfied."
+          : "");
+    }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings"));
+  }, [tab, refreshKey]);
 
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
@@ -266,6 +309,13 @@ export default function PartnerMobileApp() {
     }
   };
 
+  // Both engagement shapes set the top-level totals; `computed` carries netPayout for contract and
+  // commissionAmount for commission, so it is only ever a fallback here.
+  const isCommission = engagement === "commission";
+  const earningsNetPayout = Number(earnings?.netPayout ?? earnings?.computed?.netPayout ?? earnings?.computed?.commissionAmount ?? 0);
+  const earningsOrders = Number(earnings?.orders ?? earnings?.computed?.orders ?? 0);
+  const earningsGross = Number(earnings?.grossOrderValue ?? earnings?.computed?.grossOrderValue ?? 0);
+
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
   if (sessionChecked && !identity) return <main className={styles.viewport}>
@@ -376,9 +426,17 @@ export default function PartnerMobileApp() {
         {tab === "earnings" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER FINANCE</small><h1>Earnings</h1></div><span /></div>
           <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
-          <div className={styles.financeRows}><article><div><b>Computed net payout</b><small>Governed payout computations only</small></div><strong>{money(earnings?.computed.netPayout ?? 0)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earnings?.computed.orders ?? 0}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
-          {earnings?.settlements.map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
-          {earnings?.incentives.map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
+          {earningsNotice && <section className={styles.notice} role="status"><b>Earnings are not shown yet</b><p>{earningsNotice}</p></section>}
+          {earnings && earnings.visible !== false && <>
+            <div className={styles.financeRows}><article><div><b>{isCommission ? "Commission earned" : "Computed net payout"}</b><small>Governed payout computations only</small></div><strong>{money(earningsNetPayout)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earningsOrders}</strong></article><article><div><b>Gross order value</b><small>{isCommission ? "What the commission is computed from" : "Order value behind the payout"}</small></div><strong>{money(earningsGross)}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
+            {(earnings.settlements ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
+            {(earnings.incentives ?? []).map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
+            {/* The commission ledger and its payout states: returned by providerWorkspace for every
+                commission partner and, until now, rendered nowhere at all. */}
+            {(earnings.commissionOrders ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.serviceCode)} · {label(item.status)}</b><p>Commission {money(item.commissionAmount)} on an order of {money(item.orderAmount)}</p><small>{label(item.commissionMode)} rate{item.dueAt ? ` · due ${when(new Date(item.dueAt).toISOString())}` : ""}</small></section>)}
+            {(earnings.payouts ?? []).map(item => <section key={item.id} className={styles.notice}><b>Payout {money(item.amount)} · {label(item.status)}</b><p>Booking {item.bookingId}{item.dueAt ? ` · due ${when(new Date(item.dueAt).toISOString())}` : ""}</p>{item.providerReference && <small>Reference {item.providerReference}</small>}</section>)}
+            {earnings.note && <p className={styles.note}>{earnings.note}</p>}
+          </>}
           <p className={styles.note}>Booking value is deliberately not shown as partner earnings. Payout instructions remain sandbox-only in this UAT candidate.</p>
         </>}
 
