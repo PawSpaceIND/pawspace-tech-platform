@@ -35,3 +35,10 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 
 -- Pet taxi: full-time, city-wide.
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_taxi_ft','blr','PawSpace Pet Taxi (UAT)','full_time','["pet_taxi"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,96,1,20,16,3,'active',1,'2026-01-01',NULL,'uat_staging_seed',1785542400000);
+
+-- Partner-feed identity link (legacy fallback used by /api/partner-job-feed -> ownProviderId): map the
+-- seeded groomer staff email to the full-time grooming provider so that a booking auto-assigned to
+-- uatcap_groom_ft appears in that groomer's /partner/jobs feed. This lets the automated persona sweep
+-- prove customer booking -> partner job card end to end. Staging UAT only.
+CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000);
