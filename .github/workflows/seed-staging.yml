@@ -3,7 +3,8 @@ name: Seed staging D1
 # One-shot manual loader for the STAGING staff/UAT seed data. Manual only (workflow_dispatch) — never
 # auto-runs, never touches production. It runs `wrangler d1 execute --remote` on the GitHub runner using
 # the same repository secrets the deploy uses, so no credential is ever pasted into a chat, a log, or a
-# developer's shell. Idempotent: every seed is INSERT OR IGNORE, so re-running is safe.
+# developer's shell. Idempotent: every seed is INSERT OR IGNORE (the roster file adds one guarded provenance
+# UPDATE), so re-running is safe.
 #
 # Why this exists: UAT sign-in (lib/uat-staging-auth.ts) refuses any email that is not an ACTIVE
 # app_users row, and the staff identities the /staging-login page advertises live in
@@ -61,6 +62,38 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-provider-capacity.sql
+      - name: Verify provider capacity roster is bookable (read-only)
+        # Proves what the roster load left behind ON THE LIVE TABLE instead of trusting the import summary:
+        # provenance the assignability gate accepts (founder_seed), an active home base per seeded provider
+        # (geofence gate), and authored availability in every zone the row declares for tomorrow's UTC date (roster gate).
+        # Fails the run when any gate is unmet, and prints the table's real index list for diagnosis.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          q() { npx wrangler d1 execute pawspace-staging --remote --json --command "$1"; }
+          q "SELECT id,updated_by,live,status,version,zones_json FROM provider_capacity_profiles WHERE id GLOB 'uatcap_*' ORDER BY id" > "$RUNNER_TEMP/profiles.json"
+          q "SELECT provider_id,latitude,longitude FROM provider_home_base WHERE provider_id GLOB 'uatcap_*' AND effective_until IS NULL ORDER BY provider_id" > "$RUNNER_TEMP/bases.json"
+          q "SELECT provider_id,zone_id,source,windows_json FROM scheduling_availability WHERE date=date('now','+1 day') AND provider_id GLOB 'uatcap_*' ORDER BY provider_id,zone_id" > "$RUNNER_TEMP/tomorrow.json"
+          q "SELECT COUNT(*) n,COUNT(DISTINCT provider_id) providers,COUNT(DISTINCT date) dates,MIN(date) first_date,MAX(date) last_date FROM scheduling_availability WHERE id GLOB 'uatseed_*'" > "$RUNNER_TEMP/window.json"
+          q "SELECT name,sql FROM sqlite_master WHERE tbl_name='scheduling_availability' AND type='index'" > "$RUNNER_TEMP/indexes.json"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const rows = (f) => JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/${f}`, "utf8"))[0].results;
+            const profiles = rows("profiles.json"), bases = rows("bases.json"), tomorrow = rows("tomorrow.json"), window = rows("window.json")[0], indexes = rows("indexes.json");
+            const zonesOf = (p) => { try { return JSON.parse(p.zones_json); } catch { return []; } };
+            const problems = [];
+            for (const p of profiles) if (p.updated_by !== "founder_seed") problems.push(`${p.id}: provenance ${p.updated_by} (assignability gate needs founder_seed)`);
+            const based = new Set(bases.map(b => b.provider_id));
+            for (const p of profiles) if (!based.has(p.id)) problems.push(`${p.id}: no active home base (geofence gate)`);
+            const authored = new Set(tomorrow.filter(r => ["partner_app","operations","roster"].includes(r.source)).map(r => `${r.provider_id}|${r.zone_id}`));
+            let expected = 0;
+            for (const p of profiles) for (const z of zonesOf(p)) { expected += 1; if (!authored.has(`${p.id}|${z}`)) problems.push(`${p.id}: no authored availability for ${z} tomorrow`); }
+            console.log(JSON.stringify({ profiles: profiles.length, homeBases: bases.length, authoredTomorrow: authored.size, expectedTomorrow: expected, window, indexes: indexes.map(i => i.name) }, null, 2));
+            if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+            console.log("Roster verified: every seeded provider is assignable, geocoded, and published in every zone it serves for tomorrow.");
+          '
       - name: Load customer pack (staging-seed.sql)
         if: ${{ github.event.inputs.include_customer_pack == 'true' }}
         env:

@@ -38,6 +38,7 @@
  */
 import{POLICY_ANY,registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-governance";
 import{ensureServiceMediaTable}from"./service-media-security";
+import{governedJsonError}from"./governed-http-error";
 import{headStoredObject,mediaStorageStatus}from"./media-storage-adapter";
 import{mediaReleaseVerdict,mediaScanState}from"./media-scan-boundary";
 
@@ -116,7 +117,11 @@ registerServicePolicyDomain<MediaUploadPolicy&Record<string,unknown>>({
   },
 });
 
-const refuse=(message:string,status=400,extra:Record<string,unknown>={}):never=>{throw Response.json({error:message,...extra},{status});};
+// Governed, so the refusal reaches the caller with its code: the Partner app decides from
+// upload_token_expired / upload_token_consumed whether to re-register or to stop retrying, and a
+// reviewer needs to read self_approval_refused rather than a redacted fallback. Every body here is
+// composed from this file's own strings and the caller's policy version, never from user input.
+const refuse=(message:string,status=400,extra:Record<string,unknown>={}):never=>{throw governedJsonError({error:message,...extra},status);};
 const OPAQUE_KEY=/^[A-Za-z0-9._\/-]{8,256}$/;
 const SHA256=/^[a-f0-9]{64}$/i;
 
@@ -246,6 +251,27 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
     reviewStatus:"pending_review",proofReady:false,policyVersion:policy.policyVersion,
     upload:{mode:"private_object_put",adapterConnected:false,rawPublicUrl:false,singleUse:true},
     ...(input.supersedes?{supersedes:input.supersedes}:{})};
+}
+
+/**
+ * Step 4's server half. The upload route presents the token with the bytes; this verifies that the token
+ * is the one this asset was issued, unexpired and unused, and returns what the grant promised so the route
+ * can check the bytes against it BEFORE anything is stored. Nothing is consumed here: consumption is
+ * redeemMediaUploadGrant's job, after the object exists and matches.
+ */
+export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:string}){
+  await ensureMediaBoundaryTables(db);
+  const token=String(input.token||"").trim(),mediaId=String(input.mediaId||"").trim();
+  if(!token||!mediaId)refuse("An upload token and the media asset id are required",400);
+  const grantId=token.split(".")[0]||"";
+  const grant=await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
+  if(!grant)refuse("Media upload grant not found",404);
+  if(String(grant!.media_id)!==mediaId)refuse("This upload token belongs to another media asset",403,{code:"upload_token_mismatch"});
+  if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
+  if(Number(grant!.expires_at)<Date.now())refuse("This media upload token has expired",409,{code:"upload_token_expired"});
+  if(String(grant!.token_hash)!==await digest(token))refuse("Media upload token is not valid for this grant",403,{code:"upload_token_mismatch"});
+  return{grantId,mediaId,bookingId:String(grant!.booking_id),providerId:String(grant!.provider_id),serviceCode:String(grant!.service_code),objectKey:String(grant!.object_key),
+    mimeType:String(grant!.mime_type),sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256).toLowerCase(),expiresAt:Number(grant!.expires_at)};
 }
 
 export type ObservedObject={sizeBytes?:number;sha256?:string;mimeType?:string};
