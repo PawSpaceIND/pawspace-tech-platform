@@ -70,8 +70,8 @@ Reported by Karthik (founder) on 2026-09-13 against staging running the candidat
 
 ## 6. Observations (non-blocking) and pre-production decisions
 
-1. **Booking Command Center list scope.** The list loads the latest 150 bookings by schedule and did not include the 2026-09-17 booking; the founder step verified via the scheduling board instead. Decide whether new bookings should always surface in that list.
-2. **Proof photo bytes are not stored.** `confirm_upload` records the file's checksum, size and type. Without an object-storage binding (`PAWSPACE_MEDIA_BUCKET`) the API accepts the partner's observation of the file; with the binding present it requires the object to exist, and no endpoint uploads bytes yet. Decide before go-live whether the pilot runs metadata-only proof or the byte upload is built first.
+1. **Booking Command Center list scope.** The list loaded the 150 bookings scheduled furthest in the future and did not include the 2026-09-17 booking; the founder step verified via the scheduling board instead. **Decision (2026-09-13): fixed.** The list is now newest-created first, the search box also searches the whole table on the server (`?q=`), `sort=schedule` keeps the previous order and `limit` is capped at 500 (route-level tests seed 160 far-future fixtures plus one booking made today). This is a product change after the candidate, so it ships in the next candidate; see §7.
+2. **Proof photo bytes are not stored.** `confirm_upload` records the file's checksum, size and type. Without an object-storage binding (`PAWSPACE_MEDIA_BUCKET`) the API accepts the partner's observation of the file; with the binding present it requires the object to exist, and no endpoint uploads bytes yet. **Decision (2026-09-13): the pilot runs metadata-only proof.** `scripts/prod-config.mjs` now refuses `PRODUCTION_R2_BUCKET_NAME` unless `PRODUCTION_MEDIA_OBJECT_UPLOAD_READY=true` is declared, and the production workflow passes that variable beside the bucket name. Two consequences for the pilot: (a) leave `PRODUCTION_R2_BUCKET_NAME` unset until the byte-upload path exists; (b) production media stays blocked without a scanner unless the `media_scan_policy` service policy sets `manualReviewPermittedWithoutScanner: true` (Service policy control, permission `settings.manage`, audited). That policy must be set before the first production job completion; it is deliberately not defaulted in code.
 3. **Live money stays off.** `deploy-production.yml` accepts sandbox payment mode only; live payment activation is a separate explicitly authorized gate.
 
 ## 7. Promotion runbook (not executed)
@@ -79,7 +79,8 @@ Reported by Karthik (founder) on 2026-09-13 against staging running the candidat
 1. Push the RC tag from a maintainer checkout (tag pushes are refused for the automation credential):
    `git fetch origin && git tag -a v1.0.0-unified-rc.2 6722ba616ed7aad2d2b73bbda64979eb531c563e -m "PawSpace unified RC2 - Bengaluru UAT sign-off candidate" && git push origin v1.0.0-unified-rc.2`
 2. Dispatch "Deploy production" with `confirm=deploy-production-bengaluru`, `expected_sha=6722ba616ed7aad2d2b73bbda64979eb531c563e`, payment mode `sandbox`, communications and maps modes per the pilot decision, voice `disabled`.
-3. Any product commit after the candidate creates a new candidate and requires re-certification appropriate to its blast radius.
+3. Before the first production job completion, set the `media_scan_policy` service policy `manualReviewPermittedWithoutScanner: true` for the pilot scope in Service policy control (audited). Leave `PRODUCTION_R2_BUCKET_NAME` unset.
+4. Any product commit after the candidate creates a new candidate and requires re-certification appropriate to its blast radius. The Booking Command Center list fix and the production-config guard (§6) are such commits: promote rc.2 as certified, or cut rc.3 from `main` after they merge and re-run the staging deploy certification and the multi-persona sweep.
 
 ## 8. Sign-off
 
