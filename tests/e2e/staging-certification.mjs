@@ -67,6 +67,16 @@ export const REQUIRED_STAFF_IDENTITIES = [
 /** Disposable customer identity used only to prove the sandbox OTP and customer-session path. */
 export const SYNTHETIC_CUSTOMER_PERSONA = { phone: "9999999998", name: "UAT Customer", cityId: "blr" };
 
+export const HUMAN_UAT_SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
+export const HUMAN_UAT_ZONES = ["blr-east", "blr-south", "blr-north", "blr-west", "blr-central"];
+export const HUMAN_UAT_EXTERNAL_MODULES = ["razorpay", "maps_gps"];
+
+export function providerRosterCoverageQuery() {
+  const services = HUMAN_UAT_SERVICES.map(value => `'${value}'`).join(",");
+  const zones = HUMAN_UAT_ZONES.map(value => `'${value}'`).join(",");
+  return `SELECT service.value service_code,zone.value zone_id,COUNT(DISTINCT p.id) provider_count FROM provider_capacity_profiles p,json_each(p.services_json) service,json_each(p.zones_json) zone WHERE p.city_id='blr' AND p.live=1 AND p.status='active' AND p.effective_from<=date('now') AND (p.effective_to IS NULL OR p.effective_to>=date('now')) AND service.value IN (${services}) AND zone.value IN (${zones}) GROUP BY service.value,zone.value`;
+}
+
 /** Build the read-only staff probe against the canonical role_definitions(code) schema. */
 export function staffIdentityQuery(email) {
   const escaped = String(email).replaceAll("'", "''");
@@ -229,6 +239,21 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
   check("no UAT credential is serialized into the deployed configuration", leaked.length === 0,
     leaked.length ? `${leaked.join(", ")} present in vars - these must be Worker secrets` : "credentials are Worker secrets only");
 
+  // ── human-UAT scheduling roster ─────────────────────────────────────────────────────────────
+  try {
+    const rows = await d1(providerRosterCoverageQuery());
+    const covered = new Map(rows.map(row => [`${val(row, "service_code")}|${val(row, "zone_id")}`, Number(row.provider_count || 0)]));
+    const missing = HUMAN_UAT_SERVICES.flatMap(service => HUMAN_UAT_ZONES
+      .filter(zone => (covered.get(`${service}|${zone}`) || 0) < 1)
+      .map(zone => `${service}:${zone}`));
+    report.counts.providerRosterPairs = HUMAN_UAT_SERVICES.length * HUMAN_UAT_ZONES.length - missing.length;
+    report.counts.providerRosterPairsExpected = HUMAN_UAT_SERVICES.length * HUMAN_UAT_ZONES.length;
+    check("human-UAT provider roster covers every core service in every Bengaluru zone", missing.length === 0,
+      missing.length ? `missing ${missing.join(", ")}` : `${report.counts.providerRosterPairs}/${report.counts.providerRosterPairsExpected} service-zone pairs covered`);
+  } catch (error) {
+    unavailable("human-UAT provider roster covers every core service in every Bengaluru zone", `the provider roster could not be verified (${error?.message})`);
+  }
+
   // ── seeds and staff identities ──────────────────────────────────────────────────────────────
   //
   // Two separate facts. The row existing is not the same as sign-in working: UAT sign-in also needs
@@ -319,6 +344,21 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
       founderCookie = refreshed.ok ? refreshed.cookie : "";
     }
   } catch { founderCookie = ""; }
+  if (founderCookie) {
+    try {
+      const readiness = await http("GET", "/api/integration-readiness", { headers: { cookie: founderCookie } });
+      const modules = Array.isArray(readiness.body?.uatSandbox?.modules) ? readiness.body.uatSandbox.modules : [];
+      const byCode = new Map(modules.map(module => [String(module?.code || ""), module]));
+      const blocked = HUMAN_UAT_EXTERNAL_MODULES.filter(code => byCode.get(code)?.configuredForExternalTest !== true);
+      check("human-UAT checkout dependencies are configured before testers start", readiness.status === 200 && blocked.length === 0,
+        readiness.status !== 200 ? `integration readiness returned HTTP ${readiness.status}` : blocked.length ? `blocked: ${blocked.join(", ")}` : "Razorpay TEST and Maps/GPS UAT are configured");
+    } catch (error) {
+      unavailable("human-UAT checkout dependencies are configured before testers start", `integration readiness could not be read (${error?.message})`);
+    }
+  } else {
+    unavailable("human-UAT checkout dependencies are configured before testers start", "no founder session could be established");
+  }
+
   if (!founderCookie) {
     unavailable("hosted smoke pack answers for a real staff session", "no founder session could be established");
     unavailable("hosted smoke pack refuses an anonymous caller", "no founder session to compare against");
