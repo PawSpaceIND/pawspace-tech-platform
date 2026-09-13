@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { isSupportCaseOpen } from "../../lib/support-case-status";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 import ServiceProofReview from "./service-proof-review";
 
@@ -19,6 +19,9 @@ export default function BookingCommandCenter() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
+  // The server window is the newest 150 bookings. Three or more characters in the search box are sent
+  // as ?q= so a booking outside that window is still found; the client filter then narrows the result.
+  const queryRef = useRef(""), searchedRef = useRef("");
   const [filter, setFilter] = useState("All bookings");
   const [tab, setTab] = useState<Tab>("Overview");
   const [loading, setLoading] = useState(true);
@@ -29,7 +32,9 @@ export default function BookingCommandCenter() {
   async function load(silent = false) {
     if (!silent) setLoading(true); setError("");
     try {
-      const response = await fetch("/api/booking-command-center", { cache: "no-store" });
+      const serverQuery = queryRef.current.trim().length >= 3 ? queryRef.current.trim() : "";
+      const response = await fetch(serverQuery ? `/api/booking-command-center?q=${encodeURIComponent(serverQuery)}` : "/api/booking-command-center", { cache: "no-store" });
+      searchedRef.current = serverQuery;
       const payload = await response.json() as { bookings?: Booking[]; error?: string };
       if (!response.ok) throw new Error(payload.error || "Unable to load bookings");
       setBookings(payload.bookings || []);
@@ -38,6 +43,13 @@ export default function BookingCommandCenter() {
     finally { if (!silent) setLoading(false); }
   }
   useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, []);
+  useEffect(() => { queryRef.current = query; }, [query]);
+  useEffect(() => {
+    const serverQuery = query.trim().length >= 3 ? query.trim() : "";
+    if (serverQuery === searchedRef.current) return;
+    const timer = window.setTimeout(() => { void load(true); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const events = new EventSource("/api/booking-command-center/stream");
     const refresh = () => { void load(true); };
