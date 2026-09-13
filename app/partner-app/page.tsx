@@ -273,10 +273,8 @@ export default function PartnerMobileApp() {
         <div className={styles.identityPill}><i>•</i><span>Signed out</span></div>
       </header>
       <section className={styles.content} aria-label="Partner sign-in">
-        <div className={styles.sectionTitle}><span>VERIFIED PROVIDER ACCESS</span><h2>Sign in to your Partner workspace</h2></div>
-        <p className={styles.note}>Use the mobile number registered on your PawSpace partner profile. The OTP is shown on screen in UAT; no real SMS is sent. Only a verified provider identity can see jobs, GPS and earnings.</p>
-        {error && error !== "Verified provider session required" && <div className={styles.error}>{error}</div>}
-        <PartnerLogin onLoggedIn={() => { setError(""); setSessionChecked(false); setIdentityKey((value) => value + 1); }} />
+        {/* The session probe's "not signed in" answer is the expected state here, not an error to show. */}
+        <PartnerLogin eyebrow="🐾 Verified provider access" title="Sign in to your Partner workspace" subtitle="Use the mobile number registered on your PawSpace partner profile. The OTP is shown on screen in UAT; no real SMS is sent." onLoggedIn={() => { setError(""); setSessionChecked(false); setIdentityKey((value) => value + 1); }} />
       </section>
     </section>
   </main>;
