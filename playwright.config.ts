@@ -1,7 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
 
 const port = Number(process.env.PW_PORT || 4185);
 const baseURL = process.env.PW_BASE_URL || `http://localhost:${port}`;
+const localChromium = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const uatServiceDate = process.env.PW_UAT_SERVICE_DATE || new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
 process.env.PW_UAT_SERVICE_DATE ??= uatServiceDate;
 process.env.PAWSPACE_UAT_SERVICE_CLOCK ??= "on";
@@ -16,6 +18,7 @@ export default defineConfig({
     "e2e/customer-booking.spec.ts",
     "e2e/customer-notifications.spec.ts",
     "e2e/frontend-resilience.spec.ts",
+    "e2e/frontend-hydration-state-alignment.spec.ts",
     "e2e/mission-01.spec.ts",
     "e2e/partner-journey.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
@@ -36,6 +39,7 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
+    launchOptions: existsSync(localChromium) ? { executablePath: localChromium } : undefined,
   },
   webServer: process.env.PW_BASE_URL ? undefined : {
     command: "bash scripts/e2e/serve.sh",

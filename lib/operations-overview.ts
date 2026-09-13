@@ -38,6 +38,7 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
   const dayStart = new Date(`${day}T00:00:00+05:30`).toISOString();
   const dayEnd = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
   const zoneId = text(input.zoneId);
+  const CAPACITY_BOARD_LIMIT = 24, ACTIVITY_LIMIT = 60;
 
   const hasBookings = await tableExists(db, "canonical_bookings");
   const binds: unknown[] = [dayStart, dayEnd];
@@ -53,6 +54,25 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
          LEFT JOIN provider_work_orders w ON w.booking_id=b.id
          WHERE ${where} ORDER BY b.scheduled_start`).bind(...binds).all<Row>()).results
     : [];
+
+  // Activity is an event-day projection, not another capacity calculation. A future service that was
+  // confirmed/updated today belongs on Today's Booking activity, while the provider board and revenue
+  // above remain strictly scheduled-day based.
+  const activityBinds: unknown[] = [dayStart, dayEnd, new Date(dayStart).getTime(), new Date(dayEnd).getTime()];
+  let activityWhere = "((b.scheduled_start>=? AND b.scheduled_start<?) OR (b.updated_at>=? AND b.updated_at<?))";
+  if (zoneId) { activityWhere += " AND b.zone_id=?"; activityBinds.push(zoneId); }
+  const activityBookings = hasBookings
+    ? (await db.prepare(
+        `SELECT b.id,b.customer_id,b.service_code,b.package_name,b.zone_id,b.provider_id,b.status,b.total_amount,b.scheduled_start,b.scheduled_end,b.updated_at,
+                c.name customer_name, w.provider_name, w.status work_order_status
+         FROM canonical_bookings b
+         LEFT JOIN canonical_customers c ON c.id=b.customer_id
+         LEFT JOIN provider_work_orders w ON w.booking_id=b.id
+         WHERE ${activityWhere} ORDER BY b.updated_at DESC,b.scheduled_start ASC LIMIT ${ACTIVITY_LIMIT}`).bind(...activityBinds).all<Row>()).results
+    : [];
+  const activityTotal = hasBookings
+    ? Number((await db.prepare(`SELECT COUNT(*) total FROM canonical_bookings b WHERE ${activityWhere}`).bind(...activityBinds).first<Row>())?.total || 0)
+    : 0;
 
   const revenueRows = bookings.filter(recognized);
   const completed = bookings.filter(row => text(row.status) === "completed");
@@ -94,7 +114,6 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
     ticketsNeedingAttention = Number(row?.overdue || 0);
   }
 
-  const CAPACITY_BOARD_LIMIT = 24, ACTIVITY_LIMIT = 60;
   const providerRows = await tableExists(db, "provider_capacity_profiles")
     ? (await db.prepare(
         `SELECT id,name,city_id,zones_json,status,live FROM provider_capacity_profiles
@@ -113,7 +132,6 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
       const slotBookings = bookings.filter(row => text(row.provider_id) === id && slotOf(text(row.scheduled_start)) === slot.label && recognized(row));
       if (!slotBookings.length) return { slot: slot.label, state: "available" as const, bookingId: null, label: "Open for booking", concurrentBookings: 0 };
       const first = slotBookings[0];
-      const status = text(first.status);
       return {
         slot: slot.label,
         state: slotBookings.every(row=>text(row.status)==="completed") ? ("completed" as const) : ("booked" as const),
@@ -157,7 +175,7 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
     capacityShown: capacity.length,
     capacityTotal: providersActive,
     slots: OVERVIEW_SLOTS.map(slot => slot.label),
-    activity: bookings.slice(0, ACTIVITY_LIMIT).map(row => ({
+    activity: activityBookings.map(row => ({
       bookingId: text(row.id),
       customer: text(row.customer_name) || text(row.customer_id),
       service: text(row.service_code),
@@ -165,12 +183,13 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
       status: text(row.status),
       provider: text(row.provider_name) || null,
       scheduledStart: text(row.scheduled_start),
+      activityAt: Number(row.updated_at || 0),
       scheduledTimeIst: istTime(text(row.scheduled_start)),
       slot: slotOf(text(row.scheduled_start)),
       amount: Number(row.total_amount || 0),
     })),
-    activityShown: Math.min(bookings.length, ACTIVITY_LIMIT),
-    activityTotal: bookings.length,
+    activityShown: activityBookings.length,
+    activityTotal,
     byService,
     sourceStatus: {
       bookings: hasBookings ? "canonical_bookings" : "not_connected",
