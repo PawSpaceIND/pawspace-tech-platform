@@ -17,7 +17,7 @@ import {
   runStagingCertification, assertStagingIsolation, stagingEvidenceArtifact, StagingIsolationRefused,
   STAGING_SECRET_NAMES, SMOKE_ROUTES, REQUIRED_STAFF_IDENTITIES, activeVersionId,
   deployedConfigFromVersion, versionMessage, runStagingIsolationPreflight, staffIdentityQuery, isMainModule,
-  SYNTHETIC_CUSTOMER_PERSONA,
+  SYNTHETIC_CUSTOMER_PERSONA, HUMAN_UAT_SERVICES, HUMAN_UAT_ZONES,
 } from "./e2e/staging-certification.mjs";
 import { pathToFileURL } from "node:url";
 
@@ -46,6 +46,7 @@ function world(over = {}) {
     rollbackReference: async () => "version 0f1e2d3c",
     d1: async (sql) => {
       calls.d1.push(sql);
+      if (sql.includes("provider_capacity_profiles")) return HUMAN_UAT_SERVICES.flatMap(service => HUMAN_UAT_ZONES.map(zone => ({ service_code: service, zone_id: zone, provider_count: 1 })));
       const email = /email='([^']+)'/.exec(sql)?.[1];
       const row = email ? seeded.get(email) : undefined;
       return row ? [row] : [];
@@ -69,6 +70,9 @@ function world(over = {}) {
         if (options.headers?.cookie === "pawspace_session=customer-value") return { status: 200, headers: {}, body: { data: { subjectType: "customer", subjectId: "CUS-UAT", roleCode: "customer" } } };
         return { status: 401, headers: {}, body: { error: "Identity session required" } };
       }
+      if (path === "/api/integration-readiness" && options.headers?.cookie) return { status: 200, headers: {}, body: { uatSandbox: { modules: [
+        { code: "razorpay", configuredForExternalTest: true }, { code: "maps_gps", configuredForExternalTest: true },
+      ] } } };
       if (options.headers?.cookie) return { status: 200, headers: {} };
       return { status: 401, headers: {} };
     },
@@ -166,6 +170,32 @@ test("a correct staging deploy certifies, and the report names the sha and the s
   assert.equal(report.counts.personasTotal, 6);
   assert.equal(report.rollbackReferenceRecorded, true);
   assert.deepEqual(report.unavailable, []);
+});
+
+test("certification fails before handoff when any human-UAT service-zone provider pair is missing", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ d1: async sql => {
+    if (sql.includes("provider_capacity_profiles")) return HUMAN_UAT_SERVICES.flatMap(service => HUMAN_UAT_ZONES
+      .filter(zone => !(service === "grooming" && zone === "blr-south"))
+      .map(zone => ({ service_code: service, zone_id: zone, provider_count: 1 })));
+    return base.d1(sql);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "provider roster").length, 1);
+  assert.match(failed(report, "provider roster")[0].detail, /grooming:blr-south/);
+});
+
+test("certification fails before handoff when Razorpay TEST or Maps UAT is not configured", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ http: async (method, path, options = {}) => {
+    if (path === "/api/integration-readiness" && options.headers?.cookie) return { status: 200, headers: {}, body: { uatSandbox: { modules: [
+      { code: "razorpay", configuredForExternalTest: false }, { code: "maps_gps", configuredForExternalTest: true },
+    ] } } };
+    return base.http(method, path, options);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "checkout dependencies").length, 1);
+  assert.match(failed(report, "checkout dependencies")[0].detail, /razorpay/);
 });
 
 // ---------------------------------------------------------------------------
@@ -329,7 +359,7 @@ test("the hosted smoke pack refreshes Founder after later persona sign-ins", asy
       founderLogins += 1;
       return { status: 200, headers: { "set-cookie": `pawspace_session=founder-${founderLogins}; Path=/; HttpOnly` } };
     }
-    if (SMOKE_ROUTES.includes(path) && options.headers?.cookie) {
+    if (SMOKE_ROUTES.includes(path) && path !== "/api/integration-readiness" && options.headers?.cookie) {
       return options.headers.cookie === "pawspace_session=founder-2"
         ? { status: 200, headers: {} }
         : { status: 401, headers: {} };
