@@ -99,7 +99,7 @@ test("customer screens keep honest disclosures and drop internal vocabulary", ()
   const grooming = read("app/mobile-app/grooming-flow.tsx");
   // Internal jargon on a customer CTA teaches testers the wrong words for what they are reporting.
   assert.doesNotMatch(grooming, /Create canonical UAT booking/);
-  assert.match(grooming, /Confirm booking/);
+  assert.match(grooming, /Continue to payment|BookingPaymentPage/);
   // But the disclosures that tell a tester no real money moved are TRUE and must survive: removing
   // them to look production-ready would make the build lie about what it just did.
   assert.match(grooming, /does not move live money/);

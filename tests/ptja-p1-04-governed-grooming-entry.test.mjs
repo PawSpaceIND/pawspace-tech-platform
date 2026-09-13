@@ -80,8 +80,9 @@ test("P1-04-K05 the flow's request id contains nothing derived from the attempt"
 
 test("P1-04-P01 pay-now is recorded as pending and cannot read as already paid", async () => {
   const flow = await read(FLOW);
-  assert.match(flow, /initialPaymentStatus:pay==="online"\?"payment_pending":"due_after_service"/,
-    "an online payment is pending until something proves otherwise");
+  assert.match(flow, /payment:\{method:pay==="online"\?"upi":"cash",mode:pay==="online"\?"prepaid":"pay_after_service",status:"created"/,
+    "an online payment is created/pending until verified gateway evidence proves capture");
+  assert.match(flow, /<BookingPaymentPage/, "the customer must pass through the shared payment review page");
   const ledger = await read("lib/test-transaction.ts");
   assert.match(ledger, /"payment_pending"/, "the ledger understands the state");
   assert.match(ledger, /initialPaymentStatus\?\?\(/, "and takes it from the caller rather than guessing");
@@ -236,7 +237,7 @@ test("P1-04-K06 the key covers every input the request actually carries", async 
     else if (flow[i] === "]") { depth -= 1; if (depth === 0) { close = i + 1; break; } }
   }
   const key = flow.slice(flow.indexOf("[", open), close);
-  assert.ok(key.includes("String(preferred)"), `the preferred-groomer choice is part of the key: ${key}`);
+  assert.ok(key.includes("preferredProviderId"), `the preferred-groomer choice is part of the key: ${key}`);
   // The other request-shaping inputs, so this cannot regress silently either.
   for (const input of ["customer.customerId", "date", "String(slotIndex)", "String(count)", "type", "packId",
                        "plan", "String(pay)", "safetyNotes", "String(total)", "String(discount)",

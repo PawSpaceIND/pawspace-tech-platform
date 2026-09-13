@@ -204,7 +204,7 @@ test("Rupee amounts reach the gateway as exact paise, and the API base cannot be
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Verify-first: SANDBOX keeps the submitted status and an undeclared environment does not", async () => {
+test("Verify-first: customer capture claims are demoted in SANDBOX and undeclared environments", async () => {
   /*
    * The LIVE demotion — a client-claimed "captured" recorded as "created" — is executed across five
    * method/mode pairs in tests/live-payment-canonical-route-runtime.test.mjs, which must run on
@@ -260,12 +260,11 @@ test("Verify-first: SANDBOX keeps the submitted status and an undeclared environ
     return { status: response.status, body, row };
   };
 
-  // SANDBOX: an explicitly declared sandbox is a money-test environment, so the submitted status is
-  // kept as submitted. This is the non-vacuity control for the demotion below — without it, "the
-  // status was demoted" could just mean "the route always writes created".
+  // SANDBOX: verify-first customer services never trust a caller-declared capture. Sandbox changes
+  // provider connectivity, not payment authority: Razorpay/provider evidence still owns confirmation.
   const sandbox = await submit(1, { PAWSPACE_PAYMENT_ENV: "sandbox" }, "captured");
   assert.equal(sandbox.status, 201, `the sandbox booking must be accepted: ${JSON.stringify(sandbox.body)}`);
-  assert.equal(String(sandbox.row.status), "captured", "an explicit sandbox keeps the submitted status");
+  assert.equal(String(sandbox.row.status), "created", "sandbox must not honour a customer-claimed capture");
 
   // UNDECLARED: no PAWSPACE_PAYMENT_ENV at all. The sandbox exemption must NOT apply — the booking is
   // either refused or recorded unpaid, and in no case may a client-claimed capture stand. An absent

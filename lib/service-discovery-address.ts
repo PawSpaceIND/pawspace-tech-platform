@@ -40,7 +40,7 @@ async function ensureTestProviderHomeBases(db:Db){
  * Legacy executable suites can opt into one explicit server-owned sandbox fixture with
  * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture is impossible to activate unless the runtime
  * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
-export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string}) : Promise<GovernedServiceAddress>{
+export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
   const suppliedAddress=String(input.serviceAddress||"").trim(),suppliedPincode=String(input.servicePincode||"").trim();
   let row:Row|null=null;
@@ -61,14 +61,16 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
-    if(geocoded.status!=="configured"||!Number.isFinite(geocoded.latitude)||!Number.isFinite(geocoded.longitude))throw new Response(geocoded.error||"The service address could not be geocoded for provider matching",{status:409});
+    const fallbackLatitude=Number(input.latitude),fallbackLongitude=Number(input.longitude),gpsFallback=Number.isFinite(fallbackLatitude)&&Number.isFinite(fallbackLongitude)&&fallbackLatitude>=-90&&fallbackLatitude<=90&&fallbackLongitude>=-180&&fallbackLongitude<=180;
+    const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
+    if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     const now=Date.now(),id=String(row.id);
     if(suppliedAddress){
       await db.prepare("UPDATE customer_addresses SET is_default=0,updated_at=? WHERE customer_id=?").bind(now,input.customerId).run();
       await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET line1=excluded.line1,city=excluded.city,postal_code=excluded.postal_code,is_default=1,updated_at=excluded.updated_at WHERE customer_addresses.customer_id=excluded.customer_id").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,now,now).run();
     }
-    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,geocoded.address||address,Number(geocoded.latitude),Number(geocoded.longitude),now,now).run();
-    geo={latitude:Number(geocoded.latitude),longitude:Number(geocoded.longitude),address_text:geocoded.address||address};
+    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
+    geo={latitude:Number(resolvedGeo.latitude),longitude:Number(resolvedGeo.longitude),address_text:resolvedGeo.address||address};
   }
   const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?SERVICE_DISCOVERY_RADIUS_KM:undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};

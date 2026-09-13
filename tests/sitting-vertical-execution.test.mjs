@@ -206,7 +206,7 @@ test("SIT-04 booking gate: an unpaid quote cannot become a booking, and a quote 
 
   const uncaptured = await govern({ paymentStatus: "pending" });
   assert.equal(uncaptured.ok, false, "a booking must not confirm while the sandbox payment is still pending");
-  assert.match(String(uncaptured.body ?? ""), /captured in sandbox before confirmation/i);
+  assert.match(String(uncaptured.body ?? ""), /payment state is invalid/i);
 
   /* Sitting reserves exactly ONE canonical care reservation regardless of how many nights it
    * bills - a 2-night overnight is 2 billable units but still one reservation. */

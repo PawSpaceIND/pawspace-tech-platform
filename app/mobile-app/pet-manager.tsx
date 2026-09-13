@@ -5,7 +5,7 @@ import styles from "./pet-manager.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
 import { loadCustomerPets, upsertCustomerPet, type CustomerPet } from "../../lib/customer-account-client";
-import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
+import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromDateOfBirth, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
 
 type PetForm = {
   id?: string;
@@ -256,16 +256,17 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
           </label>
           <label>
             Age
-            <select value={form.ageBand} onChange={(event) => setField({ ageBand: event.target.value })}>
+            <select value={form.ageBand} disabled={Boolean(form.dateOfBirth)} aria-describedby="pet-age-help" onChange={(event) => setField({ ageBand: event.target.value })}>
               <option value="">Select…</option>
               {AGE_BANDS.map((band) => (
                 <option key={band} value={band}>{band}</option>
               ))}
             </select>
+            <small id="pet-age-help">{form.dateOfBirth ? "Age is calculated from date of birth." : "Select age, or enter date of birth to calculate it."}</small>
           </label>
           <label>
             Date of birth (optional)
-            <input type="date" value={form.dateOfBirth} max={todayISO} onChange={(event) => setField({ dateOfBirth: event.target.value })} />
+            <input type="date" value={form.dateOfBirth} max={todayISO} onChange={(event) => { const dateOfBirth = event.target.value; setField({ dateOfBirth, ageBand: dateOfBirth ? ageBandFromDateOfBirth(dateOfBirth) : form.ageBand }); }} />
           </label>
           <label>
             Weight

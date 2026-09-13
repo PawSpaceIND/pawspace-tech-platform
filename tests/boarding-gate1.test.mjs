@@ -203,7 +203,7 @@ test("Boarding Gate 1 refuses a booking whose body disagrees with the server quo
   assert.match(otherMode.message, /payment mode does not match the server quote/);
 
   const unpaid = await refusal(governance.governBoardingBooking(db, validBooking(quote, { paymentStatus: "pending" })));
-  assert.match(unpaid.message, /captured in sandbox before confirmation/);
+  assert.match(unpaid.message, /payment state is invalid/);
 
   assert.equal(
     (await db.prepare("SELECT status FROM boarding_commercial_quotes WHERE id=?").bind(quote.quoteId).first()).status,

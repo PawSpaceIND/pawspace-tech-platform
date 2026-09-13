@@ -132,7 +132,7 @@ test("TRN-04 booking: one quote books one programme, and the client cannot resta
   const govern = (over = {}) => attempt(() => com.governTrainingBooking(db, {
     quoteId, packageCode: PACKAGE, packageName: PACKAGE_NAME, petCount: 1, scheduledStart: start,
     submittedTotal: 6000, submittedAmountDueNow: 3000, paymentMode: "split",
-    paymentStatus: "partially_paid", reservationCount: 4, ...over,
+    paymentStatus: "created", reservationCount: 4, ...over,
   }));
 
   const forged = await govern({ submittedTotal: 1, submittedAmountDueNow: 1 });

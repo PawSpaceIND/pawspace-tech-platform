@@ -309,7 +309,7 @@ test("a Sitting booking is governed against its server quote and consumes it exa
     [{ petCount: 1 }, /pet count changed after quote/],
     [{ scheduledEnd: new Date(Date.now() + 86_400_000 + 7_200_000).toISOString() }, /care window changed after quote/],
     [{ zoneId: "blr-central" }, /city\/zone does not match the scheduling reservation/],
-    [{ paymentStatus: "pending" }, /payment must be captured in sandbox/],
+    [{ paymentStatus: "pending" }, /payment state is invalid/],
     [{ reservationCount: 2 }, /exactly one canonical care reservation/],
   ]) {
     const refused = await refusal(submit(overrides));

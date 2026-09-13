@@ -20,20 +20,21 @@ type CustomerBooking = { id: string; serviceCode: string; packageName: string; s
 type CustomerOffer = { code: string; description: string; autoApply: boolean };
 
 const PROMISE: Record<string, string> = {
-  grooming: "Salon-grade care at home",
-  dog_training: "Build better behaviour",
-  boarding: "A safe & happy stay",
-  pet_sitting: "Lovingly cared for at home",
-  pet_taxi: "Comfortable & safe rides",
-  dog_walking: "Daily walks for a healthy dog",
-  food: "Healthy meals for pets",
-  relocation: "We handle the journey",
+  grooming: "Professional grooming at home",
+  dog_training: "Positive training at home",
+  boarding: "Home stays, never kennels",
+  pet_sitting: "Trusted care in your home",
+  pet_taxi: "Safe & comfy pet rides",
+  dog_walking: "Fun, safe daily walks",
+  food: "Healthy meals, freshly made",
+  relocation: "National & international relocation",
 };
 
 const CAMPAIGNS = [
   { eyebrow: "CARE GUIDE", title: "Complete grooming, clearly compared", copy: "See every inclusion before you choose a dog or cat package.", cta: "Compare packages", serviceCode: "grooming" },
   { eyebrow: "TRAINING GUIDE", title: "Better walks start at home", copy: "Explore how PawSpace trainers build calm leash habits together with pet parents.", cta: "Explore training", serviceCode: "dog_training" },
   { eyebrow: "PAWSPACE MEDIA", title: "Your neighbourhood, pet-ready", copy: "Service education and approved local PawSpace campaigns appear here.", cta: "Browse services", serviceCode: "grooming" },
+  { eyebrow: "FRESH CARE", title: "Healthy routines, happier pets", copy: "Discover food, walking and everyday care options designed around your pet family.", cta: "Explore care", serviceCode: "food" },
 ] as const;
 
 const cta = (serviceCode: string) => serviceCode === "food" ? "Order now" : serviceCode === "relocation" ? "Enquire now" : "Book now";
@@ -143,7 +144,7 @@ export default function PremiumDiscoveryHome({
 
     <section className={pet ? styles.personalHero : styles.welcomeHero} aria-label="Your pet family">
       {pet ? <>
-        <div><small>YOUR PETTER HALF</small><h1>What does {pet.name} need today?</h1><button onClick={onShowPets}>Your pet family <span aria-hidden="true">↗</span></button></div>
+        <div><small>EVERYTHING YOUR PET NEEDS, IN ONE HAPPY PLACE</small><h1>{pet.name}’s Home</h1></div>
         <button className={styles.petPortrait} onClick={onShowPets} aria-label={`Open ${pet.name}'s profile`}>
           {pet.profile?.photo ? <img src={pet.profile.photo} alt={pet.name} /> : <span aria-hidden="true">🐾</span>}
         </button>
@@ -164,7 +165,7 @@ export default function PremiumDiscoveryHome({
     </section>}
 
     <section className={styles.care} aria-label="Care services">
-      <div className={styles.sectionHead}><h2>Care for every little need</h2><small>Explore services →</small></div>
+      <div className={styles.sectionHead}><h2>Everything your pet needs, in one happy place.</h2><small>Explore services →</small></div>
       <div className={styles.cards}>
         {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
@@ -200,6 +201,8 @@ export default function PremiumDiscoveryHome({
         <b>{offer.code}</b><small>{offer.description}</small>{offer.autoApply && <em>Auto-applies</em>}
       </article>)}
     </section>}
+
+    <section className={styles.ticker} aria-label="PawSpace updates"><div><span>Grooming at home · clear package inclusions</span><span>Training at home · positive routines</span><span>Safe pet rides · tracked care</span><span>Fresh meals · made for pet families</span></div></section>
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
 

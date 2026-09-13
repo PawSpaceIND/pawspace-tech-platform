@@ -40,7 +40,7 @@ test("reviewed unified discovery source and CSS use the same presentation contra
   assert.match(component, /Welcome to your/);
   assert.match(component, /Petter half/);
   assert.doesNotMatch(component, /data-home-design="option-5-premium-visual"/);
-  assert.match(component, />Care for every little need</);
+  assert.match(component, />Everything your pet needs, in one happy place\.</);
   assert.match(component, /aria-label="Care services"/);
   assert.match(component, /SERVICE_ART\[service\.serviceCode\]\?\.image/);
   assert.doesNotMatch(

@@ -23,7 +23,7 @@ export async function assertCustomerCheckoutBooking(db: D1Database, customerId: 
     JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.customer_id=? AND p.customer_id=?`)
     .bind(bookingId, customerId, customerId).first<Row>();
   if (!row) throw new CustomerCheckoutError("Booking payment was not found for your account.", 404);
-  if (starting && (!new Set(["confirmed", "assigned", "in_progress", "completed"]).has(String(row.booking_status)) ||
+  if (starting && (!new Set(["payment_pending", "confirmed", "assigned", "in_progress", "completed"]).has(String(row.booking_status)) ||
       new Set(["cancelled", "refunded", "partially_refunded"]).has(String(row.payment_status)))) {
     throw new CustomerCheckoutError("This booking cannot accept a new payment. Contact billing support.", 409);
   }

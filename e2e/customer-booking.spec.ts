@@ -119,9 +119,9 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-grooming-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
   await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");
   await page.getByLabel("Pincode",{exact:true}).fill("560038");
-  await page.getByRole("button",{name:"Verify map",exact:true}).click();
+  await page.getByRole("button",{name:"Use this address",exact:true}).click();
   await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();
-  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+  await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
 
   // Separate project slots while exercising the dates actually offered by the customer UI.
   const ist=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
@@ -134,11 +134,14 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   await expect(page.getByText("Review and confirm",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:/^Pay after service/}).click();
   const created=page.waitForResponse(response=>response.url().includes("/api/canonical-bookings")&&response.request().method()==="POST");
-  await page.getByRole("button",{name:"Confirm booking",exact:true}).click();
+  await page.getByRole("button",{name:"Continue to payment",exact:true}).click();
   const response=await created;
   expect(response.status(),await response.text()).toBe(201);
   const result=await response.json(),bookingId=String(result.data?.bookingId||"");
   expect(bookingId).not.toBe("");
+  await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible();
+  await expect(page.getByText("Pay after service",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Confirm booking",exact:true}).click();
   await expect(page.getByText("Your groomer is reserved.",{exact:true})).toBeVisible();
   await expect(page.getByText(`BOOKING CONFIRMED · ${bookingId}`,{exact:true})).toBeVisible();
   // Read the customer-owned account view; the all-bookings endpoint is correctly staff-only.
@@ -240,21 +243,19 @@ test("address choice: customer can recover from a wrong map match and editing cl
  });
  await page.getByLabel("Complete doorstep address",{exact:true}).fill("42 Double Road, Indiranagar, Bengaluru");
  await page.getByLabel("Pincode",{exact:true}).fill("560038");
- await page.getByRole("button",{name:"Verify map",exact:true}).click();
+ await page.getByRole("button",{name:"Use this address",exact:true}).click();
  const matches=page.getByRole("region",{name:"Matching map addresses",exact:true});
  await expect(matches.getByRole("button")).toHaveCount(2);
  expect(resolved).toEqual([]);
  await matches.getByRole("button",{name:"Indiranagar, Bengaluru",exact:true}).click();
- await expect(page.getByRole("alert")).toContainText("Choose another match");
- await expect(page.getByRole("button",{name:"Verify service address",exact:true})).toBeDisabled();
+ await expect(page.getByRole("alert")).toContainText("does not match the selected pincode");
  await page.screenshot({path:test.info().outputPath("customer-address-choice.png"),fullPage:true});
  await matches.getByRole("button",{name:"42 Double Road, Indiranagar, Bengaluru 560038",exact:true}).click();
- await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
  expect(resolved).toEqual(["area","doorstep"]);
  await expect(page.getByRole("button",{name:"Review booking",exact:true})).toBeEnabled();
  await page.getByLabel("Pincode",{exact:true}).fill("560034");
- await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
- await expect(page.getByRole("button",{name:"Verify service address",exact:true})).toBeDisabled();
+ await expect(page.getByText("Service doorstep ready",{exact:true})).toBeHidden();
  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
 });
 
@@ -267,7 +268,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  await page.getByRole("button",{name:/^4 hours/}).click();
  const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
- await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Verify map",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ await page.getByLabel("Complete doorstep address",{exact:true}).fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByLabel("Pincode",{exact:true}).fill("560038");await page.getByRole("button",{name:"Use this address",exact:true}).click();await page.getByRole("region",{name:"Matching map addresses",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Service doorstep ready",{exact:true})).toBeVisible();
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
   const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart);
@@ -304,12 +305,16 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   expect(writes).toHaveLength(0);const after=await page.context().request.get("/api/customer-account");expect(after.ok()).toBeTruthy();expect((await after.json()).data.bookings).toEqual(initial.data.bookings);
  }else{
   const created=page.waitForResponse(response=>response.url().endsWith("/api/sitting-bookings")&&response.request().method()==="POST");await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);const body=await response.json();const bookingId=String(body.data.bookingId),paymentId=String(body.data.paymentId);expect(bookingId).not.toBe("");expect(paymentId).toMatch(/^PAY-SIT-/);
-  await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();
-  await expect(page.getByText(bookingId,{exact:true})).toBeVisible();
-  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
+  await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible();
+  await expect(page.getByText("Secure Razorpay checkout",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
+  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
   await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
-  await page.screenshot({path:test.info().outputPath("customer-sitting-booked.png"),fullPage:true});
+  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("payment pending");
+  await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
+  // Verify-first contract: provider execution remains locked until signed Razorpay evidence advances payment.
+  return;
   const providerId=String(response.request().postDataJSON().provider.id),phones:Record<string,string>={sit_sana:"9000000945",sit_neha:"9000000946",sit_asha:"9000000947"};expect(phones[providerId]).toBeTruthy();
   const partner=await browser.newPage({baseURL:new URL(page.url()).origin,viewport:page.viewportSize()!});
   try{

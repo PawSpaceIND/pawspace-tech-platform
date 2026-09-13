@@ -16,7 +16,7 @@ function count(sqlite,table){return sqlite.prepare("SELECT 1 FROM sqlite_master 
 test('sitter preview returns governed choices without reservation, decision or provider offer',async t=>{
  const c=await fixture(t),result=await c.call();assert.equal(result.status,200,JSON.stringify(result.body));
  assert.ok(result.body.data.providers.length>0,JSON.stringify(result.body));assert.equal(result.body.data.reserved,false);
- assert.deepEqual(Object.keys(result.body.data.providers[0]).sort(),['id','model','name']);
+ assert.deepEqual(Object.keys(result.body.data.providers[0]).sort(),['id','model','name','qualityScore','rating']);
  for(const table of ['scheduling_reservations','scheduling_assignment_decisions','provider_assignment_offers'])assert.equal(count(c.sqlite,table),0,table);
 });
 test('sitter preview excludes leave, inactive and wrong-zone providers',async t=>{

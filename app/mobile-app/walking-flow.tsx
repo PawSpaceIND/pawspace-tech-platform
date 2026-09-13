@@ -11,6 +11,7 @@ import AddressPicker, {type ZoneResult} from "./address-picker";
 import {walkingQuoteNeedsReview} from "../../lib/walking-quote-consent";
 import {walkingReservationKey} from "../../lib/walking-reservation-key";
 import { useFlowHistory } from "../../lib/use-flow-history";
+import BookingPaymentPage from "./booking-payment-page";
 
 // Same prop contract as training-flow.tsx: the shell passes the logged-in customer; pets follow the
 // UAT roster pattern the other flows use. Walking is a dogs-only service, so the roster keeps the
@@ -65,6 +66,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [serviceLocation, setServiceLocation] = useState<ZoneResult|null>(null);
+  const [paymentReview, setPaymentReview] = useState(false);
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2800); };
 
   useFlowHistory("walking",stage,setStage);
@@ -146,6 +148,8 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Dog Walking booking"); }
     finally { actionLock.current=false; setBusy(false); }
   }
+
+  if(paymentReview&&!booking&&quote)return <BookingPaymentPage serviceName="Dog Walking" totalAmount={quote.totalAmount} amountDueNow={0} mode="pay_after_service" onCreateBooking={async()=>{await confirm();setPaymentReview(false);}} onBack={()=>setPaymentReview(false)}/>;
 
   if (booking && walker) return (
     <div className={styles.wrap}>
@@ -293,8 +297,8 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
           <fieldset disabled={busy} className={styles.addressFieldset}><legend className={styles.label}>Service address</legend><AddressPicker onZoneResolved={setServiceLocation}/></fieldset>
           <p className={styles.note}>Pay-after-service: nothing is charged now. Each walk is billed at the server-quoted per-walk price only after it is completed. Your walker is auto-assigned from the canonical roster with full-calendar conflict checks.</p>
           {error && <p className={styles.alert} role="alert">{error}</p>}
-          <button className={styles.primary} disabled={busy || !quote || !serviceLocation?.zone.serviceAvailable} onClick={() => void confirm()}>
-            {busy ? "Reserving your walk calendar…" : !quote ? "Refreshing server quote…" : `Confirm ${quote.walkCount} walk${quote.walkCount === 1 ? "" : "s"} · ${money(quote.totalAmount)} after service`}
+          <button className={styles.primary} disabled={busy || !quote || !serviceLocation?.zone.serviceAvailable} onClick={() => setPaymentReview(true)}>
+            {!quote ? "Refreshing server quote…" : `Continue to payment · ${money(quote.totalAmount)} after service`}
           </button>
           <button className={styles.back} disabled={busy} onClick={() => { setQuote(null); setStage(3); }}>← Your dog</button>
         </section>

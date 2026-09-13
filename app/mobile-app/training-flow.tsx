@@ -6,6 +6,7 @@ import extraStyles from "./training-extra.module.css";
 import planStyles from "./training-plans.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import CouponField from "./coupon-field";
+import BookingPaymentPage from "./booking-payment-page";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import PetManager from "./pet-manager";
@@ -117,7 +118,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [customGoal, setCustomGoal] = useState(""),
     [addingGoal, setAddingGoal] = useState(false),
     [view, setView] = useState<"plan" | "homework" | "progress">("plan"),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(""),
+    [pendingPayment,setPendingPayment]=useState<{kind:"meet"|"programme";bookingId:string;total:number;dueNow:number;mode:"prepaid"|"split";trainerName:string}|null>(null);
   const pets = petsState ?? [];
   const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
   const flash = (message: string) => {
@@ -213,8 +215,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const requestId=`training-meet-${customer.customerId}-${meetTrainer.id}-${start.toISOString()}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:meetTrainer.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
-        setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);
+        setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);setPendingPayment({kind:"meet",bookingId:canonical.bookingId,total:quote.totalAmount,dueNow:quote.amountDueNow,mode:"prepaid",trainerName:decision.provider.name});
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {actionLock.current=false;setScheduling(false);}
+
     },
     confirm = async () => {
       if(actionLock.current)return;
@@ -228,11 +231,12 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
-        setConfirmedTrainerName(decision.provider.name);
-        const booking=createTestTransaction({customerId:customer.customerId,customerName:customer.customerName,primary:customer.phone,secondary:"",pets:selectedPetNames.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:quote.packageName,area:`${serviceCoverage.area}, ${serviceCoverage.city}`,slot:`${frequency} · ${time}`,duration:`${quote.sessions} sessions · ${quote.minutesPerSession} min/session · ${quote.validityDays} days`,amount:quote.totalAmount,offerCode:couponCode||undefined,discount:quote.discount,payment:`${mode==="prepaid"?"Full payment pending verification":"Split payment pending verification"}${linkedMeetBookingId?` · Meet booking ${linkedMeetBookingId}`:""}`,provider:decision.provider.name,providerModel:"Commission",subscription:`${quote.packageName} · ${quote.sessions} sessions`,creditsBefore:quote.sessions,crmOwner:"Unassigned",crmNextAction:attendanceMode==="parent"?"Trainer acceptance; parent/caretaker coaching required":"Trainer acceptance; confirm package allows trainer-led outdoor practice",reminder:"In-app reminders queued; external delivery not active"},canonical.bookingId);
-        setBookingId(booking.id);setConfirmed(true);
+        setConfirmedTrainerName(decision.provider.name);setBookingId(canonical.bookingId);
+        setPendingPayment({kind:"programme",bookingId:canonical.bookingId,total:quote.totalAmount,dueNow:quote.amountDueNow,mode,trainerName:decision.provider.name});
       } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {actionLock.current=false;setScheduling(false);}
+
     };
+  if(pendingPayment)return <BookingPaymentPage serviceName={pendingPayment.kind==="meet"?"Trainer Meet & Greet":"Dog Training"} totalAmount={pendingPayment.total} amountDueNow={pendingPayment.dueNow} mode={pendingPayment.mode} bookingId={pendingPayment.bookingId} onVerified={()=>{if(pendingPayment.kind==="meet"){setMeetBookingId(pendingPayment.bookingId);setMeetTrainerName(pendingPayment.trainerName);setPendingPayment(null);setStage(2);}else{createTestTransaction({customerId:customer.customerId,customerName:customer.customerName,primary:customer.phone,secondary:"",pets:selectedPetNames.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:plan.name,area:coverage?`${coverage.area}, ${coverage.city}`:"Training service area",slot:`${frequency} · ${time}`,duration:`${plan.sessions} sessions`,amount:pendingPayment.total,payment:"Verified Razorpay payment",provider:pendingPayment.trainerName,providerModel:"Commission",subscription:`${plan.name} · ${plan.sessions} sessions`,creditsBefore:plan.sessions,crmOwner:"Unassigned",crmNextAction:"Trainer acceptance",reminder:"In-app reminders queued"},pendingPayment.bookingId);setPendingPayment(null);setConfirmed(true);}}} onBack={()=>setPendingPayment(null)}/>;
   if (confirmed)
     return (
       <TrainingDashboard

@@ -315,6 +315,21 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     if(collectedInFull)await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?").bind(now,bookingId).run().catch(()=>null);
     if(settlesBalance)await settleStayBalance(db,{bookingId,eventId:event.eventId,paymentRef:event.gatewayPaymentId??null,now});
     await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount,capturedTotal,stagesCollected,settledStayBalance:settlesBalance});
+    // Verified provider evidence is also the confirmation authority for customer bookings that were
+    // deliberately created as payment_pending. The amount due NOW (deposit for split payments, full
+    // amount for prepaid) is the threshold; the later balance remains governed by its own schedule.
+    const booking=await db.prepare("SELECT service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(()=>null);
+    const confirmationServices=new Set(["grooming","dog_training","boarding","pet_sitting"]);
+    const dueNow=Number(payment.amount_due_now||0);
+    if(confirmationServices.has(String(booking?.service_code||""))&&String(booking?.status)==="payment_pending"&&dueNow>0&&capturedTotal+0.009>=dueNow){
+      const work=await db.prepare("SELECT provider_model FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+      const nextWork=String(work?.provider_model||"")==="commission"?"awaiting_acceptance":"assigned";
+      const changed=await db.prepare("UPDATE canonical_bookings SET status='confirmed',updated_at=? WHERE id=? AND status='payment_pending'").bind(now,bookingId).run();
+      if(Number(changed.meta?.changes||0)===1){
+        await db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=? AND status='payment_pending'").bind(nextWork,now,bookingId).run();
+        await db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'booking_confirmed_after_verified_payment','booking',?,?,?,?)").bind(`payment-confirm:${bookingId}`,bookingId,bookingId,"razorpay_webhook",JSON.stringify({serviceCode:String(booking?.service_code||""),amountDueNow:dueNow,capturedAmount:capturedTotal,verifiedGatewayCapture:true}),now).run();
+      }
+    }
     // Referral qualification requires both completion and verified payment. Calling it from each
     // side makes event order irrelevant; the referral bridge is idempotent and a referral failure
     // must never roll back or counterfeit a verified gateway capture.

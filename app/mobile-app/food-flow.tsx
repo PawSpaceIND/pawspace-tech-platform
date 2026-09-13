@@ -16,6 +16,7 @@ import {
 import { createFoodSubscription } from "../../lib/food-subscription-client";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 import { useFlowHistory } from "../../lib/use-flow-history";
+import BookingPaymentPage from "./booking-payment-page";
 
 // Species drives per-pet food suggestions; the pets are the customer's own, loaded at runtime.
 const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
@@ -72,6 +73,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [orders, setOrders] = useState<FoodOrderResult[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionCreated[]>([]);
   const [done, setDone] = useState(false);
+  const [paymentReview, setPaymentReview] = useState(false);
 
   const checkCoverage = async () => {
     setCatalogueLoading(true); setCatalogueError(""); setCoverage(null); setCatalogue([]); setCart([]);
@@ -191,6 +193,8 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
       setConfirming(false);
     }
   };
+
+  if(paymentReview&&!done)return <BookingPaymentPage serviceName="Fresh Food" totalAmount={serverTotal} amountDueNow={0} mode="pay_after_service" onCreateBooking={async()=>{await confirm();setPaymentReview(false);}} onBack={()=>setPaymentReview(false)}/>;
 
   if (done)
     return (
@@ -488,7 +492,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           <button className={styles.back} onClick={() => setStep(4)}>
             ← Delivery
           </button>
-          <button className={styles.primary} disabled={confirming} onClick={() => void confirm()}>
+          <button className={styles.primary} disabled={confirming} onClick={() => setPaymentReview(true)}>
             {confirming ? "Placing order…" : plan === "repeat" ? "Confirm order + repeat plan" : "Confirm food order"}
           </button>
           {flowError && <p role="alert" className={styles.error}>{flowError}</p>}

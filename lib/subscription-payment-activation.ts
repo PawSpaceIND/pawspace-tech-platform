@@ -21,8 +21,8 @@
  * subscription whose status is in ('active','exhausted'), so a pending entitlement cannot be reserved,
  * consumed or released, and coupon/reminder/BI reads that filter on 'active' do not see it either.
  *
- * Sandbox is unchanged and explicitly so: there the recorded payment status stays 'captured', the
- * entitlement is written active at purchase, and this module never has to run.
+ * Sandbox follows the same verify-first entitlement rule for customer checkout. The environment may
+ * use sandbox provider credentials, but a caller-declared capture never activates credits by itself.
  */
 
 type Db=D1Database;
