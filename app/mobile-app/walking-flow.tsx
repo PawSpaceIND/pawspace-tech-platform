@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./walking-flow.module.css";
 import { loadWalkingCatalogue, createWalkingQuote, type WalkingPackage, type WalkingQuote } from "../../lib/walking-commercial-client";
 import { createCanonicalWalkingBooking, reserveWalkingSchedule, type AssignedWalker, type WalkingBookingResult } from "../../lib/walking-booking-client";
@@ -10,6 +10,7 @@ import type { LoggedInCustomer } from "./customer-login";
 import AddressPicker, {type ZoneResult} from "./address-picker";
 import {walkingQuoteNeedsReview} from "../../lib/walking-quote-consent";
 import {walkingReservationKey} from "../../lib/walking-reservation-key";
+import { useFlowHistory } from "../../lib/use-flow-history";
 
 // Same prop contract as training-flow.tsx: the shell passes the logged-in customer; pets follow the
 // UAT roster pattern the other flows use. Walking is a dogs-only service, so the roster keeps the
@@ -36,6 +37,7 @@ const windowLabel = (start: string, end: string) => `${slotLabel(new Date(start)
 function firstRecurringDay(weekdays: number[], hour: number) { for (let offset = 1; offset <= 28; offset++) { const candidate = istDate(offset, hour); if (weekdays.includes(istWeekday(candidate))) return candidate; } return istDate(1, hour); }
 
 export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }) {
+  const actionLock=useRef(false);
   const [instructions, setInstructions] = useState("");
   const [handoverPreference, setHandoverPreference] = useState<WalkingOwnerCare["handoverPreference"]>(null);
   const [stage, setStage] = useState(1);
@@ -65,7 +67,8 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   const [serviceLocation, setServiceLocation] = useState<ZoneResult|null>(null);
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2800); };
 
-  useEffect(() => {
+  useFlowHistory("walking",stage,setStage);
+ useEffect(() => {
     let active = true;
     void loadWalkingCatalogue({ scheduledStart: istDate(1, 7).toISOString() }).then(result => {
       if (!active) return;
@@ -121,10 +124,10 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   }, [stage, packageCode, mode, effectiveWalks, weekdays, scheduledStart, scheduledEnd, selectedPackage]);
 
   async function confirm() {
-    if (busy) return;
+    if (actionLock.current || busy) return;
     if (!serviceLocation?.zone.serviceAvailable) {setError("Verify a complete service address before booking."); return;}
     if (!pet || pet.species !== "dog") {setError("Select one of your dogs to book a walk."); return;}
-    setBusy(true); setError("");
+    actionLock.current=true;setBusy(true); setError("");
     try {
       // Fresh server quote at confirmation time (display quote may have aged past its expiry).
       const fresh = await createWalkingQuote({ packageCode, mode, petCount: 1, walkCount: effectiveWalks, weekdays: mode === "recurring" ? weekdays : undefined, scheduledStart, scheduledEnd });
@@ -141,7 +144,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
       const created = await createCanonicalWalkingBooking({ ownerCare: {instructions, handoverPreference}, idempotencyKey: requestId, groupId: reservation.groupId, walkingQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: "dog" }], cityId: coverage.cityId, zoneId: coverage.zoneId, packageCode: fresh.packageCode, packageName: fresh.packageName, walkCount: fresh.walkCount, weekdays: fresh.weekdays, scheduledStart, scheduledEnd, provider: { id: reservation.walker.id, name: reservation.walker.name, model: reservation.walker.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "pay_after_service", detail: "Payment remains pending until a verified post-service payment event" } });
       setQuote(fresh); setWalker(reservation.walker); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Dog Walking booking"); }
-    finally { setBusy(false); }
+    finally { actionLock.current=false; setBusy(false); }
   }
 
   if (booking && walker) return (

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./stay-flow.module.css";
 import Link from "next/link";
 import {saveCustomerBoardingCare,boardingCareDraft} from "../../lib/boarding-customer-care";
@@ -122,6 +122,7 @@ const toBoardingCaregiver = (host: BoardingHost): Caregiver => ({
 
 import type { LoggedInCustomer } from "./customer-login";
 export default function StayFlow({ mode: initialMode, customer, onModeChange }: { mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
+  const actionLock=useRef(false);
  const [careDraft,setCareDraft]=useState<SittingCarePlan>({}),[confirmedCarePlan,setConfirmedCarePlan]=useState<SittingCarePlan|undefined>(),[careSaveError,setCareSaveError]=useState("");
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
@@ -265,13 +266,14 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     setProfileOpen(true);
   };
   const confirm = async () => {
+    if(actionLock.current)return;
     if (!datesValid || !agreed) return;
     if (selectedPets.length === 0) { setScheduleError("Select at least one pet to continue."); return; }
     if (!serviceLocation) { setScheduleError("Verify the service address before continuing."); return; }
     if (mode === "sitting" && !sittingQuote) { setScheduleError(sittingQuoteError || "Wait for the canonical Sitting quote."); return; }
     if (mode === "boarding" && selectedPetObjs.some((pet) => pet.vaccinationStatus !== "verified")) { setScheduleError("Boarding requires verified vaccination for every selected pet."); return; }
     if(!careDraft.vet?.trim()||!careDraft.emergencyContact?.trim()||(mode==="sitting"&&!careDraft.homeAccess?.trim())){setScheduleError("Add vet and emergency contacts, plus home access for Sitting, in your Care Card before confirming.");return;}
-    setScheduling(true);setScheduleError("");
+    actionLock.current=true;setScheduling(true);setScheduleError("");
     try {
     if(mode==="sitting"&&!selectedSitter)throw new Error("Select a currently available sitter before confirming");
     const{scheduledStart:scheduleStart,scheduledEnd:scheduleEnd}=careWindowDates(start,end,careWindow,startTime),zoneId=serviceLocation.assignment.zoneId;
@@ -325,7 +327,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
     setConfirmedTotal(governedBoardingQuote?.totalAmount ?? governedSittingQuote?.totalAmount ?? total);
     setBookingId(booking.id);
     setConfirmed(true);
-    } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {setScheduling(false);}
+    } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {actionLock.current=false;setScheduling(false);}
   };
   if (confirmed)
     return (
