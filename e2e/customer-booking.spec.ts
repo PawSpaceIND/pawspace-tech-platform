@@ -272,7 +272,9 @@ test("address choice: customer can recover from a wrong map match and editing cl
  // The typed-verify path stays bounded: an address with neither a PIN nor a known Bengaluru area is refused.
  await page.locator("#grooming-address-line-1").fill("Unnamed lane behind the market");
  await expect(matches.getByRole("button")).toHaveCount(2);
- await page.getByRole("button",{name:"Verify service address",exact:true}).click();
+ // Two controls read "Verify service address": the in-picker button (enabled) and the step-3 CTA
+ // (disabled while unverified). Target the picker's own button to exercise the typed-verify guard.
+ await page.getByRole("button",{name:"Verify service address",exact:true}).first().click();
  await expect(page.getByRole("alert")).toContainText("Bengaluru area name");
  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
 });
