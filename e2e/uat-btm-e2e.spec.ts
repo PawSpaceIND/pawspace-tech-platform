@@ -135,13 +135,30 @@ async function reachReview(page: Page, preferredSlots: RegExp[]) {
   await dateChip.click();
   log(`✅ Date ${SERVICE_DATE} selected ("${(await dateChip.textContent())?.trim()}").`);
 
-  let slotUsed = "";
-  for (const slot of preferredSlots) {
-    const chip = page.getByRole("button", { name: slot }).first();
-    if (await chip.isVisible().catch(() => false) && await chip.isEnabled().catch(() => false)) { await chip.click(); slotUsed = (await chip.textContent())?.trim() || String(slot); break; }
-  }
+  const tried = new Set<string>();
+  const slotUsed = await selectSlot(page, preferredSlots, tried);
   expect(slotUsed, "an available slot must exist on the requested date").not.toEqual("");
   log(`✅ Slot "${slotUsed}" selected.`);
+  await openReview(page);
+  return { slotUsed, tried };
+}
+
+/** Slot step (3 of 4): click the first offered slot chip not tried yet. Returns its label, or "" when none is left. */
+async function selectSlot(page: Page, preferred: RegExp[], tried: Set<string>): Promise<string> {
+  for (const slot of preferred) {
+    if (tried.has(String(slot))) continue;
+    const chip = page.getByRole("button", { name: slot }).first();
+    if (await chip.isVisible().catch(() => false) && await chip.isEnabled().catch(() => false)) {
+      await chip.click();
+      tried.add(String(slot));
+      return (await chip.locator("b").first().textContent().catch(() => null))?.trim() || String(slot);
+    }
+  }
+  return "";
+}
+
+/** Review step (4 of 4): open it and (re)fill the mandatory details; the alternative phone stays blank on purpose. */
+async function openReview(page: Page) {
   await page.getByRole("button", { name: "Review booking", exact: true }).click();
   await expect(page.getByText("Review and confirm", { exact: true })).toBeVisible();
   await page.getByLabel("Customer Name", { exact: true }).fill(CUSTOMER_NAME);
@@ -149,18 +166,27 @@ async function reachReview(page: Page, preferredSlots: RegExp[]) {
   // Alternative phone deliberately left blank: it is optional and must not hold Confirm back.
   await page.getByLabel("Special instructions to groomer", { exact: true }).fill("Bruno is nervous with clippers - go slow.");
   log("✅ Review step: name + phone filled, alternative phone left blank (optional), instructions added.");
-  return slotUsed;
 }
 
 type ReserveOutcome = { status: number; body: Record<string, unknown> };
-async function confirmBooking(page: Page): Promise<{ reserve: ReserveOutcome | null; created: { status: number; body: Record<string, unknown> } }> {
+type CreatedOutcome = { status: number; body: Record<string, unknown> };
+type BookingAttempt = { reserve: ReserveOutcome | null; created: CreatedOutcome | null; refused: boolean };
+
+/**
+ * Click Confirm and read what the server said: FIRST the reserve call (/api/uat-scheduling), which is where
+ * "No provider is available" comes from, THEN the canonical booking call, which the app only makes once a
+ * provider is assigned. A refusal is logged with every candidate's evaluation in full (this is the evidence
+ * the capacity question needs) and returned as refused:true so the caller can try another slot.
+ */
+async function confirmBooking(page: Page): Promise<BookingAttempt> {
   const reservePromise = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST", { timeout: 60_000 }).catch(() => null);
-  const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 90_000 });
+  const createdPromise = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
   const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
   await expect(confirm, "Confirm booking must be enabled with the alternative phone blank").toBeEnabled();
   await confirm.click();
   const reserveRes = await reservePromise;
   const reserve = reserveRes ? { status: reserveRes.status(), body: await reserveRes.json().catch(() => ({})) as Record<string, unknown> } : null;
+  let refused = false;
   if (reserve) {
     const data = (reserve.body.data ?? {}) as Record<string, unknown>;
     const provider = (data.provider ?? {}) as Record<string, unknown>;
@@ -168,14 +194,49 @@ async function confirmBooking(page: Page): Promise<{ reserve: ReserveOutcome | n
       assignedProviderId = String(provider.id); assignedProviderName = String(provider.name ?? "");
       log(`✅ Capacity: reserve returned HTTP 200, status "${String(data.status)}", provider assigned: ${assignedProviderName || assignedProviderId} (${assignedProviderId}). The "No provider is available" refusal did NOT occur.`);
     } else {
-      log(`❌ Capacity: reserve returned HTTP ${reserve.status} ${JSON.stringify(reserve.body).slice(0, 400)}`);
+      refused = true;
+      const evaluations = Array.isArray(reserve.body.evaluations) ? reserve.body.evaluations as Array<Record<string, unknown>> : [];
+      log(`⚠️ Capacity: reserve returned HTTP ${reserve.status} "${String(reserve.body.error ?? reserve.body.message ?? "")}" for this slot; ${evaluations.length} candidate(s) evaluated:`);
+      for (const ev of evaluations) log(`   · ${String(ev.providerId ?? ev.id ?? "?")}: ${ev.eligible ? "eligible" : "refused"} — ${(Array.isArray(ev.reasons) ? ev.reasons : []).map(String).join(" | ")}`);
+      if (!evaluations.length) log(`   body: ${JSON.stringify(reserve.body)}`);
     }
   } else {
     log("ℹ️ The reserve call was not observed separately (it may have been folded into the booking call); relying on the booking result.");
   }
+  if (refused) {
+    // The app stops before the canonical booking call after a refusal; allow a folded call a moment, then move on.
+    const folded = await Promise.race([createdPromise, page.waitForTimeout(5_000).then(() => null)]);
+    return { reserve, created: folded ? { status: folded.status(), body: await folded.json().catch(() => ({})) as Record<string, unknown> } : null, refused };
+  }
   const createdRes = await createdPromise;
-  const created = { status: createdRes.status(), body: await createdRes.json().catch(() => ({})) as Record<string, unknown> };
-  return { reserve, created };
+  const created = createdRes ? { status: createdRes.status(), body: await createdRes.json().catch(() => ({})) as Record<string, unknown> } : null;
+  return { reserve, created, refused };
+}
+
+/**
+ * Book on SERVICE_DATE with the chosen payment mode, falling back across the offered slots when the reserve
+ * call refuses one (a slot can be exhausted by other testers: one job per groomer per overlapping window).
+ * Each refusal is evidence in the report; only exhausting EVERY offered slot is a capacity failure.
+ */
+async function bookWithSlotFallback(page: Page, preferred: RegExp[], payMode: "online" | "after"): Promise<BookingAttempt> {
+  const { tried } = await reachReview(page, preferred);
+  let last: BookingAttempt = { reserve: null, created: null, refused: false };
+  for (let attempt = 1; attempt <= preferred.length; attempt += 1) {
+    await page.getByRole("button", { name: payMode === "online" ? /^Pay online/ : /^Pay after service/ }).click();
+    last = await confirmBooking(page);
+    if (last.created?.status === 201 || !last.refused) return last;
+    const alert = (await page.locator("p[role='alert']").last().textContent().catch(() => "")) || "";
+    log(`ℹ️ Customer saw: "${alert.trim()}" — trying the next offered slot on ${SERVICE_DATE}.`);
+    await shot(page, `slot-refused-${attempt}`);
+    await page.getByRole("button", { name: "← Slot", exact: true }).click();
+    const dateChip = page.locator("button[aria-pressed='true']").filter({ hasText: serviceDateLabel() }).first();
+    await expect(dateChip, `date ${SERVICE_DATE} must stay selected after going back`).toBeVisible();
+    const next = await selectSlot(page, preferred, tried);
+    if (!next) { log(`❌ Capacity: every offered slot on ${SERVICE_DATE} was refused for this doorstep.`); return last; }
+    log(`✅ Slot "${next}" selected (retry ${attempt}).`);
+    await openReview(page);
+  }
+  return last;
 }
 
 /**
@@ -301,11 +362,9 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
     await customerOtpLogin(page);
     log(`✅ Login: sandbox OTP for ${PHONE} accepted (identity-session 200).`);
     await ensurePet(page);
-    await reachReview(page, [/^11:00 AM–1:00 PM/, /^1:00–3:00 PM/, /^3:00–5:00 PM/, /^9:00–11:00 AM/]);
-    await page.getByRole("button", { name: /^Pay online/ }).click();
-    const { created } = await confirmBooking(page);
-    expect(created.status, `canonical booking: ${JSON.stringify(created.body).slice(0, 400)}`).toBe(201);
-    const data = (created.body.data ?? {}) as Record<string, unknown>;
+    const { created } = await bookWithSlotFallback(page, [/^11:00 AM–1:00 PM/, /^1:00–3:00 PM/, /^3:00–5:00 PM/, /^9:00–11:00 AM/], "online");
+    expect(created?.status, `canonical booking: ${JSON.stringify(created?.body ?? { note: "no canonical booking call was made" })}`).toBe(201);
+    const data = (created?.body.data ?? {}) as Record<string, unknown>;
     bookingId = String(data.bookingId || data.id || "");
     bookingMode = "online";
     log(`✅ Canonical booking created (HTTP 201): ${bookingId}, status "${String(data.status ?? "")}". Checkout progressed to the payment step.`);
@@ -345,11 +404,9 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
   try {
     await customerOtpLogin(page);
     await ensurePet(page);
-    await reachReview(page, [/^1:00–3:00 PM/, /^3:00–5:00 PM/, /^11:00 AM–1:00 PM/, /^9:00–11:00 AM/]);
-    await page.getByRole("button", { name: /^Pay after service/ }).click();
-    const { created } = await confirmBooking(page);
-    expect(created.status, `canonical booking: ${JSON.stringify(created.body).slice(0, 400)}`).toBe(201);
-    const data = (created.body.data ?? {}) as Record<string, unknown>;
+    const { created } = await bookWithSlotFallback(page, [/^1:00–3:00 PM/, /^3:00–5:00 PM/, /^11:00 AM–1:00 PM/, /^9:00–11:00 AM/], "after");
+    expect(created?.status, `canonical booking: ${JSON.stringify(created?.body ?? { note: "no canonical booking call was made" })}`).toBe(201);
+    const data = (created?.body.data ?? {}) as Record<string, unknown>;
     bookingId = String(data.bookingId || data.id || "");
     bookingMode = "pay_after";
     const payConfirm = page.getByRole("button", { name: "Confirm booking", exact: true });
