@@ -90,6 +90,10 @@ export default function GroomingRouteCard({bookingId,providerId}:{bookingId:stri
       if(watchId.current!==null&&navigator.geolocation)navigator.geolocation.clearWatch(watchId.current);
       watchId.current=null;lastSentAt.current=0;pending.current=null;controller.current?.abort();controller.current=null;
       setTracking(false);
+      // rejection describes ONE booking's refused fix. It is cleared only by a 200 or replaced by a
+      // later 422, so without this it stayed on screen after switching jobs - the previous booking's
+      // amber GPS warning sitting under the new booking's route.
+      setRejection(null);
       void load();
     },0);
     return()=>{window.clearTimeout(timer);mounted.current=false;if(watchId.current!==null&&typeof navigator!=="undefined"&&navigator.geolocation)navigator.geolocation.clearWatch(watchId.current);controller.current?.abort();pending.current=null;};

@@ -113,6 +113,12 @@ const when = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(date);
 };
 /** expiresAt, dueAt and friends arrive as epoch milliseconds rather than as a date string. */
+// A payment that is captured, refunded or partially refunded is finished: nothing is collectable
+// against it. This is the single source of that judgement. The pay-after-service section gate used to
+// test only for "captured", so a REFUNDED booking still rendered "Payment due after service" and
+// offered to create a collection link against money that had already gone back to the customer.
+const SETTLED_PAYMENT_STATUSES = ["captured", "refunded", "partially_refunded"];
+
 const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
 export default function PartnerMobileApp() {
@@ -227,7 +233,7 @@ export default function PartnerMobileApp() {
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
 
   useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
-  useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
+  useEffect(() => { if (!paymentRequest?.collectable || SETTLED_PAYMENT_STATUSES.includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
   useEffect(() => {
     if (tab !== "earnings" || sessionState !== "verified") return;
     let active = true;
@@ -248,6 +254,9 @@ export default function PartnerMobileApp() {
       // Returned by the same call all along: today's liveness gate, the onboarding link state and the
       // proof stages the server considers outstanding. None of them used to leave this handler.
       setWorkspaceState({ onboardingStatus: body.data?.onboardingStatus ?? "", liveness: body.data?.liveness ?? null, pendingProof: body.data?.pendingProof ?? [] });
+      // The .catch below writes the shell-wide error banner. Without clearing it here a successful
+      // retry left the previous failure on screen next to freshly loaded figures.
+      setError("");
       setEarningsNotice(!next ? "Earnings are not available for this provider record yet."
         : next.visible === false ? "Earnings are withheld for this provider record until Finance controls are satisfied."
           : "");
@@ -384,13 +393,13 @@ export default function PartnerMobileApp() {
 
   // What this partner actually collects in cash/UPI at the door: the booked total, and only while the
   // booking is pay-after-service and nothing has been captured yet.
-  const collectAtDoor = selected && selected.payment.mode === "pay_after_service" && !["captured", "refunded", "partially_refunded"].includes(selected.payment.status)
+  const collectAtDoor = selected && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status)
     ? Number(selected.payment.amount || selected.totalAmount || 0)
     : 0;
 
   // paymentRequestView reports a settled payment through paymentStatus and an elapsed link through
   // status==="expired". They need different copy: one is finished, the other needs a replacement link.
-  const paymentSettled = Boolean(paymentRequest && ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus));
+  const paymentSettled = Boolean(paymentRequest && SETTLED_PAYMENT_STATUSES.includes(paymentRequest.paymentStatus));
   const paymentExpired = Boolean(paymentRequest && paymentRequest.status === "expired");
 
   // Both engagement shapes set the top-level totals; `computed` carries netPayout for contract and
@@ -556,7 +565,7 @@ export default function PartnerMobileApp() {
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
               {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
               {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
-            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}>
+            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
               <b>Payment due after service</b>
               {!paymentRequest ? <>
                 <p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p>

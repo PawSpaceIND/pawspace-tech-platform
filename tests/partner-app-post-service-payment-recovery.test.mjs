@@ -107,7 +107,9 @@ test("a settled payment reads back as settled, which must not offer a replacemen
 
 test("the expired branch offers the replacement it names, and the settled branch does not", () => {
   assert.match(page, /paymentExpired = Boolean\(paymentRequest && paymentRequest\.status === "expired"\)/);
-  assert.match(page, /paymentSettled = Boolean\(paymentRequest && \["captured", "refunded", "partially_refunded"\]/);
+  // The three settled statuses now live in one module-scope constant rather than inline here, so this
+  // asserts the judgement instead of the spelling. The list itself is pinned in the refunded test below.
+  assert.match(page, /paymentSettled = Boolean\(paymentRequest && SETTLED_PAYMENT_STATUSES\.includes\(paymentRequest\.paymentStatus\)\)/);
   assert.match(page, /Create replacement payment request/, "the named action must exist on screen");
   // The settled copy is reached before the replacement branch, so a captured payment cannot offer one.
   const settledAt = page.indexOf("no further collection is due");
@@ -119,4 +121,40 @@ test("the expired branch offers the replacement it names, and the settled branch
 test("the request's expiry and capture mode reach the screen", () => {
   assert.match(page, /whenMs\(paymentRequest\.expiresAt\)/, "expiresAt was declared and never rendered");
   assert.match(page, /paymentRequest\.liveCapture \?/, "liveCapture was declared and never rendered");
+});
+
+test("a refunded pay-after-service booking is never offered as collectable", () => {
+  // CodeAnt flagged this and it was right. The settled list governs collectAtDoor and paymentSettled,
+  // but the section gate tested only for "captured", so a REFUNDED booking rendered "Payment due after
+  // service" and offered to create a collection link against money already returned to the customer.
+  const page = readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
+
+  const settled = page.match(/const SETTLED_PAYMENT_STATUSES = \[([^\]]*)\]/);
+  assert.ok(settled, "the settled-status list must exist as one named constant");
+  for (const status of ["captured", "refunded", "partially_refunded"])
+    assert.match(settled[1], new RegExp(`"${status}"`), `${status} must count as settled`);
+
+  // Declared at module scope so every use site follows the declaration; an in-component const sat
+  // below one of its own callers and would have thrown a temporal-dead-zone ReferenceError.
+  assert.match(page, /^const SETTLED_PAYMENT_STATUSES/m, "must be module-scoped, not inside the component");
+
+  const gate = page.match(/selected\.status === "completed" && selected\.payment\.mode === "pay_after_service" && ([^&]*)&&/);
+  assert.ok(gate, "the pay-after-service section gate must still exist");
+  assert.match(gate[1], /!SETTLED_PAYMENT_STATUSES\.includes\(selected\.payment\.status\)/,
+    "the gate must exclude every settled status, not just captured");
+  assert.doesNotMatch(gate[1], /!== "captured"/,
+    "testing captured alone lets a refunded booking offer a collection link");
+
+  // Every judgement of settlement goes through the one list.
+  assert.equal((page.match(/\["captured", "refunded", "partially_refunded"\]/g) || []).length, 1,
+    "the status list must not be duplicated inline anywhere");
+});
+
+test("a successful earnings load clears the banner a previous failure left behind", () => {
+  const page = readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
+  const effect = page.slice(page.indexOf('if (tab !== "earnings"'), page.indexOf("const [mediaAssets"));
+  assert.match(effect, /setError\(problem instanceof Error/, "the failure path writes the shell error banner");
+  const success = effect.slice(0, effect.indexOf("}).catch("));
+  assert.match(success, /setError\(""\)/,
+    "the success path must clear it, or a retry shows fresh figures beside a stale failure");
 });

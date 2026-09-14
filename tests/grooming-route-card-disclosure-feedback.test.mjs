@@ -159,3 +159,15 @@ test("out-of-order responses are still discarded by sequence", () => {
   assert.equal(shouldApplyTelemetryResponse(2, 3), false);
   assert.equal(shouldApplyTelemetryResponse(4, 3), true);
 });
+
+test("a refused-fix warning does not follow the partner to another booking", () => {
+  // rejection describes ONE booking's refused fix: it is cleared by a 200 or replaced by a later 422.
+  // The effect keyed on the booking reset tracking, the watch and the in-flight controller but not
+  // this, so switching jobs left the previous booking's amber GPS warning under the new job's route.
+  const card = readFileSync(new URL("../app/partner-app/grooming-route-card.tsx", import.meta.url), "utf8");
+  const effect = card.slice(card.indexOf("mounted.current=true;"));
+  const body = effect.slice(0, effect.indexOf("},[bookingId,providerId]);"));
+  assert.match(body, /setRejection\(null\)/, "the per-booking reset must drop the previous rejection");
+  assert.ok(body.indexOf("setRejection(null)") < body.indexOf("void load()"),
+    "it must be cleared before the new booking's route is requested");
+});
