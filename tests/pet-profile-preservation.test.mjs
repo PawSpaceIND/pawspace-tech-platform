@@ -81,7 +81,9 @@ test("PET-4: no booking surface overwrites pet profile columns unconditionally",
     .map((f) => `app/api/${String(f).replaceAll("\\", "/")}`)
     .concat(fs.readdirSync(new URL("../lib", import.meta.url)).filter((f) => f.endsWith(".ts")).map((f) => `lib/${f}`))
     .filter((f) => !PET_PROFILE_AUTHORITY.has(f))
-    .filter((f) => /INSERT INTO canonical_pets[\s\S]*?vaccination_status=excluded\.vaccination_status/.test(read(f)));
+    /* Whitespace-tolerant on purpose: `vaccination_status = excluded.vaccination_status` is the same
+     * destructive clause and an exact-match regex would wave it through. */
+    .filter((f) => /INSERT INTO canonical_pets[\s\S]*?vaccination_status\s*=\s*excluded\s*\.\s*vaccination_status/i.test(read(f)));
 
   assert.deepEqual(offenders, [],
     `these write canonical_pets with the destructive clause; use CANONICAL_PET_UPSERT from lib/canonical-pet-upsert.ts:\n  ${offenders.join("\n  ")}`);

@@ -21,6 +21,11 @@
  * lead outside the newest 100 by updated_at could not be found by typing its name or number - the
  * loaded page was the whole searchable universe.
  *
+ * The searched columns must COVER what that page filter matches, or moving search to the server
+ * narrows it. The page matches `name phone pets id`, so pet_names and pet_summary are searched here
+ * too: without them a staff member typing a pet's name would have the matching contact excluded by
+ * the server before the page's own pet matching ever saw it.
+ *
  * Every placeholder is anonymous, because SQLite gives a bare ? that follows a numbered one an index
  * nobody intends, and D1 binds positionally. Each filter is switched on by a bound flag so the SQL
  * stays one constant statement: tests/crm-stack-hardening prepares every statement in the CRM stack
@@ -35,11 +40,13 @@ export const CRM_CONTACT_LIST_SQL=`SELECT * FROM crm_contacts
             OR lower(COALESCE(name,'')) LIKE ? ESCAPE '\\'
             OR lower(COALESCE(primary_phone,'')) LIKE ? ESCAPE '\\'
             OR lower(COALESCE(email,'')) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(pet_names,'')) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(pet_summary,'')) LIKE ? ESCAPE '\\'
             OR lower(id) LIKE ? ESCAPE '\\')
      ORDER BY updated_at DESC LIMIT 100`;
 
-/** Bind order for CRM_CONTACT_LIST_SQL: scope flag, the three scope values, search flag, term x4. */
+/** Bind order for CRM_CONTACT_LIST_SQL: scope flag, the three scope values, search flag, term x6. */
 export function crmContactListBinds(scope:{cityId:string;teamCode:string;departmentCode:string}|null,search:string){
  const like=`%${search.toLowerCase().replace(/[\\%_]/g,c=>`\\${c}`)}%`;
- return [scope?1:0,scope?.cityId??"",scope?.teamCode??"",scope?.departmentCode??"",search?1:0,like,like,like,like];
+ return [scope?1:0,scope?.cityId??"",scope?.teamCode??"",scope?.departmentCode??"",search?1:0,like,like,like,like,like,like];
 }
