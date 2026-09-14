@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{isPhotoProof}from"../../../lib/care-proof-photo-claims";
 
 type Booking={bookingId:string;serviceCode:string;package:string;start:string;status:string;orderValue:number;paymentStatus:string;paymentDueNow:number;paymentMethod:string|null};
 type Offer={bookingId:string;serviceCode:string;package:string;start:string;orderValue:number};
@@ -76,7 +77,16 @@ export default function PartnerWorkspacePage(){
         <h2 style={h2}>Proof pending (customers are reminded until you post it)</h2>
         <div style={card}>{data.pendingProof?.length?data.pendingProof.map(p=><div key={p.bookingId} style={{borderBottom:`1px solid ${C.line}`,padding:"8px 0"}}>
           <div><b>{p.serviceCode}</b> · <code style={{color:C.dim}}>{p.bookingId}</code></div>
-          <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>{p.missing.map(m=><button key={m} disabled={busy} style={{...btn,background:C.purple,color:C.ink,fontSize:12}} onClick={()=>void act({action:"submit_proof",bookingId:p.bookingId,proofType:m,objectId:`uat-${m}-${p.bookingId}`},`${m} posted; customer notified.`)}>Post {m.replace("_"," ")}</button>)}</div>
+          <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>{p.missing.map(m=>isPhotoProof(p.serviceCode,m)
+            /* A photo proof tells the customer "a new photo of your pet is available", so it may only
+             * be posted against stored media. This button used to send a placeholder id — `uat-<type>`
+             * — which made that promise with no photo behind it. The server refuses those now, so
+             * offering the button would only produce an error; say what is actually needed instead. */
+            ? <span key={m} style={{fontSize:12,color:C.dim,border:`1px dashed ${C.line}`,borderRadius:6,padding:"6px 10px"}}
+                title="Photo proof needs secure media storage, which is not connected yet.">
+                {m.replace("_"," ")} — needs a photo upload
+              </span>
+            : <button key={m} disabled={busy} style={{...btn,background:C.purple,color:C.ink,fontSize:12}} onClick={()=>void act({action:"submit_proof",bookingId:p.bookingId,proofType:m,objectId:`uat-${m}-${p.bookingId}`},`${m} posted; customer notified.`)}>Post {m.replace("_"," ")}</button>)}</div>
         </div>):<p style={{color:C.dim,margin:0}}>All proof up to date.</p>}</div>
 
         <h2 style={h2}>Recent jobs</h2>
