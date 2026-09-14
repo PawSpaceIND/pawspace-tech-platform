@@ -170,7 +170,7 @@ test("Training recovery preserves paid-session integrity", async () => {
   const world = freshWorld();
   const { sessions } = await programme(world, { sessions: 4 });
   const [s1, s2, s3, s4] = sessions;
-  const cases = (sessionId) => world.sqlite.prepare("SELECT recovery_type,status,detail_json FROM training_session_recovery_cases WHERE session_id=? ORDER BY created_at").all(sessionId);
+  const cases = (sessionId) => world.sqlite.prepare("SELECT recovery_type,status,detail_json FROM training_session_recovery_cases WHERE session_id=? ORDER BY created_at, rowid").all(sessionId);
   const consumed = () => world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions").get().n;
 
   await completeSession(world, s1, "r1");
