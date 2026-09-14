@@ -17,12 +17,14 @@ const receipt = { bookingId: 'B1', orderId: 'order_fixture', paymentId: 'pay_fix
   signature: createHmac('sha256', env.RAZORPAY_KEY_SECRET_SANDBOX).update('order_fixture|pay_fixture').digest('hex') };
 function world(t) {
   const sqlite = new DatabaseSync(':memory:'); t.after(() => sqlite.close());
-  sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT);
-    CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT);
+  sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,service_code TEXT DEFAULT 'grooming',package_name TEXT DEFAULT 'Bath & Basic',provider_id TEXT DEFAULT 'PRV1',scheduled_start TEXT DEFAULT '2026-09-20T03:30:00.000Z',scheduled_end TEXT DEFAULT '2026-09-20T05:30:00.000Z',total_amount REAL DEFAULT 499.50,currency TEXT DEFAULT 'INR',updated_at INTEGER DEFAULT 1);
+    CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT,mode TEXT DEFAULT 'prepaid');
     CREATE TABLE payment_intents(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,payment_id TEXT,gateway_order_id TEXT,provider TEXT,environment TEXT,amount_paise INTEGER,currency TEXT);
     CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT,detail_json TEXT NOT NULL DEFAULT '{}');
-    INSERT INTO canonical_bookings VALUES('B1','C1','confirmed'),('B2','C2','confirmed');
-    INSERT INTO booking_payments VALUES('P1','B1','C1','created',499.50,499.50,'INR'),('P2','B2','C2','created',100,100,'INR');
+    CREATE TABLE provider_work_orders(id TEXT PRIMARY KEY,booking_id TEXT,provider_name TEXT,provider_model TEXT,status TEXT);
+    INSERT INTO canonical_bookings(id,customer_id,status) VALUES('B1','C1','confirmed'),('B2','C2','confirmed');
+    INSERT INTO booking_payments(id,booking_id,customer_id,status,amount,amount_due_now,currency) VALUES('P1','B1','C1','created',499.50,499.50,'INR'),('P2','B2','C2','created',100,100,'INR');
+    INSERT INTO provider_work_orders VALUES('WO1','B1','Rahul M.','full_time','assigned'),('WO2','B2','Other Provider','commission','assigned');
     INSERT INTO payment_intents VALUES('I1','B1','C1','P1','order_fixture','razorpay','sandbox',49950,'INR');`);
   const db = d1(sqlite); enterWorkersDbScope(db); globalThis.__CUSTOMER_CHECKOUT_WIRING_DB__ = db;
   globalThis.__CUSTOMER_CHECKOUT_WIRING_ENV__ = { ...env };
@@ -221,6 +223,18 @@ test('actual confirmation route uses session ownership and returns no secret', a
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   const text = await response.text(); assert.equal(text.includes(env.RAZORPAY_KEY_SECRET_SANDBOX), false);
   assert.equal(text.includes(receipt.signature), false); assert.equal(JSON.parse(text).data.status, 'awaiting_confirmation');
+});
+test('status returns a customer-owned ready projection with exact server slot, provider and transaction', async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  event(sqlite); sqlite.exec("UPDATE booking_payments SET status='captured',amount_due_now=0 WHERE id='P1'");
+  const response = await POST(request({ action: 'status', bookingId: 'B1' }, session));
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.deepEqual(body.data.confirmation, {
+    ready: true, bookingId: 'B1', serviceCode: 'grooming', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
+    totalAmount: 499.5, currency: 'INR', providerId: 'PRV1', providerName: 'Rahul M.', providerModel: 'full_time', workOrderStatus: 'assigned', scheduledStart: '2026-09-20T03:30:00.000Z', scheduledEnd: '2026-09-20T05:30:00.000Z', updatedAt: 1,
+  });
+  const denied = await POST(request({ action: 'status', bookingId: 'B1' }, await cookie(db, 'C2')));
+  assert.equal(denied.status, 404, 'another customer cannot read the projection');
 });
 test('route rejects cross-account receipt even when body forges customerId', async t => {
   const { db } = world(t); const { POST } = await import('../app/api/customer-checkout/route.ts');

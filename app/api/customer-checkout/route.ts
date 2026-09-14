@@ -3,7 +3,7 @@ import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
 import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
 import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
-import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, readCustomerCheckoutConfirmation, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
+import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 export async function POST(request: Request) {
   try {
@@ -55,19 +55,41 @@ export async function POST(request: Request) {
     }
     if (body.action === "status") {
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId, false);
-      const stage = await paymentStageAmount(db, bookingId);
-      if (!stage) return json({ error: "Payment record was not found." }, 404);
+      const [stage, gatewayEventsTable] = await Promise.all([
+        paymentStageAmount(db, bookingId),
+        db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payment_gateway_events'").first<Record<string,unknown>>(),
+      ]);
+      const transactionExpression = gatewayEventsTable
+        ? `(SELECT MAX(e.gateway_payment_id) FROM payment_gateway_events e
+            WHERE e.booking_id=b.id AND e.payment_id=p.id AND e.signature_verified=1 AND e.processing_status='processed'
+              AND e.event_type IN ('payment.captured','order.paid','payment_link.paid'))`
+        : "NULL";
+      const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
+          w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.mode payment_mode,p.status payment_status,p.amount_due_now,
+          ${transactionExpression} transaction_id
+          FROM canonical_bookings b
+          JOIN provider_work_orders w ON w.booking_id=b.id
+          JOIN booking_payments p ON p.booking_id=b.id
+          WHERE b.id=? AND b.customer_id=?`).bind(bookingId, session.subjectId).first<Record<string, unknown>>();
+      if (!stage || !projection) return json({ error: "Payment record was not found." }, 404);
       const status = stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation";
-      const confirmation = status === "captured" ? await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId) : undefined;
-      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation } });
+      const bookingStatus = String(projection.booking_status), paymentStatus = String(projection.payment_status), paymentMode = String(projection.payment_mode);
+      const transactionId = String(projection.transaction_id || "");
+      const bookingReady = ["confirmed", "assigned", "on_the_way", "arrived", "in_service", "completed"].includes(bookingStatus);
+      const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
+      return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
+        ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageName: String(projection.package_name),
+        bookingStatus, paymentId: String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || null, amountDueNow: Number(projection.amount_due_now || 0),
+        totalAmount: Number(projection.total_amount || 0), currency: String(projection.currency || "INR"), providerId: String(projection.provider_id),
+        providerName: String(projection.provider_name), providerModel: String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
+        scheduledStart: String(projection.scheduled_start), scheduledEnd: String(projection.scheduled_end), updatedAt: Number(projection.updated_at || 0),
+      } } });
     }
     if (body.action === "confirm") {
       if (![body.orderId, body.paymentId, body.signature].every(value => typeof value === "string")) return json({ error: "Invalid payment receipt." }, 400);
-      const verified = await verifyCustomerCheckoutReceipt(db, runtime, session.subjectId, {
+      return json({ data: await verifyCustomerCheckoutReceipt(db, runtime, session.subjectId, {
         bookingId, orderId: body.orderId as string, paymentId: body.paymentId as string, signature: body.signature as string,
-      });
-      const confirmation = verified.status === "captured" ? await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId) : undefined;
-      return json({ data: { ...verified, confirmation } });
+      }) });
     }
     return json({ error: "Unknown checkout action." }, 400);
   } catch (error) {
