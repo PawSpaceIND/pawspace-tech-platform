@@ -56,7 +56,13 @@ const count = (db, type) =>
 
 // ---------------------------------------------------------------------------------------------
 test("the whole migration set applies to a deployment-shaped database with no failures", async () => {
-  assert.equal(FILES.length, 45, "the suite covers every migration file in drizzle/");
+  /*
+   * A floor, not an exact count. Every file in drizzle/ is applied below, so a migration added
+   * tomorrow is covered the moment it lands — pinning an exact number only breaks this suite on
+   * somebody else's unrelated migration, which is what it did the first time main moved. The floor
+   * still catches the case that matters: the set silently losing files.
+   */
+  assert.ok(FILES.length >= 45, `the migration set has not shrunk, found ${FILES.length}`);
 
   const db = await deploymentShapedDatabase();
 
