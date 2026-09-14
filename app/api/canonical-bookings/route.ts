@@ -1,3 +1,4 @@
+import {CANONICAL_PET_UPSERT} from "../../../lib/canonical-pet-upsert";
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import{sameInstant}from"../../../lib/booking-window-instant";
 import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
@@ -134,39 +135,8 @@ async function mintPetId(customerId:string,sourceId:string,attempt=0){
   const readable=customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase().slice(0,12);
   return `PET-${readable}-${Array.from(digest.slice(0,10)).map(byte=>byte.toString(16).padStart(2,"0")).join("").toUpperCase()}`;
 }
-/**
- * The conflict clause for canonical_pets.
- *
- * The upsert used to overwrite unconditionally, so a booking carrying no breed or vaccination status
- * ERASED what the customer had already saved. A booking may now FILL a blank field and nothing else:
- * it may not overwrite a stored value, and it may not renormalize one either. A stored value that is
- * merely padded or oddly cased is still the customer's own value, so blankness is TESTED with a trim
- * while the ORIGINAL column is what gets written back.
- *
- * 'not_provided' is the vaccination column's own sentinel for "unknown", so it counts as blank —
- * matched case-insensitively on BOTH sides, because the sentinel has been written in more than one
- * casing. A genuinely recorded status is preserved byte for byte, spacing and casing included, and a
- * sentinel is only ever displaced by a real status, never rewritten into another sentinel spelling.
- *
- * updated_at moves only when a gap was genuinely filled, so a booking against an already-complete row
- * leaves that row untouched down to its timestamp — nothing downstream sees a phantom edit.
- *
- * The WHERE guard is the last line of defence: an update proposed against a row owned by another
- * customer is skipped rather than applied.
- */
-const PET_FIELDS=["name","species","breed","source_pet_id"] as const;
-// SQL's bare TRIM() strips spaces ONLY, while the resolver's petKey() uses JS trim(). A tab-only value
-// was therefore blank to the resolver and non-blank to this clause, so it could never be healed. The
-// explicit character set — space, tab, LF, VT, FF, CR — brings SQL into line for ASCII whitespace.
-const BLANK_CHARS="' '||CHAR(9)||CHAR(10)||CHAR(11)||CHAR(12)||CHAR(13)";
-const blank=(expression:string)=>`TRIM(COALESCE(${expression},''),${BLANK_CHARS})`;
-// A write happens ONLY where the stored side is blank AND the payload actually carries something, so
-// "the column changed" and "updated_at moved" are the same condition — there is no write that leaves
-// the timestamp behind, and no timestamp bump without a write.
-const petFills=(column:string)=>`(${blank(`canonical_pets.${column}`)}='' AND ${blank(`excluded.${column}`)}<>'')`;
-const petKeep=(column:string)=>`${column}=CASE WHEN ${petFills(column)} THEN excluded.${column} ELSE canonical_pets.${column} END`;
-const VACCINATION_FILLS=`(LOWER(${blank("canonical_pets.vaccination_status")}) IN ('','not_provided') AND LOWER(${blank("excluded.vaccination_status")}) NOT IN ('','not_provided'))`;
-const PET_UPSERT=`INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ${PET_FIELDS.map(petKeep).join(",")},vaccination_status=CASE WHEN ${VACCINATION_FILLS} THEN excluded.vaccination_status ELSE canonical_pets.vaccination_status END,updated_at=CASE WHEN ${[...PET_FIELDS.map(petFills),VACCINATION_FILLS].join(" OR ")} THEN excluded.updated_at ELSE canonical_pets.updated_at END WHERE canonical_pets.customer_id=excluded.customer_id`;
+// The conflict clause for canonical_pets lives in lib/canonical-pet-upsert.ts so the sitting and taxi
+// routes share this exact non-destructive semantics rather than each carrying their own copy.
 const canonicalBookingSchemaReady=new WeakSet<Awaited<ReturnType<typeof database>>>();
 const canonicalBookingSchemaEnsuring=new WeakMap<Awaited<ReturnType<typeof database>>,Promise<void>>();
 async function canonicalBookingSchemaIsReady(db:Awaited<ReturnType<typeof database>>){
@@ -510,7 +480,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
     db.prepare("INSERT INTO booking_reservation_confirmation_guards (group_id,checked_at) VALUES (?,?)").bind(input.scheduleGroupId,now),
     ...(input.serviceCode==="grooming"?[db.prepare("INSERT INTO provider_booking_confirmation_guards (group_id,created_at) VALUES (?,?)").bind(input.scheduleGroupId,now)]:[]),
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
-    ...resolvedPets.map(pet=>db.prepare(PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
+    ...resolvedPets.map(pet=>db.prepare(CANONICAL_PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,bookingStatus,"customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
     ...(input.serviceCode==="vet_consult"?[db.prepare("INSERT INTO vet_appointments (id,booking_id,customer_id,pet_id,provider_id,triage_level,triage_summary,symptom_json,status,scheduled_start,scheduled_end,consultation_fee_paise,service_code,sac_code,tax_paise,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`VET-${bookingId}`,bookingId,input.customer.id,ids[0],input.provider.id,input.pricing.vetTriageLevel,String(input.pricing.vetTriageSummary||""),JSON.stringify({summary:input.pricing.vetTriageSummary}),"booked",input.scheduledStart,input.scheduledEnd,VET_VISIT_FEE_PAISE,"vet_consult",VET_SAC_CODE,VET_TAX_PAISE,now,now)]:[]),
     db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,input.serviceCode,input.scheduledStart,input.scheduledEnd,reservations.results.length,workOrderStatus,JSON.stringify({reservations:reservations.results,decision:assignment}),now,now),
