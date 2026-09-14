@@ -162,6 +162,18 @@ test("vaccination sweep: one reminder per stage, escalating upcoming -> due -> o
 // ---------------------------------------------------------------------------
 // 2. Birthday: ownership, one reward per pet per year, single-use redemption.
 // ---------------------------------------------------------------------------
+/*
+ * Birthday dates are derived from TODAY, never hardcoded. A reward is valid for
+ * REWARD_VALID_DAYS (30) from the day it is issued, so a fixture pinned to an absolute date
+ * silently rots: `today: "2026-08-15"` passed for a month and then failed permanently on
+ * 2026-09-14, when the reward it issues expired and every redemption below started throwing
+ * "This birthday reward has expired". Deriving the day keeps the reward fresh on every run.
+ */
+const BIRTHDAY_TODAY = new Date().toISOString().slice(0, 10);
+const BIRTHDAY_MONTH_DAY = BIRTHDAY_TODAY.slice(5);
+const BIRTHDAY_DAY_BEFORE = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+const BIRTHDAY_NEXT_YEAR = `${Number(BIRTHDAY_TODAY.slice(0, 4)) + 1}-${BIRTHDAY_MONTH_DAY}`;
+
 test("birthday: ownership and future dates rejected, DOB upserts in place", async () => {
   const { sqlite, db } = fresh();
   const birthday = await import("../lib/pet-birthday-governance.ts");
@@ -184,19 +196,19 @@ test("birthday sweep: exactly one reward per pet per year, and the reward is sin
   const birthday = await import("../lib/pet-birthday-governance.ts");
   seedOwner(sqlite, "CUS-BD", "PET-BD");
   seedOwner(sqlite, "CUS-OTHER", "PET-OTHER", "Rocky");
-  await birthday.savePetBirthday(db, { petId: "PET-BD", customerId: "CUS-BD", dateOfBirth: "2022-08-15", actorId: "CUS-BD" });
+  await birthday.savePetBirthday(db, { petId: "PET-BD", customerId: "CUS-BD", dateOfBirth: `2022-${BIRTHDAY_MONTH_DAY}`, actorId: "CUS-BD" });
   await birthday.savePetBirthday(db, { petId: "PET-OTHER", customerId: "CUS-OTHER", dateOfBirth: "2021-03-02", actorId: "CUS-OTHER" });
 
-  assert.equal((await birthday.runPetBirthdaySweep(db, { today: "2026-08-14" })).rewardsIssued, 0, "the day before is not the birthday");
-  const issued = await birthday.runPetBirthdaySweep(db, { today: "2026-08-15" });
+  assert.equal((await birthday.runPetBirthdaySweep(db, { today: BIRTHDAY_DAY_BEFORE })).rewardsIssued, 0, "the day before is not the birthday");
+  const issued = await birthday.runPetBirthdaySweep(db, { today: BIRTHDAY_TODAY });
   assert.equal(issued.rewardsIssued, 1);
   assert.equal(issued.rewards[0].petId, "PET-BD");
   assert.equal(issued.rewards[0].discount, birthday.BIRTHDAY_GROOMING_DISCOUNT);
   // The scheduler runs every five minutes: re-running the same day must not issue again.
-  assert.equal((await birthday.runPetBirthdaySweep(db, { today: "2026-08-15" })).rewardsIssued, 0);
+  assert.equal((await birthday.runPetBirthdaySweep(db, { today: BIRTHDAY_TODAY })).rewardsIssued, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM pet_birthday_rewards WHERE pet_id='PET-BD'").get().c, 1);
   // Next year is a new reward year.
-  assert.equal((await birthday.runPetBirthdaySweep(db, { today: "2027-08-15" })).rewardsIssued, 1);
+  assert.equal((await birthday.runPetBirthdaySweep(db, { today: BIRTHDAY_NEXT_YEAR })).rewardsIssued, 1);
 
   const code = issued.rewards[0].code;
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
@@ -222,8 +234,8 @@ test("birthday reward cannot be double-spent by two concurrent redeems", async (
   const { sqlite, db } = fresh();
   const birthday = await import("../lib/pet-birthday-governance.ts");
   seedOwner(sqlite, "CUS-RACE", "PET-RACE");
-  await birthday.savePetBirthday(db, { petId: "PET-RACE", customerId: "CUS-RACE", dateOfBirth: "2020-08-15", actorId: "CUS-RACE" });
-  const issued = await birthday.runPetBirthdaySweep(db, { today: "2026-08-15" });
+  await birthday.savePetBirthday(db, { petId: "PET-RACE", customerId: "CUS-RACE", dateOfBirth: `2020-${BIRTHDAY_MONTH_DAY}`, actorId: "CUS-RACE" });
+  const issued = await birthday.runPetBirthdaySweep(db, { today: BIRTHDAY_TODAY });
   const code = issued.rewards[0].code;
   for (const id of ["BK-R1", "BK-R2"]) {
     sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
