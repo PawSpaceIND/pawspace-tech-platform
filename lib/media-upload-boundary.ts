@@ -231,6 +231,14 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
     refuse(`Media must be between ${config.minSizeBytes} byte and ${config.maxSizeBytes} bytes`,400,{code:"media_size_out_of_range"});
   const sha256=String(input.sha256||"").trim().toLowerCase();
   if(!SHA256.test(sha256))refuse("A valid SHA-256 checksum is required",400);
+  // The same bytes, already received for this booking, provider and purpose, are not registered twice. A
+  // queue row whose removal failed after a successful upload, a second tab that read the queue late, or a
+  // partner picking the same photo again would otherwise open a fresh registration whose upload becomes a
+  // second review-queue entry for one photo. The refusal is a permanent 4xx, so the Partner app's flush
+  // discards the row instead of retrying it. A rejected photo does not block: rejection asks for another.
+  const arrived=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=? LIMIT 1")
+    .bind(bookingId,providerId,category,sha256,input.supersedes??"").first<Row>();
+  if(arrived)refuse("This photo has already been uploaded for this booking and purpose; it is waiting for review",409,{code:"media_already_registered",mediaId:String(arrived.id)});
 
   const mediaId=`MEDIA-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
   const grantId=`MGRANT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;

@@ -4,7 +4,7 @@
  * registrations never received its bytes, and the Ops review queue listed it as "awaiting your decision"
  * while approval could only answer "upload incomplete". Two server-side guarantees close that gap
  * whatever the client does: re-registering the same bytes supersedes a registration still waiting for them,
- * and the review queue only ever lists assets whose bytes have arrived.
+ * is refused once they have arrived, and the review queue only ever lists assets whose bytes have arrived.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -122,20 +122,32 @@ test("the Ops review queue lists only assets whose bytes have arrived", async ()
   assert.equal(decided.body.data.proofReady, true);
 });
 
-test("a registration whose bytes already arrived is never superseded by a later registration of the same photo", async () => {
-  const { call, put, register } = await world();
+test("bytes that already arrived are never registered again: the repeat is refused as a permanent 409 and the queue keeps one entry", async () => {
+  const { sqlite, call, put, register } = await world();
   const before = file();
   const uploaded = await register("before_service", before);
   const up = await put({ id: uploaded.id, token: uploaded.upload.token, bytes: before.bytes });
   assert.equal(up.status, 200, JSON.stringify(up.body));
-  const again = await register("before_service", before);
-  assert.equal(again.supersedes, undefined, "only registrations still waiting for bytes are retired");
+  // The Partner app's queue row outlived its upload (its IndexedDB delete failed, or another tab read the
+  // queue late): the flush registers the same bytes again.
+  const again = await call("POST", { bookingId: BOOKING, purpose: "before_service", mimeType: "image/jpeg", sizeBytes: before.size, sha256: before.sha256, fileName: "before_service.jpg" });
+  assert.equal(again.status, 409, JSON.stringify(again.body));
+  assert.equal(again.body.code, "media_already_registered", "a 4xx the flush treats as permanent, so the row is discarded rather than retried for ever");
+  assert.equal(again.body.mediaId, uploaded.id);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_media_assets WHERE booking_id=? AND sha256=?").get(BOOKING, before.sha256).n, 1, "no second asset was opened for bytes the server already holds");
   const listing = await call("GET", null, STAFF, `?bookingId=${BOOKING}`);
   const first = listing.body.assets.find(asset => asset.id === uploaded.id);
   assert.equal(first.retention_status, "active");
   assert.equal(first.access_status, "quarantined");
   const queue = await call("GET", null, CHECKER, "?pending=1");
-  assert.deepEqual(queue.body.pending.map(asset => asset.id), [uploaded.id], "the unuploaded repeat stays out of the queue until its bytes arrive");
+  assert.deepEqual(queue.body.pending.map(asset => asset.id), [uploaded.id], "one photo, one review-queue entry");
+  // The same photo for the OTHER purpose is another registration: the guard is keyed by purpose too.
+  const other = await register("after_service", before);
+  assert.notEqual(other.id, uploaded.id);
+  // A rejected photo does not block a re-registration of the same bytes: rejection asks for another attempt.
+  sqlite.prepare("UPDATE service_media_assets SET review_status='rejected' WHERE id=?").run(uploaded.id);
+  const retry = await register("before_service", before);
+  assert.notEqual(retry.id, uploaded.id, "after rejection the same bytes may be registered again");
 });
 
 test("supersession is scoped to the same booking, provider, purpose and bytes", async () => {
