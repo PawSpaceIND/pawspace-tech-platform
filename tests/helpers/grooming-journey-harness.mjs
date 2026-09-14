@@ -16,21 +16,30 @@ function makeD1(sqlite) {
     },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
+  // D1 runs each batch as one transaction and serializes batches; two requests in flight at once never
+  // interleave inside one. Queue them the same way here, so a concurrent test meets the constraint the
+  // second batch hits (as it would on D1) instead of SQLite's "cannot start a transaction within a transaction".
+  let batchQueue = Promise.resolve();
+  const runBatch = async (items) => {
+    sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const results = [];
+      for (const item of items) results.push(await item.run());
+      sqlite.exec("COMMIT");
+      return results;
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  };
   const db = {
     beforeBatch: null,
     prepare: (sql) => statement(sql),
     batch: async (items) => {
       if (typeof db.beforeBatch === "function") await db.beforeBatch(items);
-      sqlite.exec("BEGIN IMMEDIATE");
-      try {
-        const results = [];
-        for (const item of items) results.push(await item.run());
-        sqlite.exec("COMMIT");
-        return results;
-      } catch (error) {
-        sqlite.exec("ROLLBACK");
-        throw error;
-      }
+      const turn = batchQueue.then(() => runBatch(items));
+      batchQueue = turn.catch(() => {});
+      return turn;
     },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };

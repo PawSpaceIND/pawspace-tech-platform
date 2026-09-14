@@ -187,14 +187,30 @@ test("booking submission is guarded against concurrent double clicks", async (t)
   const f = await signedIn(t);
   const held = await reserve(f, "gi-double");
   const payload = bookingPayload(f, "gi-double", held);
-  const [first, second] = [
-    await call("../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", payload, f.cookie),
-    await call("../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", payload, f.cookie),
-  ];
-  assert.equal(first.status, 201, JSON.stringify(first.body));
-  assert.equal(second.status, 200, "the second submit is acknowledged as a replay");
-  assert.deepEqual({ id: second.body.data.bookingId, duplicate: second.body.data.duplicatePrevented }, { id: first.body.data.bookingId, duplicate: true });
-  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE idempotency_key='gi-double'").get().n, 1, "a resubmitted request never creates a second booking");
+  const submit = () => call("../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", payload, f.cookie);
+  // Both submits in flight at once, the shape a double tap produces when the client-side lock is absent.
+  // The first request's booking batch is held until the second has ALSO reached its booking batch, which
+  // means both passed the idempotency lookup before either inserted; the UNIQUE keys on the booking and
+  // its confirmation guards are then what stop the second insert, and the route must turn that
+  // constraint error into a replay of the winner rather than a 500 or a second booking. Time-boxed so a
+  // request that never reaches its batch fails the assertions instead of hanging.
+  let arrived = 0; let releaseBoth; const bothArrived = new Promise((resolve) => { releaseBoth = resolve; });
+  f.db.beforeBatch = async (items) => {
+    if (!items.some((item) => String(item._sql || "").startsWith("INSERT INTO booking_reservation_confirmation_guards"))) return;
+    if (++arrived === 2) releaseBoth();
+    await Promise.race([bothArrived, new Promise((resolve) => setTimeout(resolve, 2000))]);
+  };
+  const raced = await Promise.all([submit(), submit()]);
+  f.db.beforeBatch = null;
+  assert.equal(arrived, 2, "both submits reached their booking batch, so both passed the idempotency lookup before either inserted");
+  assert.deepEqual(raced.map((response) => response.status).sort(), [200, 201], JSON.stringify(raced.map((response) => response.body)));
+  const first = raced.find((response) => response.status === 201), second = raced.find((response) => response.status === 200);
+  assert.deepEqual({ id: second.body.data.bookingId, duplicate: second.body.data.duplicatePrevented }, { id: first.body.data.bookingId, duplicate: true }, "the loser of the race is acknowledged as a replay of the winner");
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE idempotency_key='gi-double'").get().n, 1, "a raced request never creates a second booking");
+  const later = await submit();
+  assert.equal(later.status, 200, "a later resubmit is the plain idempotent replay");
+  assert.deepEqual({ id: later.body.data.bookingId, duplicate: later.body.data.duplicatePrevented }, { id: first.body.data.bookingId, duplicate: true });
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE idempotency_key='gi-double'").get().n, 1);
   /*
    * The ONE source-text assertion this file keeps: the client-side lock that stops a second tap from
    * even reaching the server lives in a React event handler, which react-dom/server cannot execute.

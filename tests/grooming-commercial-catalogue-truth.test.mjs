@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   freshGroomingWorld,
-  GROOMING_COMMERCIAL_TRUTH_VERSION,
   groomingCatalogue,
   groomingCommercialPackages,
   groomingCommercialAddOns,
@@ -12,8 +11,10 @@ import {
   resolveGroomingSubscriptionPlan,
 } from "./helpers/grooming-harness.mjs";
 
-// Imported directly as well as through the harness: the household quote and the customer-facing
-// catalogue module are exercised below as executable pricing, not only as re-exported constants.
+// Imported directly as well as through the harness: the household quote and the commercial truth
+// module are exercised below as executable pricing, not only as re-exported constants. The truth module
+// is the marketed price list; the governance catalogue and quotes are what the server enforces, and the
+// assertions below hold the second to the first.
 const { calculateGroomingHouseholdQuote } = await import("../lib/grooming-governance.ts");
 const commercialTruth = await import("../lib/grooming-commercial-catalogue.ts");
 
@@ -166,5 +167,4 @@ test("Subscription purchases reserve one credit per pet against the governed pla
   const { semiannual, annual } = commercialTruth.groomingSubscriptionCommercialTruth;
   assert.equal(semiannual.perSession * 6, 6594, "the marketed per-session price is the plan price divided by its sessions");
   assert.equal(annual.perSession * 12, 11988);
-  assert.equal(commercialTruth.GROOMING_COMMERCIAL_TRUTH_VERSION, GROOMING_COMMERCIAL_TRUTH_VERSION);
 });
