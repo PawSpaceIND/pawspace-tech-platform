@@ -35,6 +35,7 @@
   "app/api/order-notifications/route.ts",
   "app/api/partner-finance/route.ts",
   "app/api/partner-job-feed/route.ts",
+  "app/api/partner-jobs/route.ts",
   "app/api/provider-assignment-recovery/route.ts",
   "app/api/provider-capacity-control/route.ts",
   "app/api/provider-chat/route.ts",
