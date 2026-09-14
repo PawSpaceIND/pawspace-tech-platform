@@ -277,7 +277,11 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
   const liveMode=await liveModePayments(),submittedPaymentStatus=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
   const verifyFirstService=new Set(["grooming","dog_training","boarding","pet_sitting"]).has(input.serviceCode);
-  const paymentStatusRecorded=verifyFirstService&&ONLINE_METHODS.has(input.payment.method)&&submittedPaymentStatus==="captured"?"created":submittedPaymentStatus;
+  // Verify-first is method-agnostic. The ONLINE_METHODS filter left "internal_uat" (the Training and
+  // sandbox checkout method, which by definition carries no gateway proof) and any unknown method able to
+  // confirm a booking on a caller-declared "captured" in sandbox mode. Only a staff offline collection
+  // (offlineAuthorized) may keep a submitted capture; every other caller's capture is recorded as created.
+  const paymentStatusRecorded=verifyFirstService&&submittedPaymentStatus==="captured"&&!offlineAuthorized?"created":submittedPaymentStatus;
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){
