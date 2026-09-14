@@ -9,7 +9,7 @@ type BackgroundPlugin={addWatcher(options:{backgroundMessage:string;backgroundTi
 const Background=registerPlugin<BackgroundPlugin>("BackgroundGeolocation");
 export function useDutyTracking(job:{bookingId:string;providerId:string}|null,onConnection:(value:"Online"|"Reconnecting"|"Offline")=>void,onEnded:()=>void) {
   const [notice,setNotice]=useState("");
-  const connection=useRef(onConnection),ended=useRef(onEnded);connection.current=onConnection;ended.current=onEnded;
+  const connection=useRef(onConnection),ended=useRef(onEnded);useEffect(()=>{connection.current=onConnection;ended.current=onEnded;},[onConnection,onEnded]);
   const bookingId=job?.bookingId,providerId=job?.providerId;
   useEffect(()=>{
     if(!bookingId||!providerId)return;
@@ -31,7 +31,7 @@ export function useDutyTracking(job:{bookingId:string;providerId:string}|null,on
       try{const response=await boundedFetch("/api/grooming-route",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...point,idempotencyKey:gpsIngestionKey(point)})});const body=await response.json();if(disposed)return;if(!response.ok)throw new Error(body.error||"Location could not be verified");setNotice(Capacitor.isNativePlatform()?"Background location active for this job":"Location active while this browser is open");await heartbeat();}
       catch(problem){if(!disposed)setNotice(problem instanceof Error?problem.message:"Waiting for GPS connection");}finally{sending=false;}
     };
-    setNotice("Requesting location permission for your active job…");
+    queueMicrotask(()=>{if(!disposed)setNotice("Requesting location permission for your active job…");});
     if(Capacitor.isNativePlatform()){
       const startNative=async()=>{
         if(Capacitor.getPlatform()==="android"){
@@ -42,7 +42,7 @@ export function useDutyTracking(job:{bookingId:string;providerId:string}|null,on
         const id=await Background.addWatcher({backgroundMessage:"Sharing location during your accepted PawSpace job.",backgroundTitle:"PawSpace — ON DUTY",requestPermissions:true,stale:false,distanceFilter:0},(fix,error)=>{if(disposed)return;if(error){trackingState="permission_denied";setNotice(`Location permission required: ${error.message}`);}else if(fix)void send(fix);});nativeId=id;if(disposed)await Background.removeWatcher({id});
       };void startNative().catch(problem=>{if(!disposed){trackingState="unavailable";setNotice(problem instanceof Error?problem.message:"Background tracking is unavailable in this app build. Contact Operations.");}});
     }else if(navigator.geolocation){watch=navigator.geolocation.watchPosition(position=>void send({latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy,time:position.timestamp}),error=>{trackingState=error.code===1?"permission_denied":"unavailable";setNotice(`Location needs attention: ${error.message}`);},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});}
-    else{trackingState="unavailable";setNotice("Location is unavailable on this device. Contact Operations.");}
+    else{trackingState="unavailable";queueMicrotask(()=>{if(!disposed)setNotice("Location is unavailable on this device. Contact Operations.");});}
     void heartbeat();const timer=setInterval(()=>void heartbeat(),30000);window.addEventListener("online",heartbeat);
     return()=>{stop();clearInterval(timer);window.removeEventListener("online",heartbeat);};
   },[bookingId,providerId]);
