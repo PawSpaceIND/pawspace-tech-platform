@@ -232,6 +232,12 @@ test("customer can select next month when grooming opens on the last evening of 
  const lastDate=page.getByRole("button",{name:"Fri, 30 Oct",exact:true});
  await lastDate.click();await expect(lastDate).toHaveAttribute("aria-pressed","true");
  await expect(tomorrow).toHaveAttribute("aria-pressed","false");
+ const today=page.getByRole("button",{name:"Today, 30 Sept",exact:true});
+ await today.click();
+ await page.clock.setFixedTime(new Date("2026-09-30T18:31:00Z"));
+ await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+ await expect(page.getByRole("button",{name:"Today, 1 Oct",exact:true})).toHaveAttribute("aria-pressed","true");
+ await expect(page.getByText("A new day has started. Review your requested date and slot before booking.")).toBeVisible();
 });
 
 
