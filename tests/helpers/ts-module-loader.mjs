@@ -17,7 +17,7 @@
  * emitted JavaScript is the same code the bundler would emit.
  */
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,9 +38,33 @@ const transpile = (source) => ts.transpileModule(source, {
  * @param entry  module name under lib/, without extension (e.g. "provider-workspace")
  * @returns the module's exports
  */
+/*
+ * ONE directory per process, removed when the process exits.
+ *
+ * A directory per call left emitted modules accumulating in the system temp directory: `node --test`
+ * runs each suite in its own process, but a suite calling this twice leaked twice, and CI runs the
+ * whole suite repeatedly on the same runner. Emitted files are named after the module, so sharing a
+ * directory cannot collide; `emitted` is process-wide for the same reason, and makes a second call
+ * for an already-written module free.
+ *
+ * Removal happens at exit rather than after the import resolves, because a module transpiled here
+ * may be imported again later in the same process and Node would then have nothing to read.
+ */
+let dirPromise = null;
+const emitted = new Set();
+
+function workspace() {
+  if (!dirPromise) {
+    dirPromise = mkdtemp(path.join(os.tmpdir(), "pawspace-lib-")).then((dir) => {
+      process.once("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort at exit */ } });
+      return dir;
+    });
+  }
+  return dirPromise;
+}
+
 export async function importLibModule(entry) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "pawspace-lib-"));
-  const emitted = new Set();
+  const dir = await workspace();
 
   async function emit(name) {
     if (emitted.has(name)) return;
