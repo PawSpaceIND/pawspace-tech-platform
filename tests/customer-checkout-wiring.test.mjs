@@ -232,6 +232,7 @@ test('status returns a customer-owned ready projection with exact server slot, p
   assert.deepEqual(body.data.confirmation, {
     ready: true, bookingId: 'B1', serviceCode: 'grooming', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
     totalAmount: 499.5, currency: 'INR', providerId: 'PRV1', providerName: 'Rahul M.', providerModel: 'full_time', workOrderStatus: 'assigned', scheduledStart: '2026-09-20T03:30:00.000Z', scheduledEnd: '2026-09-20T05:30:00.000Z', updatedAt: 1,
+    gatewayOrderId: 'order_fixture', gatewayPaymentId: 'pay_fixture', pets: [],
   });
   const denied = await POST(request({ action: 'status', bookingId: 'B1' }, await cookie(db, 'C2')));
   assert.equal(denied.status, 404, 'another customer cannot read the projection');
@@ -297,4 +298,30 @@ test('a settled booking shows nothing due without opening the SDK or claiming a 
   const c = client({ order: { connected: false, status: 'nothing_due' } }); await c.controller.start();
   assert.equal(c.opened.length, 0); assert.equal(c.states.at(-1).phase, 'settled');
   assert.equal(c.requests.length, 1);
+});
+
+test('captured checkout confirmation is hydrated from canonical booking, pet, provider and Razorpay evidence', async t => {
+  const sqlite = new DatabaseSync(':memory:'); t.after(() => sqlite.close());
+  sqlite.exec(`
+    CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,provider_id TEXT,package_name TEXT,scheduled_start TEXT,scheduled_end TEXT,total_amount REAL,currency TEXT,pet_ids_json TEXT);
+    CREATE TABLE canonical_pets(id TEXT PRIMARY KEY,customer_id TEXT,name TEXT,species TEXT,breed TEXT);
+    CREATE TABLE provider_work_orders(booking_id TEXT,provider_name TEXT,provider_model TEXT);
+    CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,currency TEXT);
+    CREATE TABLE payment_intents(booking_id TEXT,customer_id TEXT,gateway_order_id TEXT);
+    CREATE TABLE payment_gateway_events(booking_id TEXT,processing_status TEXT,event_type TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,received_at INTEGER);
+    INSERT INTO canonical_bookings VALUES('B-CAN','C1','confirmed','PROV-RAHUL','Complete Makeover','2026-09-15T03:30:00.000Z','2026-09-15T05:30:00.000Z',2399,'INR','["PET-BRUNO"]');
+    INSERT INTO canonical_pets VALUES('PET-BRUNO','C1','Bruno','dog','Labrador');
+    INSERT INTO provider_work_orders VALUES('B-CAN','Rahul M.','commission');
+    INSERT INTO booking_payments VALUES('PAY-CAN','B-CAN','C1','captured','INR');
+    INSERT INTO payment_intents VALUES('B-CAN','C1','order_Canonical123');
+    INSERT INTO payment_gateway_events VALUES('B-CAN','processed','payment.captured','order_Canonical123','pay_Canonical456',1234);
+  `);
+  const confirmation = await server.readCustomerCheckoutConfirmation(d1(sqlite), 'C1', 'B-CAN');
+  assert.equal(confirmation.providerName, 'Rahul M.');
+  assert.equal(confirmation.scheduledStart, '2026-09-15T03:30:00.000Z');
+  assert.deepEqual(confirmation.pets, [{ id: 'PET-BRUNO', name: 'Bruno', species: 'dog', breed: 'Labrador' }]);
+  assert.equal(confirmation.paymentId, 'PAY-CAN');
+  assert.equal(confirmation.gatewayOrderId, 'order_Canonical123');
+  assert.equal(confirmation.gatewayPaymentId, 'pay_Canonical456');
+  assert.equal(confirmation.paymentStatus, 'captured');
 });
