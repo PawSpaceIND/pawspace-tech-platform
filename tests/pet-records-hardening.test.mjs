@@ -179,10 +179,6 @@ test("birthday: ownership and future dates rejected, DOB upserts in place", asyn
   assert.equal(rows[0].date_of_birth, "2022-08-16");
 });
 
-// The sweep issues rewards against a PINNED day, but redeemBirthdayReward read the real wall clock,
-// so this test passed for exactly REWARD_VALID_DAYS (30) after 2026-08-15 and then failed forever.
-const REDEEM_NOW = Date.parse("2026-08-15T12:00:00.000Z");
-
 test("birthday sweep: exactly one reward per pet per year, and the reward is single-use", async () => {
   const { sqlite, db } = fresh();
   const birthday = await import("../lib/pet-birthday-governance.ts");
@@ -212,14 +208,14 @@ test("birthday sweep: exactly one reward per pet per year, and the reward is sin
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     .run("BK-STRANGER", "CUS-OTHER", "grooming", "Dog bath", "confirmed", "2026-08-20T05:00:00.000Z", "2026-08-20T06:00:00.000Z", 1349, "INR", NOW, NOW);
 
-  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-OTHER", bookingId: "BK-STRANGER", actorId: "CUS-OTHER", now: REDEEM_NOW }), /belongs to another account/);
-  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-STRANGER", actorId: "CUS-BD", now: REDEEM_NOW }), /your own booking/);
-  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-BOARD", actorId: "CUS-BD", now: REDEEM_NOW }), /doorstep grooming only/);
+  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-OTHER", bookingId: "BK-STRANGER", actorId: "CUS-OTHER" }), /belongs to another account/);
+  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-STRANGER", actorId: "CUS-BD" }), /your own booking/);
+  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-BOARD", actorId: "CUS-BD" }), /doorstep grooming only/);
 
-  const redeemed = await birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-GROOM", actorId: "CUS-BD", now: REDEEM_NOW });
+  const redeemed = await birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-GROOM", actorId: "CUS-BD" });
   assert.equal(redeemed.discountApplied, 500);
   assert.equal(redeemed.duplicatePrevented, false);
-  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-GROOM", actorId: "CUS-BD", now: REDEEM_NOW }), /already been used/);
+  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-BD", bookingId: "BK-GROOM", actorId: "CUS-BD" }), /already been used/);
   const active = await birthday.listBirthdayRewards(db, "CUS-BD");
   assert.ok(!active.some((row) => row.code === code), "a spent reward is no longer offered");
 });
@@ -238,8 +234,8 @@ test("birthday reward cannot be double-spent by two concurrent redeems", async (
       .run(id, "CUS-RACE", "grooming", "Dog bath", "confirmed", "2026-08-20T05:00:00.000Z", "2026-08-20T06:00:00.000Z", 1349, "INR", NOW, NOW);
   }
   const results = await Promise.allSettled([
-    birthday.redeemBirthdayReward(db, { code, customerId: "CUS-RACE", bookingId: "BK-R1", actorId: "CUS-RACE", now: REDEEM_NOW }),
-    birthday.redeemBirthdayReward(db, { code, customerId: "CUS-RACE", bookingId: "BK-R2", actorId: "CUS-RACE", now: REDEEM_NOW }),
+    birthday.redeemBirthdayReward(db, { code, customerId: "CUS-RACE", bookingId: "BK-R1", actorId: "CUS-RACE" }),
+    birthday.redeemBirthdayReward(db, { code, customerId: "CUS-RACE", bookingId: "BK-R2", actorId: "CUS-RACE" }),
   ]);
   const applied = results.filter((r) => r.status === "fulfilled" && r.value.duplicatePrevented === false);
   assert.equal(applied.length, 1, "exactly one booking may claim the Rs.500");
@@ -255,10 +251,10 @@ test("birthday reward expires and an expired code cannot be redeemed", async () 
   await birthday.savePetBirthday(db, { petId: "PET-EXP", customerId: "CUS-EXP", dateOfBirth: "2020-08-15", actorId: "CUS-EXP" });
   const issued = await birthday.runPetBirthdaySweep(db, { today: "2026-08-15" });
   const code = issued.rewards[0].code;
-  sqlite.prepare("UPDATE pet_birthday_rewards SET expires_at=? WHERE code=?").run(REDEEM_NOW - 1000, code);
+  sqlite.prepare("UPDATE pet_birthday_rewards SET expires_at=? WHERE code=?").run(Date.now() - 1000, code);
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     .run("BK-EXP", "CUS-EXP", "grooming", "Dog bath", "confirmed", "2026-08-20T05:00:00.000Z", "2026-08-20T06:00:00.000Z", 1349, "INR", NOW, NOW);
-  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-EXP", bookingId: "BK-EXP", actorId: "CUS-EXP", now: REDEEM_NOW }), /expired/);
+  await assert.rejects(() => birthday.redeemBirthdayReward(db, { code, customerId: "CUS-EXP", bookingId: "BK-EXP", actorId: "CUS-EXP" }), /expired/);
   assert.equal((await birthday.listBirthdayRewards(db, "CUS-EXP")).length, 0, "expired rewards are not advertised as available");
 });
 
