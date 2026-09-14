@@ -36,15 +36,47 @@ export async function ensureSecurityTables(db:Db){
 
 export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
 
+/**
+ * Routes whose handlers gate on requireProviderOwnership. A generic staging-login staff cookie is
+ * resolved before the platform session, so on these routes it used to shadow an explicit provider
+ * binding: the partner presented the credential the UAT switch had just issued and still got a
+ * redacted 403, with no way to make the binding count. Here the explicit binding wins instead.
+ * Staff who can actually manage providers keep precedence, so ops/admin behaviour is unchanged,
+ * and the effect is confined to these paths so no permission changes anywhere else.
+ *
+ * Every entry is a route that calls requireProviderOwnership, listed one by one on purpose. An
+ * earlier revision matched the /api/provider- and /api/partner- prefixes instead, which also caught
+ * twelve routes that do not gate on ownership at all -- among them /api/provider-workspace, which
+ * resolves its provider from actor.email and would have seen the synthetic "provider:<id>" address a
+ * platform session carries, and /api/partner-otp, the login surface itself. Prefixes are not safe
+ * here: a route's name does not say how it authorises. tests/provider-scope-precedence.test.mjs
+ * pins this set in BOTH directions against the routes that really call the gate.
+ */
+export const PROVIDER_SCOPED_API_PATHS=new Set(["/api/boarding-proof","/api/boarding-stays","/api/booking-operations","/api/food-proof","/api/grooming-lifecycle","/api/grooming-payment-sandbox","/api/grooming-route","/api/location-recovery","/api/partner-grooming-jobs","/api/partner-job-feed","/api/provider-assignment-recovery","/api/provider-availability","/api/provider-chat","/api/provider-lms","/api/provider-safety-flag","/api/service-media","/api/service-media/upload","/api/sitting-lifecycle","/api/sitting-proof","/api/taxi-adjustments","/api/taxi-lifecycle","/api/taxi-proof","/api/taxi-recovery","/api/training-provider-earnings","/api/training-session-media","/api/training-sessions","/api/walking-lifecycle","/api/walking-proof","/api/walking-recovery"]);
+
+export function providerScopedRequest(request:Request){
+  let pathname:string;
+  try{pathname=new URL(request.url).pathname;}catch{return false;}
+  const path=pathname.length>1&&pathname.endsWith("/")?pathname.slice(0,-1):pathname;
+  return PROVIDER_SCOPED_API_PATHS.has(path);
+}
+
 export async function resolvePrimaryActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
   const {env:uatEnv}=await import("cloudflare:workers");
   const runtime=uatEnv as unknown as Record<string,unknown>;
   const uatActor=await resolveUatStaffActor(db,request,runtime);
-  if(uatActor)return uatActor;
+  // The staff cookie yields only where provider ownership is the gate, and only to a staff identity
+  // that cannot manage providers itself; anything else keeps the staff actor exactly as before.
+  const bindingOutranksStaff=Boolean(uatActor)&&providerScopedRequest(request)&&!actorManagesProviders(uatActor!);
+  if(uatActor&&!bindingOutranksStaff)return uatActor;
   const session=await resolvePlatformSession(db,request);
+  // With a staff cookie also present, only a provider-scoped session may take over a provider route.
+  if(session&&uatActor&&session.subjectType!=="provider")return uatActor;
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
+  // Provider-scoped route, staff cookie set aside, but no platform session to replace it.
+  if(uatActor)return uatActor;
   const identity=resolveTrustedWorkspaceIdentity(request,runtime);
   if(!identity)throw markGovernedHttpError(signInRequiredResponse(runtime));
   const user=await db.prepare("SELECT id,email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();

@@ -89,4 +89,5 @@ artifacts/
 /test-results/
 /playwright-report/
 /playwright-report-sweep/
+/playwright-report-uat-btm/
 /dist/server/.wrangler/
