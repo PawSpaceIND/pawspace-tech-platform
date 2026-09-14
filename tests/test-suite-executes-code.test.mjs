@@ -105,10 +105,19 @@ const executes = (src) =>
  *                                       every executing test - three real defects reached main
  *                                       through exactly that gap. Executing the module is what
  *                                       CANNOT catch it: the bad line only runs on a rare branch.
+ *
+ *   customer-vertical-routes            checks that every vertical resolves at its own path. There
+ *   .test.mjs                           is nothing to execute: /grooming 404'd because app/grooming
+ *                                       held only manage/page.tsx, and a page that does not exist
+ *                                       exports nothing to import. tsc, lint and every module test
+ *                                       stayed green the whole time it was down. The filesystem is
+ *                                       the only witness, and it fails - deleting the page again
+ *                                       turns all three of its tests red.
  */
 const META_TESTS = new Set([
   "test-suite-executes-code.test.mjs",
   "schema-column-reference-contract.test.mjs",
+  "customer-vertical-routes.test.mjs",
 ]);
 
 function staticTestFiles() {
