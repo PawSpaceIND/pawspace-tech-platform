@@ -78,10 +78,11 @@ jobs:
           q "SELECT provider_id,zone_id,source,windows_json FROM scheduling_availability WHERE date=date('now','+1 day') AND provider_id GLOB 'uatcap_*' ORDER BY provider_id,zone_id" > "$RUNNER_TEMP/tomorrow.json"
           q "SELECT COUNT(*) n,COUNT(DISTINCT provider_id) providers,COUNT(DISTINCT date) dates,MIN(date) first_date,MAX(date) last_date FROM scheduling_availability WHERE id GLOB 'uatseed_*'" > "$RUNNER_TEMP/window.json"
           q "SELECT name,sql FROM sqlite_master WHERE tbl_name='scheduling_availability' AND type='index'" > "$RUNNER_TEMP/indexes.json"
+          q "SELECT id,service_code,city_id,approval_state,tracking_enabled,effective_from,effective_to FROM booking_punctuality_policies WHERE approval_state='approved' AND tracking_enabled=1 AND effective_from<=date('now') AND (effective_to IS NULL OR effective_to>=date('now'))" > "$RUNNER_TEMP/policies.json"
           node --input-type=module -e '
             import { readFileSync } from "node:fs";
             const rows = (f) => JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/${f}`, "utf8"))[0].results;
-            const profiles = rows("profiles.json"), bases = rows("bases.json"), tomorrow = rows("tomorrow.json"), window = rows("window.json")[0], indexes = rows("indexes.json");
+            const profiles = rows("profiles.json"), bases = rows("bases.json"), tomorrow = rows("tomorrow.json"), window = rows("window.json")[0], indexes = rows("indexes.json"), policies = rows("policies.json");
             const zonesOf = (p) => { try { return JSON.parse(p.zones_json); } catch { return []; } };
             const problems = [];
             for (const p of profiles) if (p.updated_by !== "founder_seed") problems.push(`${p.id}: provenance ${p.updated_by} (assignability gate needs founder_seed)`);
@@ -90,9 +91,10 @@ jobs:
             const authored = new Set(tomorrow.filter(r => ["partner_app","operations","roster"].includes(r.source)).map(r => `${r.provider_id}|${r.zone_id}`));
             let expected = 0;
             for (const p of profiles) for (const z of zonesOf(p)) { expected += 1; if (!authored.has(`${p.id}|${z}`)) problems.push(`${p.id}: no authored availability for ${z} tomorrow`); }
-            console.log(JSON.stringify({ profiles: profiles.length, homeBases: bases.length, authoredTomorrow: authored.size, expectedTomorrow: expected, window, indexes: indexes.map(i => i.name) }, null, 2));
+            for (const service of ["grooming", "dog_training"]) if (!policies.some(p => p.service_code === service)) problems.push(`${service}: no approved tracking-enabled punctuality policy (GPS telemetry and Mark arrived fail closed)`);
+            console.log(JSON.stringify({ profiles: profiles.length, homeBases: bases.length, authoredTomorrow: authored.size, expectedTomorrow: expected, window, indexes: indexes.map(i => i.name), punctualityPolicies: policies.map(p => `${p.id}:${p.service_code}:${p.city_id ?? "all cities"}`) }, null, 2));
             if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
-            console.log("Roster verified: every seeded provider is assignable, geocoded, and published in every zone it serves for tomorrow.");
+            console.log("Roster verified: every seeded provider is assignable, geocoded, and published in every zone it serves for tomorrow; GPS tracking policies are approved.");
           '
       - name: Load customer pack (staging-seed.sql)
         if: ${{ github.event.inputs.include_customer_pack == 'true' }}
