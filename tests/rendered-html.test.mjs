@@ -295,8 +295,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, tracking, grooming, stays, sittingCare] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
+  const [training, trainer, tracking, grooming, groomingLive, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -307,7 +307,9 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(tracking, /LOCATION SHARING · NOT CONNECTED IN UAT/);
   assert.match(tracking, /No location is collected or displayed by this UAT placeholder/);
   assert.match(tracking, /Live route unavailable/);
-  assert.match(grooming, /role="Groomer"/);
+  assert.match(grooming, /<CustomerGroomingLiveCard bookingId=\{bookedId\}\/>/);
+  assert.match(groomingLive, />Groomer<\/dt>/);
+  assert.match(groomingLive, /customer-grooming-summary/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);
   assert.match(stays, /<SittingCustomerPanel/);
