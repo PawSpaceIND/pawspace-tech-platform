@@ -24,11 +24,7 @@ export function youngGroomingEligibility(pet: GroomingPetAge, serviceDate: strin
     const limit = new Date(Date.UTC(dob.getUTCFullYear(), dob.getUTCMonth() + 6, Math.min(dob.getUTCDate(), lastDay)));
     return date <= limit ? null : `Puppy and Kitten packages are only for pets up to 6 months old. ${guidance}`;
   }
-  if (pet.profile?.ageBand === "< 6 months") return null;
-  // A broad 6–12 month band cannot establish eligibility at the six-month boundary.
-  if (pet.profile?.ageBand) return `Confirm the date of birth for a package limited to 6 months. ${guidance}`;
-  if (pet.ageYears != null && Number.isFinite(pet.ageYears) && pet.ageYears >= 0) {
-    return pet.ageYears <= 0.5 ? null : `Puppy and Kitten packages are only for pets up to 6 months old. ${guidance}`;
-  }
+  // Saved age bands and numeric ages have no observation date and can go stale.
+  // Only a birth date establishes age on the requested service date.
   return `Add this pet’s date of birth to confirm the 6-month limit. ${guidance}`;
 }

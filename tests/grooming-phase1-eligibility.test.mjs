@@ -23,8 +23,10 @@ for(const species of ["dog","cat"]){
     assert.match(youngGroomingEligibility(pet,"2026-09-15"),/Adult/);
     assert.match(youngGroomingEligibility({species,profile:{ageBand:"6–12 months"}},"2026-09-14"),/date of birth/);
     assert.match(youngGroomingEligibility({species},"2026-09-14"),/date of birth/);
-    assert.equal(youngGroomingEligibility({species,ageYears:0.5},"2026-09-14"),null);
-    assert.match(youngGroomingEligibility({species,ageYears:0.51},"2026-09-14"),/6 months/);
+    assert.match(youngGroomingEligibility({species,ageYears:0.5},"2026-09-14"),/date of birth/);
+    assert.match(youngGroomingEligibility({species,ageYears:0.51},"2026-09-14"),/6-month/);
+    for(const serviceDate of ["2026-09-14","2027-03-14"])
+      assert.match(youngGroomingEligibility({species,profile:{ageBand:"< 6 months"}},serviceDate),/date of birth/);
   });
 }
 test("six-month boundary clamps month ends and rejects impossible/future birth dates",()=>{

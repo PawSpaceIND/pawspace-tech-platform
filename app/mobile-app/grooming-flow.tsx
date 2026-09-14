@@ -118,6 +118,13 @@ export default function GroomingFlow({customer: signedInCustomer,initial,onVerif
  },[draftReady,customer,done,type,packId,plan,date,slot,petsState,selectedPetIds]);
  const flash=(message:string)=>{setToast(message);window.setTimeout(()=>setToast(""),2600);};
  const dates=buildDates(),dateLabel=dates.find(d=>d.iso===date)?.label??date;
+ const firstBookableDate=dates[0]?.iso??"";
+ useEffect(()=>{
+   if(!done&&!pendingPayment&&date&&firstBookableDate&&date<firstBookableDate){
+     setDate(firstBookableDate);
+     setToast("A new day has started. Review your requested date and slot before booking.");
+   }
+ },[date,firstBookableDate,done,pendingPayment]);
  const selectedPets=pets.filter(p=>selectedPetIds.includes(p.id)),count=Math.max(1,selectedPets.length);
  const young=type==="puppy"||type==="kitten";
  const eligibilityError=young?selectedPets.map(p=>youngGroomingEligibility(p,date)).find(Boolean):null;
