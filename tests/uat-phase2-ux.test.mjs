@@ -54,7 +54,7 @@ test("saved invalid or unsupported addresses do not bypass coverage validation",
   await assert.rejects(()=>validateSavedStayAddress({...address,postalCode:""}),/PIN code/);assert.equal(requests,0);
   await assert.rejects(()=>validateSavedStayAddress(address),/Outside service area/);assert.equal(requests,1);
 });
-const pets=[{id:"dog",name:"Buddy",species:"dog",ageYears:2},{id:"cat",name:"Milo",species:"cat",ageYears:2},{id:"kitten",name:"Mini",species:"cat",ageYears:0.3}];
+const pets=[{id:"dog",name:"Buddy",species:"dog",ageYears:2},{id:"cat",name:"Milo",species:"cat",ageYears:2},{id:"kitten",name:"Mini",species:"cat",ageYears:0.3,profile:{dateOfBirth:"2026-06-01"}}];
 test("changing Dog to Cat selects a saved cat without editing the profile",()=>{
   assert.deepEqual(groomingSelectionForType(pets,["dog"],"cat","2026-09-15"),["cat"]);
   assert.deepEqual(groomingSelectionForType(pets,["cat"],"dog","2026-09-15"),["dog"]);
