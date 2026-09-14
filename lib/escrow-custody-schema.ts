@@ -21,7 +21,7 @@ export const isLedgerConflict=(error:unknown)=>/(escrow_ledger_head_conflict|UNI
 
 export async function runtimePaymentPolicy(){
  let runtime:Record<string,unknown>={};
- try{const imported=await import("cloudflare:workers");runtime=(imported.env||{}) as unknown as Record<string,unknown>;}catch{}
+ try{const specifier="cloudflare:workers";const imported=await import(specifier);runtime=(imported.env||{}) as unknown as Record<string,unknown>;}catch{}
  const processEnvironment=text(typeof process!=="undefined"?process.env.PAWSPACE_PAYMENT_ENV:"");
  const forbidProduction=text(typeof process!=="undefined"?process.env.FORBID_PRODUCTION:"").toLowerCase();
  const environment=text(runtime.PAWSPACE_PAYMENT_ENV||processEnvironment||ESCROW_PAYMENT_ENV).toLowerCase();
