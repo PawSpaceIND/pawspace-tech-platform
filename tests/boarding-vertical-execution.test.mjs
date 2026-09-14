@@ -203,12 +203,14 @@ const istDay = (ms) => new Date(ms + 19800000).toISOString().slice(0, 10);
  * expectation is derived from it. */
 async function activeWorld(over = {}) {
   const w = boardWorld();
-  /* Anchor check-in to just after IST midnight TODAY, so the stay's one required day is always the
-   * current IST day and a proof uploaded during the test is credited to it. Using `now - 2h` made
-   * the required day yesterday whenever the suite ran after 18:30 UTC, and daily proof - which is
-   * deliberately stamped with the SERVER's upload day and cannot be back-dated - could then never
-   * satisfy it. That is the product behaving correctly; it was the fixture that was unrealistic. */
-  const startMs = Date.parse(`${istDay(Date.now())}T00:00:00Z`) - 19800000 + 60000;
+  /* Anchor check-in inside TODAY's IST day and strictly in the past. A fixed `IST midnight + 1m`
+   * drifts into the future when CI begins during the first minute after midnight IST, causing the
+   * lifecycle to correctly reject check-in before the money gate is reached. Clamp `now - 1m` to
+   * IST midnight instead: the stay is always active, remains on today's IST date, and proof uploads
+   * are credited to the same required stay day. */
+  const nowMs = Date.now();
+  const istMidnightMs = Date.parse(`${istDay(nowMs)}T00:00:00Z`) - 19800000;
+  const startMs = Math.max(istMidnightMs, nowMs - 60000);
   const win = { start: new Date(startMs).toISOString(), end: new Date(Date.now() + 20 * 3600000).toISOString() };
   seedCanonical(w.sqlite, { ...win, ...over });
   const stayId = await seedStay(w.db, { ...win, ...over });
