@@ -20,7 +20,7 @@ test("Capacitor dual-target configuration exports distinct customer and partner 
 
   assert.equal(customerConfig.appId, "com.pawspace.customer");
   assert.equal(customerConfig.appName, "PawSpaceCustomer");
-  assert.equal(customerConfig.webDir, ".next");
+  assert.equal(customerConfig.webDir, "native/customer-shell");
 
   assert.equal(partnerConfig.appId, "com.pawspace.partner");
   assert.equal(partnerConfig.appName, "PawSpacePartner");

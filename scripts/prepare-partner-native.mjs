@@ -1,3 +1,6 @@
+const target=(process.env.CAPACITOR_TARGET || process.env.APP_TARGET || "customer").toLowerCase();
+if (!["customer","partner"].includes(target)) throw new Error("Unknown native app target");
+if (target === "customer" && !process.env.PAWSPACE_CUSTOMER_APP_URL) throw new Error("Set PAWSPACE_CUSTOMER_APP_URL to the approved HTTPS /mobile-app workspace before syncing.");
 if(process.env.CAPACITOR_TARGET==="partner"&&!process.env.PAWSPACE_PARTNER_APP_URL)throw new Error("Set PAWSPACE_PARTNER_APP_URL to the approved HTTPS /partner-app workspace before syncing a native build.");
 import {readFileSync,writeFileSync} from "node:fs";
 // Upstream 1.2.26 declares core >=3 for npm but its SPM range still stops at Capacitor 7.
