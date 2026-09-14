@@ -190,7 +190,9 @@ test("confirmation proof is the provider's public profile, computed live from co
 
   let n = 0;
   for (const suffix of ["A", "B", "C"]) {
-    const journey = await runCompletedJourney(ctx, config({ customerId: `CUST-PROOF-${suffix}`, phone: `+91990000063${n++}`, petSourceId: `PET-PROOF-${suffix}`, groupId: `GROOM-PROOF-${suffix}`, start: new Date(Date.now() + (3 + n) * DAY).toISOString() }));
+    const start = new Date(Date.now() + (3 + n) * DAY);
+    start.setUTCHours(4, 30, 0, 0); // 10:00 IST; keep the 2-hour journey inside the seeded 09:00-19:00 UAT roster.
+    const journey = await runCompletedJourney(ctx, config({ customerId: `CUST-PROOF-${suffix}`, phone: `+91990000063${n++}`, petSourceId: `PET-PROOF-${suffix}`, groupId: `GROOM-PROOF-${suffix}`, start: start.toISOString() }));
     assert.equal(journey.booked.status, 201, JSON.stringify(journey.booked.body));
     ctx.sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(journey.bookingId);
   }
