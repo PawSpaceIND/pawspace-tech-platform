@@ -57,7 +57,7 @@ test("Boarding customer host cards do not fabricate marketplace proof",()=>{
   assert.doesNotMatch(flow,/maya-rohan-profile\.webp/);
   assert.doesNotMatch(flow,/indiranagar-home\.webp/);
   assert.doesNotMatch(flow,/pet-guest-room\.webp/);
-  assert.match(flow,/selected-window capacity checked/);
+  assert.match(flow,/Selected-window capacity checked/);
   assert.match(flow,/guest-pet spots available/);
   assert.match(flow,/Host media and customer reviews are not connected in Boarding UAT/);
   assert.match(flow,/Live masked chat is not connected yet/);
@@ -67,7 +67,8 @@ test("Boarding customer host cards do not fabricate marketplace proof",()=>{
 
 test("Boarding customer search does not pretend an unimplemented area or production availability feed",()=>{
   const flow=read("app/mobile-app/stay-flow.tsx"),api=read("app/api/boarding-commercial/route.ts");
-  assert.match(flow,/<AddressPicker onZoneResolved=\{setServiceLocation\}/);
+  assert.match(flow,/<StayAddress customerId=\{customer.customerId\} mode=\{mode\} onResolved=\{setServiceLocation\}/);
+  assert.match(read("app/mobile-app/stay-address.tsx"),/validateSavedStayAddress\(saved, controller.signal\)/);
   assert.match(flow,/serviceLocation\.assignment\.zoneId/);
   assert.match(flow,/selected-window availability verified in UAT/);
   assert.match(flow,/Host profile \+ leave blocks \+ accepted stay locks \+ pending Boarding scheduler reservations/);

@@ -77,7 +77,7 @@ async function reachReview(page: Page, opts: { line2?: string } = {}) {
     await expect(dialog).toBeHidden();
   }
   await grooming.getByRole("button", { name: /book now/i }).click();
-  await expect(page.getByText("Who needs grooming?", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pets", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Choose a package/i }).click();
   await page.getByRole("button", { name: "Choose address and requested time", exact: true }).click();
 
