@@ -233,6 +233,7 @@ export default function PartnerMobileApp() {
         // itself once the server has the bytes.
         const outcome = await dispatchQueuedProof(queued, registerQueuedProof);
         if (outcome === "in_flight") { setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo is already being uploaded from the sync queue.`); return; }
+        if (outcome === "withdrawn") { setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo left the sync queue before it was sent. Add it again if it is still needed.`); return; }
         await flushProviderProofQueue(registerQueuedProof);
         setMediaPollKey(value => value + 1);
         setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);

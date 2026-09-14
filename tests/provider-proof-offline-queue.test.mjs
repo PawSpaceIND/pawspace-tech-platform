@@ -14,6 +14,7 @@ const rows = new Map();
 const settle = (fn) => { const req = { onsuccess: null, onerror: null, result: undefined, error: null }; queueMicrotask(() => { try { req.result = fn(); req.onsuccess?.({ target: req }); } catch (error) { req.error = error; req.onerror?.({ target: req }); } }); return req; };
 const store = {
   put: (item) => settle(() => { rows.set(item.id, item); return item.id; }),
+  get: (id) => settle(() => rows.get(id)),
   delete: (id) => settle(() => { rows.delete(id); return undefined; }),
   clear: () => settle(() => { rows.clear(); return undefined; }),
   getAll: () => settle(() => [...rows.values()]),
@@ -106,4 +107,51 @@ test("a dispatch that fails releases the lock and leaves the item queued for the
   await assert.rejects(dispatchQueuedProof(item, async () => { throw new Error("timeout"); }), /timeout/);
   assert.equal(isProviderProofInFlight(item.id), false);
   assert.equal(rows.has(item.id), true, "the page decides between discarding (permanent) and leaving it for the flush");
+});
+
+test("a lock held by another tab (Web Locks) makes every dispatcher here skip the item instead of registering it a second time", async () => {
+  const item = await queueProviderProof(photo("before_service", "e".repeat(64)));
+  const heldElsewhere = new Set(); const requests = [];
+  // IndexedDB is shared by every open Partner tab; the browser's lock manager is the only lock that spans them.
+  navigator.locks = { request: async (name, options, callback) => { requests.push({ name, options }); return callback(heldElsewhere.has(name) ? null : { name }); } };
+  try {
+    heldElsewhere.add(`pawspace-proof-upload:${item.id}`);
+    const calls = []; const register = async (queued) => { calls.push(queued.id); };
+    assert.equal(await dispatchQueuedProof(item, register), "in_flight", "the other tab is uploading this photo");
+    assert.deepEqual(await flushProviderProofQueue(register), { uploaded: 0, pending: 0, discarded: 0, skipped: 1 });
+    assert.equal(calls.length, 0, "nothing was registered while another tab held the photo");
+    assert.ok(requests.length >= 2 && requests.every(entry => entry.options?.ifAvailable === true), "a held lock is skipped, never waited for behind the other tab's upload");
+    heldElsewhere.clear();
+    assert.equal(await dispatchQueuedProof(item, register), "uploaded");
+    assert.equal(calls.length, 1); assert.equal(rows.size, 0);
+  } finally { delete navigator.locks; }
+});
+
+test("a row that left the queue after this walk read it is not sent from the stale copy", async () => {
+  const gone = await queueProviderProof(photo("before_service", "f".repeat(64)));
+  const kept = await queueProviderProof(photo("after_service", "0".repeat(64)));
+  // The walk observes both rows; then "another tab" uploads and removes the first before this tab reaches it.
+  const realGetAll = store.getAll;
+  store.getAll = () => { store.getAll = realGetAll; return settle(() => { const all = [...rows.values()]; rows.delete(gone.id); return all; }); };
+  const calls = [];
+  const result = await flushProviderProofQueue(async (item) => { calls.push(item.id); });
+  assert.deepEqual(calls, [kept.id], "the row removed after the walk began was never registered");
+  assert.deepEqual(result, { uploaded: 1, pending: 0, discarded: 0, skipped: 1 });
+  assert.equal(rows.size, 0);
+});
+
+test("a session boundary stops a running flush: rows read before logout are neither sent nor re-queued afterwards", async () => {
+  const first = await queueProviderProof(photo("before_service", "1".repeat(64)));
+  await queueProviderProof(photo("after_service", "2".repeat(64)));
+  const gate = deferred(); const calls = [];
+  const register = async (item) => { calls.push(item.id); await gate.promise; throw new Error("network dropped"); };
+  const flush = flushProviderProofQueue(register);
+  await tick();
+  assert.deepEqual(calls, [first.id]);
+  await clearProviderProofQueue(); // the partner logged out (or switched provider) while the first upload was in flight
+  gate.resolve();
+  const result = await flush;
+  assert.deepEqual(calls, [first.id], "the second row, read before logout, was never sent on behalf of the ended session");
+  assert.deepEqual(result, { uploaded: 0, pending: 0, discarded: 0, skipped: 1 });
+  assert.equal(rows.size, 0, "the transient failure did not resurrect the ended session's photo in the cleared queue");
 });

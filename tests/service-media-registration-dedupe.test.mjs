@@ -14,12 +14,13 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__PROOF_DEDUPE_DB__", "__PROOF_DEDUPE_ENV__");
 
-function makeD1(sqlite) {
+function makeD1(sqlite, hooks = {}) {
   const statement = (sql, args = []) => ({
+    sql,
     bind: (...bound) => statement(sql, bound),
     first: async () => sqlite.prepare(sql).get(...args) ?? null,
     run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    all: async () => { await hooks.beforeAll?.(sql); return { results: sqlite.prepare(sql).all(...args) }; },
   });
   let depth = 0;
   return {
@@ -47,7 +48,8 @@ const BOOKING = "BK-GROOM-1", PROVIDER = "PRV-GROOMER-1";
 
 async function world(env = { PAWSPACE_MEDIA_ENV: "uat" }) {
   const sqlite = new DatabaseSync(":memory:");
-  const db = makeD1(sqlite);
+  const hooks = {};
+  const db = makeD1(sqlite, hooks);
   globalThis.__PROOF_DEDUPE_DB__ = db;
   globalThis.__PROOF_DEDUPE_ENV__ = env;
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
@@ -75,7 +77,7 @@ async function world(env = { PAWSPACE_MEDIA_ENV: "uat" }) {
     assert.equal(created.status, 201, `register ${purpose}: ${JSON.stringify(created.body).slice(0, 300)}`);
     return created.body.data;
   };
-  return { sqlite, db, call, put, register };
+  return { sqlite, db, hooks, call, put, register };
 }
 
 const file = (size = 2048) => { const bytes = randomBytes(size); return { bytes, size, sha256: createHash("sha256").update(bytes).digest("hex") }; };
@@ -147,4 +149,39 @@ test("supersession is scoped to the same booking, provider, purpose and bytes", 
   const byId = Object.fromEntries(listing.body.assets.map(asset => [asset.id, asset]));
   assert.equal(byId[a.id].retention_status, "active", "a different purpose is untouched");
   assert.equal(byId[a.id].access_status, "pending_upload");
+});
+
+test("two registrations of the same bytes that overlap in flight settle on exactly one live registration", async () => {
+  const { sqlite, hooks, call, put, register } = await world();
+  const before = file();
+  // Hold each request at its search for a stale twin until BOTH have searched. A design that searches, retires
+  // and only then inserts sees nothing to retire in either request and leaves two live rows; one that retires
+  // every pending twin it can see, without bounding itself to rows older than its own, retires its rival and
+  // leaves none. Time-boxed so a request that never searches fails the assertions instead of hanging.
+  let searched = 0; const bothSearched = new Promise(resolve => { hooks.beforeAll = async (sql) => {
+    if (!sql.startsWith("SELECT") || !sql.includes("FROM service_media_assets") || !sql.includes("access_status='pending_upload'")) return;
+    if (++searched === 2) resolve(); await Promise.race([bothSearched, new Promise(done => setTimeout(done, 2000))]);
+  }; });
+  const [one, two] = await Promise.all([register("before_service", before), register("before_service", before)]);
+  hooks.beforeAll = undefined;
+  assert.notEqual(one.id, two.id);
+  const listing = await call("GET", null, STAFF, `?bookingId=${BOOKING}`);
+  const live = listing.body.assets.filter(asset => asset.access_status === "pending_upload" && asset.retention_status === "active");
+  assert.equal(live.length, 1, `exactly one registration survives, got ${JSON.stringify(listing.body.assets.map(a => [a.id, a.access_status, a.retention_status]))}`);
+  const retired = listing.body.assets.find(asset => asset.id !== live[0].id);
+  assert.equal(retired.retention_status, "superseded");
+  assert.equal(retired.access_status, "revoked");
+  const link = sqlite.prepare("SELECT supersedes FROM service_media_assets WHERE id=?").get(live[0].id);
+  assert.equal(link.supersedes, retired.id, "the survivor is linked to the registration it retired");
+  const events = sqlite.prepare("SELECT media_id FROM service_media_events WHERE event_type='media_registration_superseded'").all();
+  assert.deepEqual(events.map(row => row.media_id), [retired.id], "one retirement, recorded once");
+
+  const grants = Object.fromEntries([one, two].map(entry => [entry.id, entry.upload.token]));
+  const late = await put({ id: retired.id, token: grants[retired.id], bytes: before.bytes });
+  assert.equal(late.status, 409, JSON.stringify(late.body));
+  assert.equal(late.body.code, "upload_token_superseded");
+  const up = await put({ id: live[0].id, token: grants[live[0].id], bytes: before.bytes });
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  const queue = await call("GET", null, CHECKER, "?pending=1");
+  assert.deepEqual(queue.body.pending.map(asset => asset.id), [live[0].id], "the review queue holds exactly one entry for one photo");
 });
