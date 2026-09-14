@@ -135,7 +135,7 @@ test("today is the IST day, not the UTC day", async () => {
   sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='LATE'").run(new Date("2026-08-03T20:00:00+05:30").toISOString());
   booking(sqlite, "TOMORROW", { hour: 9, amount: 9000 });
   const tomorrowStart = new Date("2026-08-04T00:30:00+05:30").toISOString();
-  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='TOMORROW'").run(tomorrowStart);
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=?,updated_at=? WHERE id='TOMORROW'").run(tomorrowStart, ASOF - 86_400_000);
   assert.equal(tomorrowStart.slice(0, 10), DAY, "the fixture only proves anything if its UTC prefix still reads as today");
 
   const overview = await buildOperationsOverview(db, { asOf: ASOF });
@@ -145,6 +145,24 @@ test("today is the IST day, not the UTC day", async () => {
   assert.equal(overview.metrics.bookingsToday, 1, "the 00:30 IST booking belongs to tomorrow");
   assert.equal(overview.metrics.recognizedRevenue, 500, "tomorrow's ₹9,000 must not be recognized today");
   assert.deepEqual(overview.activity.map(row => row.bookingId), ["LATE"]);
+});
+
+test("a future service confirmed today appears in activity without changing today's capacity or revenue", async () => {
+  const { sqlite, db } = fresh();
+  provider(sqlite, "PRV-1", "Arun Rao");
+  booking(sqlite, "TODAY-SERVICE", { hour: 10, amount: 1200, provider: "PRV-1" });
+  booking(sqlite, "FUTURE-CONFIRMED-TODAY", { hour: 11, amount: 8000, provider: "PRV-1" });
+  const futureStart = new Date("2026-08-08T15:00:00+05:30").toISOString();
+  const futureEnd = new Date("2026-08-08T17:00:00+05:30").toISOString();
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,updated_at=? WHERE id='FUTURE-CONFIRMED-TODAY'").run(futureStart, futureEnd, ASOF);
+
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  assert.equal(overview.metrics.bookingsToday, 1, "future service does not inflate today's scheduled bookings");
+  assert.equal(overview.metrics.recognizedRevenue, 1200, "future service does not inflate today's recognized revenue");
+  assert.equal(overview.capacity[0].slots.filter(slot => slot.bookingId === "FUTURE-CONFIRMED-TODAY").length, 0, "future service does not occupy today's capacity");
+  assert.deepEqual(overview.activity.map(row => row.bookingId), ["TODAY-SERVICE", "FUTURE-CONFIRMED-TODAY"]);
+  const future = overview.activity.find(row => row.bookingId === "FUTURE-CONFIRMED-TODAY");
+  assert.equal(future.scheduledStart, futureStart, "activity preserves the actual future service date");
 });
 
 test("slots are placed by IST wall-clock time", async () => {
@@ -238,6 +256,7 @@ test("the /admin screen renders live data and labels anything that is still samp
   // Today's booking list and the detail panel read the live day, not the sample array.
   assert.match(page, /liveActivity\.map/);
   assert.match(page, /const liveActivity = overview\?\.activity/);
+  assert.match(page, /longInstantDay\(selectedActivity\.scheduledStart\)/, "details render the booking's real service date, not the activity-board date");
   assert.doesNotMatch(page.slice(0, page.indexOf('view === "crm"')), /selectedBooking\./, "the overview detail panel no longer reads the sample booking");
   assert.doesNotMatch(page, /Monday · 3 August 2026/, "the header date is read from the data, not frozen");
   // Nav badges are queue lengths. Hard-coding them is the quietest lie on the screen.
