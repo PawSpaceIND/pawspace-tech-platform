@@ -224,6 +224,22 @@ export function executedSourceModules(source) {
   return [...found].sort();
 }
 
+/*
+ * tests/helpers/ts-module-loader.mjs transpiles a lib/ module and its transitive dependencies and
+ * imports the result. A suite calling importLibModule("provider-workspace") executes lib/provider-
+ * workspace.ts as surely as a static import would — the helper does nothing else — but it names the
+ * module bare, so neither the static-import scan nor transpiledSourceModules (which looks for a
+ * literal new URL("lib/...")) can see it. Without this the loader's users classify as source_contract
+ * while running real code against a real database.
+ */
+function libLoaderModules(source) {
+  const found = new Set();
+  for (const match of source.matchAll(/\bimportLibModule\s*\(\s*["']([a-zA-Z0-9._-]+)["']/g)) {
+    found.add(`lib/${match[1]}.ts`);
+  }
+  return [...found].sort();
+}
+
 /** Product modules transpiled into a temporary executable module before dynamic import. */
 function transpiledSourceModules(source) {
   if (!/\bts\.transpileModule\s*\(/.test(source) || !/\bimport\s*\(/.test(source)) return [];
@@ -324,6 +340,7 @@ function collectSignals(file, repoRoot, seen = new Set()) {
   try { source = fs.readFileSync(path.join(repoRoot, key), "utf8"); } catch { return signals; }
   for (const reached of executedSourceModules(source)) signals.modules.add(reached);
   for (const reached of transpiledSourceModules(source)) signals.modules.add(reached);
+  for (const reached of libLoaderModules(source)) signals.modules.add(reached);
   if (moduleReferences(source).some(reference => reference.executed && reference.specifier === "node:sqlite")) signals.sqlite = true;
 
   // A deployed origin or provider host supplied by the environment - the only way a suite here can
