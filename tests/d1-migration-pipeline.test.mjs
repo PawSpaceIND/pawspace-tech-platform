@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { makeD1 } from "./helpers/taxi-harness.mjs";
 import {
@@ -138,6 +139,25 @@ test("normalisation makes every create replay-safe, which is what lets the deplo
   }
   assert.ok(bareCreates > 50,
     `the raw set really does carry unguarded creates (${bareCreates}) — this is why verbatim apply is unsafe`);
+});
+
+
+// ---------------------------------------------------------------------------------------------
+test("remote migration plan applies governed columns before dependent DDL", () => {
+  const output = execFileSync(
+    process.execPath,
+    ["scripts/schema/apply-remote-migrations.mjs", "--dry-run", "--dir", DIR],
+    { encoding: "utf8" },
+  );
+
+  const columnCheck = output.indexOf(
+    "would check atlas_secure_context_facts.aad_agent_id before 0038_atlas_mas_audit_remediation.sql",
+  );
+  const migrationApply = output.indexOf("would apply 0038_atlas_mas_audit_remediation.sql");
+
+  assert.ok(columnCheck >= 0, "the remote plan includes the aad_agent_id governed-column check");
+  assert.ok(migrationApply >= 0, "the remote plan includes migration 0038");
+  assert.ok(columnCheck < migrationApply, "aad_agent_id is prepared before the index that references it");
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -65,45 +65,51 @@ function remoteColumns(table) {
 }
 
 const files = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
-const bodies = [];
-const directives = [];
-
-for (const file of files) {
+const migrations = files.map((file) => {
   const raw = readFileSync(path.join(DIR, file), "utf8");
-  for (const m of raw.matchAll(ADD_COLUMN)) {
-    directives.push({ file, table: m[1], column: m[2], definition: m[3].trim() });
-  }
-  bodies.push(`-- ${file}\n${normalizeReplaySafeDdl(raw)}`);
-}
+  const directives = [...raw.matchAll(ADD_COLUMN)].map((m) => ({
+    file,
+    table: m[1],
+    column: m[2],
+    definition: m[3].trim(),
+  }));
+  const ddl = normalizeReplaySafeDdl(raw.replace(ADD_COLUMN, ""));
+  return { file, directives, ddl };
+});
+const directiveCount = migrations.reduce((n, migration) => n + migration.directives.length, 0);
+console.log(`[schema] ${files.length} migration files, ${directiveCount} add-column directives`);
 
-const combined = bodies.join("\n\n");
-console.log(`[schema] ${files.length} migration files, ${directives.length} add-column directives`);
-
-// Phase 1 — the replay-safe DDL. Every CREATE is IF NOT EXISTS and every DROP is IF EXISTS after
-// normalisation, so this is safe to re-run on every deploy.
 const tmp = mkdtempSync(path.join(tmpdir(), "pawspace-schema-"));
-const sqlFile = path.join(tmp, "migrations.sql");
-writeFileSync(sqlFile, combined);
-
 if (DRY) {
-  console.log(`[schema] DRY RUN — ${combined.split("\n").length} lines written to ${sqlFile}`);
-  for (const d of directives) console.log(`[schema]   would check ${d.table}.${d.column}`);
+  for (const migration of migrations) {
+    for (const d of migration.directives) console.log(`[schema]   would check ${d.table}.${d.column} before ${migration.file}`);
+    console.log(`[schema]   would apply ${migration.file}`);
+  }
   process.exit(0);
 }
 
-console.log(`[schema] applying replay-safe DDL to ${BINDING} (remote)…`);
-wrangler(["--file", sqlFile]);
-
-// Phase 2 — the columns SQLite cannot add conditionally. Each is checked against the live table and
-// added only when absent, which is exactly what the local runner does with PRAGMA table_info.
+// Match the local idempotent runner: each migration's governed column additions must exist before
+// that same migration's indexes/triggers/views are executed. Applying the full DDL set first makes
+// migrations such as 0038 fail when an index references a newly governed column (aad_agent_id).
 let added = 0, skipped = 0, deferred = 0;
-for (const d of directives) {
-  const columns = remoteColumns(d.table);
-  if (columns === null) { deferred += 1; console.log(`[schema]   defer ${d.table}.${d.column} — table not present yet`); continue; }
-  if (columns.has(d.column)) { skipped += 1; continue; }
-  wrangler(["--command", `ALTER TABLE ${ident(d.table)} ADD COLUMN ${ident(d.column)} ${d.definition}`]);
-  added += 1;
-  console.log(`[schema]   added ${d.table}.${d.column}`);
+for (const migration of migrations) {
+  for (const d of migration.directives) {
+    const columns = remoteColumns(d.table);
+    if (columns === null) {
+      deferred += 1;
+      console.log(`[schema]   defer ${d.table}.${d.column} — table not present before ${migration.file}`);
+      continue;
+    }
+    if (columns.has(d.column)) { skipped += 1; continue; }
+    wrangler(["--command", `ALTER TABLE ${ident(d.table)} ADD COLUMN ${ident(d.column)} ${d.definition}`]);
+    added += 1;
+    console.log(`[schema]   added ${d.table}.${d.column}`);
+  }
+
+  const sqlFile = path.join(tmp, `${migration.file}.sql`);
+  writeFileSync(sqlFile, `-- ${migration.file}\n${migration.ddl}`);
+  console.log(`[schema] applying ${migration.file} to ${BINDING} (remote)…`);
+  wrangler(["--file", sqlFile]);
 }
 
 console.log(`[schema] done — columns added ${added}, already present ${skipped}, deferred ${deferred}`);
