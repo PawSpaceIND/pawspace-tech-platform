@@ -94,7 +94,32 @@ function resolve(spec, fromFile) {
 }
 
 const read = (abs) => readFileSync(abs, "utf8");
-const isClientModule = (source) => /^(?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*["']use client["']/.test(source);
+
+function leadingCode(source) {
+  let at = 0;
+  while (at < source.length) {
+    while (at < source.length && /\s/.test(source[at])) at += 1;
+    if (source.startsWith("//", at)) {
+      const newline = source.indexOf("\n", at + 2);
+      if (newline === -1) return "";
+      at = newline + 1;
+      continue;
+    }
+    if (source.startsWith("/*", at)) {
+      const close = source.indexOf("*/", at + 2);
+      if (close === -1) return "";
+      at = close + 2;
+      continue;
+    }
+    break;
+  }
+  return source.slice(at);
+}
+
+const isClientModule = (source) => {
+  const code = leadingCode(source);
+  return code.startsWith('"use client"') || code.startsWith("'use client'");
+};
 
 const CLIENT_MODULES = SOURCE.filter((f) => isClientModule(read(path.join(ROOT, f))));
 
