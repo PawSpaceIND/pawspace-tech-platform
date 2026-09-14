@@ -73,7 +73,9 @@ test("customer navigation and billing controls have physical 44px targets and re
     await expect(control, label).toBeVisible();
     await expect(control, label).toBeEnabled();
     await control.scrollIntoViewIfNeeded();
-    await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "center" }));
+    await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }));
+    // Wait for layout stability before measuring hit targets; the app enables smooth scrolling.
+    await control.click({ trial: true });
     const box = await control.boundingBox();
     expect(box, `${label}: a physical rectangle is required`).not.toBeNull();
     const hit = await control.evaluate(element => {
