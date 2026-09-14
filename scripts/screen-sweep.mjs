@@ -23,6 +23,12 @@
 //   npm run dev &                                   # or point --base at staging
 //   node scripts/screen-sweep.mjs
 //   node scripts/screen-sweep.mjs --base=https://pawspace-staging.example.workers.dev --cookie="..."
+//
+// Signed in (what actually exercises the staff and customer screens):
+//   node scripts/screen-sweep.mjs --storage=founder-state.json
+// Produce that file once with a Playwright login, then reuse it. Three sessions cover the app:
+// a Founder from /staging-login for staff screens, a sandbox-OTP customer from /mobile-app for the
+// customer screens, and a provider for the /partner surface. No single session reaches all three.
 //   node scripts/screen-sweep.mjs --only=/team      # sweep one subtree
 //   node scripts/screen-sweep.mjs --json=sweep.json # machine-readable, for diffing between runs
 
@@ -38,6 +44,13 @@ const BASE = arg("base", "http://localhost:5173").replace(/\/$/, "");
 const ONLY = arg("only");
 const JSON_OUT = arg("json");
 const COOKIE = arg("cookie");
+// A Playwright storageState file. Preferred over --cookie for a real session: the sweep opens a
+// fresh context per route (see below), and storageState replays the whole signed-in state into each
+// one, where a single cookie only replays one cookie.
+const STORAGE = arg("storage");
+// Whether this run carries a real session at all. It changes what an expected auth refusal means:
+// see the GATED branch in verdict().
+const SESSION_SUPPLIED = Boolean(STORAGE || COOKIE);
 const TIMEOUT = Number(arg("timeout", "20000"));
 
 // Dynamic segments need a real value or the route 404s and tells us nothing. These are sampled from
@@ -157,7 +170,7 @@ async function sweepRoute(page, route) {
  * Turns measurements into a verdict. Ordered most to least severe, and deliberately treats a
  * self-declared empty state as PASSING — a screen that says "nothing recorded yet" is doing its job.
  */
-function verdict(result) {
+function verdict(result, { sessionSupplied = SESSION_SUPPLIED } = {}) {
   if (result.status === 0 || result.failure.startsWith("page.goto")) return { level: "BROKEN", why: result.failure || "did not load" };
   if (result.status >= 500) return { level: "BROKEN", why: `HTTP ${result.status}` };
   if (result.pageErrors.length) return { level: "BROKEN", why: `uncaught: ${result.pageErrors[0]}` };
@@ -172,7 +185,21 @@ function verdict(result) {
   if (unexpected.length) return { level: "DATA", why: `API ${unexpected.join(", ")}` };
   if (result.apiFailures.length) {
     const rule = EXPECTED_WITHOUT_SESSION.find((candidate) => result.apiFailures.some((failure) => candidate.pattern.test(failure)));
-    return { level: "GATED", why: `${rule?.why || "gated"} — re-run with --cookie to test this properly` };
+    // Whether an expected refusal means "not tested" depends on whether a session was supplied.
+    //
+    // With NO session, it does: a signed-out visit to a customer screen can render a perfectly good
+    // marketing shell while the actual signed-in screen was never seen, so calling that a pass would
+    // overstate coverage. That is the original judgement here and it is correct.
+    //
+    // WITH a session, it does not. Nearly every page probes /api/identity-session, which 401s for
+    // anyone who is not a customer or provider — a signed-in staff member included. Letting that lone
+    // 401 override everything else buried the findings: one signed-in run reported 139 routes
+    // untested while holding measurements showing 123 of them had rendered a full screen with working
+    // controls. A sweep that shrugs at everything hides real defects as well as one that cries wolf.
+    const rendered = result.textLength >= 260 || result.formControls > 0 || result.emptyStates.length > 0;
+    if (!sessionSupplied || !rendered) {
+      return { level: "GATED", why: `${rule?.why || "gated"} — re-run with --storage or --cookie to test this properly` };
+    }
   }
 
   // The blank-screen test: almost no text, no form control offering a way forward, and no empty state.
@@ -189,10 +216,20 @@ const FAIL_LEVELS = new Set(["BROKEN", "MISSING", "DATA", "BLANK", "THIN"]);
 // never saw the real screen. Reported separately so it cannot be mistaken for coverage.
 const UNTESTED_LEVELS = new Set(["GATED", "FIXTURE"]);
 
-async function main() {
-  const routes = discoverRoutes().filter((route) => !ONLY || route.startsWith(ONLY));
-  console.log(`Sweeping ${routes.length} route(s) at ${BASE}\n`);
+// Errors that mean the BROWSER died, not that the page is bad. Before this was distinguished, one
+// dead browser at route 47 of 150 marked every remaining route BROKEN — a report claiming 106 broken
+// screens when none of them had even been opened. A sweep that cries wolf like that gets ignored,
+// which is worse than no sweep at all.
+const INFRA_FAILURE = /has been closed|Target crashed|browser has disconnected|Target page, context or browser|Protocol error|Browser closed/i;
+const isInfraFailure = (result) => Boolean(result.failure) && INFRA_FAILURE.test(result.failure);
+// One route that kills a freshly launched browser is a pathological PAGE. Several in a row is a
+// pathological MACHINE - out of memory, no disk left, a broken browser binary - and continuing would
+// relabel the whole remaining run BROKEN, which is the exact false report this file exists to
+// prevent. At this many consecutive post-relaunch deaths, stop and say the environment is the
+// problem instead of blaming pages nobody has managed to open.
+const INFRA_ABORT_AFTER = 3;
 
+function chromiumExecutable() {
   // This container ships Chromium at a pinned revision that will not match whatever the installed
   // playwright package expects, and it forbids downloading more. Point at the binary that is here.
   const candidates = [
@@ -200,24 +237,95 @@ async function main() {
     "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
     ...fs.existsSync("/opt/pw-browsers") ? fs.readdirSync("/opt/pw-browsers").filter((name) => name.startsWith("chromium")).map((name) => `/opt/pw-browsers/${name}/chrome-linux/chrome`) : [],
   ].filter(Boolean);
-  const executablePath = candidates.find((candidate) => fs.existsSync(candidate));
-  const browser = await chromium.launch(executablePath ? { executablePath } : {});
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  if (COOKIE) {
-    const [name, ...rest] = COOKIE.split("=");
-    await context.addCookies([{ name, value: rest.join("="), url: BASE }]);
-  }
-  const page = await context.newPage();
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
 
+const launchBrowser = () => {
+  const executablePath = chromiumExecutable();
+  return chromium.launch(executablePath ? { executablePath } : {});
+};
+
+/**
+ * One route in its own context, always torn down.
+ *
+ * A fresh context per route costs a little startup time and buys two things the shared page did not
+ * have: one route's leaked timers, service workers and modal state cannot colour the next route's
+ * verdict, and a context that dies takes only its own route down with it.
+ */
+async function sweepRouteIsolated(browser, route) {
+  let context;
+  try {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      ...(STORAGE ? { storageState: STORAGE } : {}),
+    });
+    if (COOKIE) {
+      const [name, ...rest] = COOKIE.split("=");
+      await context.addCookies([{ name, value: rest.join("="), url: BASE }]);
+    }
+    const page = await context.newPage();
+    return await sweepRoute(page, route);
+  } catch (error) {
+    // Reaching here means the context or page could not even be created, which is the browser's
+    // fault rather than the route's. Shaped like a sweepRoute result so the caller can retry it.
+    return { route, status: 0, landed: route, redirected: false, failure: String(error.message).split("\n")[0].slice(0, 160), apiFailures: [], consoleErrors: [], pageErrors: [], textLength: 0, interactive: 0, formControls: 0, headings: 0, emptyStates: [], excerpt: "" };
+  } finally {
+    await context?.close().catch(() => {});
+  }
+}
+
+async function main() {
+  const routes = discoverRoutes().filter((route) => !ONLY || route.startsWith(ONLY));
+  console.log(`Sweeping ${routes.length} route(s) at ${BASE}${STORAGE ? " (signed in)" : ""}\n`);
+
+  let browser = await launchBrowser();
   const results = [];
+  let relaunches = 0;
+  let consecutiveInfraDeaths = 0;
+  let aborted = "";
+
   for (const route of routes) {
-    const result = await sweepRoute(page, route);
+    let result = await sweepRouteIsolated(browser, route);
+
+    // A route may only be called BROKEN by a browser that is demonstrably alive. If the browser died,
+    // replace it and give the route one clean attempt.
+    if (isInfraFailure(result) || !browser.isConnected()) {
+      await browser.close().catch(() => {});
+      browser = await launchBrowser();
+      relaunches += 1;
+      result = await sweepRouteIsolated(browser, route);
+      result.retriedAfterRelaunch = true;
+    }
+
+    if (isInfraFailure(result)) {
+      // Still a browser-level death after a clean relaunch. Record what happened rather than
+      // asserting whose fault it is: one such route is most likely the page, but the same line of
+      // code cannot also be right when the machine itself is the thing that is broken.
+      consecutiveInfraDeaths += 1;
+      result.failure = `${result.failure} (browser died again after a relaunch)`;
+      if (consecutiveInfraDeaths >= INFRA_ABORT_AFTER) {
+        aborted = `the browser died on ${consecutiveInfraDeaths} consecutive routes even after being relaunched each time, so this machine cannot run the sweep; the routes below were never opened and say nothing about the pages`;
+        break;
+      }
+    } else {
+      consecutiveInfraDeaths = 0;
+    }
+
     result.verdict = verdict(result);
     results.push(result);
     const mark = FAIL_LEVELS.has(result.verdict.level) ? "✗" : result.verdict.level === "OK" ? "✓" : "·";
     console.log(`${mark} ${result.verdict.level.padEnd(7)} ${route.padEnd(44)} ${result.verdict.why}`);
   }
-  await browser.close();
+  await browser.close().catch(() => {});
+  if (relaunches) console.log(`\n(browser was relaunched ${relaunches}x mid-sweep; each affected route was retried clean)`);
+
+  if (aborted) {
+    console.log(`\n${"!".repeat(78)}`);
+    console.log(`SWEEP ABORTED: ${aborted}.`);
+    console.log(`Only ${results.length} of ${routes.length} routes were judged. Check the machine (free memory,`);
+    console.log("free disk, and that the Chromium binary runs) before trusting any run from here.");
+    console.log(`${"!".repeat(78)}`);
+  }
 
   const failures = results.filter((item) => FAIL_LEVELS.has(item.verdict.level));
   const grouped = new Map();
@@ -247,7 +355,7 @@ async function main() {
     fs.writeFileSync(JSON_OUT, JSON.stringify({ base: BASE, routes: results }, null, 2));
     console.log(`\nWrote ${JSON_OUT} — diff two runs to see what a change actually altered.`);
   }
-  process.exit(failures.length ? 1 : 0);
+  process.exit(aborted || failures.length ? 1 : 0);
 }
 
 export { discoverRoutes, verdict, DYNAMIC_ROUTES, EMPTY_STATE_PHRASES, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS };
