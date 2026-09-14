@@ -2,6 +2,13 @@ import { openMobileRazorpayCheckout, type MobileRazorpayCheckoutOptions, type Mo
 export type CheckoutConfirmation = { bookingId:string; status:string; providerId:string|null; providerName:string|null; providerModel:string|null; packageName:string|null; scheduledStart:string; scheduledEnd:string; totalAmount:number; currency:string; paymentStatus:string|null; paymentId:string|null; gatewayOrderId:string|null; gatewayPaymentId:string|null; pets:Array<{id:string;name:string;species:string;breed:string|null}> };
 export type CheckoutState = { phase: "ready" | "starting" | "checkout" | "confirming" | "pending" | "captured" | "settled" | "error"; message: string; canCheck: boolean; confirmation?:CheckoutConfirmation };
 export type CheckoutReceipt = { bookingId: string; orderId: string; paymentId: string; signature: string };
+export type CustomerConfirmationProjection = {
+  ready:boolean;bookingId:string;serviceCode:string;packageName:string;bookingStatus:string;status?:string;
+  paymentId:string;paymentMode:string;paymentStatus:string;transactionId:string|null;amountDueNow:number;
+  totalAmount:number;currency:string;providerId:string;providerName:string;providerModel:string;
+  workOrderStatus:string;scheduledStart:string;scheduledEnd:string;updatedAt:number;
+  gatewayOrderId?:string|null;gatewayPaymentId?:string|null;pets?:Array<{id:string;name:string;species:string;breed:string|null}>;
+};
 type Receipt = CheckoutReceipt;
 export const CHECKOUT_RETURN_PATH = "/api/razorpay-checkout-return";
 export const BOOKING_CONFIRMATION_PATH = "/mobile-app/booking-confirmation";
@@ -14,6 +21,13 @@ export function checkoutReturnUrl(bookingId: string, origin = typeof window === 
   return `${origin}${CHECKOUT_RETURN_PATH}?bookingId=${encodeURIComponent(bookingId)}`;
 }
 type Dependencies = { fetch: typeof fetch; open: (options: MobileRazorpayCheckoutOptions, env?: Record<string, unknown>) => Promise<MobileRazorpayResult> };
+export async function loadCustomerConfirmationProjection(bookingId:string,signal?:AbortSignal):Promise<CustomerConfirmationProjection>{
+  const response=await fetch("/api/customer-checkout",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"content-type":"application/json"},signal,body:JSON.stringify({action:"status",bookingId})});
+  const body=await response.json() as{data?:{bookingId?:string;environment?:string;confirmation?:CustomerConfirmationProjection};error?:string};
+  if(!response.ok)throw new Error(body.error||"Unable to load the canonical booking confirmation");
+  if(body.data?.bookingId!==bookingId||body.data.environment!=="sandbox"||body.data.confirmation?.bookingId!==bookingId)throw new Error("Canonical booking confirmation could not be matched");
+  return body.data.confirmation;
+}
 /** One UI intent. Browser callbacks are receipts only; capture remains server/provider authoritative. */
 export class CustomerCheckoutController {
   private receipt?: Receipt; private pendingOrderId?: string; private dismissed=false; private busy=false; private captured=false;

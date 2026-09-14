@@ -1,11 +1,15 @@
 import{database}from"../../../lib/server-auth";
-import{uatAccessCodeValid,uatLoginEnabled}from"../../../lib/uat-staging-auth";
+import{clearUatCookie,uatAccessCodeValid,uatLoginEnabled}from"../../../lib/uat-staging-auth";
 import{getGovernedProvider,seedProviderCapacityDefaults}from"../../../lib/provider-capacity-governance";
 import{upsertIdentityBinding}from"../../../lib/identity-binding";
 import{issuePlatformSession,platformSessionCookie}from"../../../lib/platform-session";
 
 type Row=Record<string,unknown>;
-const json=(value:unknown,status=200,cookie?:string)=>Response.json(value,{status,headers:{"cache-control":"no-store",...(cookie?{"set-cookie":cookie}:{})}});
+const json=(value:unknown,status=200,cookies:readonly string[]=[])=>{
+ const headers=new Headers({"cache-control":"no-store"});
+ for(const cookie of cookies)headers.append("set-cookie",cookie);
+ return Response.json(value,{status,headers});
+};
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 
 export async function GET(){
@@ -29,6 +33,9 @@ export async function POST(request:Request){
   const principalKey=`uat-provider:${provider.id}`,actorId="uat-provider-switch";
   const binding=await upsertIdentityBinding(db,{identitySource:"partner_otp",principalType:"identity_subject",principalKey,subjectType:"provider",subjectId:provider.id,cityId:provider.cityId,verificationState:"verified",expiresAt:null,metadata:{uatProviderSwitch:true},actorId,reason:"UAT-only provider identity switch"});
   const issued=await issuePlatformSession(db,{bindingId:String(binding?.id||""),identitySource:"partner_otp",principalType:"identity_subject",principalKey,subjectType:"provider",subjectId:provider.id,ttlSeconds:28_800,metadata:{uatProviderSwitch:true}});
-  return json({data:{providerId:provider.id,name:provider.name,services:provider.services}},200,platformSessionCookie(issued.token,issued.ttlSeconds));
+  // Clear the staff staging-login cookie in the same response. Leaving both set makes actor
+  // resolution depend on which cookie the request happens to carry; one credential at a time keeps
+  // the partner session deterministic for the rest of the UAT run.
+  return json({data:{providerId:provider.id,name:provider.name,services:provider.services}},200,[platformSessionCookie(issued.token,issued.ttlSeconds),clearUatCookie()]);
  }catch(error){if(error instanceof Response)return error;return json({error:error instanceof Error?error.message:"Unable to switch UAT provider"},500);}
 }
