@@ -7,7 +7,7 @@ import GroomingRouteCard from "./grooming-route-card";
 import PartnerLogin from "../partner/partner-login";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
-import { clearProviderProofQueue, discardProviderProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
+import { clearProviderProofQueue, discardProviderProof, dispatchQueuedProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -227,9 +227,12 @@ export default function PartnerMobileApp() {
       const queued = await queueProviderProof({ bookingId: selected.bookingId, purpose, file, fileName: file.name, mimeType: file.type, sizeBytes: file.size, sha256: digest });
       if (!navigator.onLine) { setMediaMessage("Proof saved on this device and queued for automatic sync when connectivity returns."); return; }
       try {
-        await registerQueuedProof(queued);
-        // Registered and confirmed: take it out of the queue BEFORE flushing, or the flush re-registers it.
-        await discardProviderProof(queued.id);
+        // Exactly one registration per queued photo: dispatchQueuedProof holds the item's in-flight lock
+        // while it registers and uploads, so the periodic / `online` flush that runs concurrently skips it
+        // instead of registering the same bytes a second time, and it removes the item from the queue
+        // itself once the server has the bytes.
+        const outcome = await dispatchQueuedProof(queued, registerQueuedProof);
+        if (outcome === "in_flight") { setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo is already being uploaded from the sync queue.`); return; }
         await flushProviderProofQueue(registerQueuedProof);
         setMediaPollKey(value => value + 1);
         setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);

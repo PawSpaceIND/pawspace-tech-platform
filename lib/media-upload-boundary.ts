@@ -232,6 +232,11 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
   const sha256=String(input.sha256||"").trim().toLowerCase();
   if(!SHA256.test(sha256))refuse("A valid SHA-256 checksum is required",400);
 
+  // Idempotent re-registration. The Partner app keys a queued photo by (booking, purpose, sha256). When the
+  // same bytes are registered again while an earlier registration never received them (a dropped upload,
+  // a reload, a flush racing the direct upload), that earlier asset would otherwise sit in the Ops review
+  // queue for ever as "upload incomplete". Retire it and link the new registration to it instead.
+  const supersedes=input.supersedes??await supersedeStalePendingRegistration(db,{bookingId,providerId,category,sha256,actorId});
   const mediaId=`MEDIA-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
   const grantId=`MGRANT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
   const objectKey=`${serviceCode}/${input.scopeType}/${scopeId}/${mediaId}`;
@@ -241,7 +246,7 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
 
   await db.batch([
     db.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,supersedes) VALUES (?,?,?,?,?,?,?,?,'pending','pending_upload','active',0,?,?,?,'pending_review',?)")
-      .bind(mediaId,bookingId,providerId,category,objectKey,mimeType,sizeBytes,sha256,actorId,now,now,input.supersedes??null),
+      .bind(mediaId,bookingId,providerId,category,objectKey,mimeType,sizeBytes,sha256,actorId,now,now,supersedes??null),
     db.prepare("INSERT INTO media_upload_grants (id,media_id,booking_id,scope_type,scope_id,provider_id,service_code,city_id,category,object_key,mime_type,size_bytes,sha256,token_hash,status,expires_at,consumed_at,policy_version,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'issued',?,NULL,?,?,?)")
       .bind(grantId,mediaId,bookingId,input.scopeType,scopeId,providerId,serviceCode,String(input.cityId||POLICY_ANY).trim().toLowerCase()||POLICY_ANY,category,objectKey,mimeType,sizeBytes,sha256,tokenHash,expiresAt,policy.policyVersion,actorId,now),
   ]);
@@ -250,7 +255,30 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
   return{mediaId,mediaRef:`media://asset/${mediaId}`,grantId,token,objectKey,category,mimeType,sizeBytes,sha256,expiresAt,
     reviewStatus:"pending_review",proofReady:false,policyVersion:policy.policyVersion,
     upload:{mode:"private_object_put",adapterConnected:false,rawPublicUrl:false,singleUse:true},
-    ...(input.supersedes?{supersedes:input.supersedes}:{})};
+    ...(supersedes?{supersedes}:{})};
+}
+
+/**
+ * Retire every earlier registration of the same bytes for the same booking, provider and purpose that is
+ * still waiting for its upload: its grant is voided (a late PUT with that token is refused as superseded,
+ * never as "used") and the asset leaves the active set, so the Ops queue never lists a duplicate that can
+ * only ever answer "upload incomplete". Returns the most recent retired asset id, or null.
+ */
+async function supersedeStalePendingRegistration(db:Db,input:{bookingId:string;providerId:string;category:string;sha256:string;actorId:string}):Promise<string|null>{
+  const stale=await db.prepare("SELECT a.id FROM service_media_assets a JOIN media_upload_grants g ON g.media_id=a.id WHERE a.booking_id=? AND a.provider_id=? AND a.purpose=? AND a.sha256=? AND a.access_status='pending_upload' AND a.retention_status='active' AND g.status='issued' ORDER BY a.created_at,a.id")
+    .bind(input.bookingId,input.providerId,input.category,input.sha256).all<Row>();
+  let last:string|null=null;
+  const now=Date.now();
+  for(const row of stale.results){
+    const id=String(row.id);
+    await db.batch([
+      db.prepare("UPDATE service_media_assets SET retention_status='superseded',access_status='revoked',updated_at=? WHERE id=? AND access_status='pending_upload'").bind(now,id),
+      db.prepare("UPDATE media_upload_grants SET status='superseded' WHERE media_id=? AND status='issued'").bind(id),
+    ]);
+    await mediaEvent(db,id,input.bookingId,"media_registration_superseded",input.actorId,{reason:"the same bytes were registered again before this upload arrived",sha256:input.sha256,category:input.category});
+    last=id;
+  }
+  return last;
 }
 
 /**
@@ -267,6 +295,7 @@ export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:
   const grant=await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
   if(!grant)refuse("Media upload grant not found",404);
   if(String(grant!.media_id)!==mediaId)refuse("This upload token belongs to another media asset",403,{code:"upload_token_mismatch"});
+  if(String(grant!.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
   if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
   if(Number(grant!.expires_at)<Date.now())refuse("This media upload token has expired",409,{code:"upload_token_expired"});
   if(String(grant!.token_hash)!==await digest(token))refuse("Media upload token is not valid for this grant",403,{code:"upload_token_mismatch"});
@@ -295,6 +324,7 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   const grantId=token.split(".")[0]||"";
   const grant=await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
   if(!grant)refuse("Media upload grant not found",404);
+  if(String(grant!.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
   if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
   const now=Date.now();
   if(Number(grant!.expires_at)<now)refuse("This media upload token has expired",409,{code:"upload_token_expired"});
