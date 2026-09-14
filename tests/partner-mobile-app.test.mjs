@@ -14,7 +14,10 @@ test("keeps the provider Partner app mobile-first and canonical", async () => {
   assert.match(page, /PAWSPACE PARTNER MOBILE/);
   for (const label of ["Home", "Jobs", "GPS", "Earnings", "More"]) assert.match(page, new RegExp(`\\"${label}\\"`));
   assert.match(page, /\/api\/identity-session/);
-  assert.match(page, /\/api\/partner-grooming-jobs/);
+  assert.match(page, /\/api\/partner-jobs/);
+  assert.match(page, /serviceCode === "dog_training"/);
+  assert.match(page, /training_accept/);
+  assert.match(page, /\/api\/training-sessions/);
   assert.match(page, /GroomingRouteCard/);
   assert.match(page, /Settlement-controlled earnings/);
   assert.match(page, /Live money/);

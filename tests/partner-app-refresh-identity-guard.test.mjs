@@ -74,7 +74,7 @@ test("3. enabled refresh still increments refreshKey and refetches the provider 
     assert.match(button, /onClick=\{\(\) => setRefreshKey\(\(value\) => value \+ 1\)\}/, "refresh must not gain a cosmetic side effect");
   }
   // Advancing refreshKey must still drive a real refetch of the provider's jobs.
-  assert.match(page, /fetch\(`\/api\/partner-grooming-jobs\?providerId=\$\{encodeURIComponent\(identity\.subjectId\)\}&v=\$\{refreshKey\}`/, "the jobs fetch must still be keyed on refreshKey");
+  assert.match(page, /fetch\(`\/api\/partner-jobs\?providerId=\$\{encodeURIComponent\(identity\.subjectId\)\}&v=\$\{refreshKey\}`/, "the jobs fetch must still be keyed on refreshKey");
   assert.match(page, /\}, \[identity\?\.subjectId, refreshKey, paymentPollKey\]\);/, "the jobs effect must still re-run when refreshKey or payment reconciliation polling advances");
   assert.match(page, /if \(!identity\?\.subjectId\) return;/, "the effect's own identity guard stays in place");
   // The post-mutation refresh inside the lifecycle action is unrelated to the control and untouched.
