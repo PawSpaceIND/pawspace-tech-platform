@@ -51,7 +51,21 @@ const transpile = (source) => ts.transpileModule(source, {
  * may be imported again later in the same process and Node would then have nothing to read.
  */
 let dirPromise = null;
-const emitted = new Set();
+
+/*
+ * name -> promise that RESOLVES ONCE `${name}.mjs` IS ON DISK, carrying that module's lib/ deps.
+ *
+ * It was a Set of names, marked before the write rather than after, so a second caller arriving
+ * while the first was still inside writeFile saw the name already present, skipped the write and
+ * imported a file that was empty or half-written. Holding the promise instead makes the second
+ * caller await the first caller's write, which is the thing it actually needs to happen.
+ *
+ * The promise deliberately covers this module's OWN file and not its dependencies': lib/ has import
+ * cycles (provider-capacity-governance <-> provider-assignment-eligibility), and a promise that
+ * waited for the whole subtree would, on a cycle, wait for itself. The worklist below walks the
+ * graph instead, so a cycle is just a name already started.
+ */
+const emitted = new Map();
 
 function workspace() {
   if (!dirPromise) {
@@ -63,27 +77,44 @@ function workspace() {
   return dirPromise;
 }
 
-export async function importLibModule(entry) {
-  const dir = await workspace();
-
-  async function emit(name) {
-    if (emitted.has(name)) return;
-    emitted.add(name);
+/** Transpile one lib module into `dir`, resolving to the lib/ modules it imports. */
+function emitOne(dir, name) {
+  const existing = emitted.get(name);
+  if (existing) return existing;
+  const write = (async () => {
     const source = await readFile(path.join(LIB, `${name}.ts`), "utf8");
-    const pending = [];
+    const deps = [];
     /* Point every relative import at the .mjs sibling this loader is about to write. A specifier
      * that names no lib/ file is left exactly as it was - it resolves for Node already, and
      * rewriting it would break it. */
     const rewritten = source.replace(RELATIVE_IMPORT, (match, head, quote, target) => {
       const bare = target.replace(/\.(ts|tsx|js|mjs)$/, "");
       if (!existsSync(path.join(LIB, `${bare}.ts`))) return match;
-      pending.push(bare);
+      deps.push(bare);
       return `${head}${quote}./${bare}.mjs${quote}`;
     });
     await writeFile(path.join(dir, `${name}.mjs`), transpile(rewritten));
-    for (const dep of pending) await emit(dep);
-  }
+    return deps;
+  })();
+  emitted.set(name, write);
+  return write;
+}
 
-  await emit(entry);
+export async function importLibModule(entry) {
+  const dir = await workspace();
+  const queue = [entry];
+  const started = new Set();
+  const writes = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (started.has(name)) continue;
+    started.add(name);
+    const write = emitOne(dir, name);
+    writes.push(write);
+    queue.push(...await write);
+  }
+  /* Every file in the graph is on disk before anything imports it - including files another caller
+   * started, which is the whole point of sharing the map. */
+  await Promise.all(writes);
   return import(pathToFileURL(path.join(dir, `${entry}.mjs`)).href);
 }

@@ -21,7 +21,8 @@ import assert from "node:assert/strict";
 import { freshCountingD1 } from "./helpers/d1-harness.mjs";
 import { importLibModule } from "./helpers/ts-module-loader.mjs";
 
-const { submitJobProof, ensureProviderWorkspaceTables, PHOTO_PROOF_PURPOSE } = await importLibModule("provider-workspace");
+const { submitJobProof, ensureProviderWorkspaceTables } = await importLibModule("provider-workspace");
+const { PHOTO_PROOF_PURPOSE } = await importLibModule("care-proof-photo-claims");
 
 const PROVIDER = "PRV-1", CUSTOMER = "CUST-1";
 

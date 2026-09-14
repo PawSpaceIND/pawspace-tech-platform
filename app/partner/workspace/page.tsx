@@ -1,7 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
-import{isPhotoProof}from"../../../lib/provider-workspace";
+import{isPhotoProof}from"../../../lib/care-proof-photo-claims";
 
 type Booking={bookingId:string;serviceCode:string;package:string;start:string;status:string;orderValue:number;paymentStatus:string;paymentDueNow:number;paymentMethod:string|null};
 type Offer={bookingId:string;serviceCode:string;package:string;start:string;orderValue:number};
