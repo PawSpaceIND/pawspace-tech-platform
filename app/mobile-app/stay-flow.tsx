@@ -257,14 +257,35 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
         ? current.filter((item) => item !== benefit)
         : [...current, benefit],
     );
+  const resetStaySelection = () => {
+    setBoardingHosts([]);
+    setBoardingHostWindowKey("");
+    setBoardingHostError("");
+    setSitters([]);
+    setSitterWindowKey("");
+    setSitterError("");
+    setBoardingQuote(null);
+    setSittingQuote(null);
+    setSittingQuoteError("");
+    setScheduleError("");
+  };
+  const selectCareWindow = (next: CareWindow) => {
+    if (next === careWindow) return;
+    setCareWindow(next);
+    resetStaySelection();
+    setCaregiver(mode === "boarding" ? boardingPlaceholder : sitterPlaceholder);
+  };
   const switchMode = (next: Mode) => {
+    if (next === mode) return;
     setMode(next);
     onModeChange?.(next);
+    resetStaySelection();
     setCaregiver(next === "boarding" ? boardingPlaceholder : sitterPlaceholder);
     if(next==="boarding"&&careWindow==="12 hours")setCareWindow("10 hours");
     if(next==="sitting"&&careWindow==="10 hours")setCareWindow("12 hours");
     setTaxi(false);
     setProfileOpen(true);
+    setStage(1);
   };
   const confirm = async () => {
     if(actionLock.current)return;
@@ -369,6 +390,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
           <Head title="Plan their care" note="Trip · 1 of 4" />
           <div className={styles.modeSwitch}>
             <button
+              type="button"
+              aria-pressed={mode === "boarding"}
               className={mode === "boarding" ? styles.selected : ""}
               onClick={() => switchMode("boarding")}
             >
@@ -377,6 +400,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
               <span>Pets stay in a verified host home</span>
             </button>
             <button
+              type="button"
+              aria-pressed={mode === "sitting"}
               className={mode === "sitting" ? styles.selected : ""}
               onClick={() => switchMode("sitting")}
             >
@@ -392,9 +417,11 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
           <div className={styles.careWindows}>
             {(mode === "boarding" ? (["4 hours", "10 hours", "24 hours"] as CareWindow[]) : (["4 hours", "12 hours", "24 hours"] as CareWindow[])).map((window) => (
               <button
+                type="button"
                 key={window}
+                aria-pressed={careWindow === window}
                 className={careWindow === window ? styles.selected : ""}
-                onClick={() => setCareWindow(window)}
+                onClick={() => selectCareWindow(window)}
               >
                 <b>{window}</b>
                 <small>
@@ -451,7 +478,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
             )}
             {pets.map((p) => (
               <button
+                type="button"
                 key={p.id}
+                aria-pressed={selectedPets.includes(p.id)}
                 className={selectedPets.includes(p.id) ? styles.selected : ""}
                 onClick={() => togglePet(p.id)}
               >
@@ -463,7 +492,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                 <em>{selectedPets.includes(p.id) ? "✓" : "＋"}</em>
               </button>
             ))}
-            <button className={styles.addPet} onClick={() => setShowPetManager(v => !v)}>
+            <button type="button" className={styles.addPet} onClick={() => setShowPetManager(v => !v)}>
               <i>{showPetManager ? "−" : "＋"}</i>
               <span>
                 <b>{showPetManager ? "Hide pet details" : "Add another pet"}</b>
@@ -479,7 +508,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
           <div className={styles.chips}>
             {needs.map((n) => (
               <button
+                type="button"
                 key={n}
+                aria-pressed={selectedNeeds.includes(n)}
                 className={selectedNeeds.includes(n) ? styles.selected : ""}
                 onClick={() => toggleNeed(n)}
               >
@@ -496,6 +527,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
               : "End date must be after the start date."}
           </p>
           <button
+            type="button"
             disabled={!canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable})}
             className={styles.primary}
             onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}
