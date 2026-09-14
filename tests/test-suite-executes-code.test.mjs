@@ -83,8 +83,15 @@ const TRANSPILE     = /typescript|transpile/;
  * loads cannot reach them. Err towards counting a file as EXECUTING - over-reporting static files
  * invites converting something that already works.
  */
+/* tests/helpers/ts-module-loader.mjs transpiles a lib/ module and its transitive dependencies and
+ * imports the result. A file calling it is executing production code by definition - the helper does
+ * nothing else - and it names the module bare ("provider-workspace"), with no lib/ prefix for
+ * PRODUCT_PATH to match. Without this clause the loader's own users are counted static, which is the
+ * opposite of what this ratchet exists to encourage. */
+const LIB_LOADER    = /importLibModule\s*\(/;
+
 const executes = (src) =>
-  STATIC_IMPORT.test(src) || HARNESS.test(src) ||
+  STATIC_IMPORT.test(src) || HARNESS.test(src) || LIB_LOADER.test(src) ||
   ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src));
 
 /*
