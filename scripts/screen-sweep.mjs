@@ -48,6 +48,9 @@ const COOKIE = arg("cookie");
 // fresh context per route (see below), and storageState replays the whole signed-in state into each
 // one, where a single cookie only replays one cookie.
 const STORAGE = arg("storage");
+// Whether this run carries a real session at all. It changes what an expected auth refusal means:
+// see the GATED branch in verdict().
+const SESSION_SUPPLIED = Boolean(STORAGE || COOKIE);
 const TIMEOUT = Number(arg("timeout", "20000"));
 
 // Dynamic segments need a real value or the route 404s and tells us nothing. These are sampled from
@@ -167,7 +170,7 @@ async function sweepRoute(page, route) {
  * Turns measurements into a verdict. Ordered most to least severe, and deliberately treats a
  * self-declared empty state as PASSING — a screen that says "nothing recorded yet" is doing its job.
  */
-function verdict(result) {
+function verdict(result, { sessionSupplied = SESSION_SUPPLIED } = {}) {
   if (result.status === 0 || result.failure.startsWith("page.goto")) return { level: "BROKEN", why: result.failure || "did not load" };
   if (result.status >= 500) return { level: "BROKEN", why: `HTTP ${result.status}` };
   if (result.pageErrors.length) return { level: "BROKEN", why: `uncaught: ${result.pageErrors[0]}` };
@@ -182,14 +185,21 @@ function verdict(result) {
   if (unexpected.length) return { level: "DATA", why: `API ${unexpected.join(", ")}` };
   if (result.apiFailures.length) {
     const rule = EXPECTED_WITHOUT_SESSION.find((candidate) => result.apiFailures.some((failure) => candidate.pattern.test(failure)));
-    // An expected refusal only means "not tested" if it actually stopped the screen from rendering.
-    // Almost every page here probes /api/identity-session, which 401s for anyone who is not a
-    // customer or provider — a signed-in staff member included. Treating that lone 401 as "not
-    // tested" threw away the evidence already in hand: a run once reported 139 routes untested while
-    // holding measurements showing 123 of them had rendered a full screen. A sweep that shrugs at
-    // everything hides its real findings just as effectively as one that cries wolf.
+    // Whether an expected refusal means "not tested" depends on whether a session was supplied.
+    //
+    // With NO session, it does: a signed-out visit to a customer screen can render a perfectly good
+    // marketing shell while the actual signed-in screen was never seen, so calling that a pass would
+    // overstate coverage. That is the original judgement here and it is correct.
+    //
+    // WITH a session, it does not. Nearly every page probes /api/identity-session, which 401s for
+    // anyone who is not a customer or provider — a signed-in staff member included. Letting that lone
+    // 401 override everything else buried the findings: one signed-in run reported 139 routes
+    // untested while holding measurements showing 123 of them had rendered a full screen with working
+    // controls. A sweep that shrugs at everything hides real defects as well as one that cries wolf.
     const rendered = result.textLength >= 260 || result.formControls > 0 || result.emptyStates.length > 0;
-    if (!rendered) return { level: "GATED", why: `${rule?.why || "gated"} — re-run with --storage to test this properly` };
+    if (!sessionSupplied || !rendered) {
+      return { level: "GATED", why: `${rule?.why || "gated"} — re-run with --storage or --cookie to test this properly` };
+    }
   }
 
   // The blank-screen test: almost no text, no form control offering a way forward, and no empty state.

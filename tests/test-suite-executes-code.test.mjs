@@ -46,7 +46,11 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 // training-programme and training-session-lifecycle drive the quote, programme and session lifecycle
 // modules and their routes. Sabotage-verified in the PR: each converted suite goes red when its
 // guard is disabled behind the very string the old regex matched, while the old file stays green.
-const STATIC_FILE_BUDGET = 164;
+/* 165, not 164: schema-read-coverage.test.mjs is deliberately static. It is the read-side twin of
+ * schema-column-reference-contract.test.mjs above — it reads source to find routes that SELECT from
+ * a table nothing on their import path creates, which is precisely the defect that executing a
+ * module cannot reveal, because the failing query only runs against a cold database. */
+const STATIC_FILE_BUDGET = 165;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
