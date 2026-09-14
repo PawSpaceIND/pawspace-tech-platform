@@ -11,6 +11,10 @@ import {
   expectResponseRefusal,
 } from "./helpers/training-gate-harness.mjs";
 
+// Imported directly as well as through the harness: the two cases at the end drive the quote's
+// expiry and the Meet & Greet branch of the same module.
+const commercial = await import("../lib/training-commercial-governance.ts");
+
 test("Training commercial truth is server-quoted and consumed exactly once", async () => {
   const world = freshTrainingWorld();
   const quote = await createTrainingQuote(world.db, {
@@ -116,4 +120,40 @@ test("Training commercial inputs fail closed for coupon misuse and past scheduli
     paymentMode: "prepaid",
   }), { status: 400, message: /Training quote requires a future scheduled start/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes").get().n, 0);
+});
+
+test("Training quote expiry fails closed at capture and at booking, and an unpaid quote reports UNPAID", async () => {
+  const world = freshTrainingWorld();
+  const scheduledStart = futureTrainingStart();
+  const quote = await createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 1, scheduledStart, paymentMode: "prepaid" });
+  assert.deepEqual(await commercial.trainingQuotePaymentState(world.db, quote.quoteId), { status: "UNPAID", amountPaid: 0, remainingAmount: null });
+  assert.ok(quote.expiresAt > Date.now(), "a fresh quote carries a future expiry");
+
+  world.sqlite.prepare("UPDATE training_commercial_quotes SET expires_at=? WHERE id=?").run(Date.now() - 1, quote.quoteId);
+  await expectResponseRefusal(
+    () => captureTrainingQuoteSandbox(world.db, { quoteId: quote.quoteId, amount: quote.amountDueNow, paymentKey: "gate3-late-capture" }),
+    { status: 409, message: /Training quote expired before sandbox capture/ },
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations").get().n, 0);
+  await expectResponseRefusal(
+    () => commercial.governTrainingBooking(world.db, { quoteId: quote.quoteId, packageCode: "training-2-starter", packageName: quote.packageName, petCount: 1, scheduledStart, submittedTotal: quote.totalAmount, submittedAmountDueNow: quote.amountDueNow, paymentMode: "prepaid", paymentStatus: "created", reservationCount: 2 }),
+    { status: 409, message: /Training quote expired; refresh price and availability/ },
+  );
+  assert.equal(world.sqlite.prepare("SELECT status FROM training_commercial_quotes WHERE id=?").get(quote.quoteId).status, "open", "an expired quote is refused, not silently consumed");
+});
+
+test("Trainer Meet & Greet is a full-payment, single-reservation assessment that only a verified payment event can settle", async () => {
+  const world = freshTrainingWorld();
+  const scheduledStart = futureTrainingStart();
+  const meet = await createTrainingQuote(world.db, { packageCode: "trainer-meet-greet", petCount: 1, scheduledStart, paymentMode: "prepaid" });
+  assert.deepEqual({ meet: meet.meetAndGreet, sessions: meet.sessions, due: meet.amountDueNow, total: meet.totalAmount }, { meet: true, sessions: 1, due: meet.totalAmount, total: meet.totalAmount });
+
+  await expectResponseRefusal(
+    () => captureTrainingQuoteSandbox(world.db, { quoteId: meet.quoteId, amount: meet.amountDueNow, paymentKey: "gate3-meet-capture" }),
+    { status: 409, message: /Meet & Greet remains pending until a verified payment event/ },
+  );
+  const govern = (reservationCount) => commercial.governTrainingBooking(world.db, { quoteId: meet.quoteId, packageCode: "trainer-meet-greet", packageName: meet.packageName, petCount: 1, scheduledStart, submittedTotal: meet.totalAmount, submittedAmountDueNow: meet.amountDueNow, paymentMode: "prepaid", paymentStatus: "created", reservationCount });
+  await expectResponseRefusal(() => govern(2), { status: 409, message: /Trainer Meet & Greet requires exactly one reservation/ });
+  const governed = await govern(1);
+  assert.deepEqual({ sessions: governed.sessions, meet: governed.meetAndGreet }, { sessions: 1, meet: true });
 });

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   freshGroomingWorld,
+  GROOMING_COMMERCIAL_TRUTH_VERSION,
   groomingCatalogue,
   groomingCommercialPackages,
   groomingCommercialAddOns,
@@ -10,6 +11,11 @@ import {
   governGroomingBooking,
   resolveGroomingSubscriptionPlan,
 } from "./helpers/grooming-harness.mjs";
+
+// Imported directly as well as through the harness: the household quote and the customer-facing
+// catalogue module are exercised below as executable pricing, not only as re-exported constants.
+const { calculateGroomingHouseholdQuote } = await import("../lib/grooming-governance.ts");
+const commercialTruth = await import("../lib/grooming-commercial-catalogue.ts");
 
 const packageTruth = [
   ["dog-bath", 1349, 1149, 2298],
@@ -117,4 +123,48 @@ test("Grooming subscription truth resolves from real D1 configuration", async ()
   );
   assert.equal(groomingSubscriptionCommercialTruth.semiannual.perSession, 1099);
   assert.equal(groomingSubscriptionCommercialTruth.annual.perSession, 999);
+});
+
+test("Household quote executes multi-pet pricing and the GST breakdown for a mixed household", () => {
+  const quote = calculateGroomingHouseholdQuote({ lines: [{ packageCode: "dog-basic", petType: "dog" }, { packageCode: "cat-basic", petType: "cat" }] });
+  assert.deepEqual(
+    { base: quote.baseAmount, subtotal: quote.subtotal, discount: quote.multiPetDiscount, total: quote.totalAmount, mode: quote.taxMode, rate: quote.taxRate },
+    { base: 3798, subtotal: 3298, discount: 500, total: 3298, mode: "inclusive", rate: 18 },
+    "two pets pay the multi-pet unit price each, GST inclusive",
+  );
+  assert.equal(quote.gstAmount, Math.round((3298 - 3298 / 1.18) * 100) / 100);
+  assert.deepEqual(quote.lines.map((line) => line.chargedPrice), [1649, 1649]);
+
+  const single = calculateGroomingHouseholdQuote({ lines: [{ packageCode: "dog-basic", petType: "dog" }], taxMode: "exclusive" });
+  assert.deepEqual({ subtotal: single.subtotal, gst: single.gstAmount, total: single.totalAmount }, { subtotal: 1899, gst: 341.82, total: 2240.82 }, "a single pet pays the single price; exclusive GST is added on top");
+
+  assert.throws(() => calculateGroomingHouseholdQuote({ lines: Array.from({ length: 5 }, () => ({ packageCode: "dog-basic", petType: "dog" })) }), /supports 1-4 pets/);
+  assert.throws(() => calculateGroomingHouseholdQuote({ lines: [{ packageCode: "dog-basic", petType: "cat" }] }), /not eligible for cat/);
+  assert.throws(() => calculateGroomingHouseholdQuote({ lines: [{ packageCode: "sub-6", petType: "dog" }] }), /Active Grooming package not found: sub-6/, "subscriptions are not household lines");
+  assert.throws(() => calculateGroomingHouseholdQuote({ lines: [{ packageCode: "dog-basic", petType: "dog" }], taxRate: 41 }), /GST rate must be between 0 and 40/);
+});
+
+test("Subscription purchases reserve one credit per pet against the governed plan, and the per-session truth reconciles", async () => {
+  const world = freshGroomingWorld();
+  const twoPets = await governGroomingBooking(world.db, { packageCode: "sub-6", pets: [{ species: "dog" }, { species: "cat" }], submittedTotal: 6594, submittedAmountDueNow: 6594, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" });
+  assert.deepEqual({ reserve: twoPets.subscriptionPlan?.reserveSessions, total: twoPets.totalAmount, petCount: twoPets.petCount }, { reserve: 2, total: 6594, petCount: 2 }, "the wallet price is not multiplied by pet count; credits are");
+
+  await assert.rejects(
+    governGroomingBooking(world.db, { packageCode: "sub-6", pets: Array.from({ length: 5 }, () => ({ species: "dog" })), submittedTotal: 6594, submittedAmountDueNow: 6594, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" }),
+    /Grooming supports between 1 and 4 pets/,
+  );
+  await assert.rejects(
+    governGroomingBooking(world.db, { packageCode: "sub-6", pets: [{ species: "dog" }], submittedTotal: 6594, submittedAmountDueNow: 0, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" }),
+    /Submitted amount due now does not match the governed payment mode/,
+    "a prepaid subscription owes its full price now",
+  );
+  await assert.rejects(
+    governGroomingBooking(world.db, { packageCode: "sub-6", pets: [{ species: "dog" }], submittedTotal: 6594, submittedAmountDueNow: 6594, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east", existingSubscriptionId: "SUB-EXISTING" }),
+    /cannot also consume an existing subscription/,
+  );
+
+  const { semiannual, annual } = commercialTruth.groomingSubscriptionCommercialTruth;
+  assert.equal(semiannual.perSession * 6, 6594, "the marketed per-session price is the plan price divided by its sessions");
+  assert.equal(annual.perSession * 12, 11988);
+  assert.equal(commercialTruth.GROOMING_COMMERCIAL_TRUTH_VERSION, GROOMING_COMMERCIAL_TRUTH_VERSION);
 });

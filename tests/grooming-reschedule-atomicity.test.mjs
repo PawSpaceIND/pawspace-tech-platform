@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {setupJourney,runCompletedJourney,routeCall,sessionCookie} from "./helpers/grooming-journey-harness.mjs";
 
+// The change route the whole file drives, loaded directly so the ownership case below can call the
+// handler with a session of its own construction rather than through the harness's staff fallback.
+const changeRoute=await import("../app/api/grooming-booking-change/route.ts");
+
 async function fixture(t){
  const ctx=await setupJourney();t.after(ctx.close);
  const start=new Date(Date.now()+3*86400000);start.setUTCHours(3,30,0,0);
@@ -72,4 +76,16 @@ test("rescheduling a commission replacement cannot accept the partner offer",asy
  const early=await routeCall("../../app/api/grooming-lifecycle/route.ts","POST","/api/grooming-lifecycle",{bookingId:f.result.bookingId,action:"on_the_way"},cookie);assert.equal(early.status,409,JSON.stringify(early.body));
  const accepted=await routeCall("../../app/api/provider-assignment-recovery/route.ts","POST","/api/provider-assignment-recovery",{bookingId:f.result.bookingId,providerId:id,action:"accept"},cookie);assert.equal(accepted.status,200,JSON.stringify(accepted.body));
  assert.equal(f.snapshot().work.status,"assigned");assert.equal(f.snapshot().work.scheduled_start,f.input.scheduledStart);
+});
+
+test("a customer session that does not own the booking cannot reschedule it, and leaves no trace",async t=>{
+ const f=await fixture(t),before=f.snapshot();
+ const stranger=await sessionCookie(f.db,"customer","CUST-RESCHEDULE-STRANGER","customer:CUST-RESCHEDULE-STRANGER");
+ const attempt=async(body,cookie)=>{const response=await changeRoute.POST(new Request("https://uat.pawspace.in/api/grooming-booking-change",{method:"POST",headers:{"content-type":"application/json",cookie},body:JSON.stringify(body)}));return{status:response.status,body:await response.json().catch(()=>({}))};};
+ const impersonated=await attempt(f.input,stranger);assert.equal(impersonated.status,403,JSON.stringify(impersonated.body));
+ const relabelled=await attempt({...f.input,customerId:"CUST-RESCHEDULE-STRANGER"},stranger);assert.equal(relabelled.status,403,JSON.stringify(relabelled.body));
+ assert.deepEqual(f.snapshot(),before,"neither the booking, its work order, its reservations nor its evidence moved");
+ assert.equal(f.sqlite.prepare("SELECT count(*) n FROM security_audit_events WHERE resource_id=? AND action='grooming.reschedule'").get(f.result.bookingId).n,before.audits,"no reschedule audit is written for a refused actor");
+ const owner=await attempt(f.input,f.result.customerCookie);assert.equal(owner.status,200,JSON.stringify(owner.body));
+ assert.equal(f.snapshot().booking.scheduled_start,f.input.scheduledStart,"the same request from the owner's session is the one that moves the booking");
 });

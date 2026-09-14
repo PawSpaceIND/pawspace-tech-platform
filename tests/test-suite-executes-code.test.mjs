@@ -39,7 +39,13 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 //
 // All three sabotages leave the OLD regex assertions satisfied - the point being that the previous
 // versions could not have caught the regression the new ones do.
-const STATIC_FILE_BUDGET = 169;
+//
+// 169 -> 160: grooming and training conversions (WO-02). Four files (grooming-customer-integrity,
+// training-customer-wiring, training-programme, training-session-lifecycle) were pure source-text and
+// now drive the real modules and routes against an in-memory D1; the other five already executed
+// product code through shared harnesses that this detector could not see, and now import the modules
+// they exercise directly. Every file was sabotage-verified: see the PR for the per-file breakage.
+const STATIC_FILE_BUDGET = 160;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
