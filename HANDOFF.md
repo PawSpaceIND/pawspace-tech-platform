@@ -132,10 +132,11 @@ Ranked roughly by what I'd tackle first if continuing this:
 - **A GitHub PAT was used during this session to push directly to `main`**
   (the repo was made temporarily public for write access). **Revoke it** if
   it hasn't been already — it should not still be valid, but confirm.
-  Token prefix used: `github_pat_11CK4ZIPQ0...` (full value was never
-  persisted anywhere in this repo; it was only ever passed inline to `git
-  remote set-url` and immediately reset back to the plain HTTPS URL after
-  each push).
+  The prefix that was recorded here has been redacted: this repository is
+  public, and a partial token narrows a search for the rest of it. Identify
+  the token by its creation date in GitHub settings instead. The full value
+  was never persisted in this repo; it was only ever passed inline to `git
+  remote set-url` and reset back to the plain HTTPS URL after each push.
 - Every commit in sections 2 and 4 has a detailed message explaining the
   reasoning, what was reproduced, and how it was verified — `git log` on any
   of the hashes above for the full story rather than re-deriving it.
