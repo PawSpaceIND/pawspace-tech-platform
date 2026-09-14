@@ -24,12 +24,10 @@ test("renders the Partner Mobile field app route", async () => {
 
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /PawSpace Partner/i);
-  assert.match(html, /Good morning/i);
-  assert.match(html, /Next assignment/i);
-  assert.match(html, />Track</i);
-  assert.match(html, />Jobs</i);
-  assert.match(html, />Earnings</i);
+
+  assert.match(html, /Checking your partner session/i);
+  assert.doesNotMatch(html, /NEXT ASSIGNMENT/);
+
 });
 
 test("Partner Mobile uses governed provider identity and GPS APIs", async () => {
@@ -38,12 +36,8 @@ test("Partner Mobile uses governed provider identity and GPS APIs", async () => 
     "utf8",
   );
 
-  assert.match(source, /GPS & ETA/);
-  assert.match(source, /Track journey/);
-  assert.match(source, /\/api\/identity-session/);
-  assert.match(source, /\/api\/partner-grooming-jobs/);
-  assert.match(source, /\/api\/grooming-route/);
-  assert.match(source, /navigator\.geolocation/);
-  assert.match(source, /Use my GPS & calculate ETA/);
-  assert.match(source, /Continuous background tracking is not enabled in UAT/);
+  assert.match(source, /export \{default\} from "\.\.\/partner-app\/page"/);
+  const shared=await readFile(new URL("../app/partner-app/page.tsx",import.meta.url),"utf8");
+  assert.match(shared,/useStatusQueue/);assert.match(shared,/useDutyTracking/);
+  assert.match(shared,/\/api\/identity-session/);assert.match(shared,/\/api\/partner-jobs/);
 });

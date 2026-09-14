@@ -66,10 +66,12 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array><string>location</string></array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>PawSpace requires location access to track walker routes during active sessions.</string>
+	<string>PawSpace shares your location during an accepted partner job.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>PawSpace requires background location access for live pet walking telemetry.</string>
+	<string>PawSpace shares location during accepted partner jobs while the app is in the background. Tracking stops when the job ends.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>PawSpace requires camera access for pet grooming verification photos.</string>
 </dict>

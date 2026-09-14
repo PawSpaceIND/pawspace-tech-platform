@@ -1,0 +1,41 @@
+/* Keep complete component rules together: partial CSS-module overrides lose base selectors. */
+.trainingPetGrid { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; margin:16px 0; }
+.trainingPetGrid button { display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:12px; width:100%; min-height:64px; padding:14px; border:1px solid #c6d7ce; border-radius:14px; background:white; text-align:left; color:#173b30; }
+.trainingPetGrid button[aria-pressed="true"] { border:2px solid #165c45; background:#edf7f0; }
+.trainingPetGrid span { display:grid; gap:6px; min-width:0; }
+.trainingPetGrid b { font-size:15px; line-height:1.4; overflow-wrap:anywhere; }
+.trainingPetGrid small { font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.trainingPetGrid i,.trainingPetGrid em { font-style:normal; }
+.trainingPetGrid em { font-size:12px; font-weight:700; }
+.goalGrid { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:12px 0; }
+.goalGrid button { display:flex; align-items:center; gap:8px; max-width:100%; min-height:44px; padding:10px 14px; border:1px solid #aabfb2; border-radius:22px; background:white; color:#173b30; white-space:normal; text-align:left; font-size:13px; line-height:1.5; }
+.goalGrid button[aria-pressed="true"] { border:2px solid #165c45; background:#e6f4eb; font-weight:700; }
+.goalGrid span { overflow-wrap:anywhere; }
+.goalGrid i { font-style:normal; flex-shrink:0; }
+.goalGrid b { display:none; }
+.primary { display:block; position:static; width:100%; min-height:48px; margin:20px 0 12px; padding:12px 18px; border:0; border-radius:14px; background:#e6b34e; color:#2a1e05; font-size:15px; font-weight:800; }
+.primary:disabled { opacity:.5; }
+.head { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:12px; margin:16px 0; }
+.head h3 { margin:0; font-size:20px; line-height:1.4; }
+.head small { font-size:12px; }
+.assessmentPet { display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:12px; padding:16px; border-radius:14px; background:white; }
+.assessmentPet div { display:grid; gap:6px; min-width:0; }
+.assessmentPet span { font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.assessmentPet button { min-height:44px; padding:8px; border:1px solid #c6d7ce; background:white; border-radius:8px; }
+
+.field { display:grid; gap:8px; margin:20px 0; font-size:14px!important; font-weight:700; line-height:1.5; }
+.field select,.field textarea { display:block; box-sizing:border-box; width:100%; min-width:0; min-height:48px; padding:12px; border:1px solid #aabfb2; border-radius:12px; background:white; color:#173b30; font-size:16px!important; line-height:1.5; }
+.field textarea { min-height:100px; resize:vertical; }
+.attendanceChoice { display:grid; gap:12px; margin:24px 0; }
+.attendanceChoice > b { font-size:15px; line-height:1.5; }
+.attendanceChoice > button { min-height:64px; padding:14px; }
+.attendanceChoice strong { font-size:14px; line-height:1.5; }
+.attendanceChoice small { font-size:12px; line-height:1.6; }
+.durationRule { display:grid; gap:8px; margin:20px 0; font-size:13px!important; line-height:1.6!important; }
+.durationRule span { display:block; font-size:12px; line-height:1.6; }
+.requirementActions { display:grid; gap:10px; margin:16px 0 24px; }
+.requirementActions > button { justify-self:start; min-height:44px; padding:10px 14px; font-size:13px; }
+.requirementActions > div { display:flex; flex-wrap:wrap; gap:10px; }
+.requirementActions input { min-width:0; flex:1 1 200px; min-height:44px; font-size:16px; }
+.requirementActions small { font-size:12px; line-height:1.5; }
+.primary { position:static!important; box-shadow:none; }

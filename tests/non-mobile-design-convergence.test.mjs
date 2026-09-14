@@ -34,7 +34,7 @@ test("canonical partner hub is no longer an inline-styled prototype", () => {
   const source = read("app/partner/page.tsx");
   assert.match(source, /partner-hub\.module\.css/);
   assert.doesNotMatch(source, /style=\{/);
-  assert.match(source, /CanonicalGroomingJobs/);
+  assert.match(source, /href="\/partner-app"/);
 });
 
 test("canonical grooming board collapses below tablet so /partner has no horizontal overflow", () => {

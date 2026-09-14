@@ -1,3 +1,4 @@
+import {fixtureChecklist} from "./helpers/partner-checklist-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {setupJourney,runCompletedJourney,routeCall,sessionCookie} from "./helpers/grooming-journey-harness.mjs";
@@ -8,7 +9,7 @@ function snapshot(sqlite){return Object.fromEntries(tables.map(table=>[table,sql
 
 
 async function actorFor(ctx,id){return sessionCookie(ctx.db,"provider",id,`provider:${id}`);}
-async function step(bookingId,cookie,action,extra={}){return routeCall("../../app/api/grooming-lifecycle/route.ts","POST","/api/grooming-lifecycle",{bookingId,action,...extra},cookie);}
+async function step(bookingId,cookie,action,extra={}){return routeCall("../../app/api/grooming-lifecycle/route.ts","POST","/api/grooming-lifecycle",{bookingId,action,checklist:fixtureChecklist(action),...extra},cookie);}
 async function arrive(bookingId,id,cookie){const gps=await routeCall("../../app/api/grooming-route/route.ts","POST","/api/grooming-route",{bookingId,providerId:id,latitude:12.9716,longitude:77.5946,accuracyMeters:10,capturedAt:Date.now(),idempotencyKey:crypto.randomUUID()},cookie);assert.equal(gps.status,201,JSON.stringify(gps.body));const arrival=await step(bookingId,cookie,"arrived");assert.equal(arrival.status,200,JSON.stringify(arrival.body));}
 for(const state of ["accepted","on_the_way","arrived"])test(`replacement completes Grooming after the original provider reached ${state}`,async t=>{
  const ctx=await setupJourney();t.after(ctx.close);const input=config(),job=await runCompletedJourney(ctx,input),oldCookie=await actorFor(ctx,job.provider.id);assert.equal((await step(job.bookingId,oldCookie,"accept")).status,200);

@@ -1,3 +1,4 @@
+import {fixtureChecklist} from "./helpers/partner-checklist-fixture.mjs";
 /**
  * Correlated checkout -> authenticated webhook -> customer, partner, Operations and finance.
  * Production handlers + both API authorization gates + transactional SQLite.
@@ -296,7 +297,7 @@ test("without a browser callback: paid grooming reaches provider completion, cus
   const location = await w.request("/api/grooming-service-location", { method: "POST", cookie: w.customerCookie, body: {
     bookingId: w.bookingId, customerId: w.customerId, address: "Synthetic cross-app service address", pincode: "560038", latitude: 12.9716, longitude: 77.5946 } });
   assert.equal(location.status, 201, JSON.stringify(location));
-  const lifecycle = (action, extra = {}) => w.request("/api/grooming-lifecycle", { method: "POST", cookie: w.providerCookie, body: { bookingId: w.bookingId, action, ...extra } });
+  const lifecycle = (action, extra = {}) => w.request("/api/grooming-lifecycle", { method: "POST", cookie: w.providerCookie, body: { bookingId: w.bookingId, action, checklist:fixtureChecklist(action), ...extra } });
   for (const action of ["accept", "on_the_way", "arrived", "start_service"]) {
     if (action === "arrived") {
       const telemetry = await w.request("/api/grooming-route", { method: "POST", cookie: w.providerCookie, body: {

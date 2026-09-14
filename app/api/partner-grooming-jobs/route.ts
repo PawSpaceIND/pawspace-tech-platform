@@ -1,3 +1,4 @@
+import {ensureCustomerAccountTables} from "../../../lib/customer-account";
 import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
 import{projectProviderLifecycleEvent}from"../../../lib/grooming-provider-projection";
 
@@ -29,7 +30,7 @@ export async function GET(request:Request){
     const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
     const providerId=new URL(request.url).searchParams.get("providerId")?.trim();
     if(!providerId)return json({error:"Provider ID is required"},400);
-    const db=await database();await ensureTables(db);await requireProviderOwnership(db,actor,providerId);
+    const db=await database();await ensureTables(db);await ensureCustomerAccountTables(db);await requireProviderOwnership(db,actor,providerId);
     const rows=await db.prepare(`SELECT w.id work_order_id,w.booking_id,w.provider_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,
       b.status booking_status,b.package_code,b.package_name,b.zone_id,b.city_id,b.scheduled_start,b.scheduled_end,b.total_amount,b.currency,b.pricing_json,b.customer_id,b.pet_ids_json,
       c.name customer_name,c.primary_phone,p.method payment_method,p.mode payment_mode,p.status payment_status,p.amount payment_amount,p.amount_due_now
@@ -42,7 +43,7 @@ export async function GET(request:Request){
     const jobs=[];
     for(const row of rows.results){
       const[pets,events,proof,invoice]=await Promise.all([
-        db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
+        db.prepare("SELECT id,name,species,breed,vaccination_status,profile_json FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
         db.prepare("SELECT event_type,entity_type,actor_id,detail_json,occurred_at FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC LIMIT 50").bind(row.booking_id).all<Row>(),
         db.prepare("SELECT before_photo_ref,after_photo_ref,checklist_json,completion_notes,updated_at FROM grooming_service_proof WHERE booking_id=?").bind(row.booking_id).first<Row>(),
         db.prepare("SELECT invoice_number,status,net_amount,issued_at FROM booking_invoices WHERE booking_id=?").bind(row.booking_id).first<Row>(),
@@ -55,7 +56,7 @@ export async function GET(request:Request){
         status:String(row.booking_status),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
         zoneId:String(row.zone_id),cityId:String(row.city_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),totalAmount:Number(row.total_amount||0),currency:String(row.currency||"INR"),
         customer:{id:String(row.customer_id),name:partnerFirstName(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
-        pets:pets.results.map(pet=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status)})),
+        pets:pets.results.map(pet=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status),safetyNotes:[parseJson<Record<string,unknown>>(pet.profile_json,{}).aggression,pricing.healthSafetyNotes,pricing.behaviourNotes].filter((value):value is string=>typeof value==="string"&&value.trim().length>0)})),
         payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:String(row.payment_status),amount:Number(row.payment_amount||0),amountDueNow:Number(row.amount_due_now||0)},
         subscription:pricing.subscription?String(pricing.subscription):null,
         addOns,

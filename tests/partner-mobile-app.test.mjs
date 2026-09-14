@@ -22,12 +22,12 @@ test("keeps the provider Partner app mobile-first and canonical", async () => {
   assert.match(page, /Settlement-controlled earnings/);
   assert.match(page, /Live money/);
   assert.match(page, /OFF/);
-  assert.match(page, /background GPS/i);
+  assert.match(page, /Background location/i);
 
   assert.match(routeCard, /watchPosition/);
   assert.match(routeCard, /Start GPS/);
   assert.match(routeCard, /Stop GPS/);
-  assert.match(routeCard, /foreground-only/i);
+  assert.match(routeCard, /managedTracking/);
   assert.match(routeCard, /clearWatch/);
   assert.match(routeCard, /\/api\/grooming-route/);
 
@@ -37,10 +37,10 @@ test("keeps the provider Partner app mobile-first and canonical", async () => {
   assert.match(api, /GPS_CAPTURE_STATES/);
   assert.match(api, /decideCustomerDataAccess|resolveDataAccessPolicy/);
   assert.match(api, /provider_location_events|universal_provider_location_events/);
-  assert.match(api, /GPS capture is disabled outside assigned, on-the-way or arrived states/);
+  assert.match(api, /GPS capture requires an accepted, active job/);
 
   assert.match(layout, /PARTNER MOBILE UAT/);
-  assert.match(layout, /Live payouts, background GPS and production activation remain disabled/);
+  assert.match(layout, /Live payouts and production activation remain disabled/);
   assert.match(styles, /max-width:560px/);
   assert.match(styles, /bottomNav/);
   assert.match(styles, /grid-template-columns:repeat\(5,1fr\)/);

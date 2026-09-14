@@ -1,3 +1,4 @@
+import {fixtureChecklist} from "./partner-checklist-fixture.mjs";
 import {seedOwnedPet} from "./saved-pet-fixture.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./module-hooks.mjs";
@@ -165,7 +166,7 @@ export async function runCompletedJourney(ctx, config) {
 
   const providerCookie = await sessionCookie(db, "provider", provider.id, `provider:${provider.id}`);
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
-  const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
+  const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, checklist:fixtureChecklist(action), ...extra }, providerCookie);
   const transitions = [];
   for (const action of ["accept", "on_the_way", "arrived", "start_service"]) {
     if (action === "arrived") {

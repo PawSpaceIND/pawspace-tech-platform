@@ -1,14 +1,17 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import baseStyles from "./training.module.css";
 import extraStyles from "./training-extra.module.css";
+import uatStyles from "./training-uat.module.css";
 import planStyles from "./training-plans.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import CouponField from "./coupon-field";
 import BookingPaymentPage from "./booking-payment-page";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
+import StayAddress from "./stay-address";
+import type { StayLocation } from "../../lib/stay-saved-address";
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
@@ -18,7 +21,8 @@ import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/tra
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 import { trainingProgrammeRequestId } from "../../lib/booking-state-integrity";
 import { useFlowHistory } from "../../lib/use-flow-history";
-const styles = { ...baseStyles, ...extraStyles };
+// Compose overlapping CSS-module classes: replacing a class name loses its layout rules.
+const styles: Record<string,string> = Object.fromEntries([...new Set([...Object.keys(baseStyles),...Object.keys(extraStyles),...Object.keys(uatStyles)])].map(key=>[key,[baseStyles[key],extraStyles[key],uatStyles[key]].filter(Boolean).join(" ")]));
 type Plan = {
   packageCode: string;
   name: string;
@@ -48,7 +52,7 @@ const fallbackGoals = [
   "Separation anxiety",
 ];
 const petDetail = (pet: CustomerPet) =>
-  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  [pet.profile?.breed || pet.breed, pet.ageYears != null ? `${pet.ageYears} years` : pet.profile?.ageBand, pet.weightKg != null ? `${pet.weightKg} kg` : pet.profile?.weightBand].filter(Boolean).join(" · ") ||
   "Profiles, health notes and service history included";
 const planMarketing = [
   { packageCode:"training-2-starter",name:"Starter Plan",detail:"Professional guidance and a clear starting structure for dogs of any age.",bonus:false,level:"Assessment start",idealFor:"Parents who need a professional plan before committing long-term",outcomes:["Behaviour assessment","Home routine","Action plan"] },
@@ -85,7 +89,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const [meetPackage,setMeetPackage]=useState<TrainingPackage|null>(null);
   const [checkoutQuote,setCheckoutQuote]=useState<TrainingQuote|null>(null);
   const [startDateIndex,setStartDateIndex]=useState(0);
-  const [pincode,setPincode]=useState("");
+  const [location,setLocation]=useState<StayLocation|null>(null);
+  const pincode=location?.assignment?.pincode || "";
+  const resolveLocation=useCallback((value:StayLocation|null)=>setLocation(value),[]);
   const [coverage,setCoverage]=useState<ResolvedServiceCoverage|null>(null);
   const [stage, setStage] = useState(1),
     [goals, setGoals] = useState(fallbackGoals),
@@ -94,7 +100,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       "Leash walking",
     ]),
     [trainingCategory, setTrainingCategory] = useState("obedience"),
-    [behaviourNotes, setBehaviourNotes] = useState("Pulls on walks and gets excited when guests arrive."),
+    [behaviourNotes, setBehaviourNotes] = useState(""),
     [healthSafetyNotes, setHealthSafetyNotes] = useState("No aggression or medical concern"),
     [selRaw, setSelectedPets] = useState<string[]>([]),
     [petsState, setPets] = useState<CustomerPet[] | null>(null),
@@ -204,7 +210,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     confirmMeetFirst = async () => {
       if(actionLock.current)return;
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
-      if(pincode.length!==6){setScheduleError("Enter the six-digit service PIN code before booking a Meet & Greet.");return;}
+      if(pincode.length!==6){setScheduleError("Choose your service address before booking a Meet & Greet.");return;}
       actionLock.current=true;setScheduling(true);setScheduleError("");
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
@@ -281,6 +287,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             {dogs.map((pet) => (
               <button
                 key={pet.id}
+                type="button" aria-pressed={selectedPets.includes(pet.id)}
                 className={selectedPets.includes(pet.id) ? styles.selected : ""}
                 onClick={() => togglePet(pet.id)}
               >
@@ -289,7 +296,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
                   <b>{pet.name}</b>
                   <small>{petDetail(pet)}</small>
                 </span>
-                <em>{selectedPets.includes(pet.id) ? "✓" : "＋"}</em>
+                <em>{selectedPets.includes(pet.id) ? "Selected" : "Add"}</em>
               </button>
             ))}
             <button onClick={() => setShowPetManager((v) => !v)}>
@@ -299,11 +306,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           </div>
           {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
           <p className={styles.durationRule}>
-            {selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"} · {serviceMinutes} minutes per session
-            <span>
+            {plan.sessions > 0 ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"} · ${serviceMinutes} minutes per session` : "Choose a package to see session duration."}
+            {plan.sessions > 0 && <span>
               Every pet receives {plan.directMinutes} minutes of direct training + {plan.coachingMinutes} minutes
               for coaching, homework, video and the app update.
-            </span>
+            </span>}
           </p>
           <div className={styles.attendanceChoice}>
             <b>Who will join the session?</b>
@@ -320,7 +327,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             Training category
             <select value={trainingCategory} onChange={(event) => setTrainingCategory(event.target.value)}><option value="puppy">Puppy training</option><option value="obedience">Basic & advanced obedience</option><option value="behaviour">Behaviour correction</option></select>
           </label>
-          <div className={styles.goalGrid}>
+          <h4>Training requirements</h4>
+          <div className={styles.goalGrid} role="group" aria-label="Training requirements">
             {goals.map((goal) => (
               <button type="button" key={goal} className={selectedGoals.includes(goal) ? styles.selected : ""} onClick={() => toggle(goal)} aria-pressed={selectedGoals.includes(goal)}>
                 <i>{selectedGoals.includes(goal) ? "✓" : "＋"}</i><span>{goal}</span>{selectedGoals.includes(goal) && <b>Selected</b>}
@@ -335,7 +343,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           </div>
           <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
           <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
-          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See PawSpace plans"}</button>
+          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "Book a Meet & Greet"}</button>
         </section>
       )}
       {stage === 2 && (
@@ -345,11 +353,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <div className={styles.goalSummary}><b>Selected requirements</b>{selectedGoals.map((goal) => <span key={goal}><i>✓</i> {goal}</span>)}</div>
           <section className={styles.meetTrainer}>
             <div className={styles.meetPitch}><span>MEET A TRAINER FIRST</span><h4>Prefer to meet a trainer before choosing a programme?</h4><p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p></div>
-            <label className={styles.consent}>Service PIN code<input value={pincode} inputMode="numeric" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Enter six-digit PIN code" /></label>
+            <StayAddress customerId={customer.customerId} mode="training" onResolved={resolveLocation}/>
             <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
             <div className={styles.meetSlots}>{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}</div>
-            <p>Trainer availability is checked in the governed city and zone before booking. This creates one standalone canonical Meet &amp; Greet with payment awaiting a verified event.</p>
-            <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Reserving Meet & Greet…":"Book Meet & Greet only"}</button>
+            <p>We’ll check trainer availability in your area before confirming.</p>
+            <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Reserving Meet & Greet…":"Book a Meet & Greet"}</button>
             {meetLinked&&<article className={styles.meetConfirmed}><b>✓ Meet &amp; Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||"Assigned trainer"} · {meetBookingId}</span><small>You can continue to a programme now or return after the meeting.</small></article>}
             {meetBookingId&&!meetLinked&&<article className={styles.meetConfirmed}><b>Meet &amp; Greet belongs to another dog selection</b><span>Select the original dogs to link that meeting, or book another Meet &amp; Greet for the current selection.</span></article>}
             {scheduleError&&<p role="alert">{scheduleError}</p>}
@@ -376,7 +384,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       {stage === 3 && (
         <section>
           <div className={styles.head}><h3>Your trainer matches</h3><small>Trainer · 3 of 5</small></div>
-          <div className={styles.trainers}>{trainers.length===0&&<p>{pincode.length===6?"No eligible trainer is currently available for this start date and zone.":"Enter the service PIN code on the previous step to load eligible trainers."}</p>}{trainers.map((item) => <button key={item.id} className={trainerId===item.id?styles.selected:""} onClick={()=>setTrainerId(item.id)}><i>{item.name.split(" ").map((x)=>x[0]).join("")}</i><div><span>Canonical capacity roster</span><h4>{item.name} · {item.rating.toFixed(1)} ★</h4><p>Quality {item.qualityScore}/100 · capacity {item.capacity} · {item.travelBufferMinutes} min travel buffer</p><small>{item.model.replaceAll("_"," ")} · final assignment after whole-calendar conflict checks</small></div><em>{trainerId===item.id?"✓":""}</em></button>)}</div>
+          <div className={styles.trainers}>{trainers.length===0&&<p>{pincode.length===6?"No eligible trainer is currently available for this start date and zone.":"Choose your service address on the previous step to find trainers."}</p>}{trainers.map((item) => <button key={item.id} className={trainerId===item.id?styles.selected:""} onClick={()=>setTrainerId(item.id)}><i>{item.name.split(" ").map((x)=>x[0]).join("")}</i><div><span>Canonical capacity roster</span><h4>{item.name} · {item.rating.toFixed(1)} ★</h4><p>Quality {item.qualityScore}/100 · capacity {item.capacity} · {item.travelBufferMinutes} min travel buffer</p><small>{item.model.replaceAll("_"," ")} · final assignment after whole-calendar conflict checks</small></div><em>{trainerId===item.id?"✓":""}</em></button>)}</div>
           <article className={styles.protection}><i>↻</i><div><b>Protected trainer matching</b><span>If the trainer declines or cancels, PawSpace recommends a replacement and reopens the customer calendar. Session credit remains protected.</span></div></article>
           <article className={styles.protection}><i>◎</i><div><b>One shared session plan</b><span>Customer goals, home routine, safety notes and selected milestones are automatically displayed in the trainer app.</span></div></article>
           <button className={styles.back} onClick={() => setStage(2)}>← Package</button>
@@ -408,7 +416,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             <div><span>Validity</span><b>{plan.validity} from service start</b></div>
             <div><span>Complimentary care</span><b>{plan.bonus ? "Bath & Basic grooming" : "Not included"}</b></div>
           </article>
-          <label className={styles.consent}>Service PIN code<input value={pincode} inputMode="numeric" maxLength={6} onChange={event=>setPincode(event.target.value.replace(/\D/g,"").slice(0,6))} placeholder="Enter six-digit PIN code" /></label>
+          <StayAddress customerId={customer.customerId} mode="training" onResolved={resolveLocation}/>
           <p className={styles.policy}>{coverage?`Coverage confirmed for ${coverage.area || coverage.zoneName}, ${coverage.city}.`:"Enter the service PIN code to resolve the governed city and trainer zone."}</p>
           <div className={styles.paymentOptions}>
             <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>

@@ -1,3 +1,4 @@
+import {sweepPartnerHeartbeats} from "../lib/partner-job-heartbeat";
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import * as Sentry from "@sentry/cloudflare";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
@@ -203,7 +204,7 @@ const worker = {
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention"}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -224,8 +225,10 @@ const worker = {
         executiveTask,
         atlasDailyTask,
         dpdpRetentionTask,
+        sweepPartnerHeartbeats(env.DB,controller.scheduledTime),
       ]);
       const errors:string[]=[];
+      if(partnerHeartbeat.status==="rejected")errors.push(`partner heartbeat: ${String(partnerHeartbeat.reason)}`);
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
       if(gatewayInbound.status==="rejected")errors.push(`gateway inbound retry: ${gatewayInbound.reason instanceof Error?gatewayInbound.reason.message:String(gatewayInbound.reason)}`);else if(gatewayInbound.value.deadLettered||gatewayInbound.value.purge.deadLettered)errors.push(`gateway inbound retry: ${gatewayInbound.value.deadLettered+gatewayInbound.value.purge.deadLettered} event(s) dead-lettered`);
       if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);

@@ -24,7 +24,7 @@ test("Capacitor dual-target configuration exports distinct customer and partner 
 
   assert.equal(partnerConfig.appId, "com.pawspace.partner");
   assert.equal(partnerConfig.appName, "PawSpacePartner");
-  assert.equal(partnerConfig.webDir, ".next");
+  assert.equal(partnerConfig.webDir, "native/partner-shell");
 
   assert.notEqual(customerConfig.appId, partnerConfig.appId);
   assert.notEqual(customerConfig.appName, partnerConfig.appName);
@@ -234,12 +234,14 @@ test("Native permission manifests for iOS and Android declare all required hardw
   // Verify iOS Info.plist
   const iosPlist = readFileSync(resolve("ios/App/App/Info.plist"), "utf-8");
   assert.match(iosPlist, /<key>NSLocationWhenInUseUsageDescription<\/key>/);
-  assert.match(iosPlist, /PawSpace requires location access to track walker routes during active sessions\./);
+  assert.match(iosPlist, /PawSpace shares your location during an accepted partner job\./);
   assert.match(iosPlist, /<key>NSLocationAlwaysAndWhenInUseUsageDescription<\/key>/);
-  assert.match(iosPlist, /PawSpace requires background location access for live pet walking telemetry\./);
+  assert.match(iosPlist, /Tracking stops when the job ends\./);
   assert.match(iosPlist, /<key>NSCameraUsageDescription<\/key>/);
   assert.match(iosPlist, /PawSpace requires camera access for pet grooming verification photos\./);
 
+  assert.match(iosPlist, /<key>UIBackgroundModes<\/key>/);
+  assert.match(iosPlist, /<string>location<\/string>/);
   // Verify Android AndroidManifest.xml
   const androidManifest = readFileSync(resolve("android/app/src/main/AndroidManifest.xml"), "utf-8");
   assert.match(androidManifest, /android:name="android\.permission\.ACCESS_FINE_LOCATION"/);
