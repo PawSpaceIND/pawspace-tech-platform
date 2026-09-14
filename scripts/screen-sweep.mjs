@@ -212,6 +212,12 @@ const UNTESTED_LEVELS = new Set(["GATED", "FIXTURE"]);
 // which is worse than no sweep at all.
 const INFRA_FAILURE = /has been closed|Target crashed|browser has disconnected|Target page, context or browser|Protocol error|Browser closed/i;
 const isInfraFailure = (result) => Boolean(result.failure) && INFRA_FAILURE.test(result.failure);
+// One route that kills a freshly launched browser is a pathological PAGE. Several in a row is a
+// pathological MACHINE - out of memory, no disk left, a broken browser binary - and continuing would
+// relabel the whole remaining run BROKEN, which is the exact false report this file exists to
+// prevent. At this many consecutive post-relaunch deaths, stop and say the environment is the
+// problem instead of blaming pages nobody has managed to open.
+const INFRA_ABORT_AFTER = 3;
 
 function chromiumExecutable() {
   // This container ships Chromium at a pinned revision that will not match whatever the installed
@@ -265,20 +271,34 @@ async function main() {
   let browser = await launchBrowser();
   const results = [];
   let relaunches = 0;
+  let consecutiveInfraDeaths = 0;
+  let aborted = "";
 
   for (const route of routes) {
     let result = await sweepRouteIsolated(browser, route);
 
     // A route may only be called BROKEN by a browser that is demonstrably alive. If the browser died,
-    // replace it and give the route one clean attempt; if it fails again in a brand-new browser, the
-    // failure is genuinely the page's.
+    // replace it and give the route one clean attempt.
     if (isInfraFailure(result) || !browser.isConnected()) {
       await browser.close().catch(() => {});
       browser = await launchBrowser();
       relaunches += 1;
       result = await sweepRouteIsolated(browser, route);
       result.retriedAfterRelaunch = true;
-      if (isInfraFailure(result)) result.failure = `${result.failure} (survived a browser relaunch, so this is the page)`;
+    }
+
+    if (isInfraFailure(result)) {
+      // Still a browser-level death after a clean relaunch. Record what happened rather than
+      // asserting whose fault it is: one such route is most likely the page, but the same line of
+      // code cannot also be right when the machine itself is the thing that is broken.
+      consecutiveInfraDeaths += 1;
+      result.failure = `${result.failure} (browser died again after a relaunch)`;
+      if (consecutiveInfraDeaths >= INFRA_ABORT_AFTER) {
+        aborted = `the browser died on ${consecutiveInfraDeaths} consecutive routes even after being relaunched each time, so this machine cannot run the sweep; the routes below were never opened and say nothing about the pages`;
+        break;
+      }
+    } else {
+      consecutiveInfraDeaths = 0;
     }
 
     result.verdict = verdict(result);
@@ -288,6 +308,14 @@ async function main() {
   }
   await browser.close().catch(() => {});
   if (relaunches) console.log(`\n(browser was relaunched ${relaunches}x mid-sweep; each affected route was retried clean)`);
+
+  if (aborted) {
+    console.log(`\n${"!".repeat(78)}`);
+    console.log(`SWEEP ABORTED: ${aborted}.`);
+    console.log(`Only ${results.length} of ${routes.length} routes were judged. Check the machine (free memory,`);
+    console.log("free disk, and that the Chromium binary runs) before trusting any run from here.");
+    console.log(`${"!".repeat(78)}`);
+  }
 
   const failures = results.filter((item) => FAIL_LEVELS.has(item.verdict.level));
   const grouped = new Map();
@@ -317,7 +345,7 @@ async function main() {
     fs.writeFileSync(JSON_OUT, JSON.stringify({ base: BASE, routes: results }, null, 2));
     console.log(`\nWrote ${JSON_OUT} — diff two runs to see what a change actually altered.`);
   }
-  process.exit(failures.length ? 1 : 0);
+  process.exit(aborted || failures.length ? 1 : 0);
 }
 
 export { discoverRoutes, verdict, DYNAMIC_ROUTES, EMPTY_STATE_PHRASES, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS };
