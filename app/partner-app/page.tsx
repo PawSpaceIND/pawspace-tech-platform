@@ -14,6 +14,22 @@ type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
 type UatProvider = { id: string; name: string; cityId: string; services: string[] };
 type Pet = { id: string; name: string; species: string; breed: string; vaccinationStatus: string };
 type Proof = { beforePhotoRef: string | null; afterPhotoRef: string | null; checklist: string[]; completionNotes: string | null };
+/** Already sanitized server-side by projectProviderLifecycleEvent: operational state, never contact data. */
+type JobEvent = { eventType: string; entityType: string; actorId: string; detail: Record<string, unknown>; occurredAt: number };
+/**
+ * Every field /api/partner-grooming-jobs actually returns for a job.
+ *
+ * The route projects safetyRequirements and addOns out of the booking's pricing_json and returns the
+ * payment amounts alongside the mode - none of which were declared here, so all of them were dropped
+ * on arrival. A partner therefore drove to a job without the handling requirements recorded against
+ * the pet and without any of the money on it.
+ *
+ * amount and amountDueNow are not interchangeable: amountDueNow is what the customer owed ONLINE at
+ * booking, which the flow sets to 0 for pay_after_service - exactly the case where the partner is the
+ * one collecting. The door figure is therefore `amount`, and the render keeps them apart.
+ *
+ * occurrenceCount matters for the same reason: a multi-visit package rendered as if it were one visit.
+ */
 type Job = {
   bookingId: string;
   workOrderId: string;
@@ -22,16 +38,24 @@ type Job = {
   providerModel: string;
   status: string;
   workOrderStatus: string;
+  occurrenceCount: number;
+  packageCode: string;
   packageName: string;
   zoneId: string;
+  cityId: string;
   scheduledStart: string;
   scheduledEnd: string;
   totalAmount: number;
+  currency: string;
   customer: { id: string; name: string; maskedPhone: string };
   pets: Pet[];
-  payment: { mode: string; status: string };
-  proof: Proof | null;
-  invoice: { invoiceNumber: string; status: string; netAmount: number } | null;
+  payment: { method: string; mode: string; status: string; amount: number; amountDueNow: number };
+  subscription: string | null;
+  addOns: string[];
+  safetyRequirements: string[];
+  proof: (Proof & { updatedAt: number }) | null;
+  invoice: { invoiceNumber: string; status: string; netAmount: number; issuedAt: number } | null;
+  events: JobEvent[];
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
 type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number };
@@ -50,7 +74,36 @@ function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_
 /** A 4xx (other than timeout/rate-limit) will never succeed on retry; the offline queue drops it instead of re-registering for ever. */
 const proofFailure = (status: number, message: string) => Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && status !== 408 && status !== 429 });
 type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; providerReference: string; collectable: boolean; expiresAt: number; sandboxOnly: boolean; liveCapture: boolean };
-type WorkspaceEarnings = { visible: boolean; computed: { netPayout: number; orders: number; grossOrderValue: number }; settlements: Array<{ bookingId: string; payoutAmount: number | null; status: string; reason: string }>; incentives: Array<{ monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number }> };
+/**
+ * Both engagement shapes, because providerWorkspace returns different keys for each and this one screen
+ * renders whichever arrives. A CONTRACT provider carries settlements + incentives and
+ * computed.netPayout; a COMMISSION provider carries commissionOrders + payouts and
+ * computed.commissionAmount, with no settlements or incentives key at all.
+ *
+ * Reading computed.netPayout therefore showed every commission partner zero while
+ * earnings.netPayout held the real figure, and mapping the settlements list threw outright on the
+ * missing key - an optional chain on `earnings` short-circuits one level too early to protect the list
+ * itself, so the Earnings tab hit the error boundary. Every per-engagement key is optional here, each
+ * list is defaulted before it is mapped, and the totals are read from the top-level fields, which both
+ * shapes always set.
+ */
+type WorkspaceSettlement = { bookingId: string; payoutAmount: number | null; status: string; reason: string };
+type WorkspaceIncentive = { monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number };
+type WorkspaceCommissionOrder = { bookingId: string; serviceCode: string; orderAmount: number; commissionAmount: number; commissionMode: string; status: string; dueAt: number };
+type WorkspaceCommissionPayout = { id: string; bookingId: string; amount: number; status: string; dueAt: number; providerReference: string | null };
+type WorkspaceEarnings = {
+  visible: boolean;
+  netPayout?: number; orders?: number; grossOrderValue?: number; note?: string;
+  computed?: { netPayout?: number; commissionAmount?: number; orders?: number; grossOrderValue?: number };
+  settlements?: WorkspaceSettlement[];
+  incentives?: WorkspaceIncentive[];
+  commissionOrders?: WorkspaceCommissionOrder[];
+  payouts?: WorkspaceCommissionPayout[];
+};
+/** Shift liveness for today, and the proof stages the server says are still outstanding. */
+type WorkspaceLiveness = { required: boolean; matched: boolean; shiftDate: string; checkId: string | null };
+type WorkspacePendingProof = { bookingId: string; serviceCode: string; missing: string[] };
+type WorkspacePayload = { linked?: boolean; reason?: string; engagement?: string; onboardingStatus?: string; liveness?: WorkspaceLiveness; pendingProof?: WorkspacePendingProof[]; earnings?: WorkspaceEarnings };
 
 const activeTravelStates = new Set(["assigned", "on_the_way", "arrived"]);
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -59,6 +112,14 @@ const when = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(date);
 };
+/** expiresAt, dueAt and friends arrive as epoch milliseconds rather than as a date string. */
+// A payment that is captured, refunded or partially refunded is finished: nothing is collectable
+// against it. This is the single source of that judgement. The pay-after-service section gate used to
+// test only for "captured", so a REFUNDED booking still rendered "Payment due after service" and
+// offered to create a collection link against money that had already gone back to the customer.
+const SETTLED_PAYMENT_STATUSES = ["captured", "refunded", "partially_refunded"];
+
+const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
 export default function PartnerMobileApp() {
   const [tab, setTab] = useState<Tab>("home");
@@ -91,6 +152,9 @@ export default function PartnerMobileApp() {
   const [mediaMessage, setMediaMessage] = useState("");
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
+  const [earningsNotice, setEarningsNotice] = useState("");
+  const [engagement, setEngagement] = useState("");
+  const [workspaceState, setWorkspaceState] = useState<{ onboardingStatus: string; liveness: WorkspaceLiveness | null; pendingProof: WorkspacePendingProof[] }>({ onboardingStatus: "", liveness: null, pendingProof: [] });
   const sessionVersion = useRef(0);
 
   useEffect(() => {
@@ -169,8 +233,36 @@ export default function PartnerMobileApp() {
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
 
   useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey, paymentPollKey]);
-  useEffect(() => { if (!paymentRequest?.collectable || ["captured", "refunded", "partially_refunded"].includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
-  useEffect(() => { if (tab !== "earnings" || sessionState !== "verified") return; let active=true;const version=sessionVersion.current;void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); if(active&&version===sessionVersion.current)setEarnings(body.data?.earnings ?? null); }).catch(problem => {if(active&&version===sessionVersion.current)setError(problem instanceof Error ? problem.message : "Unable to load earnings")});return()=>{active=false}; }, [tab, refreshKey, sessionState]);
+  useEffect(() => { if (!paymentRequest?.collectable || SETTLED_PAYMENT_STATUSES.includes(paymentRequest.paymentStatus)) return; const timer=window.setInterval(()=>setPaymentPollKey(current=>current+1),5_000); return()=>window.clearInterval(timer); }, [paymentRequest?.collectable, paymentRequest?.paymentStatus]);
+  useEffect(() => {
+    if (tab !== "earnings" || sessionState !== "verified") return;
+    let active = true;
+    const version = sessionVersion.current;
+    void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => {
+      const body = await response.json() as { data?: WorkspacePayload; error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to load earnings");
+      // main's staleness guard, and every setter below sits inside it. workspaceState especially:
+      // pendingProof names the PREVIOUS partner's booking ids, so a response arriving after the
+      // session changed hands is exactly the leak resetAccountState exists to prevent.
+      if (!active || version !== sessionVersion.current) return;
+      // linked:false is a 200 carrying no earnings key - an identity with no provider record bound to
+      // it. Rendering that as zero rupees was indistinguishable from having earned nothing, so say it.
+      if (body.data?.linked === false) { setEarnings(null); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] }); setEarningsNotice(body.data.reason || "No active provider record is linked to your identity."); return; }
+      const next = body.data?.earnings ?? null;
+      setEarnings(next);
+      setEngagement(body.data?.engagement ?? "");
+      // Returned by the same call all along: today's liveness gate, the onboarding link state and the
+      // proof stages the server considers outstanding. None of them used to leave this handler.
+      setWorkspaceState({ onboardingStatus: body.data?.onboardingStatus ?? "", liveness: body.data?.liveness ?? null, pendingProof: body.data?.pendingProof ?? [] });
+      // The .catch below writes the shell-wide error banner. Without clearing it here a successful
+      // retry left the previous failure on screen next to freshly loaded figures.
+      setError("");
+      setEarningsNotice(!next ? "Earnings are not available for this provider record yet."
+        : next.visible === false ? "Earnings are withheld for this provider record until Finance controls are satisfied."
+          : "");
+    }).catch(problem => { if (active && version === sessionVersion.current) setError(problem instanceof Error ? problem.message : "Unable to load earnings"); });
+    return () => { active = false; };
+  }, [tab, refreshKey, sessionState]);
 
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
@@ -303,6 +395,24 @@ export default function PartnerMobileApp() {
     }
   };
 
+  // What this partner actually collects in cash/UPI at the door: the booked total, and only while the
+  // booking is pay-after-service and nothing has been captured yet.
+  const collectAtDoor = selected && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status)
+    ? Number(selected.payment.amount || selected.totalAmount || 0)
+    : 0;
+
+  // paymentRequestView reports a settled payment through paymentStatus and an elapsed link through
+  // status==="expired". They need different copy: one is finished, the other needs a replacement link.
+  const paymentSettled = Boolean(paymentRequest && SETTLED_PAYMENT_STATUSES.includes(paymentRequest.paymentStatus));
+  const paymentExpired = Boolean(paymentRequest && paymentRequest.status === "expired");
+
+  // Both engagement shapes set the top-level totals; `computed` carries netPayout for contract and
+  // commissionAmount for commission, so it is only ever a fallback here.
+  const isCommission = engagement === "commission";
+  const earningsNetPayout = Number(earnings?.netPayout ?? earnings?.computed?.netPayout ?? earnings?.computed?.commissionAmount ?? 0);
+  const earningsOrders = Number(earnings?.orders ?? earnings?.computed?.orders ?? 0);
+  const earningsGross = Number(earnings?.grossOrderValue ?? earnings?.computed?.grossOrderValue ?? 0);
+
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
   // Both handlers only ask the server to change the session, then re-run the identity check above.
@@ -316,6 +426,11 @@ export default function PartnerMobileApp() {
     setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setOperationBusy(false);
     setPaymentRequest(null); setPaymentPollKey(0); setEarnings(null); setMediaMessage(""); setMediaAssets([]); setMediaAssetsError(""); setMediaPollKey(0);
     setBusy(false); setRefreshKey(0); lifecycleLock.current = false;
+    // The workspace state that arrives with the earnings payload belongs to the same account and is
+    // dropped with it. pendingProof names the previous partner's BOOKING IDS, so leaving it behind
+    // would carry one partner's work onto the next partner's screen - on the UAT provider switch
+    // just as much as on sign-out, which is why it lives in this shared reset.
+    setEarningsNotice(""); setEngagement(""); setWorkspaceState({ onboardingStatus: "", liveness: null, pendingProof: [] });
   };
   const signOut = async () => {
     if (accountBusy) return;
@@ -430,16 +545,56 @@ export default function PartnerMobileApp() {
             <div className={styles.detailGrid}>
               <div><small>Customer</small><b>{selected.customer.name}</b><span>{selected.customer.maskedPhone}</span></div>
               <div><small>Pets</small><b>{selected.pets.map((pet) => pet.name).join(", ")}</b><span>{selected.pets.map((pet) => pet.breed).filter(Boolean).join(", ")}</span></div>
-              <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}</span></div>
-              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
+              <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}{selected.occurrenceCount > 1 ? ` · visit 1 of ${selected.occurrenceCount}` : ""}</span></div>
+              {/* The mode alone never said how much money was involved. The two amounts are NOT
+                  interchangeable: amount_due_now is what the customer owed ONLINE at booking, which the
+                  flow sets to 0 for pay_after_service - precisely the case where the partner collects.
+                  So the door figure is payment.amount, and amountDueNow is only ever a prepaid note. */}
+              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}{collectAtDoor > 0 ? ` · collect ${money(collectAtDoor)}` : selected.payment.amountDueNow > 0 ? ` · ${money(selected.payment.amountDueNow)} due online` : ""}</span></div>
+              <div><small>Where</small><b>{selected.zoneId}</b><span>{selected.cityId}</span></div>
+              <div><small>Package</small><b>{selected.packageName}</b><span>{selected.subscription ? `${label(selected.subscription)} plan` : money(selected.totalAmount)}</span></div>
             </div>
-            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
+            {/* Projected by the route out of the booking's pricing_json and, until now, discarded by the
+                client: the handling requirements recorded against this pet and the add-ons the partner is
+                expected to perform. Driving to a job without either is the gap this closes. */}
+            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{label(item)}</li>)}</ul></section>}
+            {!!selected.addOns.length && <div className={styles.proof}><b>Add-ons booked</b><span>{selected.addOns.map(label).join(" · ")}</span></div>}
+            {/* The lifecycle timeline the route already sanitizes for providers. Only the event type and
+                its timestamp are shown: detail_json is filtered server-side, but there is no reason to
+                render free-form detail on a partner's phone at all. */}
+            {!!selected.events.length && <section className={styles.notice} aria-label="Job activity"><b>Recent activity</b><ul>{selected.events.slice(0, 5).map((event, index) => <li key={`${event.occurredAt}-${index}`}>{label(event.eventType)}{whenMs(event.occurredAt) ? ` · ${whenMs(event.occurredAt)}` : ""}</li>)}</ul></section>}
+            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>
             {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
               {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
               {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
               {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
-            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}><b>Payment due after service</b>{!paymentRequest ? <><p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p><button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button></> : <><p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>{paymentRequest.collectable ? <><p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p><p><code>{paymentRequest.qrPayload}</code></p></> : <p>This payment request is no longer collectable. Refresh or create a governed replacement request.</p>}<small>Razorpay ref {paymentRequest.providerReference}. Payment remains unpaid until a signature-verified gateway capture is reconciled.</small></>}</section>}
+            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
+              <b>Payment due after service</b>
+              {!paymentRequest ? <>
+                <p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p>
+                <button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button>
+              </> : <>
+                <p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>
+                {paymentRequest.collectable ? <>
+                  <p><a href={paymentRequest.paymentPath} target="_blank" rel="noreferrer">Open sandbox checkout</a></p>
+                  <p><code>{paymentRequest.qrPayload}</code></p>
+                  {whenMs(paymentRequest.expiresAt) && <small>Collectable until {whenMs(paymentRequest.expiresAt)}.</small>}
+                </> : paymentSettled ? <p>This payment is already {label(paymentRequest.paymentStatus)} against the canonical payment record, so no further collection is due.</p>
+                  : <>
+                    {/* The expired branch used to say "create a governed replacement request" while the
+                        only create button lived in the !paymentRequest branch above - so the instruction
+                        named an action the screen did not offer. createPostServicePaymentRequest already
+                        issues a replacement once the old link has expired; this is that call. */}
+                    <p>{paymentExpired ? `This payment link expired${whenMs(paymentRequest.expiresAt) ? ` on ${whenMs(paymentRequest.expiresAt)}` : ""}.` : "This payment request is no longer collectable."} A governed replacement link can be issued for the same booking.</p>
+                    <div className={styles.primaryActions}>
+                      <button disabled={busy} onClick={() => void requestPayment()}>{busy ? "Working…" : "Create replacement payment request"}</button>
+                      <button type="button" disabled={busy} onClick={() => setPaymentPollKey(current => current + 1)}>Refresh payment status</button>
+                    </div>
+                  </>}
+                <small>Razorpay ref {paymentRequest.providerReference}. {paymentRequest.liveCapture ? "Capture is live." : "Sandbox only - no live capture."} Payment remains unpaid until a signature-verified gateway capture is reconciled.</small>
+              </>}
+            </section>}
             <section className={styles.notice}>
               <b>Live order impact</b>
               <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
@@ -471,9 +626,25 @@ export default function PartnerMobileApp() {
         {tab === "earnings" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER FINANCE</small><h1>Earnings</h1></div><span /></div>
           <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
-          <div className={styles.financeRows}><article><div><b>Computed net payout</b><small>Governed payout computations only</small></div><strong>{money(earnings?.computed.netPayout ?? 0)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earnings?.computed.orders ?? 0}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
-          {earnings?.settlements.map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
-          {earnings?.incentives.map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
+          {earningsNotice && <section className={styles.notice} role="status"><b>Earnings are not shown yet</b><p>{earningsNotice}</p></section>}
+          {/* The shift-liveness gate, the onboarding link state and outstanding proof: all three arrive
+              with the earnings payload and none of them used to be shown anywhere.
+              The gate only RETURNS required:true after its own "no matched check" throw, so matched is
+              true on every value that gets here - an unmatched gate arrives as the governed 428, which
+              the shell's error banner shows on every tab. The reachable state to render is the pass. */}
+          {workspaceState.liveness?.required && workspaceState.liveness.matched && <section className={styles.notice} role="status"><b>Shift liveness matched</b><p>Your live selfie was matched against your verified onboarding profile{workspaceState.liveness.shiftDate ? ` for ${workspaceState.liveness.shiftDate}` : ""}, so today&rsquo;s schedule is open.</p></section>}
+          {workspaceState.onboardingStatus && workspaceState.onboardingStatus !== "active" && <section className={styles.notice} role="status"><b>Onboarding is {label(workspaceState.onboardingStatus)}</b><p>Settlement and payout states stay withheld until your partner profile is active.</p><Link href="/partner/onboarding">Open onboarding &amp; documents</Link></section>}
+          {!!workspaceState.pendingProof.length && <section className={styles.notice} role="status"><b>Service proof still outstanding</b><ul>{workspaceState.pendingProof.map(item => <li key={item.bookingId}>{item.bookingId} · {label(item.serviceCode)} — missing {item.missing.map(label).join(", ")}</li>)}</ul><p>A completed job without its required proof holds up the settlement for that booking.</p></section>}
+          {earnings && earnings.visible !== false && <>
+            <div className={styles.financeRows}><article><div><b>{isCommission ? "Commission earned" : "Computed net payout"}</b><small>Governed payout computations only</small></div><strong>{money(earningsNetPayout)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earningsOrders}</strong></article><article><div><b>Gross order value</b><small>{isCommission ? "What the commission is computed from" : "Order value behind the payout"}</small></div><strong>{money(earningsGross)}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
+            {(earnings.settlements ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
+            {(earnings.incentives ?? []).map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
+            {/* The commission ledger and its payout states: returned by providerWorkspace for every
+                commission partner and, until now, rendered nowhere at all. */}
+            {(earnings.commissionOrders ?? []).map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.serviceCode)} · {label(item.status)}</b><p>Commission {money(item.commissionAmount)} on an order of {money(item.orderAmount)}</p><small>{label(item.commissionMode)} rate{item.dueAt ? ` · due ${whenMs(item.dueAt)}` : ""}</small></section>)}
+            {(earnings.payouts ?? []).map(item => <section key={item.id} className={styles.notice}><b>Payout {money(item.amount)} · {label(item.status)}</b><p>Booking {item.bookingId}{item.dueAt ? ` · due ${whenMs(item.dueAt)}` : ""}</p>{item.providerReference && <small>Reference {item.providerReference}</small>}</section>)}
+            {earnings.note && <p className={styles.note}>{earnings.note}</p>}
+          </>}
           <p className={styles.note}>Booking value is deliberately not shown as partner earnings. Payout instructions remain sandbox-only in this UAT candidate.</p>
         </>}
 
