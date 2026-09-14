@@ -199,6 +199,9 @@ test("birthday sweep: exactly one reward per pet per year, and the reward is sin
   assert.equal((await birthday.runPetBirthdaySweep(db, { today: "2027-08-15" })).rewardsIssued, 1);
 
   const code = issued.rewards[0].code;
+  // Redemption semantics are independent of expiry. Keep this historical sweep fixture
+  // active so the test does not start failing when wall-clock time passes its 30-day window.
+  sqlite.prepare("UPDATE pet_birthday_rewards SET expires_at=? WHERE code=?").run(Date.now() + 30 * DAY, code);
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     .run("BK-GROOM", "CUS-BD", "grooming", "Dog bath", "confirmed", "2026-08-20T05:00:00.000Z", "2026-08-20T06:00:00.000Z", 1349, "INR", NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
@@ -225,6 +228,9 @@ test("birthday reward cannot be double-spent by two concurrent redeems", async (
   await birthday.savePetBirthday(db, { petId: "PET-RACE", customerId: "CUS-RACE", dateOfBirth: "2020-08-15", actorId: "CUS-RACE" });
   const issued = await birthday.runPetBirthdaySweep(db, { today: "2026-08-15" });
   const code = issued.rewards[0].code;
+  // This case proves atomic single-use redemption, not expiration. Keep the historical
+  // reward active regardless of the date on which the suite is executed.
+  sqlite.prepare("UPDATE pet_birthday_rewards SET expires_at=? WHERE code=?").run(Date.now() + 30 * DAY, code);
   for (const id of ["BK-R1", "BK-R2"]) {
     sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, "CUS-RACE", "grooming", "Dog bath", "confirmed", "2026-08-20T05:00:00.000Z", "2026-08-20T06:00:00.000Z", 1349, "INR", NOW, NOW);
