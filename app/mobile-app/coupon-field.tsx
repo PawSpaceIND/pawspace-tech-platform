@@ -26,6 +26,7 @@ export default function CouponField(props: {
   cityId?: string;
   channel?: "customer_app" | "website" | "assisted_staff" | "whatsapp" | "partner_app";
   packageCode?: string;
+  cartKey?: string;
   onDiscountChange: (discount: number, code: string, quoteId?: string) => void;
 }) {
   const {
@@ -38,6 +39,7 @@ export default function CouponField(props: {
     cityId = "blr",
     channel = "customer_app",
     packageCode = "uat-default",
+    cartKey = "",
     onDiscountChange,
   } = props;
   const [code, setCode] = useState("");
@@ -48,12 +50,16 @@ export default function CouponField(props: {
   const [showOffers, setShowOffers] = useState(false);
   const autoApplied = useRef(false);
   const appliedCommercialKey = useRef("");
-  const commercialKey = `${service}|${orderValue}|${paymentMode}|${isSubscription}|${cityId}|${packageCode}`;
+  const commercialKey = JSON.stringify([service,orderValue,paymentMode,isSubscription,cityId,packageCode,customerId,channel,eligible,cartKey]);
+  const requestVersion=useRef(0);
+  useEffect(()=>{requestVersion.current+=1;setLoading(false);return()=>{requestVersion.current+=1;};},[commercialKey]);
 
   const apply = async (rawCode?: string) => {
     const normalized = (rawCode ?? code).trim().toUpperCase();
     if (!normalized || loading) return;
     if (!customerId) { setMessage("Sign in required before applying a coupon"); return; }
+    const version=++requestVersion.current;
+    setApplied("");onDiscountChange(0, "");
     setLoading(true);
     try {
       const result = await quoteGovernedCoupon({
@@ -67,6 +73,7 @@ export default function CouponField(props: {
         paymentMode,
         isSubscription,
       });
+      if(version!==requestVersion.current)return;
       if (!result.valid || !result.code) {
         setApplied("");
         setMessage(result.error || "Coupon is not eligible for this booking");
@@ -78,11 +85,12 @@ export default function CouponField(props: {
       setMessage(`UAT coupon applied · you save ₹${result.discount}`);
       onDiscountChange(result.discount, result.code, result.quoteId);
     } catch (error) {
+      if(version!==requestVersion.current)return;
       setApplied("");
       setMessage(error instanceof Error ? error.message : "Unable to validate coupon");
       onDiscountChange(0, "");
     } finally {
-      setLoading(false);
+      if(version===requestVersion.current)setLoading(false);
     }
   };
 

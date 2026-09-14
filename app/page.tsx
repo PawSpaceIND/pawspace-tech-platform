@@ -7,7 +7,7 @@ import TestSyncPanel from "./components/test-sync-panel";
 import GroomingFlow, { GROOMING_SLOTS, resolveGroomingPackId } from "./mobile-app/grooming-flow";
 import CustomerLogin, { type LoggedInCustomer } from "./mobile-app/customer-login";
 import { loadCustomerAccount } from "../lib/customer-account-client";
-import { groomingBookingDates, groomingSlotFitsRoster } from "../lib/grooming-booking-calendar";
+import { groomingBookingDates, groomingSlotAvailable } from "../lib/grooming-booking-calendar";
 
 type PetType = "dog" | "cat";
 type OfferType = "regular" | "young" | "subscription";
@@ -70,6 +70,8 @@ const slots = GROOMING_SLOTS;
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
 export default function Home() {
+  const [clock,setClock]=useState(()=>Date.now());
+  useEffect(()=>{const refresh=()=>setClock(Date.now());const timer=window.setInterval(refresh,30_000);window.addEventListener("focus",refresh);return()=>{window.clearInterval(timer);window.removeEventListener("focus",refresh);};},[]);
   const [customer, setCustomer] = useState<LoggedInCustomer | null>(null);
   const [booking, setBooking] = useState(false);
   // loadCustomerAccount() sends NO id: the server derives the subject from the platform session.
@@ -81,6 +83,7 @@ export default function Home() {
     return () => { active = false; };
   }, []);
   function startBooking() {
+    if(!groomingSlotAvailable(dates[selectedDate]?.isoDate??"",slots.indexOf(selectedSlot??""),durationMinutes,Date.now())){setSelectedSlot(null);return;}
     if (customer) setBooking(true);
     else window.location.hash = "customer-login-modal";
   }
@@ -185,7 +188,7 @@ export default function Home() {
             </button>;
           })}
         </div>
-        {offerType !== "subscription" && <div className="addons-strip"><span>Popular add-ons</span><strong>Tick & flea ₹499</strong><strong>Oil massage ₹299</strong><em>Add during service</em></div>}
+        {offerType !== "subscription" && <div className="addons-strip"><span>Popular add-ons</span>{petType==="dog"&&<strong>Tick & flea ₹499</strong>}<strong>Oil massage ₹299</strong><em>Add during service</em></div>}
       </section>
 
       <section className="booking-panel slots-panel">
@@ -193,14 +196,14 @@ export default function Home() {
         <p className="muted">No login needed to browse. Provider capacity and zone availability are checked when you confirm the booking.</p>
         <div className="date-row">{dates.map((d, index) => <button key={d.isoDate} className={selectedDate === index ? "active" : ""} onClick={() => { setSelectedDate(index); setSelectedSlot(null); }}><span>{d.day}</span><strong>{d.date}</strong></button>)}</div>
         <div className="slots-grid">{slots.map((slot, index) => {
-          const withinRoster = groomingSlotFitsRoster(index, durationMinutes);
-          return <button key={slot} disabled={!withinRoster} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span><small>{withinRoster ? "Availability checked at confirmation" : "Outside service hours"}</small></button>;
+          const withinRoster = groomingSlotAvailable(dates[selectedDate]?.isoDate??"",index,durationMinutes,clock);
+          return <button key={slot} disabled={!withinRoster} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span><small>{withinRoster ? "Availability checked at confirmation" : "Started or outside service hours"}</small></button>;
         })}</div>
       </section>
 
       <aside className="checkout-bar">
         <div><span>{selectedPackage.name} · {petCount} {petCount === 1 ? "pet" : "pets"}</span><strong>{money(total)}</strong><small>{selectedSlot ? `${dates[selectedDate].date} · ${selectedSlot}` : "Select a slot to continue"}</small></div>
-        <button disabled={!selectedSlot} onClick={startBooking}>Confirm booking →</button>
+        <button disabled={!groomingSlotAvailable(dates[selectedDate]?.isoDate??"",slots.indexOf(selectedSlot??""),durationMinutes,clock)} onClick={startBooking}>Confirm booking →</button>
       </aside>
 
       

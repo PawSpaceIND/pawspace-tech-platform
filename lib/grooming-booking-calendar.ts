@@ -84,3 +84,14 @@ export function createAddressSessionToken(cryptoApi: Crypto | undefined = global
   fallbackSessionSequence += 1;
   return `address-${Date.now().toString(36)}-${fallbackSessionSequence.toString(36)}`;
 }
+
+/** Compare actual instants; slots remain in the service location's India time zone. */
+export function groomingSlotAvailable(isoDate: string, slotIndex: number, durationMinutes: number, asOf = Date.now()): boolean {
+  if (!Number.isFinite(asOf) || !Number.isInteger(slotIndex)) return false;
+  try {
+    const { start, end } = groomingSlotWindow(isoDate, slotIndex, durationMinutes);
+    return start.getTime() > asOf && end.getTime() > asOf;
+  } catch {
+    return false;
+  }
+}
