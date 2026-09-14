@@ -34,6 +34,44 @@ export const PROOF_REQUIREMENTS:Record<string,string[]>={
  pet_taxi:["reached","completed"],
 };
 
+/*
+ * Which proofs CLAIM a photo, and the media purpose each claim must be backed by.
+ *
+ * submitJobProof mirrors every proof into customer_job_updates, so a proof is a message to the
+ * customer: "A new daily photo of your pet is available." Only grooming's two photos were ever
+ * checked against stored media. Boarding's daily_photo and Sitting's visit_photo were not, so a
+ * provider could post either with any objectId, or none at all, and the customer was told a photo of
+ * their pet existed when nothing had been stored. Object storage is not even provisioned yet
+ * (lib/media-storage-adapter.ts reports connected:false until a bucket binding exists), so on this
+ * deployment no such photo could exist by any route.
+ *
+ * The other proof types make no photo claim - "reached", "completed", "medication ... logged",
+ * "fed and it's logged", and walk_route, which is GPS rather than media - so they stay note-based.
+ * A claim is gated here by what it tells the customer, not by which vertical it belongs to.
+ */
+export const PHOTO_PROOF_PURPOSE:Record<string,Record<string,string>>={
+ grooming:{before_photo:"before_service",after_photo:"after_service"},
+ boarding:{daily_photo:"stay_update"},
+ pet_sitting:{visit_photo:"sitting_update"},
+};
+
+const MEDIA_REF_PREFIX="media://asset/";
+
+/**
+ * A proof may only claim media that is stored, scan-approved and genuinely this provider's, for this
+ * booking. `synthetic` is checked too: a placeholder generated for a sandbox run is not evidence that
+ * anybody looked after an animal.
+ *
+ * Pass expectedPurpose to require a specific purpose; pass null to verify a reference that rode along
+ * on a proof which makes no photo claim, where any stored purpose is acceptable.
+ */
+async function requireStoredMedia(db:Db,input:{providerId:string;bookingId:string;objectId?:string|null},expectedPurpose:string|null,label:string){
+ const ref=text(input.objectId),mediaId=ref.startsWith(MEDIA_REF_PREFIX)?ref.slice(MEDIA_REF_PREFIX.length):"";
+ if(!mediaId)throw new Error(`${label} must use a registered private media reference`);
+ const asset=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>().catch(()=>null);
+ if(!asset||text(asset.booking_id)!==input.bookingId||text(asset.provider_id)!==input.providerId||(expectedPurpose!==null&&text(asset.purpose)!==expectedPurpose)||text(asset.scan_status)!=="clean"||text(asset.access_status)!=="ready"||text(asset.retention_status)!=="active"||num(asset.synthetic)!==0)throw new Error(`${label} is not storage-confirmed and scan-approved`);
+}
+
 export async function ensureProviderWorkspaceTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_job_offers (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,booking_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'offered',offered_at INTEGER NOT NULL,responded_at INTEGER,expires_at INTEGER,detail_json TEXT NOT NULL DEFAULT '{}',UNIQUE(provider_id,booking_id))"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_job_offers_provider ON provider_job_offers(provider_id,status)"),
@@ -106,12 +144,12 @@ export async function submitJobProof(db:Db,input:{providerId:string;bookingId:st
  if(text(booking.provider_id)!==text(input.providerId))throw new Error("This booking is not assigned to you");
  const allowed=PROOF_REQUIREMENTS[text(booking.service_code)]||["reached","completed"];
  if(!allowed.includes(text(input.proofType)))throw new Error(`Proof type '${input.proofType}' is not expected for ${text(booking.service_code)}`);
- if(text(booking.service_code)==="grooming"&&["before_photo","after_photo"].includes(text(input.proofType))){
-  const expectedPurpose=text(input.proofType)==="before_photo"?"before_service":"after_service",ref=text(input.objectId),mediaId=ref.startsWith("media://asset/")?ref.slice("media://asset/".length):"";
-  if(!mediaId)throw new Error("Grooming photo proof must use a registered private media reference");
-  const asset=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>().catch(()=>null);
-  if(!asset||text(asset.booking_id)!==input.bookingId||text(asset.provider_id)!==input.providerId||text(asset.purpose)!==expectedPurpose||text(asset.scan_status)!=="clean"||text(asset.access_status)!=="ready"||text(asset.retention_status)!=="active"||num(asset.synthetic)!==0)throw new Error("Grooming photo proof is not storage-confirmed and scan-approved");
- }
+ const expectedPurpose=PHOTO_PROOF_PURPOSE[text(booking.service_code)]?.[text(input.proofType)];
+ if(expectedPurpose)await requireStoredMedia(db,input,expectedPurpose,`${text(input.proofType).replace(/_/g," ")} proof`);
+ /* A proof type that makes no photo claim may still carry an objectId, and that reference is copied
+  * into the customer update verbatim. An unverified one would be a second way to point a customer at
+  * an asset that was never stored, so a media reference is checked wherever it appears. */
+ else if(text(input.objectId).startsWith(MEDIA_REF_PREFIX))await requireStoredMedia(db,input,null,`${text(input.proofType).replace(/_/g," ")} proof`);
  const now=Date.now();
  await db.prepare("INSERT INTO provider_job_proofs (id,booking_id,provider_id,proof_type,object_id,note,distance_km,created_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(booking_id,proof_type) DO UPDATE SET object_id=excluded.object_id,note=excluded.note,distance_km=excluded.distance_km,created_at=excluded.created_at")
   .bind(uid("PRF"),input.bookingId,input.providerId,text(input.proofType),text(input.objectId)||null,text(input.note)||null,input.distanceKm==null?null:Number(input.distanceKm),now).run();
