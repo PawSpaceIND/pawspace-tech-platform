@@ -75,7 +75,7 @@ test("pay-now is gated by the shared payment page and cannot self-confirm", () =
   assert.match(source, /mode:pay==="online"\?"prepaid":"pay_after_service"/);
   assert.match(source, /setPendingPayment\(\{bookingId:canonical\.bookingId/);
   assert.match(source, /<BookingPaymentPage[^>]*serviceName="Grooming"/);
-  assert.match(source, /onVerified=\{\(\)=>\{/);
+  assert.match(source, /onVerified=\{(?:async)?\(\)=>\{/);
   assert.doesNotMatch(code, /Paid in UAT sandbox/);
   assert.match(transactionSource, /"payment_pending"/);
 });
