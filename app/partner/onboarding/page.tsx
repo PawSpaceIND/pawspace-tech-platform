@@ -1,5 +1,5 @@
-import { apiErrorMessage } from "../../../lib/api-error-message";
 "use client";
+import { apiErrorMessage } from "../../../lib/api-error-message";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import PartnerLogin, { type LoggedInProvider } from "../partner-login";

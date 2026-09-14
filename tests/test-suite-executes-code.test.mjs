@@ -110,6 +110,17 @@ const executes = (src) =>
  *                                       through exactly that gap. Executing the module is what
  *                                       CANNOT catch it: the bad line only runs on a rare branch.
  *
+ *   use-client-directive-placement       checks that "use client" is the FIRST statement in its
+ *   .test.mjs                            file. Put an import above it and Next.js silently ignores
+ *                                        the directive, so the module ships as a server component
+ *                                        and every hook in it fails. Executing the module is what
+ *                                        CANNOT catch it - the directive is just a string
+ *                                        expression, legal to tsc, clean to eslint, and tolerated
+ *                                        by the dev server, so even a browser check of the page
+ *                                        looks fine. It reached three pages at once before a review
+ *                                        bot caught it, and it fails: swapping the two lines back
+ *                                        turns it red and names the import that pushed it down.
+ *
  *   customer-vertical-routes            checks that every vertical resolves at its own path. There
  *   .test.mjs                           is nothing to execute: /grooming 404'd because app/grooming
  *                                       held only manage/page.tsx, and a page that does not exist
@@ -122,6 +133,7 @@ const META_TESTS = new Set([
   "test-suite-executes-code.test.mjs",
   "schema-column-reference-contract.test.mjs",
   "customer-vertical-routes.test.mjs",
+  "use-client-directive-placement.test.mjs",
 ]);
 
 function staticTestFiles() {
