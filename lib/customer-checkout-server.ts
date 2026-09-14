@@ -1,4 +1,5 @@
 import { reconcileRazorpayCaptureIntent } from "./razorpay-capture-reconciliation";
+import { createDegradationLog, type DegradedRead } from "./degraded-reads";
 /** Customer-owned sandbox boundary. No capture, refund, ledger or assignment writes live here. */
 type Row = Record<string, unknown>;
 export class CustomerCheckoutError extends Error {
@@ -27,6 +28,25 @@ export async function assertCustomerCheckoutBooking(db: D1Database, customerId: 
       new Set(["cancelled", "refunded", "partially_refunded"]).has(String(row.payment_status)))) {
     throw new CustomerCheckoutError("This booking cannot accept a new payment. Contact billing support.", 409);
   }
+}
+export type CustomerCheckoutPet = { id:string; name:string; species:string; breed:string|null };
+export type CustomerCheckoutConfirmation = { bookingId:string; status:string; providerId:string|null; providerName:string|null; providerModel:string|null; packageName:string|null; scheduledStart:string; scheduledEnd:string; totalAmount:number; currency:string; paymentStatus:string|null; paymentId:string|null; gatewayOrderId:string|null; gatewayPaymentId:string|null; pets:CustomerCheckoutPet[]; degraded:DegradedRead[] };
+export async function readCustomerCheckoutConfirmation(db:D1Database,customerId:string,bookingId:string):Promise<CustomerCheckoutConfirmation>{
+  const booking=await db.prepare(`SELECT id,status,provider_id,package_name,scheduled_start,scheduled_end,total_amount,currency FROM canonical_bookings WHERE id=? AND customer_id=? LIMIT 1`).bind(bookingId,customerId).first<Row>();
+  if(!booking)throw new CustomerCheckoutError("Booking confirmation was not found for your account.",404);
+  const degradation=createDegradationLog();
+  const optionalFirst=async(source:string,statement:D1PreparedStatement)=>{try{return await statement.first<Row>()}catch(error){return degradation.note(source,error,null)}};
+  const optionalAll=async(source:string,statement:D1PreparedStatement)=>{try{return await statement.all<Row>()}catch(error){return degradation.note(source,error,{results:[] as Row[]})}};
+  const petLink=await optionalFirst("booking pet linkage",db.prepare("SELECT pet_ids_json FROM canonical_bookings WHERE id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId));
+  const petIds=(()=>{try{const value=JSON.parse(String(petLink?.pet_ids_json||"[]"));return Array.isArray(value)?value.filter((id):id is string=>typeof id==="string"&&id.length>0):[]}catch{return[]}})();
+  const [work,payment,pets,intent,event]=await Promise.all([
+    optionalFirst("provider work order",db.prepare("SELECT provider_name,provider_model FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(bookingId)),
+    optionalFirst("booking payment",db.prepare("SELECT id,status,currency FROM booking_payments WHERE booking_id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId)),
+    petIds.length?optionalAll("customer pets",db.prepare("SELECT id,name,species,breed FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(customerId,JSON.stringify(petIds))):Promise.resolve({results:[] as Row[]}),
+    optionalFirst("payment intent",db.prepare("SELECT gateway_order_id FROM payment_intents WHERE booking_id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId)),
+    optionalFirst("payment capture event",db.prepare("SELECT gateway_order_id,gateway_payment_id FROM payment_gateway_events WHERE booking_id=? AND processing_status='processed' AND event_type IN ('payment.captured','order.paid') ORDER BY received_at DESC LIMIT 1").bind(bookingId)),
+  ]);
+  return{bookingId:String(booking.id),status:String(booking.status||""),providerId:booking.provider_id?String(booking.provider_id):null,providerName:work?.provider_name?String(work.provider_name):null,providerModel:work?.provider_model?String(work.provider_model):null,packageName:booking.package_name?String(booking.package_name):null,scheduledStart:String(booking.scheduled_start||""),scheduledEnd:String(booking.scheduled_end||""),totalAmount:Number(booking.total_amount||0),currency:String(payment?.currency||booking.currency||"INR"),paymentStatus:payment?.status?String(payment.status):null,paymentId:payment?.id?String(payment.id):null,gatewayOrderId:event?.gateway_order_id?String(event.gateway_order_id):intent?.gateway_order_id?String(intent.gateway_order_id):null,gatewayPaymentId:event?.gateway_payment_id?String(event.gateway_payment_id):null,pets:pets.results.map(row=>({id:String(row.id),name:String(row.name||"Pet"),species:String(row.species||"other"),breed:row.breed?String(row.breed):null})),degraded:degradation.entries()};
 }
 export type CustomerCheckoutReceipt = { bookingId: string; orderId: string; paymentId: string; signature: string };
 export async function verifyCustomerCheckoutReceipt(db: D1Database, env: Record<string, unknown>, customerId: string, receipt: CustomerCheckoutReceipt) {
