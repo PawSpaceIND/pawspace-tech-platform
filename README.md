@@ -91,7 +91,24 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 ## Diagnostic Commands
 
 - `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
+- `npm run dev`: start the Vite/Vinext development server.
+  **This needs a `CLOUDFLARE_API_TOKEN`** — the Workers AI and Vectorize bindings in
+  `wrangler.toml` have no local emulation, so the Cloudflare plugin opens a remote session for
+  them and aborts without one. To run the whole app locally with no Cloudflare account at all,
+  use the e2e binding set, which carries only D1:
+
+  ```bash
+  PAWSPACE_DEPLOYMENT_ENV=e2e PAWSPACE_LOCAL_PREVIEW=on APP_ENV=staging FORBID_PRODUCTION=true \
+    PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false \
+    PAWSPACE_UAT_LOGIN=on PAWSPACE_UAT_ACCESS_CODE=<choose-one> \
+    PAWSPACE_UAT_SIGNING_KEY=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))') \
+    npm run dev
+  ```
+
+  Then sign in at `/staging-login` with that access code for a Founder session, or at
+  `/mobile-app` with any 10-digit number for a customer session — the sandbox OTP is printed on
+  screen. Anything that inspects the UI needs one of these; a signed-out visitor sees very
+  little.
 - `npm run build`: build and validate the deployable Sites artifact
 - `npm run start`: start the built Vinext application
 - `npm test`: build, validate, and verify the rendered development-preview metadata
