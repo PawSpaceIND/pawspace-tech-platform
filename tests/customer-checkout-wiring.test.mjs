@@ -277,6 +277,8 @@ test('real order route persists one server-priced intent and reuses it across re
   sqlite.exec('DROP TABLE payment_intents; DROP TABLE payment_gateway_events;');
   const { ensureFinancialRuntimeTables } = await import('../lib/financial-runtime-schema.ts');
   await ensureFinancialRuntimeTables(db);
+  // Sabotage the secondary reconciliation metadata: customer payment-start must not wait on it.
+  sqlite.exec('DROP TABLE IF EXISTS payment_gateway_links; DROP TABLE IF EXISTS payment_reconciliation_records;');
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'https://api.razorpay.com/v1/orders'); assert.equal(init.method, 'POST');
