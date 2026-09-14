@@ -8,12 +8,31 @@
 
 import { publicKeyId, paymentEnvironment } from "./razorpay-client";
 import { paymentStageAmount } from "./payment-stage-amount";
+import { ensurePaymentReconciliationTables } from "./grooming-payment-reconciliation";
 import { governedJsonError } from "./governed-http-error";
 import { claimPaymentIntent, rupeesToPaiseExact } from "./financial-lifecycle";
 import { executeRazorpayOrderOutbox } from "./razorpay-order-outbox-saga";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
+
+async function persistGatewayOrderLink(db: Db, input: {
+  bookingId: string; paymentId: string; gatewayOrderId: string; environment: "sandbox" | "live"; expectedAmount: number; currency: string;
+}) {
+  const now = Date.now();
+  await db.batch([
+    db.prepare(`INSERT INTO payment_gateway_links
+      (id,booking_id,payment_id,provider,environment,gateway_order_id,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,'active',?,?)
+      ON CONFLICT(booking_id) DO UPDATE SET gateway_order_id=excluded.gateway_order_id,provider=excluded.provider,environment=excluded.environment,status='active',updated_at=excluded.updated_at`)
+      .bind(`PAYLINK-${crypto.randomUUID().slice(0,10).toUpperCase()}`, input.bookingId, input.paymentId, "razorpay", input.environment, input.gatewayOrderId, now, now),
+    db.prepare(`INSERT INTO payment_reconciliation_records
+      (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at)
+      VALUES (?,?,?,?,?,0,0,?,'order_linked','pending',0,NULL,?)
+      ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,currency=excluded.currency,gateway_status=CASE WHEN payment_reconciliation_records.gateway_status IN ('captured','refunded','partially_refunded') THEN payment_reconciliation_records.gateway_status ELSE 'order_linked' END,updated_at=excluded.updated_at`)
+      .bind(input.paymentId, input.bookingId, "razorpay", input.environment, input.expectedAmount, input.currency, now),
+  ]);
+}
 
 export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
   const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
@@ -26,6 +45,9 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
   if (!stage) throw new Error("Booking or its payment record was not found");
   if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
 
+  // Initialize reconciliation schema before any irreversible Razorpay provider call. This keeps
+  // lazy DDL out of the post-provider response path while preserving webhook/reconciliation tables.
+  await ensurePaymentReconciliationTables(db);
   const amount = stage.dueNow, currency = stage.currency, paymentId = stage.paymentId;
   const amountPaise = rupeesToPaiseExact(amount);
   const environment = paymentEnvironment(env);
@@ -74,9 +96,9 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
     }
   }
 
-  // The durable payment intent is the authoritative order mapping. Do not block the customer
-  // response on secondary reconciliation-table DDL/DML after Razorpay has already created an order.
-  // Webhook and receipt verification both resolve the order through payment_intents.gateway_order_id.
+  // Schema is already ready before the provider call, so this is DML-only reconciliation metadata.
+  // The authoritative order identity remains payment_intents.gateway_order_id.
+  await persistGatewayOrderLink(db, { bookingId, paymentId, gatewayOrderId: orderId, environment, expectedAmount: amount, currency });
   return {
     connected: true,
     environment,
