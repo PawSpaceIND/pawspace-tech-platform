@@ -260,6 +260,26 @@ test("the server key never reaches a provider response, even when a route is con
   }
 });
 
+test("route snapshots and provider points are real rows the module reads back", async (t) => {
+  const f = await assignedJourney(t);
+  const bookingId = f.result.bookingId, providerId = f.result.provider.id;
+  assert.equal(await maps.latestProviderPoint(f.db, bookingId, providerId), null, "no point exists before one is stored");
+  const older = Date.now() - 60_000, newer = Date.now();
+  for (const [id, lat, lng, at] of [["PLE-1", 12.9, 77.5, older], ["PLE-2", 12.95, 77.55, newer]]) {
+    f.sqlite.prepare("INSERT INTO provider_location_events (id,booking_id,provider_id,latitude,longitude,accuracy_meters,captured_at,created_at) VALUES (?,?,?,?,?,8,?,?)").run(id, bookingId, providerId, lat, lng, at, at);
+  }
+  assert.deepEqual(await maps.latestProviderPoint(f.db, bookingId, providerId), { lat: 12.95, lng: 77.55, accuracyMeters: 8, capturedAt: newer }, "the most recent capture wins");
+  assert.equal(await maps.latestProviderPoint(f.db, bookingId, "groom_maa"), null, "points are scoped to the provider");
+  await maps.saveRouteSnapshot(f.db, { bookingId, providerId, origin: { lat: 12.95, lng: 77.55 }, destinationAddress: "12 MG Road", route: { status: "configured", provider: "google_routes", distanceMeters: 3100, durationSeconds: 420, polyline: "xyz" } });
+  await maps.saveRouteSnapshot(f.db, { bookingId, providerId, origin: { lat: 12.95, lng: 77.55 }, destinationAddress: "12 MG Road", route: { status: "route_unavailable", error: "quota" } });
+  const rows = f.sqlite.prepare("SELECT route_status,distance_meters,duration_seconds,provider,detail_json FROM grooming_route_snapshots WHERE booking_id=? ORDER BY created_at, rowid").all(bookingId);
+  assert.deepEqual(rows.map((row) => [row.route_status, row.distance_meters, row.duration_seconds, row.provider, JSON.parse(row.detail_json)]), [
+    ["configured", 3100, 420, "google_routes", { error: null, polyline: "xyz" }],
+    ["route_unavailable", null, null, "google_routes", { error: "quota", polyline: null }],
+  ], "a failed route is recorded with its reason and no invented distance");
+  assert.equal(maps.mapsNavigationUrl("12 MG Road, Bengaluru", { lat: 12.95, lng: 77.55 }), "https://www.google.com/maps/dir/?api=1&destination=12+MG+Road%2C+Bengaluru&travelmode=driving&origin=12.95%2C77.55");
+});
+
 // --- lib/grooming-location-client.ts -------------------------------------------------------------
 
 test("the customer client posts the canonical booking's doorstep to the governed endpoint and surfaces its refusal", async () => {

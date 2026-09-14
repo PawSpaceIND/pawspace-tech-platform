@@ -149,6 +149,17 @@ test("a Training booking needs a server quote and the reserved window, starts pa
   assert.equal(claimed.status, 201, JSON.stringify(claimed.body));
   assert.equal(claimed.body.data.status, "payment_pending");
   assert.equal(ctx.sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id=?").get(claimed.body.data.bookingId).status, "created", "a caller-declared capture is demoted until a gateway proves it");
+
+  // The Training checkout method itself carries no gateway proof, so a "captured" claim on it is
+  // demoted the same way. This used to slip through the online-methods filter and confirm the booking.
+  const third = await commercial.createTrainingQuote(ctx.db, { packageCode: "training-2-starter", petCount: 1, scheduledStart: futureStart(34).toISOString(), paymentMode: "prepaid" });
+  const thirdStart = futureStart(34);
+  const thirdSchedule = await schedule(ctx, third, thirdStart);
+  assert.equal(thirdSchedule.status, 200, JSON.stringify(thirdSchedule.body));
+  const internal = await book(ctx, bookingPayload(third, thirdSchedule, thirdStart, { payment: { method: "internal_uat", mode: "prepaid", status: "captured", detail: "Training UAT sandbox capture marker" } }));
+  assert.equal(internal.status, 201, JSON.stringify(internal.body));
+  assert.equal(internal.body.data.status, "payment_pending", "no payment method lets a caller confirm their own Training booking");
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id=?").get(internal.body.data.bookingId).status, "created");
 });
 
 test("the scheduling gateway books only the signed-in customer's own dogs", async (t) => {
