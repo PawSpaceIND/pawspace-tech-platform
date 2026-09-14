@@ -48,6 +48,8 @@ test("saved address is checked by PIN without inventing a geographic point",asyn
   assert.equal(calls[0].url,"/api/service-zone?pincode=560038");assert.equal(calls[0].options.signal,signal);
   assert.equal(resolved.assignment.pincode,"560038");assert.match(resolved.address,/42 Test Road/);
   assert.equal(resolved.latitude,undefined);assert.equal(resolved.longitude,undefined);
+  await validateSavedStayAddress({...address,postalCode:"560 038"},signal);
+  assert.equal(calls[1].url,"/api/service-zone?pincode=560038");
 });
 test("saved invalid or unsupported addresses do not bypass coverage validation",async t=>{
   let requests=0;t.mock.method(globalThis,"fetch",async()=>{requests++;return Response.json({error:"Outside service area"},{status:422});});

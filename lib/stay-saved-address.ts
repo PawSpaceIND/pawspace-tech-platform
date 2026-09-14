@@ -10,7 +10,7 @@ export function savedStayAddressText(address: SavedStayAddress) {
   return [address.line1, address.line2, address.area, address.city, address.postalCode].filter(Boolean).join(", ");
 }
 export async function validateSavedStayAddress(address: SavedStayAddress, signal?: AbortSignal): Promise<StayLocation> {
-  const pin = address.postalCode?.trim() || savedStayAddressText(address).match(/\b[1-9]\d{5}\b/)?.[0] || "";
+  const pin = address.postalCode?.replace(/\D/g, "") || savedStayAddressText(address).match(/\b[1-9]\d{5}\b/)?.[0] || "";
   if (!/^[1-9]\d{5}$/.test(pin)) throw new Error("Add the PIN code to this address so we can check availability.");
   const coverage = await resolveServiceCoverage(pin, signal);
   return { address: savedStayAddressText(address), zone: coverage.zone,
