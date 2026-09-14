@@ -42,7 +42,8 @@ jobs:
           set -euo pipefail
           ACTUAL_SHA="$(git rev-parse HEAD)"
           test "$ACTUAL_SHA" = "${{ inputs.expected_sha }}"
-          git merge-base --is-ancestor "$ACTUAL_SHA" origin/main
+          git fetch --no-tags --depth=1 origin main
+          git merge-base --is-ancestor "$ACTUAL_SHA" FETCH_HEAD
           echo "Exact deployed SHA verified: $ACTUAL_SHA"
 
       - name: Install Node
