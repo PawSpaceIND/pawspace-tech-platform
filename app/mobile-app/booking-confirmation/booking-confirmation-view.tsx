@@ -97,10 +97,17 @@ function BookingConfirmationInner(props: Props) {
             <div><dt>Status</dt><dd>{projection.bookingStatus.replaceAll("_", " ")}</dd></div>
             <div><dt>Exact slot</dt><dd>{when(projection.scheduledStart)} – {when(projection.scheduledEnd)} IST</dd></div>
             <div><dt>Assigned provider</dt><dd>{projection.providerName} · {projection.providerModel.replaceAll("_", " ")}</dd></div>
+            {(projection.pets?.length ?? 0) > 0 && <div><dt>{projection.pets?.length === 1 ? "Pet" : "Pets"}</dt><dd>{projection.pets?.map(pet => `${pet.name}${pet.breed ? ` · ${pet.breed}` : ` · ${pet.species}`}`).join(", ")}</dd></div>}
             <div><dt>Payment</dt><dd>{projection.paymentStatus.replaceAll("_", " ")}</dd></div>
             <div><dt>Transaction ID</dt><dd>{projection.transactionId || (projection.paymentMode === "pay_after_service" ? "Not applicable · pay after service" : "Synchronizing")}</dd></div>
             <div><dt>Booking total</dt><dd>{money(projection.totalAmount, projection.currency)}</dd></div>
           </dl><p className={styles.reference}>Booking reference · {projection.bookingId}</p></section>}
+      {verified && projection && <section className={styles.card} aria-label="Payment receipt"><h2>Payment receipt</h2><dl>
+        <div><dt>Status</dt><dd>{projection.paymentStatus.replaceAll("_", " ")}</dd></div>
+        <div><dt>Amount</dt><dd>{money(projection.totalAmount, projection.currency)}</dd></div>
+        {projection.gatewayPaymentId && <div><dt>Razorpay payment</dt><dd>{projection.gatewayPaymentId}</dd></div>}
+        {projection.gatewayOrderId && <div><dt>Razorpay order</dt><dd>{projection.gatewayOrderId}</dd></div>}
+      </dl><p className={styles.reference}>PawSpace payment record · {projection.paymentId}</p></section>}
       <div className={styles.actions}>
         {canPayAgain && <button type="button" className={styles.primary} disabled={busy} onClick={() => void controller.current?.start()}>Pay securely with Razorpay</button>}
         {!verified && state.canCheck && !busy && state.phase !== "pending" && <button type="button" className={styles.secondary} onClick={() => void controller.current?.resume()}>Check payment status</button>}
