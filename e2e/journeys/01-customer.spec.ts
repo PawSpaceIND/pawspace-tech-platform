@@ -91,6 +91,10 @@ test("customer navigation and billing controls have physical 44px targets and re
   try {
     const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
     expect(response?.status()).toBe(200);
+    // Consent remains visible through checkout: neither it nor the fixed navigation may intercept the other.
+    const consent = page.getByRole("dialog", { name: "Cookie consent" });
+    await target(consent.getByRole("button", { name: "Essential only" }), "consent:essential");
+    await target(consent.getByRole("button", { name: "Accept optional" }), "consent:optional");
     const nav = page.getByRole("navigation", { name: "Customer navigation" });
     const surfaces = [["Home", /Good morning,/], ["Book", /^Book Grooming$/], ["Activity", /^Your activity$/],
       ["My Pets", /^Your pets$/], ["Account", /^My PawSpace$/]] as const;

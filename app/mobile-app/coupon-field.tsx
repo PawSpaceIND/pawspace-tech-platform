@@ -45,14 +45,20 @@ export default function CouponField(props: {
   const [code, setCode] = useState("");
   const [applied, setApplied] = useState("");
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [offers, setOffers] = useState<AvailableOffer[]>([]);
   const [showOffers, setShowOffers] = useState(false);
   const autoApplied = useRef(false);
   const appliedCommercialKey = useRef("");
   const commercialKey = JSON.stringify([service,orderValue,paymentMode,isSubscription,cityId,packageCode,customerId,channel,eligible,cartKey]);
+  const [previousCommercialKey, setPreviousCommercialKey] = useState(commercialKey);
+  if (previousCommercialKey !== commercialKey) {
+    setPreviousCommercialKey(commercialKey);
+    setLoadingKey(null);
+  }
+  const loading = loadingKey === commercialKey;
   const requestVersion=useRef(0);
-  useEffect(()=>{requestVersion.current+=1;setLoading(false);return()=>{requestVersion.current+=1;};},[commercialKey]);
+  useEffect(()=>{requestVersion.current+=1;return()=>{requestVersion.current+=1;};},[commercialKey]);
 
   const apply = async (rawCode?: string) => {
     const normalized = (rawCode ?? code).trim().toUpperCase();
@@ -60,7 +66,7 @@ export default function CouponField(props: {
     if (!customerId) { setMessage("Sign in required before applying a coupon"); return; }
     const version=++requestVersion.current;
     setApplied("");onDiscountChange(0, "");
-    setLoading(true);
+    setLoadingKey(commercialKey);
     try {
       const result = await quoteGovernedCoupon({
         code: normalized,
@@ -90,7 +96,7 @@ export default function CouponField(props: {
       setMessage(error instanceof Error ? error.message : "Unable to validate coupon");
       onDiscountChange(0, "");
     } finally {
-      if(version===requestVersion.current)setLoading(false);
+      if(version===requestVersion.current)setLoadingKey(null);
     }
   };
 

@@ -405,7 +405,7 @@ body:has(nav[aria-label="Customer navigation"]) .ps-order-fab { bottom: calc(104
 @media (max-width:720px) { .cookie-consent { align-items:stretch; flex-direction:column; } .cookie-consent__actions { width:100%; } .cookie-consent button { flex:1; } .legal-header { flex-direction:column; } }
 
 /* Keep consent actions clear of customer/partner bottom bars, including iOS safe areas. */
-.cookie-consent { position:fixed; z-index:100; left:50%; transform:translateX(-50%); bottom:calc(88px + env(safe-area-inset-bottom, 0px)); margin:0; max-height:calc(100dvh - 120px - env(safe-area-inset-bottom, 0px)); overflow:auto; box-sizing:border-box; }
+.cookie-consent { position:relative; z-index:100; margin-bottom:calc(104px + env(safe-area-inset-bottom, 0px)); box-sizing:border-box; }
 .cookie-consent__actions { flex-wrap:wrap; }
 .cookie-consent button { min-height:44px; }
 @media (max-width:380px) { .cookie-consent { padding:12px; gap:12px; } .cookie-consent__actions { gap:8px; } }

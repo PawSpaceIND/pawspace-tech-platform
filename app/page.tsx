@@ -82,11 +82,6 @@ export default function Home() {
       .catch(() => { /* signed out: the booking control offers sign-in instead */ });
     return () => { active = false; };
   }, []);
-  function startBooking() {
-    if(!groomingSlotAvailable(dates[selectedDate]?.isoDate??"",slots.indexOf(selectedSlot??""),durationMinutes,Date.now())){setSelectedSlot(null);return;}
-    if (customer) setBooking(true);
-    else window.location.hash = "customer-login-modal";
-  }
   function completeLogin(next: LoggedInCustomer) {
     setCustomer(next);
     if (window.location.hash === "#customer-login-modal") window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
@@ -112,6 +107,12 @@ export default function Home() {
 
   const duration = petCount <= 2 ? "2 hours" : petCount === 3 ? "2.5 hours" : "4 hours";
   const durationMinutes = petCount <= 2 ? 120 : petCount === 3 ? 150 : 240;
+
+  const startBooking = () => {
+    if(!groomingSlotAvailable(dates[selectedDate]?.isoDate??"",slots.indexOf(selectedSlot??""),durationMinutes,Date.now())){setSelectedSlot(null);return;}
+    if (customer) setBooking(true);
+    else window.location.hash = "customer-login-modal";
+  };
 
   function switchPet(type: PetType) {
     setPetType(type);
