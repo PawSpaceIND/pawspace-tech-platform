@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installAiHooks, freshAiDb, seedCustomer } from "./helpers/ai-harness.mjs";
@@ -251,3 +252,23 @@ test("Native permission manifests for iOS and Android declare all required hardw
   assert.match(androidManifest, /android:name="android\.permission\.POST_NOTIFICATIONS"/);
 });
 
+
+
+test("native preparation requires partner URL for normalized targets and aliases", () => {
+  for (const selection of [
+    { CAPACITOR_TARGET: "partner" },
+    { CAPACITOR_TARGET: "PARTNER" },
+    { APP_TARGET: "partner" },
+    { APP_TARGET: "PARTNER" },
+  ]) {
+    const env = { ...process.env };
+    delete env.CAPACITOR_TARGET;
+    delete env.APP_TARGET;
+    delete env.PAWSPACE_PARTNER_APP_URL;
+    const result = spawnSync(process.execPath, ["scripts/prepare-partner-native.mjs"], {
+      cwd: new URL("..", import.meta.url), env: { ...env, ...selection }, encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Set PAWSPACE_PARTNER_APP_URL/);
+  }
+});
