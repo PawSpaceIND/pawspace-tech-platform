@@ -26,6 +26,8 @@ const findStatement = (source, marker) => {
 };
 
 // Owning DDL sources for every table the CRM stack touches (copied via extraction, never guessed).
+const contactListLib = read("lib/crm-contact-list.ts");
+
 const DDL_SOURCES = [
   crmRoute,
   revenueRoute,
@@ -83,7 +85,10 @@ function makeD1(sqlite) {
 test("no query in the CRM stack references a column missing from the owning DDL", () => {
   const db = schemaDb();
   let checked = 0;
-  for (const source of [crmRoute, revenueRoute, c360Route, c360Lib]) {
+  // The contact list query moved to lib/crm-contact-list.ts so a test could import and run it. It is
+  // audited here exactly as before: leaving it off this list would drop the CRM's most-used read out
+  // of the phantom-column check while every test still passed.
+  for (const source of [crmRoute, revenueRoute, c360Route, c360Lib, contactListLib]) {
     for (const sql of statementsOf(source)) {
       // Schema mutation uses interpolated identifiers; replacing identifiers with SQLite value
       // placeholders creates invalid SQL (for example ADD COLUMN ? ?). DML queries remain audited.
@@ -136,10 +141,27 @@ test("real execution: /api/crm create persists a contact + lead work item that t
   assert.match(ownerModule, /JOIN app_users u ON lower\(u\.email\)=lower\(m\.employee_email\)/,
     "and it must only consider members with a real login");
 
-  const list = db.prepare(findStatement(crmRoute, "SELECT * FROM crm_contacts ORDER BY updated_at")).all();
-  assert.equal(list.length, 1);
-  assert.equal(list[0].id, "CU-77001");
-  assert.equal(list[0].primary_phone, "9999977001");
+  /* The list query gained a WHERE clause: a scope filter that also admits unclaimed leads, and an
+   * optional search, each switched on by a bound flag. Both are exercised here, because "the insert
+   * and the list agree" is only worth asserting against the query the route actually runs. Binds are
+   * the route's order: scope flag, the three scope values, search flag, then the term four times. */
+  /* Source text, not runtime text: inside a template literal `\\` is a single backslash, and SQLite
+   * rejects a two-character ESCAPE expression. Undo the escaping the TypeScript source needed. */
+  const listSql = contactListLib.match(/export const CRM_CONTACT_LIST_SQL=`([\s\S]*?)`;/)[1].replaceAll("\\\\", "\\");
+  const runList = (scope, search = "") => db.prepare(listSql)
+    .all(scope ? 1 : 0, scope?.[0] ?? "", scope?.[1] ?? "", scope?.[2] ?? "", search ? 1 : 0, ...Array(4).fill(`%${search}%`));
+
+  for (const [label, rows] of [
+    ["unscoped", runList(null)],
+    ["the creating manager's own scope", runList(["blr", "sales", "cc-sales"])],
+    ["a search for the phone number", runList(null, "9999977001")],
+  ]) {
+    assert.equal(rows.length, 1, `${label}: the list query must return the contact the route just inserted`);
+    assert.equal(rows[0].id, "CU-77001");
+    assert.equal(rows[0].primary_phone, "9999977001");
+  }
+  assert.equal(runList(["hyd", "sales", "cc-sales"]).length, 0,
+    "a manager in another city must not see this Bengaluru lead");
 });
 
 // ---------------------------------------------------------------------------
@@ -294,7 +316,10 @@ test("legacy CRM page shows only real API data: demo arrays and fabricated field
   assert.doesNotMatch(crmPage, /score:\s*58/, "fabricated customer score removed");
   assert.doesNotMatch(crmPage, /₹2\.84L|₹18\.6L|Lifecycle campaigns|18,420|1,284 events/, "fabricated command/campaign/report figures removed");
   assert.doesNotMatch(crmPage, /"command"|"pipeline"|"inbox"|"automation"|"campaigns"|"reports"/, "demo-only views removed");
-  assert.match(crmPage, /fetch\("\/api\/crm",\s*\{\s*cache:\s*"no-store"\s*\}\)/, "contacts come from the real API");
+  // The URL became a template literal when search moved server-side: the page appends ?search= so a
+  // lead outside the newest 100 can be found at all. Still one real API call, still no-store.
+  assert.match(crmPage, /fetch\(`\/api\/crm\$\{[\s\S]*?`,\s*\{\s*cache:\s*"no-store"\s*\}\)/, "contacts come from the real API");
+  assert.match(crmPage, /search=\$\{encodeURIComponent\(query\)\}/, "the typed query is passed to the server, and encoded");
   assert.match(crmPage, /loadError/, "API failures surface to staff instead of being swallowed");
   assert.match(crmPage, /No CRM contacts yet/, "honest empty state");
 });

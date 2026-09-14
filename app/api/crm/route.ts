@@ -1,3 +1,4 @@
+import{CRM_CONTACT_LIST_SQL,crmContactListBinds}from"../../../lib/crm-contact-list";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{maskName,maskPhone}from"../../../lib/platform-security";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
@@ -35,9 +36,10 @@ export async function GET(request:Request){try{
   const crmActor=await authorize(request,"customers.view"); await ensureTables();
   const db=await getDatabase();
   const scope=await resolveManagerOrganizationalScope(db,crmActor);requireManagerDomain(scope,CRM_MANAGER_DOMAIN);
-  const result=scope
-    ?await db.prepare("SELECT * FROM crm_contacts WHERE lower(COALESCE(city_id,''))=? AND lower(COALESCE(team_code,''))=? AND lower(COALESCE(department_code,''))=? ORDER BY updated_at DESC LIMIT 100").bind(scope.cityId,scope.teamCode,scope.departmentCode).all<Record<string,unknown>>()
-    :await db.prepare("SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 100").all<Record<string,unknown>>();
+  /* The list query and its bind order live in lib/crm-contact-list.ts; see that file for why
+   * unclaimed leads are admitted and why search runs here rather than in the page. */
+  const search=clean(new URL(request.url).searchParams.get("search"),80);
+  const result=await db.prepare(CRM_CONTACT_LIST_SQL).bind(...crmContactListBinds(scope,search)).all<Record<string,unknown>>();
   const contacts=result.results;
   if(contacts.length){
     const ids=contacts.map(row=>String(row.id));
