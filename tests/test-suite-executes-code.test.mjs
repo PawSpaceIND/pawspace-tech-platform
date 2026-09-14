@@ -39,7 +39,7 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 //
 // All three sabotages leave the OLD regex assertions satisfied - the point being that the previous
 // versions could not have caught the regression the new ones do.
-const STATIC_FILE_BUDGET = 169;
+const STATIC_FILE_BUDGET = 164;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
