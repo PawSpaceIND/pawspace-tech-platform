@@ -242,7 +242,7 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /serviceAddress:serviceLocation.address/);
   assert.doesNotMatch(stays, /15 km service radius/);
   assert.match(stays, /loadBoardingCommercial/);
-  assert.match(stays, /AddressPicker/);
+  assert.match(stays, /StayAddress/);
   assert.match(stays, /Three walks/);
   assert.match(stays, /1-hour play time/);
   assert.match(training, /meetPackage\.direct_minutes_per_pet/);

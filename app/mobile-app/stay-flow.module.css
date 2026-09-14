@@ -1248,3 +1248,11 @@
 .flow .stayIntro h2 { color: #fff !important; }
 
 .careInstructions{display:grid;gap:12px}
+.savedAddress { margin:16px 0; padding:16px; border:1px solid #d6e4de; border-radius:14px; background:var(--ps-surface,white); }
+.savedAddress p { margin:8px 0; overflow-wrap:anywhere; }
+.addressChange { border:0; background:transparent; color:inherit; text-decoration:underline; padding:10px 0; min-height:44px; cursor:pointer; }
+.careDate { min-width:0; margin:0; padding:12px; border:1px solid #d6e4de; border-radius:12px; }
+.careDate legend { font-weight:700; }
+.careDate input { width:100%; box-sizing:border-box; min-height:44px; }
+.durationSummary { padding:12px; background:#f2f7f5; border-radius:12px; font-weight:600; }
+@media(max-width:380px) { .datePair { grid-template-columns:1fr; } }
