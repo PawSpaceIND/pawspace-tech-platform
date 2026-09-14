@@ -39,7 +39,14 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 //
 // All three sabotages leave the OLD regex assertions satisfied - the point being that the previous
 // versions could not have caught the regression the new ones do.
-const STATIC_FILE_BUDGET = 169;
+//
+// 169 -> 164: Work Order 02. The five Grooming and Training source-text suites now execute the real
+// modules against a real database: grooming-customer-integrity and grooming-maps drive the
+// scheduling, booking, service-location, GPS route and Routes-adapter paths; training-customer-wiring,
+// training-programme and training-session-lifecycle drive the quote, programme and session lifecycle
+// modules and their routes. Sabotage-verified in the PR: each converted suite goes red when its
+// guard is disabled behind the very string the old regex matched, while the old file stays green.
+const STATIC_FILE_BUDGET = 164;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
