@@ -65,13 +65,13 @@ export async function runPetBirthdaySweep(db: Db, input: { today?: string } = {}
 }
 
 /** Redeem a birthday reward against a real, customer-owned, completed-or-open grooming booking. */
-export async function redeemBirthdayReward(db: Db, input: { code: string; customerId: string; bookingId: string; actorId: string }) {
+export async function redeemBirthdayReward(db: Db, input: { code: string; customerId: string; bookingId: string; actorId: string; now?: number }) {
   await ensurePetBirthdayTables(db);
   const reward = await db.prepare("SELECT * FROM pet_birthday_rewards WHERE code=?").bind(input.code.trim()).first<Row>();
   if (!reward) throw new Error("Birthday reward code not found");
   if (String(reward.customer_id) !== input.customerId) throw new Error("This birthday reward belongs to another account");
   if (String(reward.status) !== "issued") throw new Error("This birthday reward has already been used");
-  if (Number(reward.expires_at) < Date.now()) throw new Error("This birthday reward has expired");
+  if (Number(reward.expires_at) < (input.now ?? Date.now())) throw new Error("This birthday reward has expired");
   const booking = await db.prepare("SELECT id,customer_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
   if (!booking) throw new Error("Booking not found");
   if (String(booking.customer_id) !== input.customerId) throw new Error("You can only apply your reward to your own booking");
