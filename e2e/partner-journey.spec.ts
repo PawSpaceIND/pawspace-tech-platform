@@ -36,7 +36,9 @@ async function sandboxPartnerLogin(page: import("@playwright/test").Page, phone:
 }
 
 test("partner: verified OTP login -> authenticated queue surface", async ({ page }, testInfo) => {
-  await sandboxPartnerLogin(page, phoneForProject(testInfo.project.name));
+  test.setTimeout(120_000);
+  const phone=phoneForProject(testInfo.project.name);
+  await sandboxPartnerLogin(page, phone);
 
   const session = await page.evaluate(async () => {
     const response = await fetch("/api/identity-session", { cache: "no-store" });
@@ -48,4 +50,20 @@ test("partner: verified OTP login -> authenticated queue surface", async ({ page
   const response = await page.goto("/partner-app", { waitUntil: "domcontentloaded" });
   expect(response?.status() ?? 500).toBeLessThan(500);
   await expect(page.locator("body")).toContainText(/job|booking|queue|today|service/i);
+
+  const headerDelete=page.waitForResponse(response=>response.url().endsWith("/api/identity-session")&&response.request().method()==="DELETE");
+  await page.getByRole("button",{name:"Sign out",exact:true}).click();
+  expect((await headerDelete).status()).toBe(200);
+  await expect(page.getByRole("heading",{name:"Sign in to your Partner app"})).toBeVisible();
+  await expect(page.getByText("PAWSPACE PARTNER MOBILE",{exact:true})).toHaveCount(0);
+  expect((await page.request.get("/api/identity-session")).status()).toBe(401);
+
+  await sandboxPartnerLogin(page,phone);
+  await page.goto("/partner-app");
+  await page.getByRole("navigation",{name:"Partner mobile navigation"}).getByRole("button",{name:/More/}).click();
+  const moreDelete=page.waitForResponse(response=>response.url().endsWith("/api/identity-session")&&response.request().method()==="DELETE");
+  await page.getByRole("button",{name:/Sign out \/ switch partner/}).click();
+  expect((await moreDelete).status()).toBe(200);
+  await expect(page.getByRole("heading",{name:"Sign in to your Partner app"})).toBeVisible();
+  await expect(page.getByText("PAWSPACE PARTNER MOBILE",{exact:true})).toHaveCount(0);
 });

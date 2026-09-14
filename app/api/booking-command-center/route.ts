@@ -26,7 +26,32 @@ function parse(value: unknown) {
   try { return JSON.parse(String(value || "{}")); } catch { return {}; }
 }
 
-async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){
+/*
+ * The list window. It used to be the 150 bookings scheduled FURTHEST in the future. On a seeded UAT
+ * database that is 150 fixtures months ahead, so a booking made today never entered the window and the
+ * founder could not find it (Bengaluru sweep run 8, 2026-09-13). An operator watching live bookings
+ * needs newest-created first; `sort=schedule` keeps the old order for planning views, `q` searches the
+ * whole table so any booking is reachable, and `limit` is capped so a client cannot pull everything.
+ */
+export type BookingListOptions={q?:string;limit?:number;sort?:"created"|"schedule"};
+export const BOOKING_LIST_DEFAULT_LIMIT=150,BOOKING_LIST_MAX_LIMIT=500;
+export function parseBookingListOptions(url:URL):BookingListOptions{
+  const q=String(url.searchParams.get("q")||"").trim().toLowerCase().slice(0,120);
+  const requested=Number(url.searchParams.get("limit"));
+  const limit=Number.isFinite(requested)&&requested>0?Math.min(BOOKING_LIST_MAX_LIMIT,Math.floor(requested)):BOOKING_LIST_DEFAULT_LIMIT;
+  return{q,limit,sort:url.searchParams.get("sort")==="schedule"?"schedule":"created"};
+}
+async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
+  const where:string[]=[],binds:unknown[]=[];
+  if(scope){where.push("lower(b.city_id)=?");binds.push(scope.cityId);}
+  const q=String(options.q||"").trim().toLowerCase();
+  if(q){
+    const like=`%${q.replace(/[\\%_]/g,match=>`\\${match}`)}%`;
+    where.push("(lower(b.id) LIKE ? ESCAPE '\\' OR lower(c.name) LIKE ? ESCAPE '\\' OR c.primary_phone LIKE ? ESCAPE '\\' OR lower(c.email) LIKE ? ESCAPE '\\' OR lower(w.provider_name) LIKE ? ESCAPE '\\' OR lower(b.package_name) LIKE ? ESCAPE '\\')");
+    binds.push(like,like,like,like,like,like);
+  }
+  const limit=Math.min(BOOKING_LIST_MAX_LIMIT,Math.max(1,Math.floor(Number(options.limit)||BOOKING_LIST_DEFAULT_LIMIT)));
+  const order=options.sort==="schedule"?"b.scheduled_start DESC":"b.created_at DESC, b.scheduled_start DESC";
   const sql=`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
     w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,w.assignment_json,
     p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json
@@ -34,13 +59,13 @@ async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerO
     JOIN canonical_customers c ON c.id=b.customer_id
     JOIN provider_work_orders w ON w.booking_id=b.id
     JOIN booking_payments p ON p.booking_id=b.id
-    ${scope?"WHERE lower(b.city_id)=?":""}
-    ORDER BY b.scheduled_start DESC LIMIT 150`;
-  return scope?db.prepare(sql).bind(scope.cityId).all<Row>():db.prepare(sql).all<Row>();
+    ${where.length?`WHERE ${where.join(" AND ")}`:""}
+    ORDER BY ${order} LIMIT ${limit}`;
+  return db.prepare(sql).bind(...binds).all<Row>();
 }
 
-async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>){
-  const rows=await bookingRows(db,scope);
+async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
+  const rows=await bookingRows(db,scope,options);
   const supportCases=await bookingSupportCases(db,rows.results.map(row=>String(row.id)));
   const casesByBooking=new Map<string,Row[]>();
   for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
@@ -72,8 +97,8 @@ export async function GET(request: Request) {
     const actor=await authorize(request,"bookings.manage"),db=await database();
     await ensureTables(db);
     const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);
-    const wantsStream=new URL(request.url).searchParams.get("stream")==="1";
-    if(!wantsStream)return Response.json(await bookingSnapshot(db,scope));
+    const url=new URL(request.url),wantsStream=url.searchParams.get("stream")==="1";
+    if(!wantsStream)return Response.json(await bookingSnapshot(db,scope,parseBookingListOptions(url)));
     const encoder=new TextEncoder();
     let stopped=false,timer:ReturnType<typeof setTimeout>|null=null,lastFingerprint="";
     const stream=new ReadableStream<Uint8Array>({
