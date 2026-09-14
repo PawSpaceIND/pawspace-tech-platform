@@ -41,9 +41,9 @@ const SCOPE = { cityId: "blr", teamCode: "sales", departmentCode: "cc-sales" };
 
 function crmTable() {
   const db = new DatabaseSync(":memory:");
-  db.exec("CREATE TABLE crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,email TEXT,city_id TEXT,team_code TEXT,department_code TEXT,updated_at INTEGER)");
-  const add = (id, { name = "Lead", phone = "9000000000", email = "lead@example.com", city = null, team = null, dept = null, at = 1 } = {}) =>
-    db.prepare("INSERT INTO crm_contacts VALUES (?,?,?,?,?,?,?,?)").run(id, name, phone, email, city, team, dept, at);
+  db.exec("CREATE TABLE crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,email TEXT,pet_names TEXT,pet_summary TEXT,city_id TEXT,team_code TEXT,department_code TEXT,updated_at INTEGER)");
+  const add = (id, { name = "Lead", phone = "9000000000", email = "lead@example.com", pets = "Pet", petSummary = "Profile incomplete", city = null, team = null, dept = null, at = 1 } = {}) =>
+    db.prepare("INSERT INTO crm_contacts VALUES (?,?,?,?,?,?,?,?,?,?)").run(id, name, phone, email, pets, petSummary, city, team, dept, at);
   /* Bound exactly as the route binds: scope flag, the three scope values, search flag, the term four
    * times. Escaping matches the route so a term containing % or _ is a literal, not a wildcard. */
   const visible = (search = "", scope = SCOPE) =>
@@ -76,11 +76,15 @@ test("CRM-3: a partially scoped lead is not treated as unclaimed", () => {
     "a lead carrying another city is that city's, even with the other two columns blank");
 });
 
-test("CRM-4: search finds a lead by name, phone, email or id across the table", () => {
+test("CRM-4: search finds a lead across the table by everything the page's own filter matches", () => {
   const { add, visible } = crmTable();
-  add("LEAD-OLD", { name: "Meera Iyer", phone: "9876500011", email: "meera@example.com", at: 1 });
-  for (let i = 0; i < 150; i++) add(`LEAD-NOISE-${i}`, { name: "Someone Else", at: 1000 + i });
-  for (const [label, term] of [["name", "meera"], ["phone", "9876500011"], ["email", "meera@example"], ["id", "lead-old"]]) {
+  add("LEAD-OLD", { name: "Meera Iyer", phone: "9876500011", email: "meera@example.com", pets: "Simba", petSummary: "Labrador, 3 years", at: 1 });
+  for (let i = 0; i < 150; i++) add(`LEAD-NOISE-${i}`, { name: "Someone Else", pets: "Other", at: 1000 + i });
+  /* pet name and summary are in this list because app/crm/page.tsx matches `name phone pets id`.
+   * Moving search to the server must not narrow it: without those columns a staff member typing a
+   * pet's name has the contact excluded before the page's own pet matching can see it. */
+  for (const [label, term] of [["name", "meera"], ["phone", "9876500011"], ["email", "meera@example"],
+                               ["pet name", "simba"], ["pet summary", "labrador"], ["id", "lead-old"]]) {
     assert.ok(visible(term).includes("LEAD-OLD"), `search by ${label} did not find a lead outside the newest 100`);
   }
 });
