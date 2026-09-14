@@ -54,6 +54,7 @@ test("training pet cards and requirement chips fit mobile; saved address replace
  await page.goto("/mobile-app?service=dog_training");
  await expect(page.getByRole("button",{name:/Maya.*Selected/})).toBeVisible();
  await expect(page.getByRole("button",{name:/Evy.*Add/})).toBeVisible();
+ await expect(page.getByRole("button",{name:/Maya.*24 kg.*Selected/})).toBeVisible();
  const chips=page.getByRole("group",{name:"Training requirements"});await expect(chips).toBeVisible();
  await expect(chips.getByRole("button",{name:/Leash walking/})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);

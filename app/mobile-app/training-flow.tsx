@@ -52,7 +52,7 @@ const fallbackGoals = [
   "Separation anxiety",
 ];
 const petDetail = (pet: CustomerPet) =>
-  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  [pet.profile?.breed || pet.breed, pet.ageYears != null ? `${pet.ageYears} years` : pet.profile?.ageBand, pet.weightKg != null ? `${pet.weightKg} kg` : pet.profile?.weightBand].filter(Boolean).join(" · ") ||
   "Profiles, health notes and service history included";
 const planMarketing = [
   { packageCode:"training-2-starter",name:"Starter Plan",detail:"Professional guidance and a clear starting structure for dogs of any age.",bonus:false,level:"Assessment start",idealFor:"Parents who need a professional plan before committing long-term",outcomes:["Behaviour assessment","Home routine","Action plan"] },
@@ -306,11 +306,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           </div>
           {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
           <p className={styles.durationRule}>
-            {selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"} · {serviceMinutes} minutes per session
-            <span>
+            {plan.sessions > 0 ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"} · ${serviceMinutes} minutes per session` : "Choose a package to see session duration."}
+            {plan.sessions > 0 && <span>
               Every pet receives {plan.directMinutes} minutes of direct training + {plan.coachingMinutes} minutes
               for coaching, homework, video and the app update.
-            </span>
+            </span>}
           </p>
           <div className={styles.attendanceChoice}>
             <b>Who will join the session?</b>
