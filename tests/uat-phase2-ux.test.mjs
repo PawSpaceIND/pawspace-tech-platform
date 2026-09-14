@@ -62,6 +62,7 @@ test("changing Dog to Cat selects a saved cat without editing the profile",()=>{
   assert.deepEqual(groomingSelectionForType(pets,["cat"],"kitten","2026-09-15"),["kitten"]);
   assert.deepEqual(groomingSelectionForType(pets,[],"puppy","2026-09-15"),[]);
   assert.match(groomingPetIssue(pets[1],"kitten","2026-09-15"),/Adult/);
+  assert.match(groomingPetIssue(pets[0],"cat","2026-09-15"),/Dog package/);
 });
 test("pet cards expose readable selection and eligibility instead of ambiguous glyphs",()=>{
   const html=renderToStaticMarkup(React.createElement(GroomingPetList,{pets,selected:["cat"],type:"cat",date:"2026-09-15",onToggle(){}}));

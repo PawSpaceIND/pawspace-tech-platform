@@ -11,7 +11,7 @@ import CustomerGroomingLiveCard from "./customer-grooming-live-card";
 import CouponField from "./coupon-field";
 import PetManager from "./pet-manager";
 import GroomingPetList from "./grooming-pet-list";
-import { groomingSelectionForType } from "../../lib/grooming-pet-selection";
+import { groomingPetIssue, groomingSelectionForType } from "../../lib/grooming-pet-selection";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import { previewUatProviders, reserveUatSchedule, SchedulingRefusal, type ProviderPreview } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
@@ -129,8 +129,8 @@ export default function GroomingFlow({customer: signedInCustomer,initial,onVerif
  const togglePet=(id:string)=>{
   if(selectedPetIds.includes(id)){setSelectedPetIds(prev=>prev.filter(x=>x!==id));return;}
   const target=pets.find(x=>x.id===id);
-  if(!target||target.species!==typeSpecies(type)){flash(`Switch to a ${typeSpecies(type)} package to add ${target?.name??"this pet"}.`);return;}
-  if(young){const issue=youngGroomingEligibility(target,date);if(issue){flash(issue);return;}}
+  if(!target)return;
+  const issue=groomingPetIssue(target,type,date);if(issue){flash(issue);return;}
   if(selectedPetIds.length>=4){flash("Book up to 4 pets per booking.");return;}
   setSelectedPetIds(prev=>[...prev,id]);
  };
