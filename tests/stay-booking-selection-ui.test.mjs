@@ -4,17 +4,19 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("boarding and sitting selection controls are explicit interactive buttons", async () => {
-  const {canPlanStay, careWindowDates} = await import("../lib/stay-search-state.ts");
+test("boarding and sitting selection controls and explicit care dates remain interactive", async () => {
+  const {canPlanStay} = await import("../lib/stay-search-state.ts");
   assert.equal(canPlanStay({datesValid:true, petCount:1, serviceAvailable:true}), true);
   assert.equal(canPlanStay({datesValid:true, petCount:0, serviceAvailable:true}), false);
-  const window = careWindowDates("2026-09-20", "2026-09-21", "4 hours", "13:00");
+  const {stayCareWindow}=await import("../lib/stay-care-window.ts");
+  const window = stayCareWindow("2026-09-20", "2026-09-20", "13:00", "17:00");
   assert.equal(window.scheduledEnd.getTime() - window.scheduledStart.getTime(), 4 * 60 * 60 * 1000);
   const flow = await read("app/mobile-app/stay-flow.tsx");
   assert.match(flow, /aria-pressed=\{mode === "boarding"\}/);
   assert.match(flow, /aria-pressed=\{mode === "sitting"\}/);
-  assert.match(flow, /aria-pressed=\{careWindow === window\}/);
-  assert.match(flow, /onClick=\{\(\) => selectCareWindow\(window\)\}/);
+  assert.doesNotMatch(flow, /selectCareWindow/);
+  assert.match(flow, /Check-in time<input type="time"/);
+  assert.match(flow, /Check-out time<input type="time"/);
   assert.match(flow, /aria-pressed=\{selectedPets\.includes\(p\.id\)\}/);
   assert.match(flow, /aria-pressed=\{selectedNeeds\.includes\(n\)\}/);
   assert.match(flow, /resetStaySelection\(\)/);
