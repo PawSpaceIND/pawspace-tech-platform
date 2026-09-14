@@ -218,12 +218,24 @@ test("ONBOARDING — a repeated submit changes nothing and records nothing new",
   const statusOf = () => sqlite.prepare("SELECT status FROM provider_onboarding_applications WHERE id=?").get(application.id).status;
   const eventCount = () => sqlite.prepare("SELECT COUNT(*) n FROM provider_onboarding_events WHERE application_id=?").get(application.id).n;
 
-  // With no active policy the submit fails closed — a submission that cannot be governed is refused.
+  /* With no active policy the submit fails closed — a submission that cannot be governed is refused.
+   *
+   * The refusal is now a thrown Response rather than an Error: a missing policy is an ops gap, not
+   * an applicant mistake and not a crash, and it used to reach a caregiver as a 500 carrying raw
+   * JSON. That means matching the message no longer works — a Response has no `.message` — so this
+   * asserts what actually matters and is now stricter than the phrase match was: refused, with a
+   * client-error status, and nothing advanced. */
   const before = { status: statusOf(), events: eventCount() };
-  await assert.rejects(() => selfService.submitOwnedProviderApplication(db, { providerId, actorId: providerId, applicationId: application.id }),
-    /active onboarding policy/, "an ungoverned submission must be refused rather than accepted and sorted out later");
-  await assert.rejects(() => selfService.submitOwnedProviderApplication(db, { providerId, actorId: providerId, applicationId: application.id }),
-    /active onboarding policy/, "and the second attempt must behave identically");
+  const refusal = async (why) => assert.rejects(
+    () => selfService.submitOwnedProviderApplication(db, { providerId, actorId: providerId, applicationId: application.id }),
+    (thrown) => {
+      assert.ok(thrown instanceof Response, `${why}: expected a Response, got ${thrown?.constructor?.name}`);
+      assert.ok(thrown.status >= 400 && thrown.status < 500,
+        `${why}: an ungoverned submission is the platform's gap, not a server fault — got ${thrown.status}`);
+      return true;
+    }, why);
+  await refusal("an ungoverned submission must be refused rather than accepted and sorted out later");
+  await refusal("and the second attempt must behave identically");
 
   assert.equal(statusOf(), before.status, "a refused submit must not advance the application");
   assert.equal(eventCount(), before.events, "nor accumulate an event trail for work that did not happen");

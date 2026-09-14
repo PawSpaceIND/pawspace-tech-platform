@@ -11,9 +11,18 @@ function sameOrigin(request:Request){const origin=request.headers.get("origin");
 async function providerActor(request:Request){const db=await database(),actor=await resolvePlatformSession(db,request);if(!actor)throw new Response("Provider identity session required",{status:401});if(actor.subjectType!=="provider"||actor.roleCode!=="service_provider")throw new Response("Provider identity required",{status:403});return{db,actor};}
 async function runtimeEnv(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 async function audit(db:D1Database,actor:{auditId:string;roleCode:string},action:string,resourceId:string|null,outcome:string,detail:unknown={}){await db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),actor.auditId,actor.roleCode,action,"provider_onboarding_self_service",resourceId,outcome,JSON.stringify(detail),Date.now()).run();}
-function failure(error:unknown){if(error instanceof Response)return json({error:"Provider onboarding request rejected"},error.status);return json({error:error instanceof Error?error.message:"Unable to update provider onboarding"},500);}
+/*
+ * A thrown Response carried the right status and then lost its message to a generic string, while a
+ * thrown Error kept its message and became a 500. Neither path could produce "correct status AND
+ * something the applicant can act on", which is why a missing onboarding policy reached a caregiver
+ * as a 500 carrying raw JSON.
+ */
+async function failure(error:unknown){
+ if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Provider onboarding request rejected"},error.status);}
+ return json({error:error instanceof Error?error.message:"Unable to update provider onboarding"},500);
+}
 
-export async function GET(request:Request){try{const{db,actor}=await providerActor(request);const data=await providerOnboardingSelfServiceSnapshot(db,actor.subjectId);await audit(db,actor,"provider.onboarding.self_service.read",null,"allowed");return json({data});}catch(error){return failure(error);}}
+export async function GET(request:Request){try{const{db,actor}=await providerActor(request);const data=await providerOnboardingSelfServiceSnapshot(db,actor.subjectId);await audit(db,actor,"provider.onboarding.self_service.read",null,"allowed");return json({data});}catch(error){return await failure(error);}}
 
 export async function POST(request:Request){let db:D1Database|undefined,actor:Awaited<ReturnType<typeof resolvePlatformSession>>=null,action="unknown",resourceId:string|null=null;try{sameOrigin(request);const resolved=await providerActor(request);db=resolved.db;actor=resolved.actor;const body=await request.json() as Body;action=String(body.action||"");let data:unknown,status=200;
  if(action==="create_application"){if(!body.payload)return json({error:"Application payload is required"},400);data=await createOwnedProviderApplication(db,{providerId:actor.subjectId,actorId:actor.auditId,payload:body.payload});resourceId=(data as{ id:string}).id;status=201;}
@@ -29,4 +38,4 @@ export async function POST(request:Request){let db:D1Database|undefined,actor:Aw
  else if(action==="update_activated_profile"){if(!body.applicationId||!body.changes||!body.reason)return json({error:"Application, changes and reason are required"},400);resourceId=body.applicationId;data=await updateOwnedActivatedProfile(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,changes:body.changes,reason:body.reason});}
  else return json({error:"Unsupported provider self-service action"},400);
  await audit(db,actor,`provider.onboarding.self_service.${action}`,resourceId,"completed",{serverOwnedDocumentUpload:action==="upload_document",productionEsign:action==="accept_sla"});return json({data},status);
- }catch(error){if(db&&actor)await audit(db,actor,`provider.onboarding.self_service.${action}`,resourceId,"denied",{status:error instanceof Response?error.status:500}).catch(()=>{});return failure(error);}}
+ }catch(error){if(db&&actor)await audit(db,actor,`provider.onboarding.self_service.${action}`,resourceId,"denied",{status:error instanceof Response?error.status:500}).catch(()=>{});return await failure(error);}}
