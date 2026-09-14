@@ -34,6 +34,17 @@ for (const name of ["STAGING_D1_ID", "RELEASE_PREVIEW_D1_ID", "SHARED_STAGING_D1
   if (other && d1Id && other === d1Id) problems.push(`PRODUCTION_D1_ID is the same database as ${name}. Production must not share a database with a non-production environment.`);
 }
 
+/* Pilot proof-media policy (Bengaluru UAT sign-off, 2026-09-13): partner before/after proof is
+ * METADATA-ONLY. confirm_upload records the checksum, size and type the Partner app observed of the
+ * exact file; nothing uploads the bytes yet. With a bucket bound, lib/media-upload-boundary treats the
+ * stored object as authoritative and every confirmation fails with stored_object_missing, so a groomer
+ * could never complete a job. A bucket may therefore be bound only once the byte-upload path exists,
+ * and that has to be stated, not inferred from the presence of a bucket name. */
+const r2BucketName = String(process.env.PRODUCTION_R2_BUCKET_NAME || "").trim();
+if (r2BucketName && String(process.env.PRODUCTION_MEDIA_OBJECT_UPLOAD_READY || "").trim().toLowerCase() !== "true") {
+  problems.push("PRODUCTION_R2_BUCKET_NAME is set but no byte-upload path exists for partner proof media. The pilot runs metadata-only proof: leave the bucket unset, or set PRODUCTION_MEDIA_OBJECT_UPLOAD_READY=true only once uploads actually reach the bucket.");
+}
+
 const explicit = {};
 for (const [name, allowed, why] of REQUIRED_EXPLICIT) {
   const value = String(process.env[name] || "").trim().toLowerCase();
