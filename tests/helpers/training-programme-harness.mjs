@@ -117,7 +117,28 @@ export function seedRoster(world, provider, dateIso, windows = ["09:00-19:00"], 
     .run(`AV-${provider}-${dateIso}-${zone}`, provider, "blr", zone, dateIso, JSON.stringify(windows), NOW);
 }
 
-/** A clean, ready, active, non-synthetic asset linked to exactly this session and trainer. */
+/**
+ * Evidence the way the product creates it: the trainer registers the photo through the real media route
+ * (one single-use grant, linked to exactly this session), confirms the upload against that grant, the scan
+ * boundary records the scanner's verdict, and a SECOND person approves through the route. Returns the
+ * route's id and ref with the asset row as completion will read it. `seedAsset` below stays for the rows
+ * this path refuses to create (a synthetic asset, a link to another session or trainer), which exist to
+ * prove completion refuses them, and for the Before/After purposes the route cannot issue yet (see the
+ * lifecycle suite's gap pin).
+ */
+export async function uploadEvidence(world, sessionRow, { trainer, reviewer, sha256, verdict = "clean" }) {
+  const mediaRoute = await import("../../app/api/training-session-media/route.ts");
+  const { recordScanVerdict } = await import("../../lib/media-scan-boundary.ts");
+  const step = async (label, response, expected) => { if (response.status !== expected) throw new Error(`${label}: ${response.status} ${JSON.stringify(response.body)}`); return response.body.data; };
+  const prepared = await step("register", await callRoute(mediaRoute.POST, "POST", "/api/training-session-media", { body: { sessionId: sessionRow.id, mimeType: "image/jpeg", sizeBytes: 2048, sha256, fileName: "evidence.jpg" }, email: trainer }), 201);
+  const confirmed = await step("confirm", await callRoute(mediaRoute.PATCH, "PATCH", "/api/training-session-media", { body: { id: prepared.id, action: "confirm_upload", uploadToken: prepared.upload.token, storageReference: prepared.upload.objectKey, observedSizeBytes: 2048, observedSha256: sha256, observedMimeType: "image/jpeg" }, email: trainer }), 200);
+  await recordScanVerdict(world.db, { mediaId: prepared.id, verdict, provider: "uat-scanner", detail: "harness verdict" });
+  const reviewed = await step("review", await callRoute(mediaRoute.PATCH, "PATCH", "/api/training-session-media", { body: { id: prepared.id, action: "record_review", decision: "approved", reason: "Clear photo, pet identifiable" }, email: reviewer }), 200);
+  const asset = { ...world.sqlite.prepare("SELECT purpose,scan_status,access_status,retention_status,synthetic,review_status,created_by FROM service_media_assets WHERE id=?").get(prepared.id) };
+  return { id: prepared.id, ref: prepared.ref, asset, prepared, confirmed, reviewed };
+}
+
+/** A clean, ready, active, non-synthetic asset linked to exactly this session and trainer, written directly. */
 export function seedAsset(world, mediaId, purpose, sessionRow, overrides = {}) {
   const asset = { scan: "clean", access: "ready", retention: "active", synthetic: 0, bookingId: sessionRow.booking_id, providerId: sessionRow.provider_id, linkSessionId: sessionRow.id, linkProviderId: sessionRow.provider_id, ...overrides };
   world.sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'uat',?,?)")

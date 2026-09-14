@@ -16,6 +16,7 @@ import {
   seedTrainingBooking,
   seedRoster,
   seedAsset,
+  uploadEvidence,
   seedEvidence,
   advanceSession,
   completeSession,
@@ -290,6 +291,45 @@ test("both gateways map the sessions route to bookings.view for trainers and boo
   assert.equal(await authorizePlatformSessionRequest(post("replace_provider", { cookie }), world.db), null, "a platform session alone can never satisfy a staff action");
   const foreign = await authorizePlatformSessionRequest(new Request(`https://app.pawspace.in/api/training-sessions?providerId=${OTHER_TRAINER_ID}`, { headers: { cookie } }), world.db);
   assert.ok(foreign instanceof Response && foreign.status === 403, "a provider session is scoped to its own providerId");
+});
+
+test("evidence the media route creates is confirmed against its grant, scanned, and released by a second person; completion still demands the Before/After purposes the route cannot issue (gap pin)", async () => {
+  const world = freshTrainingProgrammeWorld();
+  // Two sessions so that session 1 is not the final one: the final-balance gate runs before the evidence gate.
+  const { sessions: [s1] } = await programmeOf(world, { sessions: 2 });
+  const trainerEmail = await seedActor(world, { email: "kiran@pawspace.test", role: "service_provider", providerId: TRAINER_ID });
+  const reviewer = await seedActor(world, { email: "ops.manager@pawspace.test", role: "manager" });
+  await advanceSession(world.db, s1, "s1");
+
+  // The bytes are checked against the grant, never taken on the caller's word: a confirm whose observed
+  // checksum differs from what was registered is refused and the asset stays pending_upload.
+  const decoy = await callRoute(mediaRoute.POST, "POST", "/api/training-session-media", { body: { sessionId: s1.id, mimeType: "image/jpeg", sizeBytes: 2048, sha256: "d".repeat(64), fileName: "decoy.jpg" }, email: trainerEmail });
+  assert.equal(decoy.status, 201, JSON.stringify(decoy.body));
+  const wrong = await callRoute(mediaRoute.PATCH, "PATCH", "/api/training-session-media", { body: { id: decoy.body.data.id, action: "confirm_upload", uploadToken: decoy.body.data.upload.token, storageReference: decoy.body.data.upload.objectKey, observedSizeBytes: 2048, observedSha256: "c".repeat(64), observedMimeType: "image/jpeg" }, email: trainerEmail });
+  assert.equal(wrong.status, 409, JSON.stringify(wrong.body));
+  assert.match(String(wrong.body.error), /checksum does not match the upload grant/);
+  assert.equal(world.sqlite.prepare("SELECT access_status FROM service_media_assets WHERE id=?").get(decoy.body.data.id).access_status, "pending_upload");
+
+  // The real path end to end: register, confirm, scanner verdict, second-person approval through the route.
+  const evidence = await uploadEvidence(world, s1, { trainer: trainerEmail, reviewer, sha256: "b".repeat(64) });
+  assert.deepEqual({ ...evidence.asset }, { purpose: "training_homework", scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, review_status: "approved", created_by: trainerEmail });
+  assert.equal(evidence.confirmed.accessStatus, "quarantined", "confirmed bytes wait in quarantine for a second person");
+  assert.equal(evidence.reviewed.proofReady, true);
+  const own = await callRoute(mediaRoute.PATCH, "PATCH", "/api/training-session-media", { body: { id: evidence.id, action: "record_review", decision: "approved", reason: "Approving my own photo" }, email: trainerEmail });
+  assert.equal(own.status, 403, "the uploader holds no review permission; approval is never self-service");
+  const listed = await callRoute(mediaRoute.GET, "GET", `/api/training-session-media?sessionId=${s1.id}`, { email: trainerEmail });
+  assert.deepEqual(listed.body.data.assets.filter((asset) => asset.id === evidence.id).map((asset) => asset.proofReady), [true]);
+
+  // GAP PIN. Completion requires one before_service and one after_service asset (TRAINING_REQUIRED_PROOF),
+  // but the route registers every Training photo under the single category "training_homework" and its
+  // register input carries no purpose, so evidence created the product's own way can never close a session.
+  // The completion tests seed Before/After rows directly until the route can issue those purposes; when it
+  // can, this assertion goes red and the completion tests should switch to uploadEvidence.
+  await expectResponseRefusal(
+    () => mutateTrainingSession(world.db, { sessionId: s1.id, action: "complete", actorId: trainer(s1), idempotencyKey: "s1-complete-route-evidence", report: { ...REPORT, evidenceRefs: [evidence.ref] } }),
+    { status: 409, message: /Canonical Before Picture \+ After Picture are required for Training completion/ },
+  );
+  assert.equal(sessionStatus(world, s1.id), "in_session");
 });
 
 test("the media route issues homework evidence grants only to the assigned trainer and never a raw public URL", async () => {
