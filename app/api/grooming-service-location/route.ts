@@ -1,4 +1,4 @@
-import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{authError,authFailure,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{ensureGroomingMapTables,mapsNavigationUrl}from"../../../lib/grooming-maps";
 import{ensureCustomerAccountTables}from"../../../lib/customer-account";
 import{validateIndianPincode}from"../../../lib/pincode-validation";
@@ -13,7 +13,7 @@ const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cac
 // address and coordinates server-side; this guard only verifies those governed coordinates are valid.
 function verifiedCoordinates(governed:GovernedServiceAddress){
  const latitude=Number(governed.latitude),longitude=Number(governed.longitude);
- if(!validGpsCoordinates(latitude,longitude))throw new Response("Doorstep coordinates could not be verified",{status:409});
+ if(!validGpsCoordinates(latitude,longitude))throw authFailure("The doorstep address could not be resolved to verified map coordinates. Re-pick the address or move the pin, then save again.",409);
  return{latitude,longitude,source:"server_geocode" as const};
 }
 
