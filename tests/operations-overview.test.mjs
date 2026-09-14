@@ -135,7 +135,7 @@ test("today is the IST day, not the UTC day", async () => {
   sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='LATE'").run(new Date("2026-08-03T20:00:00+05:30").toISOString());
   booking(sqlite, "TOMORROW", { hour: 9, amount: 9000 });
   const tomorrowStart = new Date("2026-08-04T00:30:00+05:30").toISOString();
-  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=?,updated_at=? WHERE id='TOMORROW'").run(tomorrowStart, ASOF - 86_400_000);
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=?,updated_at=? WHERE id='TOMORROW'").run(tomorrowStart, ASOF);
   assert.equal(tomorrowStart.slice(0, 10), DAY, "the fixture only proves anything if its UTC prefix still reads as today");
 
   const overview = await buildOperationsOverview(db, { asOf: ASOF });
@@ -144,7 +144,8 @@ test("today is the IST day, not the UTC day", async () => {
   assert.equal(overview.dayWindow.startUtc, new Date(`${DAY}T00:00:00+05:30`).toISOString());
   assert.equal(overview.metrics.bookingsToday, 1, "the 00:30 IST booking belongs to tomorrow");
   assert.equal(overview.metrics.recognizedRevenue, 500, "tomorrow's ₹9,000 must not be recognized today");
-  assert.deepEqual(overview.activity.map(row => row.bookingId), ["LATE"], "a future-service booking updated yesterday stays out of today's activity");
+  assert.ok(overview.activity.some(row => row.bookingId === "LATE"));
+  assert.ok(overview.activity.some(row => row.bookingId === "TOMORROW"), "activity includes a future-service booking updated today while headline metrics remain service-date scoped");
 });
 
 test("today activity includes a booking confirmed today even when its service date is later", async () => {

@@ -3,10 +3,11 @@ export type CheckoutConfirmation = { bookingId:string; status:string; providerId
 export type CheckoutState = { phase: "ready" | "starting" | "checkout" | "confirming" | "pending" | "captured" | "settled" | "error"; message: string; canCheck: boolean; confirmation?:CheckoutConfirmation };
 export type CheckoutReceipt = { bookingId: string; orderId: string; paymentId: string; signature: string };
 export type CustomerConfirmationProjection = {
-  ready:boolean;bookingId:string;serviceCode:string;packageName:string;bookingStatus:string;
+  ready:boolean;bookingId:string;serviceCode:string;packageName:string;bookingStatus:string;status?:string;
   paymentId:string;paymentMode:string;paymentStatus:string;transactionId:string|null;amountDueNow:number;
   totalAmount:number;currency:string;providerId:string;providerName:string;providerModel:string;
   workOrderStatus:string;scheduledStart:string;scheduledEnd:string;updatedAt:number;
+  gatewayOrderId?:string|null;gatewayPaymentId?:string|null;pets?:Array<{id:string;name:string;species:string;breed:string|null}>;
 };
 type Receipt = CheckoutReceipt;
 export const CHECKOUT_RETURN_PATH = "/api/razorpay-checkout-return";

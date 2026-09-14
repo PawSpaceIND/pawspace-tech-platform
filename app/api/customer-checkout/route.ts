@@ -3,7 +3,7 @@ import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
 import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
 import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
-import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
+import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, readCustomerCheckoutConfirmation, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 export async function POST(request: Request) {
   try {
@@ -77,12 +77,14 @@ export async function POST(request: Request) {
       const transactionId = String(projection.transaction_id || "");
       const bookingReady = ["confirmed", "assigned", "on_the_way", "arrived", "in_service", "completed"].includes(bookingStatus);
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
+      const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
         ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageName: String(projection.package_name),
-        bookingStatus, paymentId: String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || null, amountDueNow: Number(projection.amount_due_now || 0),
-        totalAmount: Number(projection.total_amount || 0), currency: String(projection.currency || "INR"), providerId: String(projection.provider_id),
-        providerName: String(projection.provider_name), providerModel: String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
-        scheduledStart: String(projection.scheduled_start), scheduledEnd: String(projection.scheduled_end), updatedAt: Number(projection.updated_at || 0),
+        bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || canonical.gatewayPaymentId, amountDueNow: Number(projection.amount_due_now || 0),
+        totalAmount: canonical.totalAmount, currency: canonical.currency, providerId: canonical.providerId || String(projection.provider_id),
+        providerName: canonical.providerName || String(projection.provider_name), providerModel: canonical.providerModel || String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
+        scheduledStart: canonical.scheduledStart, scheduledEnd: canonical.scheduledEnd, updatedAt: Number(projection.updated_at || 0),
+        gatewayOrderId: canonical.gatewayOrderId, gatewayPaymentId: canonical.gatewayPaymentId || transactionId || null, pets: canonical.pets,
       } } });
     }
     if (body.action === "confirm") {

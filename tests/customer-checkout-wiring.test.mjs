@@ -232,6 +232,7 @@ test('status returns a customer-owned ready projection with exact server slot, p
   assert.deepEqual(body.data.confirmation, {
     ready: true, bookingId: 'B1', serviceCode: 'grooming', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
     totalAmount: 499.5, currency: 'INR', providerId: 'PRV1', providerName: 'Rahul M.', providerModel: 'full_time', workOrderStatus: 'assigned', scheduledStart: '2026-09-20T03:30:00.000Z', scheduledEnd: '2026-09-20T05:30:00.000Z', updatedAt: 1,
+    gatewayOrderId: 'order_fixture', gatewayPaymentId: 'pay_fixture', pets: [],
   });
   const denied = await POST(request({ action: 'status', bookingId: 'B1' }, await cookie(db, 'C2')));
   assert.equal(denied.status, 404, 'another customer cannot read the projection');

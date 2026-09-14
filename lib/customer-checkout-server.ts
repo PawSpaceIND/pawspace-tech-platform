@@ -32,12 +32,13 @@ export async function assertCustomerCheckoutBooking(db: D1Database, customerId: 
 export type CustomerCheckoutPet = { id:string; name:string; species:string; breed:string|null };
 export type CustomerCheckoutConfirmation = { bookingId:string; status:string; providerId:string|null; providerName:string|null; providerModel:string|null; packageName:string|null; scheduledStart:string; scheduledEnd:string; totalAmount:number; currency:string; paymentStatus:string|null; paymentId:string|null; gatewayOrderId:string|null; gatewayPaymentId:string|null; pets:CustomerCheckoutPet[]; degraded:DegradedRead[] };
 export async function readCustomerCheckoutConfirmation(db:D1Database,customerId:string,bookingId:string):Promise<CustomerCheckoutConfirmation>{
-  const booking=await db.prepare(`SELECT id,status,provider_id,package_name,scheduled_start,scheduled_end,total_amount,currency,pet_ids_json FROM canonical_bookings WHERE id=? AND customer_id=? LIMIT 1`).bind(bookingId,customerId).first<Row>();
+  const booking=await db.prepare(`SELECT id,status,provider_id,package_name,scheduled_start,scheduled_end,total_amount,currency FROM canonical_bookings WHERE id=? AND customer_id=? LIMIT 1`).bind(bookingId,customerId).first<Row>();
   if(!booking)throw new CustomerCheckoutError("Booking confirmation was not found for your account.",404);
-  const petIds=(()=>{try{const value=JSON.parse(String(booking.pet_ids_json||"[]"));return Array.isArray(value)?value.filter((id):id is string=>typeof id==="string"&&id.length>0):[]}catch{return[]}})();
   const degradation=createDegradationLog();
   const optionalFirst=async(source:string,statement:D1PreparedStatement)=>{try{return await statement.first<Row>()}catch(error){return degradation.note(source,error,null)}};
   const optionalAll=async(source:string,statement:D1PreparedStatement)=>{try{return await statement.all<Row>()}catch(error){return degradation.note(source,error,{results:[] as Row[]})}};
+  const petLink=await optionalFirst("booking pet linkage",db.prepare("SELECT pet_ids_json FROM canonical_bookings WHERE id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId));
+  const petIds=(()=>{try{const value=JSON.parse(String(petLink?.pet_ids_json||"[]"));return Array.isArray(value)?value.filter((id):id is string=>typeof id==="string"&&id.length>0):[]}catch{return[]}})();
   const [work,payment,pets,intent,event]=await Promise.all([
     optionalFirst("provider work order",db.prepare("SELECT provider_name,provider_model FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(bookingId)),
     optionalFirst("booking payment",db.prepare("SELECT id,status,currency FROM booking_payments WHERE booking_id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId)),
