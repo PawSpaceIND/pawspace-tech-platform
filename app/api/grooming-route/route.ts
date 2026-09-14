@@ -10,7 +10,7 @@ type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
 /** GPS capture remains limited to active travel; address disclosure uses governed policy statuses. */
-const GPS_CAPTURE_STATES=new Set(["assigned","on_the_way","arrived"]);
+const GPS_CAPTURE_STATES=new Set(["assigned","on_the_way","arrived","in_service"]);
 
 async function assignedBooking(db:Awaited<ReturnType<typeof database>>,bookingId:string,providerId:string){
   return db.prepare("SELECT b.id,b.customer_id,b.provider_id,b.status booking_status,b.scheduled_start,w.status work_order_status,l.address_text,l.latitude destination_latitude,l.longitude destination_longitude FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id AND w.provider_id=b.provider_id JOIN booking_service_locations l ON l.booking_id=b.id AND l.status='active' WHERE b.id=? AND b.provider_id=? AND b.service_code='grooming'").bind(bookingId,providerId).first<Row>();
@@ -92,7 +92,7 @@ export async function POST(request:Request){try{
   if(!validInput(input))return json({error:"Booking, provider, valid GPS coordinates, non-negative accuracy and capture timestamp are required"},400);
   const db=await database();await ensureGroomingMapTables(db);await ensureGroomingGpsPipelineTables(db);await requireProviderOwnership(db,actor,input.providerId);
   const booking=await assignedBooking(db,input.bookingId,input.providerId);if(!booking)return json({error:"Assigned booking location is unavailable"},404);
-  if(!GPS_CAPTURE_STATES.has(travelStatus(booking)))return json({error:"GPS capture is disabled outside assigned, on-the-way or arrived states"},409);
+  if(!GPS_CAPTURE_STATES.has(travelStatus(booking))||!GPS_CAPTURE_STATES.has(String(booking.booking_status)))return json({error:"GPS capture requires an accepted, active job"},409);
   if(booking.destination_latitude==null||booking.destination_longitude==null)return json({error:"Booking doorstep coordinates are required before provider GPS tracking can start"},409);
   const disclosure=await addressDisclosure(db,actor,booking);
   const key=String(input.idempotencyKey||gpsIngestionKey(input)),prior=await existingGroomingTelemetry(db,key);if(prior)return json({data:{...prior,duplicate:true}},200);

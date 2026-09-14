@@ -166,7 +166,7 @@ test("a refused-fix warning does not follow the partner to another booking", () 
   // this, so switching jobs left the previous booking's amber GPS warning under the new job's route.
   const card = readFileSync(new URL("../app/partner-app/grooming-route-card.tsx", import.meta.url), "utf8");
   const effect = card.slice(card.indexOf("mounted.current=true;"));
-  const body = effect.slice(0, effect.indexOf("},[bookingId,providerId]);"));
+  const body = effect.slice(0, effect.indexOf("},[bookingId,providerId,managedTracking]);"));
   assert.match(body, /setRejection\(null\)/, "the per-booking reset must drop the previous rejection");
   assert.ok(body.indexOf("setRejection(null)") < body.indexOf("void load()"),
     "it must be cleared before the new booking's route is requested");

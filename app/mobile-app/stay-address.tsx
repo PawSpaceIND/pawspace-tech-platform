@@ -5,7 +5,7 @@ import { defaultStayAddress, savedStayAddressText, validateSavedStayAddress, typ
 import AddressPicker, { type ZoneResult } from "./address-picker";
 import styles from "./stay-flow.module.css";
 
-export default function StayAddress({ customerId, mode, onResolved }: { customerId: string; mode: "boarding" | "sitting"; onResolved: (address: StayLocation | null) => void }) {
+export default function StayAddress({ customerId, mode, onResolved }: { customerId: string; mode: "boarding" | "sitting" | "training"; onResolved: (address: StayLocation | null) => void }) {
   const [summary, setSummary] = useState(""), [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [editing, setEditing] = useState(false), [candidate, setCandidate] = useState<ZoneResult | null>(null), [retry, setRetry] = useState(0);
   useEffect(() => {

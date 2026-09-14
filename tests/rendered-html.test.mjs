@@ -281,7 +281,7 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   assert.match(grooming, /<BookingPaymentPage/);
   assert.doesNotMatch(grooming.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//")).join("\n"), /status:pay==="online"\?"captured":"created"/);
   assert.match(training, /MEET A TRAINER FIRST/);
-  assert.match(training, /Book Meet & Greet only/);
+  assert.match(training, /Book a Meet & Greet/);
   assert.match(stays, /10-minute phone call · Included/);
   assert.match(groomer, /Package upgraded/);
   assert.match(groomer, /Bike issue/);

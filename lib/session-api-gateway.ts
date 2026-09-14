@@ -29,7 +29,7 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/grooming-booking-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/partner-grooming-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/grooming-route"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
-  if(url.pathname==="/api/grooming-route"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
+  if((url.pathname==="/api/grooming-route"||url.pathname==="/api/partner-heartbeat")&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return{permission:"bookings.view",subjectType:"provider"};if(method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?undefined:{permission:"bookings.view",subjectType:"provider"};}}
   if(url.pathname==="/api/provider-assignment-recovery"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
   return undefined;

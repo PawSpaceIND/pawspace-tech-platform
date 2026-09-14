@@ -1,3 +1,4 @@
+import {fixtureChecklist} from "./helpers/partner-checklist-fixture.mjs";
 /**
  * PawSpace Total Journey Audit, Wave 2 — permanent behavioural regressions for the confirmed Marketing
  * and loyalty defects. Every case executes the real module or the real route.
@@ -99,7 +100,7 @@ CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQ
 
   const complete = () => route.POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
     method: "POST", headers: { "content-type": "application/json", ...STAFF },
-    body: JSON.stringify({ bookingId: "BK-SESS", action: "complete" }),
+    body: JSON.stringify({ bookingId: "BK-SESS", action: "complete", checklist:fixtureChecklist("complete") }),
   })).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }));
   const subscription = () => sqlite.prepare("SELECT sessions_reserved,sessions_consumed,status FROM customer_grooming_subscriptions WHERE id='GSUB-1'").get();
   return { sqlite, db, complete, subscription };
