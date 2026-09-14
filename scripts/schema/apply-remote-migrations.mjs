@@ -50,6 +50,20 @@ function wrangler(sqlArgs) {
   return execFileSync("npx", [...base, ...sqlArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
+function wranglerWithResetRetry(sqlArgs, label, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return wrangler(sqlArgs);
+    } catch (error) {
+      const detail = `${error?.message ?? ""}\n${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
+      const reset = detail.includes("D1_RESET_DO");
+      if (!reset || attempt === attempts) throw error;
+      console.warn(`[schema] ${label} hit D1_RESET_DO; retrying ${attempt}/${attempts - 1}`);
+      execFileSync("sleep", [String(attempt * 2)], { stdio: "ignore" });
+    }
+  }
+}
+
 /** Columns a remote table already has, via PRAGMA over wrangler's JSON output. */
 function remoteColumns(table) {
   try {
@@ -65,7 +79,7 @@ function remoteColumns(table) {
 }
 
 const files = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
-const bodies = [];
+const migrations = [];
 const directives = [];
 
 for (const file of files) {
@@ -73,10 +87,10 @@ for (const file of files) {
   for (const m of raw.matchAll(ADD_COLUMN)) {
     directives.push({ file, table: m[1], column: m[2], definition: m[3].trim() });
   }
-  bodies.push(`-- ${file}\n${normalizeReplaySafeDdl(raw)}`);
+  migrations.push({ file, sql: `-- ${file}\n${normalizeReplaySafeDdl(raw)}` });
 }
 
-const combined = bodies.join("\n\n");
+const combined = migrations.map((migration) => migration.sql).join("\n\n");
 console.log(`[schema] ${files.length} migration files, ${directives.length} add-column directives`);
 
 // Phase 1 — the replay-safe DDL. Every CREATE is IF NOT EXISTS and every DROP is IF EXISTS after
@@ -91,8 +105,14 @@ if (DRY) {
   process.exit(0);
 }
 
-console.log(`[schema] applying replay-safe DDL to ${BINDING} (remote)…`);
-wrangler(["--file", sqlFile]);
+console.log(`[schema] applying replay-safe DDL to ${BINDING} (remote), one migration at a time…`);
+for (let index = 0; index < migrations.length; index += 1) {
+  const migration = migrations[index];
+  const migrationFile = path.join(tmp, `${String(index).padStart(4, "0")}-${migration.file}`);
+  writeFileSync(migrationFile, migration.sql);
+  wranglerWithResetRetry(["--file", migrationFile], `migration ${migration.file}`);
+  console.log(`[schema]   applied ${migration.file}`);
+}
 
 // Phase 2 — the columns SQLite cannot add conditionally. Each is checked against the live table and
 // added only when absent, which is exactly what the local runner does with PRAGMA table_info.
@@ -101,7 +121,7 @@ for (const d of directives) {
   const columns = remoteColumns(d.table);
   if (columns === null) { deferred += 1; console.log(`[schema]   defer ${d.table}.${d.column} — table not present yet`); continue; }
   if (columns.has(d.column)) { skipped += 1; continue; }
-  wrangler(["--command", `ALTER TABLE ${ident(d.table)} ADD COLUMN ${ident(d.column)} ${d.definition}`]);
+  wranglerWithResetRetry(["--command", `ALTER TABLE ${ident(d.table)} ADD COLUMN ${ident(d.column)} ${d.definition}`], `add column ${d.table}.${d.column}`);
   added += 1;
   console.log(`[schema]   added ${d.table}.${d.column}`);
 }
