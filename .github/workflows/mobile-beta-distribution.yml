@@ -39,6 +39,7 @@ env:
   APP_ENV: "staging"
   NODE_ENV: "production"
   CAPACITOR_TARGET: ${{ inputs.target_app || 'customer' }}
+  PAWSPACE_CUSTOMER_APP_URL: ${{ vars.PAWSPACE_CUSTOMER_APP_URL }}
   PAWSPACE_PARTNER_APP_URL: ${{ vars.PAWSPACE_PARTNER_APP_URL }}
 
 jobs:
