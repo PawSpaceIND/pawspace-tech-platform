@@ -20,7 +20,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 const app = (path) => new URL(`../app/${path}`, import.meta.url);
-const VERTICALS = ["grooming", "boarding", "sitting", "walking", "training", "food", "taxi"];
+const VERTICALS = ["grooming", "boarding", "sitting", "walking", "training", "food", "taxi", "relocation", "funeral-memorial"];
+const CUSTOMER_SURFACES = ["/", "/mobile-app", ...VERTICALS.map((vertical) => `/${vertical}`)];
 
 test("ROUTE-1: every customer vertical resolves at its own path", () => {
   const missing = VERTICALS.filter((v) => !existsSync(app(`${v}/page.tsx`)));
@@ -42,8 +43,10 @@ test("ROUTE-3: every path the app treats as a customer surface exists", () => {
   const source = readFileSync(app("components/review-ux-fixes.tsx"), "utf8");
   const declared = source.match(/const customerPaths = new Set\(\[([^\]]*)\]\)/);
   assert.ok(declared, "app/components/review-ux-fixes.tsx no longer declares customerPaths");
-  const paths = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((p) => p !== "/");
-  const missing = paths.filter((p) => !existsSync(app(`${p.replace(/^\//, "")}/page.tsx`)));
+  const paths = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const omitted = CUSTOMER_SURFACES.filter((path) => !paths.includes(path));
+  assert.deepEqual(omitted, [], `customer UI safeguards are missing routes: ${omitted.join(", ")}`);
+  const missing = paths.filter((p) => p !== "/" && !existsSync(app(`${p.replace(/^\//, "")}/page.tsx`)));
   assert.deepEqual(missing, [],
     `declared as customer surfaces but 404: ${missing.join(", ")}`);
 });
