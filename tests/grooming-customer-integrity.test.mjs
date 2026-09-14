@@ -275,3 +275,56 @@ test("pay-now is gated by verified payment and cannot self-confirm", async (t) =
   assert.equal(replay.body.data.result.duplicate, true, "the same gateway event is recognised as a replay");
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM payment_gateway_events WHERE provider='razorpay' AND event_id=?").get(`evt_${c.groupId}`).c, 1, "a replayed gateway event is recorded once");
 });
+
+test("a base service plus add-on coupon creates the discounted booking and consumes only once",async(t)=>{
+  const ctx=await world(t),c=config();
+  await seedOwnedPet(ctx.db,c.customerId,c.petSourceId,c.petName);
+  const cookie=await sessionCookie(ctx.db,"customer",c.customerId,`customer:${c.customerId}`);
+  const scheduled=await schedule(ctx,c,cookie);
+  assert.equal(scheduled.status,200,JSON.stringify(scheduled.body));
+  const {quoteCoupon}=await import("../lib/coupon-governance.ts");
+  const quote=await quoteCoupon(ctx.db,{code:"UATCARE100",customerId:c.customerId,serviceCode:"grooming",cityId:"blr",channel:"customer_app",packageCode:"dog-basic",orderValue:2398,paymentMode:"full",isSubscription:false});
+  assert.equal(quote.valid,true,JSON.stringify(quote));
+  const payload=bookingPayload(c,scheduled.body.data.provider,{total:2298,pricing:{addOns:["Tick & flea treatment"],couponCode:quote.code,couponQuoteId:quote.quoteId,discount:100}});
+  const result=await book(payload,cookie);
+  assert.equal(result.status,201,JSON.stringify(result.body));
+  const stored=ctx.sqlite.prepare("SELECT total_amount,pricing_json FROM canonical_bookings WHERE id=?").get(result.body.data.bookingId);
+  assert.equal(stored.total_amount,2298);
+  assert.equal(JSON.parse(stored.pricing_json).addOnTotal,499);
+  const replay=await book(payload,cookie);
+  assert.ok([200,201].includes(replay.status),JSON.stringify(replay.body));
+  assert.equal(ctx.sqlite.prepare("SELECT count(*) n FROM coupon_redemptions WHERE quote_id=?").get(quote.quoteId).n,1);
+});
+
+for(const species of ["dog","cat"])test(`young ${species} package validates the saved DOB and rejects an adult before booking writes`,async(t)=>{
+  const ctx=await world(t),c=config();
+  await seedOwnedPet(ctx.db,c.customerId,c.petSourceId,c.petName);
+  const dob=new Date(c.start);dob.setUTCFullYear(dob.getUTCFullYear()-2);
+  ctx.sqlite.prepare("UPDATE canonical_pets SET species=?,profile_json=? WHERE id=?").run(species,JSON.stringify({dateOfBirth:dob.toISOString().slice(0,10)}),c.petSourceId);
+  const cookie=await sessionCookie(ctx.db,"customer",c.customerId,`customer:${c.customerId}`);
+  const scheduled=await schedule(ctx,c,cookie);
+  assert.equal(scheduled.status,200,JSON.stringify(scheduled.body));
+  const payload=bookingPayload(c,scheduled.body.data.provider,{total:999});
+  payload.packageCode="young-basic";payload.packageName="Puppy / Kitten Bath & Basic";payload.pets[0].species=species;
+  const refused=await book(payload,cookie);
+  assert.equal(refused.status,409,JSON.stringify(refused.body));
+  assert.match(refused.body.error,/Adult/);
+  assert.equal(bookingCount(ctx),0);
+  const youngDob=new Date(c.start);youngDob.setUTCMonth(youngDob.getUTCMonth()-3);
+  ctx.sqlite.prepare("UPDATE canonical_pets SET profile_json=? WHERE id=?").run(JSON.stringify({dateOfBirth:youngDob.toISOString().slice(0,10)}),c.petSourceId);
+  const allowed=await book(payload,cookie);
+  assert.equal(allowed.status,201,JSON.stringify(allowed.body));
+});
+
+test("a cat cannot receive tick treatment even if the client calls the saved animal a dog",async(t)=>{
+  const ctx=await world(t),c=config();
+  await seedOwnedPet(ctx.db,c.customerId,c.petSourceId,c.petName);
+  ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id=?").run(c.petSourceId);
+  const cookie=await sessionCookie(ctx.db,"customer",c.customerId,`customer:${c.customerId}`);
+  const scheduled=await schedule(ctx,c,cookie);
+  assert.equal(scheduled.status,200,JSON.stringify(scheduled.body));
+  const result=await book(bookingPayload(c,scheduled.body.data.provider,{total:2398,pricing:{discount:0,addOns:["Tick & flea treatment"]}}),cookie);
+  assert.equal(result.status,409,JSON.stringify(result.body));
+  assert.match(result.body.error,/species|Tick/);
+  assert.equal(bookingCount(ctx),0);
+});

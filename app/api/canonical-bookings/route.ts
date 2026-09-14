@@ -1,4 +1,7 @@
 import {CANONICAL_PET_UPSERT} from "../../../lib/canonical-pet-upsert";
+import { youngGroomingEligibility } from "../../../lib/grooming-package-eligibility";
+import { groomingAddOnsValid } from "../../../lib/grooming-add-ons";
+import { ensureCustomerAccountTables } from "../../../lib/customer-account";
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import{sameInstant}from"../../../lib/booking-window-instant";
 import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
@@ -230,6 +233,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   const submittedAddOns=(input.pricing.addOns??[]).map(value=>String(value));
   if(input.serviceCode!=="grooming"&&submittedAddOns.length)return json({error:"Add-ons are only supported for Grooming bookings"},409);
   if(submittedAddOns.some(value=>groomingAddOnPrices[value]===undefined)||new Set(submittedAddOns).size!==submittedAddOns.length)return json({error:"The Grooming add-on selection is invalid"},409);
+  if(input.serviceCode==="grooming"&&input.pets.some(pet=>!groomingAddOnsValid(submittedAddOns,pet.species??"other")))return json({error:"The selected add-on is not available for this pet species. Tick treatment is for dogs only."},409);
   const groomingAddOnTotal=submittedAddOns.reduce((sum,value)=>sum+groomingAddOnPrices[value],0);
   let couponCommercial:CouponBookingPreparation|null=null;
   const couponQuoteId=String(input.pricing.couponQuoteId||"").trim();
@@ -417,6 +421,22 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
     const claim=named.find(petHasProfile)??named[0];
     if(claim)take(index,claim);
   });
+  if(input.serviceCode==="grooming"){
+    // Validate against the resolved saved animal, not client-supplied age or species.
+    if(matches.some(row=>row&&!groomingAddOnsValid(submittedAddOns,String(row.species))))return json({error:"The selected add-on is not available for the saved pet species. Tick treatment is for dogs only."},409);
+    if(input.packageCode.startsWith("young-")){
+      await ensureCustomerAccountTables(db);
+      const serviceDate=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(input.scheduledStart));
+      for(let index=0;index<input.pets.length;index++){
+        const row=matches[index];
+        const saved=row?await db.prepare("SELECT age_years,profile_json FROM canonical_pets WHERE id=? AND customer_id=?").bind(row.id,input.customer.id).first<Record<string,unknown>>():null;
+        let profile=null;
+        try{const parsed=JSON.parse(String(saved?.profile_json??"null"));if(parsed&&typeof parsed==="object")profile=parsed;}catch{/* Missing or invalid age must fail closed. */}
+        const issue=youngGroomingEligibility({name:String(row?.name??input.pets[index].name),species:String(row?.species??input.pets[index].species),ageYears:saved?.age_years==null?null:Number(saved.age_years),profile},serviceDate);
+        if(issue)return json({error:issue,code:"young_package_ineligible"},409);
+      }
+    }
+  }
   // PHASE 4 — mint the rest, then CHECK the proposed ids globally.
   //
   // The digest makes an id correct for a given identity, but it cannot know whether some unrelated row

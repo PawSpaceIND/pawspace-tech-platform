@@ -179,3 +179,23 @@ test("real coupon booking preparation preserves governed amount and rejects tamp
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM coupon_redemptions").get().count, 0);
   assert.deepEqual({ ...sqlite.prepare("SELECT status,booking_id FROM coupon_quotes WHERE id=?").get(quote.quoteId) }, { status: "open", booking_id: null });
 });
+
+for (const scenario of [
+  {name:"fixed",discountType:"fixed",discountValue:100,maxDiscount:100,discount:100},
+  {name:"percentage",discountType:"percent",discountValue:10,maxDiscount:1000,discount:240},
+  {name:"capped percentage",discountType:"percent",discountValue:50,maxDiscount:200,discount:200},
+]) test(`base service plus add-on: ${scenario.name} coupon quotes and prepares the full basket`,async()=>{
+  const {sqlite,db}=await couponDb();
+  try{
+    const {quoteCoupon,prepareCouponBooking}=await import("../lib/coupon-governance.ts");
+    const saved=await campaign(db,{code:"ADDONTEST",...scenario});
+    const gross=1899+499;
+    const quote=await quoteCoupon(db,quoteInput(saved.code,{orderValue:gross}));
+    assert.equal(quote.valid,true,JSON.stringify(quote));
+    assert.equal(quote.discount,scenario.discount);
+    assert.equal(quote.finalAmount,gross-scenario.discount);
+    const prepared=await prepareCouponBooking(db,{quoteId:quote.quoteId,bookingId:"BK-ADDON",customerId:"CUS-RUNTIME",serviceCode:"grooming",cityId:"blr",packageCode:"dog-basic",submittedTotal:quote.finalAmount,submittedDiscount:quote.discount,idempotencyKey:"addon",now:NOW});
+    assert.equal(prepared.orderValue,gross);
+    await assert.rejects(()=>prepareCouponBooking(db,{quoteId:quote.quoteId,bookingId:"BK-ADDON",customerId:"CUS-RUNTIME",serviceCode:"grooming",cityId:"blr",packageCode:"dog-basic",submittedTotal:1899-quote.discount,submittedDiscount:quote.discount,idempotencyKey:"tampered-addon",now:NOW}),/Booking amount does not match/);
+  }finally{sqlite.close();}
+});

@@ -88,7 +88,7 @@ test("Puppy, kitten, trim and add-on commercial truth is executable data", () =>
 
   const tick = groomingCommercialAddOns.find((item) => item.code === "tick-flea-treatment");
   const oil = groomingCommercialAddOns.find((item) => item.code === "full-body-oil-massage");
-  assert.deepEqual({ price: tick?.price, pets: tick?.eligiblePetTypes }, { price: 499, pets: ["dog", "cat"] });
+  assert.deepEqual({ price: tick?.price, pets: tick?.eligiblePetTypes }, { price: 499, pets: ["dog"] });
   assert.deepEqual({ price: oil?.price, pets: oil?.eligiblePetTypes }, { price: 299, pets: ["dog", "cat"] });
   assert.equal(groomingCatalogue.some((item) => item.code === "tick-flea-treatment"), false, "add-ons cannot silently become base packages");
 });

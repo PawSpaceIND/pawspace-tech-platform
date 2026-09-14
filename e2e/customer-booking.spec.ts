@@ -106,7 +106,7 @@ test("customer: sandbox sign-in -> grooming checkout -> persisted booking", asyn
   }
 
   await grooming.getByRole("button", { name: /book now/i }).click();
-  await expect(page.getByText("Who needs grooming?", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pets", exact: true })).toBeVisible();
   await expect(page.getByText("Buddy", { exact: true }).first()).toBeVisible();
 
   const choosePackage = page.getByRole("button", { name: /Choose a package/i });
@@ -232,6 +232,12 @@ test("customer can select next month when grooming opens on the last evening of 
  const lastDate=page.getByRole("button",{name:"Fri, 30 Oct",exact:true});
  await lastDate.click();await expect(lastDate).toHaveAttribute("aria-pressed","true");
  await expect(tomorrow).toHaveAttribute("aria-pressed","false");
+ const today=page.getByRole("button",{name:"Today, 30 Sept",exact:true});
+ await today.click();
+ await page.clock.setFixedTime(new Date("2026-09-30T18:31:00Z"));
+ await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+ await expect(page.getByRole("button",{name:"Today, 1 Oct",exact:true})).toHaveAttribute("aria-pressed","true");
+ await expect(page.getByText("A new day has started. Review your requested date and slot before booking.")).toBeVisible();
 });
 
 
@@ -284,25 +290,34 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  // Google address autocomplete is an external transport boundary. Keep it deterministic here while
  // the PawSpace doorstep verification, pincode, city/zone, radius and scheduling gates remain real.
  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
- await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);await ensureCustomerPet(page);await page.goto(`/${mode}`);
+ await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);await ensureCustomerPet(page);
+ const savedAddress=await page.request.post("/api/customer-account",{data:{action:"upsert_address",idempotencyKey:`phase2-address-${mode}-${Date.now()}`,address:{label:"Home",line1:"42, Indiranagar Double Road",area:"Indiranagar",city:"Bengaluru",postalCode:"560038",isDefault:true}}});expect(savedAddress.ok(),await savedAddress.text()).toBeTruthy();
+ await page.goto(`/${mode}`);
+ await expect(page.getByRole("button",{name:"Change Address",exact:true})).toBeEnabled();
+ await expect(page.getByRole("region",{name:"Care location"})).toContainText("42, Indiranagar Double Road");
+ await expect(page.locator("#grooming-address-line-1")).toHaveCount(0);
+ await page.getByRole("button",{name:"Change Address",exact:true}).click();
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
- await page.getByRole("button",{name:/^4 hours/}).click();
- const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Start",{exact:true}).fill(date);
- await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Check-in date",{exact:true}).fill(date);await page.getByLabel("Check-out date",{exact:true}).fill(date);
+ await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText(mode==="boarding"?"Host location":"Your location",{exact:true})).toBeVisible();await page.getByRole("button",{name:"Use this address",exact:true}).click();
+ let eveningProviders:Array<{name:string}>=[];
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
-  const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart);
-  await page.getByRole("combobox",{name:"Start time",exact:true}).selectOption(time);
+  const preview=mode==="sitting"?page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000):null;
+  const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000);
+  await page.getByLabel("Check-in time",{exact:true}).fill(time);await page.getByLabel("Check-out time",{exact:true}).fill(`${String(Number(time.slice(0,2))+4).padStart(2,"0")}:00`);
   const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
+  if(preview){const result=await preview;expect(result.status()).toBe(200);eveningProviders=(await result.json()).data.providers;}
  }
  await page.getByRole("button",{name:`See available ${mode==="boarding"?"homes":"sitters"}`,exact:true}).click();
  await expect(page.getByRole("heading",{name:`Choose your ${mode==="boarding"?"host":"sitter"}`,exact:true})).toBeVisible();
  if(mode==="sitting"){
-  await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");
-  await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();
-  await page.getByRole("button",{name:/Trip details/}).click();
-  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`);
-  await page.getByRole("combobox",{name:"Start time",exact:true}).selectOption("13:00");
+  // Availability is owned by the current roster, not by a hard-coded evening-hours assumption.
+  if(eveningProviders.length){for(const provider of eveningProviders)await expect(page.getByRole("heading",{name:provider.name,exact:true}).first()).toBeVisible();}
+  else{await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();}
+  await page.getByRole("button",{name:/← Plan/}).click();
+  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T11:30:00.000Z`);
+  await page.getByLabel("Check-in time",{exact:true}).fill("13:00");await page.getByLabel("Check-out time",{exact:true}).fill("17:00");
   const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
   await page.getByRole("button",{name:"See available sitters",exact:true}).click();
  }
@@ -311,7 +326,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await page.getByLabel("Emergency contact",{exact:true}).fill("UAT emergency contact: 9000000952");
  if(mode==="sitting")await page.getByLabel("Home access instructions",{exact:true}).fill("UAT fixture: call the customer at the gate.");
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
- const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"13:00 IST":"18:00 IST");await expect(review).toContainText("4 hours");
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:00 pm":"6:00 pm");await expect(review).toContainText("4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
  await expect(page.getByRole("button",{name:/^Pay .* (create canonical stay|request final partner approval)$/})).toBeDisabled();
@@ -416,4 +431,25 @@ test("grooming truth test mounts Razorpay iframe from payment_pending",async({pa
  const sandboxKey=["rzp","test","frontendsync913"].join("_");
  await page.route("**/api/customer-checkout",async route=>{const body=route.request().postDataJSON();if(body?.action!=="start")return route.continue();return route.fulfill({status:201,json:{data:{connected:true,environment:"sandbox",bookingId:body.bookingId,orderId:"order_frontendsync913",keyId:sandboxKey,razorpay_order_id:"order_frontendsync913",RAZORPAY_KEY_ID:sandboxKey,amountPaise:134900,currency:"INR",locks:{PAWSPACE_PAYMENT_ENV:"sandbox",FORBID_PRODUCTION:"true",PAWSPACE_PAYMENT_LIVE_APPROVED:"false"}}}})});
  const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST");await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirm booking",exact:true}).click();const response=await created;expect(response.status(),await response.text()).toBe(201);const payload=await response.json();expect(payload.data.status).toBe("payment_pending");await expect(page.locator(".razorpay-checkout-frame")).toBeAttached();
+});
+
+
+test("grooming: Cat selects saved cat and package empty state can select it directly",async({page})=>{
+ await sandboxLogin(page,`6${String(Date.now()).slice(-9)}`);await ensureCustomerPet(page);
+ const created=await page.request.post("/api/customer-account",{data:{action:"upsert_pet",idempotencyKey:`phase2-cat-${Date.now()}`,pet:{name:"Milo Phase2",species:"cat",breed:"Indie",ageYears:2,vaccinationStatus:"not_provided"}}});expect(created.ok(),await created.text()).toBeTruthy();
+ await page.goto("/mobile-app");
+ await page.locator("nav").getByRole("button",{name:/home/i}).last().click();
+ const location=page.getByRole("button",{name:"Choose your service location"});
+ if(await location.isVisible().catch(()=>false)){await location.click();await page.getByRole("dialog",{name:"Choose your service area"}).getByRole("button",{name:"Browse without location",exact:true}).click();}
+ await serviceCard(page,"Grooming").getByRole("button",{name:/book now/i}).click();
+ await expect(page.getByRole("heading",{name:"Pets",exact:true})).toBeVisible();
+ await page.getByRole("button",{name:/Cat$/}).click();
+ const cat=page.getByRole("button").filter({hasText:"Milo Phase2"});
+ await expect(cat).toHaveAttribute("aria-pressed","true");await expect(cat).toContainText("Selected");
+ await cat.click();await expect(cat).toContainText("Add");
+ await page.getByRole("button",{name:"Explore packages",exact:true}).click();
+ const saved=page.getByRole("region",{name:"Choose a saved pet"}).getByRole("button").filter({hasText:"Milo Phase2"});
+ await saved.click();
+ await expect(page.getByRole("button",{name:"Choose address and requested time",exact:true})).toBeEnabled();
+ await page.screenshot({path:test.info().outputPath("grooming-cat-direct-selection.png"),fullPage:true});
 });
