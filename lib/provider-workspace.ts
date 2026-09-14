@@ -57,6 +57,11 @@ export const PHOTO_PROOF_PURPOSE:Record<string,Record<string,string>>={
 
 const MEDIA_REF_PREFIX="media://asset/";
 
+/** True for a proof type that promises the customer a photo, and so must be backed by stored media. */
+export function isPhotoProof(serviceCode:string,proofType:string){
+ return Boolean(PHOTO_PROOF_PURPOSE[serviceCode]?.[proofType]);
+}
+
 /**
  * A proof may only claim media that is stored, scan-approved and genuinely this provider's, for this
  * booking. `synthetic` is checked too: a placeholder generated for a sandbox run is not evidence that

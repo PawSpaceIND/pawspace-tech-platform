@@ -230,11 +230,17 @@ test("ONBOARDING — a repeated submit changes nothing and records nothing new",
     () => selfService.submitOwnedProviderApplication(db, { providerId, actorId: providerId, applicationId: application.id }),
     (thrown) => {
       assert.ok(thrown instanceof Response, `${why}: expected a Response, got ${thrown?.constructor?.name}`);
-      assert.ok(thrown.status >= 400 && thrown.status < 500,
-        `${why}: an ungoverned submission is the platform's gap, not a server fault — got ${thrown.status}`);
+      assert.equal(thrown.status, 409,
+        `${why}: a missing policy is a conflict with platform state, not any old client error — got ${thrown.status}`);
       return true;
     }, why);
   await refusal("an ungoverned submission must be refused rather than accepted and sorted out later");
+  /* The status alone would still pass if the body regressed to an internal precondition, which is
+   * exactly what an applicant was shown before. Read the message the caregiver actually gets. */
+  const shown = await selfService.submitOwnedProviderApplication(db, { providerId, actorId: providerId, applicationId: application.id })
+    .then(() => "", (e) => (e instanceof Response ? e.text() : ""));
+  assert.doesNotMatch(shown, /policy is required before submission/i, "the internal precondition must not be the message");
+  assert.ok(shown.length > 40, `the refusal has to explain what happens next, got: ${JSON.stringify(shown)}`);
   await refusal("and the second attempt must behave identically");
 
   assert.equal(statusOf(), before.status, "a refused submit must not advance the application");

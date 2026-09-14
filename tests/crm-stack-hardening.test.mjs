@@ -149,7 +149,11 @@ test("real execution: /api/crm create persists a contact + lead work item that t
    * rejects a two-character ESCAPE expression. Undo the escaping the TypeScript source needed. */
   const listSql = contactListLib.match(/export const CRM_CONTACT_LIST_SQL=`([\s\S]*?)`;/)[1].replaceAll("\\\\", "\\");
   const runList = (scope, search = "") => db.prepare(listSql)
-    .all(scope ? 1 : 0, scope?.[0] ?? "", scope?.[1] ?? "", scope?.[2] ?? "", search ? 1 : 0, ...Array(4).fill(`%${search}%`));
+    /* One value per LIKE placeholder, read from the statement itself. Hard-coding a count let this
+     * bind four against six: node:sqlite leaves the extras NULL instead of throwing, so the search
+     * still "passed" purely because the column that matched happened to be one of the four bound. */
+    .all(scope ? 1 : 0, scope?.[0] ?? "", scope?.[1] ?? "", scope?.[2] ?? "", search ? 1 : 0,
+      ...Array((listSql.match(/LIKE \? ESCAPE/g) ?? []).length).fill(`%${search}%`));
 
   for (const [label, rows] of [
     ["unscoped", runList(null)],

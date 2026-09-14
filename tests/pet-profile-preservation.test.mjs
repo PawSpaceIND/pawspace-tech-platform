@@ -73,7 +73,20 @@ test("PET-3: a booking carrying no breed cannot erase a stored breed", () => {
  * is the AUTHORITY over these columns and must overwrite - a customer correcting a breed, or a status
  * lapsing from verified back to not_provided, has to be able to land. Only BOOKING writes are
  * constrained, so the exemption is by role, not convenience. */
-const PET_PROFILE_AUTHORITY = new Set(["lib/customer-account.ts"]);
+const PET_PROFILE_AUTHORITY = new Set([
+  "lib/customer-account.ts",
+  /* The staff CSV import, behind customers.manage. Like the pet manager it is somebody deliberately
+   * supplying the record rather than a booking passing through, so its write is authoritative and
+   * has to be able to land. It writes name, species and breed and never touches vaccination_status,
+   * so it was never part of the defect this file exists for. Whether a bulk import SHOULD be allowed
+   * to overwrite a customer's own breed entry with spreadsheet data is a real question, and a
+   * business one — flagged rather than decided here. */
+  "app/api/admin/data-ingest/route.ts",
+]);
+
+/* The columns a customer fills in and a booking must never overwrite. Both were erased by the
+ * original clause; a check covering only one of them is half a ratchet. */
+const PET_PROFILE_COLUMNS = ["vaccination_status", "breed"];
 
 test("PET-4: no booking surface overwrites pet profile columns unconditionally", () => {
   const offenders = fs.readdirSync(new URL("../app/api", import.meta.url), { recursive: true })
@@ -81,16 +94,26 @@ test("PET-4: no booking surface overwrites pet profile columns unconditionally",
     .map((f) => `app/api/${String(f).replaceAll("\\", "/")}`)
     .concat(fs.readdirSync(new URL("../lib", import.meta.url)).filter((f) => f.endsWith(".ts")).map((f) => `lib/${f}`))
     .filter((f) => !PET_PROFILE_AUTHORITY.has(f))
-    /* Whitespace-tolerant on purpose: `vaccination_status = excluded.vaccination_status` is the same
-     * destructive clause and an exact-match regex would wave it through. */
-    .filter((f) => /INSERT INTO canonical_pets[\s\S]*?vaccination_status\s*=\s*excluded\s*\.\s*vaccination_status/i.test(read(f)));
+    /* Every column a booking can erase, not just vaccination. Breed was destroyed by the same clause
+     * on the same paths, and a route reintroducing `breed=excluded.breed` alone would have walked
+     * past a vaccination-only check. Whitespace-tolerant because `col = excluded.col` is the same
+     * destructive write and an exact-match regex would wave it through. */
+    .filter((f) => PET_PROFILE_COLUMNS.some((column) =>
+      new RegExp(`INSERT INTO canonical_pets[\\s\\S]*?${column}\\s*=\\s*excluded\\s*\\.\\s*${column}`, "i").test(read(f))));
 
   assert.deepEqual(offenders, [],
     `these write canonical_pets with the destructive clause; use CANONICAL_PET_UPSERT from lib/canonical-pet-upsert.ts:\n  ${offenders.join("\n  ")}`);
 });
 
 test("PET-5: every booking flow sends the pet's real vaccination status", () => {
-  const flows = ["app/mobile-app/stay-flow.tsx", "app/mobile-app/taxi-flow.tsx"];
+  /* Discovered, not listed. A hard-coded pair let a third booking client regress silently, which is
+   * how taxi-flow came to send no status at all while stay-flow was being fixed. Any customer-facing
+   * flow that builds a pets[] payload for a booking has to carry the pet's own status. */
+  const flows = fs.readdirSync(new URL("../app/mobile-app", import.meta.url))
+    .filter((f) => f.endsWith(".tsx"))
+    .map((f) => `app/mobile-app/${f}`)
+    .filter((f) => /pets:\s*\w+\.map\(/.test(read(f)) && /vaccinationStatus/.test(read(f)));
+  assert.ok(flows.length >= 2, `expected to discover the booking flows, found ${flows.length}`);
   for (const flow of flows) {
     const source = read(flow);
     assert.ok(!/vaccinationStatus:"(not_provided|)"/.test(source),
