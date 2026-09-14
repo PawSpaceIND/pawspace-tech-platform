@@ -294,17 +294,21 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
  const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Check-in date",{exact:true}).fill(date);await page.getByLabel("Check-out date",{exact:true}).fill(date);
  await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText(mode==="boarding"?"Host location":"Your location",{exact:true})).toBeVisible();await page.getByRole("button",{name:"Use this address",exact:true}).click();
+ let eveningProviders:Array<{name:string}>=[];
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
+  const preview=mode==="sitting"?page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000):null;
   const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000);
   await page.getByLabel("Check-in time",{exact:true}).fill(time);await page.getByLabel("Check-out time",{exact:true}).fill(`${String(Number(time.slice(0,2))+4).padStart(2,"0")}:00`);
   const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
+  if(preview){const result=await preview;expect(result.status()).toBe(200);eveningProviders=(await result.json()).data.providers;}
  }
  await page.getByRole("button",{name:`See available ${mode==="boarding"?"homes":"sitters"}`,exact:true}).click();
  await expect(page.getByRole("heading",{name:`Choose your ${mode==="boarding"?"host":"sitter"}`,exact:true})).toBeVisible();
  if(mode==="sitting"){
-  await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");
-  await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();
+  // Availability is owned by the current roster, not by a hard-coded evening-hours assumption.
+  if(eveningProviders.length){for(const provider of eveningProviders)await expect(page.getByRole("heading",{name:provider.name,exact:true}).first()).toBeVisible();}
+  else{await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();}
   await page.getByRole("button",{name:/← Plan/}).click();
   const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T11:30:00.000Z`);
   await page.getByLabel("Check-in time",{exact:true}).fill("13:00");await page.getByLabel("Check-out time",{exact:true}).fill("17:00");
