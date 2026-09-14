@@ -7,6 +7,9 @@ const route = await read("../app/api/provider-workspace/route.ts");
 
 test("provider workspace is own-record-only and splits contract vs commission surfaces", () => {
   assert.match(ws, /export async function resolveProviderForActor/);
+  // A provider platform session carries the audit id `provider:<subjectId>`, never a mailbox, so the
+  // resolver short-circuits on that prefix before the legacy address lookup.
+  assert.match(ws, /\/\^provider:\(\.\+\)\$\//);
   assert.match(ws, /provider_identity_links WHERE email=\? AND status='active'/);
   assert.match(ws, /this booking is not assigned to you|is not assigned to you/i);
   assert.match(ws, /contractEarnings/);                                  // contract earnings are governed provider earnings
@@ -30,7 +33,10 @@ test("live assignments: first accept wins and assigns the booking", () => {
 });
 
 test("the route resolves the caller's own provider and gates writes", () => {
+  // Identity-binding first, legacy email link as the fallback: an OTP Partner-app session carries the
+  // synthetic audit id "provider:<id>" as its actor email, so an email-only lookup matched nothing.
   assert.match(route, /resolveProviderForActor\(db,actor\.email\)/);
+  assert.doesNotMatch(route, /searchParams\.get\("providerId"\)/);
   assert.match(route, /Cross-origin provider write blocked/);
   for (const a of ["submit_proof", "accept_job", "decline_job"]) assert.match(route, new RegExp(`"${a}"`));
 });

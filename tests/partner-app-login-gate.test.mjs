@@ -245,7 +245,19 @@ test("the Partner app offers Sign out and only ever re-asks the server after it"
   assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out \/ switch partner"\}<\/b>/, "Sign out is in the More menu, named for what a tester looks for");
   assert.match(page, /\{identity\?\.subjectId && <button type="button" className=\{styles\.headerSignOut\} onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}>/, "and in the header of a signed-in shell");
   // Every per-account state is dropped when the session changes hands (sign-out and switch alike).
-  assert.match(page, /const resetAccountState = \(\) => \{\s*setIdentity\(null\); setJobs\(\[\]\); setSelectedId\(""\); setTab\("home"\); setOperationResult\(null\); setOperationBusy\(false\);\s*setPaymentRequest\(null\); setPaymentPollKey\(0\); setEarnings\(null\); setMediaMessage\(""\); setMediaAssets\(\[\]\); setMediaAssetsError\(""\); setMediaPollKey\(0\);\s*setBusy\(false\); setRefreshKey\(0\); lifecycleLock\.current = false;\s*\};/);
+  // Asserted as "each of these setters is present" rather than as the exact body: the reset is the
+  // right home for any new per-account state, so pinning the literal list makes ADDING to it fail.
+  // main's list is required in full below; PR #847 adds earningsNotice, engagement and
+  // workspaceState (the last naming the previous partner's booking ids), which is what this wants.
+  const resetBody = page.match(/const resetAccountState = \(\) => \{([\s\S]*?)\n  \};/);
+  assert.ok(resetBody, "resetAccountState must exist as one shared reset");
+  for (const setter of ['setIdentity(null)', 'setJobs([])', 'setSelectedId("")', 'setTab("home")',
+                        'setOperationResult(null)', 'setOperationBusy(false)', 'setPaymentRequest(null)',
+                        'setPaymentPollKey(0)', 'setEarnings(null)', 'setMediaMessage("")', 'setMediaAssets([])',
+                        'setMediaAssetsError("")', 'setMediaPollKey(0)', 'setBusy(false)', 'setRefreshKey(0)',
+                        'lifecycleLock.current = false']) {
+    assert.ok(resetBody[1].includes(setter), `resetAccountState must drop ${setter}`);
+  }
   assert.equal(page.split("resetAccountState();").length, 3, "sign-out and the switch both reset the account state");
   // One busy guard for both account actions: a sign-out and a switch can never be in flight together.
   assert.match(page, /const accountBusy = signingOut \|\| switching;/);
