@@ -3,6 +3,7 @@ import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
 import {useDutyTracking} from "./use-duty-tracking";
 import {BEFORE_SERVICE,AFTER_SERVICE,checklistComplete,isGroomerOnDuty} from "../../lib/partner-job-checklists";
@@ -128,6 +129,8 @@ const SETTLED_PAYMENT_STATUSES = ["captured", "refunded", "partially_refunded"];
 const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
 export default function PartnerMobileApp() {
+  const searchParams = useSearchParams();
+  const requestedBookingId = searchParams.get("bookingId") || "";
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
   // The dashboard is gated on the SERVER's answer only. "checking" avoids flashing the sign-in form at
@@ -210,12 +213,15 @@ export default function PartnerMobileApp() {
       .then((next) => {
         if (cancelled || version !== sessionVersion.current) return;
         setJobs(next);
-        setSelectedId((current) => current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? ""));
+        setSelectedId((current) => {
+          if (requestedBookingId && next.some((job) => job.bookingId === requestedBookingId)) return requestedBookingId;
+          return current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? "");
+        });
         setError("");
       })
       .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
     return () => { cancelled = true; };
-  }, [identity?.subjectId, refreshKey, paymentPollKey]);
+  }, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);
 
   useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
