@@ -3,15 +3,17 @@ import Link from"next/link";
 import{useState}from"react";
 
 type EnquiryResult={id:string;customerName:string;pickupDate:string;expectedTravelDate:string};
-type FormState={customerName:string;phonePrimary:string;phoneSecondary:string;email:string;petType:"dog"|"cat";pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string};
+type FormState={customerName:string;phonePrimary:string;phoneSecondary:string;email:string;petType:"dog"|"cat";relocationKind:"domestic"|"international";pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string};
 
-const empty:FormState={customerName:"",phonePrimary:"",phoneSecondary:"",email:"",petType:"dog",pickupDate:"",pickupApproxTime:"",pickupLocation:"",dropLocation:"",expectedTravelDate:""};
+const empty:FormState={customerName:"",phonePrimary:"",phoneSecondary:"",email:"",petType:"dog",relocationKind:"domestic",pickupDate:"",pickupApproxTime:"",pickupLocation:"",dropLocation:"",expectedTravelDate:""};
 
 const page={maxWidth:640,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16} as const;
 const hero={background:"var(--ds-primary-500)",color:"#fff",borderRadius:"var(--ds-radius-lg)",padding:"24px 22px",display:"grid",gap:8} as const;
 const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:18,display:"grid",gap:14} as const;
 const label={display:"grid",gap:4,fontSize:14,color:"var(--ds-text)"} as const;
 const input={padding:"10px 12px",borderRadius:"var(--ds-radius-sm)",border:"1px solid var(--ds-border)",fontSize:15} as const;
+const choice={display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"} as const;
+const choiceItem={display:"flex",gap:6,alignItems:"center",fontSize:15,cursor:"pointer"} as const;
 const button={background:"var(--ds-accent-500)",color:"var(--ds-primary-600)",border:"none",borderRadius:"var(--ds-radius-sm)",padding:"12px 20px",fontWeight:700,fontSize:15,cursor:"pointer"} as const;
 
 export default function RelocationEnquiryPage(){
@@ -50,6 +52,17 @@ export default function RelocationEnquiryPage(){
       <label style={label}>Secondary phone (optional)<input style={input} value={form.phoneSecondary} onChange={e=>set("phoneSecondary",e.target.value.replace(/\D/g,"").slice(0,10))} placeholder="Optional" inputMode="numeric"/></label>
       <label style={label}>Email<input style={input} type="email" value={form.email} onChange={e=>set("email",e.target.value)} placeholder="you@example.com"/></label>
       <label style={label}>Pet type<select style={input} value={form.petType} onChange={e=>set("petType",e.target.value as"dog"|"cat")}><option value="dog">Dog</option><option value="cat">Cat</option></select></label>
+      {/* The API and lib/relocation-enquiry both REQUIRE this, and the page never collected it: every
+          submission from this form was refused with `Relocation type must be "domestic" or
+          "international"`. Radios rather than a <select> so the two choices are visible without
+          opening anything - and so this page keeps exactly two <option> elements, dog and cat. */}
+      <fieldset style={{...label,border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-sm)",padding:"10px 12px",margin:0}}>
+        <legend style={{fontSize:14,padding:"0 4px"}}>Relocation type</legend>
+        <div style={choice}>
+          <label style={choiceItem}><input type="radio" name="relocationKind" value="domestic" checked={form.relocationKind==="domestic"} onChange={()=>set("relocationKind","domestic")}/>Domestic (within India)</label>
+          <label style={choiceItem}><input type="radio" name="relocationKind" value="international" checked={form.relocationKind==="international"} onChange={()=>set("relocationKind","international")}/>International</label>
+        </div>
+      </fieldset>
       <label style={label}>Pickup date<input style={input} type="date" value={form.pickupDate} onChange={e=>set("pickupDate",e.target.value)}/></label>
       <label style={label}>Pickup approximate time<input style={input} type="time" value={form.pickupApproxTime} onChange={e=>set("pickupApproxTime",e.target.value)}/></label>
       <label style={label}>Pickup location<input style={input} value={form.pickupLocation} onChange={e=>set("pickupLocation",e.target.value)} placeholder="Address / area, city"/></label>

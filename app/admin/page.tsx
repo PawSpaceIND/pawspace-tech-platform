@@ -10,8 +10,41 @@ import BoardingPanel from "./boarding-panel";
 import MobilityPanel from "./mobility-panel";
 import FoodPanel from "./food-panel";
 import TestSyncPanel from "../components/test-sync-panel";
+// R3-G / F4: four links in the page BODY (the day board, Add booking, the command-center cues and
+// the Communications Desk) were ungated too, so gating the footer alone would have left the same
+// offered-then-refused path open from a different corner of the same screen.
+import { StaffGatedLink, useStaffActor, useVisibleStaffLinks } from "../components/hub-workspace-links";
+import type { HubWorkspaceLink } from "../components/hub-workspace-links";
 
 type View = "overview" | "calendar" | "bookings" | "crm" | "training" | "boarding" | "mobility" | "food" | "groomers" | "workforce" | "subscriptions" | "payments" | "tickets";
+
+/**
+ * The sidebar footer.
+ *
+ * R3-G / F4: fourteen links, no gate, rendered identically to every signed-in role - so /admin
+ * offered auditor the Booking Command Center, Communications Desk, Advanced CRM, Assisted Booking
+ * and System Integration Control, and every one of them refused. Each permission below is the one
+ * the destination's API actually enforces: /api/team-overview dashboard.view,
+ * /api/booking-command-center bookings.manage, /api/conversations communications.manage,
+ * /api/control-tower audit.view (and launch.view for the integration screen, per
+ * app/control/page.tsx controlRoutes), /api/customer-360 customers.view, /api/assisted-orders
+ * scheduling.book, and the finance hub finance.view.
+ *
+ * The public surfaces below - the customer app, the partner app, the API reference and the two test
+ * labs - carry no staff gate of their own and stay unconditional. `detail` is unused here; the
+ * shared HubWorkspaceLink shape is reused so this list is filtered by exactly the same function as
+ * every other gated list on the platform.
+ */
+const ADMIN_FOOTER_LINKS: HubWorkspaceLink[] = [
+  { href: "/team", label: "⌂ Team home", detail: "", permission: "dashboard.view" },
+  { href: "/team/operations/bookings", label: "▤ Booking Command Center", detail: "", permission: "bookings.manage" },
+  { href: "/team/customer-experience", label: "◎ Communications Desk", detail: "", permission: "communications.manage" },
+  { href: "/control/integrations", label: "◎ System Integration Control", detail: "", permission: "launch.view" },
+  { href: "/assisted-booking", label: "◎ Assisted Booking", detail: "", permission: "scheduling.book" },
+  { href: "/control", label: "◇ Platform Control", detail: "", permission: "audit.view" },
+  { href: "/team/finance", label: "₹ Finance & People OS", detail: "", permission: "finance.view" },
+  { href: "/team/sales", label: "⚡ Advanced CRM", detail: "", permission: "customers.view" },
+];
 
 type Customer = {
   id: string;
@@ -69,6 +102,12 @@ const nav: { id: View; label: string; icon: string }[] = [
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
+/** Initials for the signed-in operator, from whatever the directory actually holds. */
+const adminInitials = (name: string, email: string) => {
+  const parts = (name || email || "").replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "PS";
+};
+
 type OverviewMetrics={bookingsToday:number;confirmed:number;completed:number;inProgress:number;cancelled:number;unassigned:number;recognizedRevenue:number;providersActive:number|null;providersTotal:number|null;openTickets:number|null;ticketsNeedingAttention:number|null};
 type OverviewCapacity={providerId:string;name:string;zone:string|null;slots:{slot:string;state:"available"|"booked"|"completed";bookingId:string|null;label:string}[]};
 type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;scheduledTimeIst:string;activityAt:number;slot:string|null;amount:number};
@@ -101,6 +140,8 @@ const PROTOTYPE_VIEWS=new Set(["groomers","payments","crm","tickets","subscripti
 const rupees=(value:number)=>`\u20B9${value.toLocaleString("en-IN")}`;
 
 export default function AdminPage() {
+  const staff = useStaffActor();
+  const footerLinks = useVisibleStaffLinks(ADMIN_FOOTER_LINKS);
   const [zone, setZone] = useState("");
   const{data:overview,error:overviewError,loading:overviewLoading}=useOperationsOverview(zone);
   const [view, setView] = useState<View>("overview");
@@ -137,13 +178,18 @@ export default function AdminPage() {
       <aside className={styles.sidebar}>
         <div className={styles.brand}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span>Operations</span></div>
         <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)} aria-label={item.label}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
-        <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/customer-experience">◎ Communications Desk</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/finance">₹ Finance & People OS</Link><Link href="/team/sales">⚡ Advanced CRM</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
+        <div className={styles.sidebarFooter}>{footerLinks.map((link) => <Link key={link.href} href={link.href}>{link.label}</Link>)}<Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/">← Customer app</Link>
+          {/* R3-G / F9: this said "KP · Karthik · Super admin" verbatim, whoever was signed in - it was
+              rendered unchanged to auditor, finance, manager and associate. A console that tells you
+              you are someone else is worse than one that says nothing, so an unresolved actor now
+              says so rather than borrowing a name. */}
+          <div className={styles.adminUser}><span>{staff.actor ? adminInitials(staff.actor.name, staff.actor.email) : "··"}</span><div><strong>{staff.actor?.name || (staff.loaded ? "Not signed in" : "Signing in…")}</strong><small>{staff.actor ? staff.actor.roleCode.replace(/_/g, " ") : staff.loaded ? "no staff account" : "checking your access"}</small></div></div></div>
       </aside>
 
       <section className={styles.workspace}>
         <header className={styles.header}>
           <div><p>{overview?`${longDay(overview.date)} · IST`:"Loading today’s date…"}</p><h1>{title}</h1></div>
-          <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)} aria-label="Filter by zone"><option value="">All zones</option>{(overview?.zones??[]).map(id=><option key={id} value={id}>{id}</option>)}</select><Link className={styles.ghostButton} href="/team/operations/bookings">Open day board</Link><Link className={styles.primaryButton} href="/assisted-booking">＋ Add booking</Link></>}</div>
+          <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)} aria-label="Filter by zone"><option value="">All zones</option>{(overview?.zones??[]).map(id=><option key={id} value={id}>{id}</option>)}</select><StaffGatedLink className={styles.ghostButton} href="/team/operations/bookings" permission="bookings.manage">Open day board</StaffGatedLink><StaffGatedLink className={styles.primaryButton} href="/assisted-booking" permission="scheduling.book">＋ Add booking</StaffGatedLink></>}</div>
         </header>
         <TestSyncPanel surface="admin" />
         {PROTOTYPE_VIEWS.has(view)&&<p className={styles.prototypeNotice}><b>Sample data.</b> This tab still shows built-in example rows, not your database. Overview, Live calendar and Bookings are live.</p>}
@@ -171,9 +217,9 @@ export default function AdminPage() {
           </section>
         </>}
 
-        {view === "bookings" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Connected operations</span><h2>Modern Booking Command Center</h2></div><Link className={styles.primaryButton} href="/team/operations/bookings">Open command center →</Link></div><p>Control canonical bookings, provider work orders, payments, delay impact, customer communication, tickets, rebooking, refunds and the full audit timeline from one workspace.</p></section>}
+        {view === "bookings" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Connected operations</span><h2>Modern Booking Command Center</h2></div><StaffGatedLink className={styles.primaryButton} href="/team/operations/bookings" permission="bookings.manage">Open command center →</StaffGatedLink></div><p>Control canonical bookings, provider work orders, payments, delay impact, customer communication, tickets, rebooking, refunds and the full audit timeline from one workspace.</p></section>}
         {(view === "overview" || view === "bookings") && <section className={styles.splitGrid}>
-          <div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Today</span><h2>Booking activity</h2></div><Link className={styles.textButton} href="/team/operations/bookings">View all →</Link></div>
+          <div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Today</span><h2>Booking activity</h2></div><StaffGatedLink className={styles.textButton} href="/team/operations/bookings" permission="bookings.manage">View all →</StaffGatedLink></div>
             {overviewLoading&&<p className={styles.dataNote}>Loading today’s bookings…</p>}
             {!overviewLoading&&!liveActivity.length&&<p className={styles.dataNote}>No booking was scheduled or updated today{zone?` in ${zone}`:""}. This is a live read of canonical_bookings, not an empty template.</p>}
             {!!overview&&overview.activityShown<overview.activityTotal&&<p className={styles.dataNote}>Showing the first {overview.activityShown} of {overview.activityTotal} scheduled or updated bookings today.</p>}
@@ -262,7 +308,7 @@ export default function AdminPage() {
 
         {view === "payments" && <section className={styles.splitGrid}><div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Sample data</span><h2>Payment reconciliation</h2></div><button className={styles.ghostButton} disabled title="Canonical finance export is not connected">Export unavailable</button></div><div className={styles.paymentRows}><div><span>Online · Razorpay</span><strong>₹18,994</strong><small>11 transactions · sample only</small></div><div><span>Pay-after-service · UPI</span><strong>₹8,390</strong><small>5 sample payments</small></div><div><span>Cash collected</span><strong>₹5,098</strong><small>3 sample groomers</small></div><div className={styles.totalRow}><span>Sample total</span><strong>₹32,482</strong></div></div></div><aside className={styles.detailPanel}><span className={styles.kicker}>Sample data</span><h2>Cash to collect</h2><div className={styles.cashItem}><span>AR</span><div><strong>Arun R.</strong><small>2 sample bookings</small></div><b>₹2,698</b></div><div className={styles.cashItem}><span>DK</span><div><strong>Deepa K.</strong><small>1 sample booking</small></div><b>₹1,599</b></div><button className={styles.primaryButton} disabled title="Canonical cash reconciliation is not connected">Reconciliation unavailable</button></aside></section>}
 
-        {view === "tickets" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Operations queue</span><h2>Support tickets</h2></div><Link className={styles.textButton} href="/team/customer-experience">Communications Desk →</Link></div><div className={styles.ticketList}><article><span className={styles.urgentTag}>Urgent</span><div><strong>Groomer waiting · Customer unreachable</strong><p>PS-2838 · 15-minute reminder sent · HSR Layout</p></div><button onClick={() => notify("Ticket assigned to you")}>Resolve</button></article><article><span className={styles.normalTag}>Payment</span><div><strong>Dynamic QR payment not matched</strong><p>PS-2829 · ₹1,899 received · Whitefield</p></div><button onClick={() => notify("Payment matching opened")}>Review</button></article><article><span className={styles.normalTag}>Reschedule</span><div><strong>Preferred groomer unavailable</strong><p>PS-2851 · Customer wants Arun R. · Koramangala</p></div><button onClick={() => notify("Alternative slots displayed")}>Review</button></article></div></section>}
+        {view === "tickets" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Operations queue</span><h2>Support tickets</h2></div><StaffGatedLink className={styles.textButton} href="/team/customer-experience" permission="communications.manage">Communications Desk →</StaffGatedLink></div><div className={styles.ticketList}><article><span className={styles.urgentTag}>Urgent</span><div><strong>Groomer waiting · Customer unreachable</strong><p>PS-2838 · 15-minute reminder sent · HSR Layout</p></div><button onClick={() => notify("Ticket assigned to you")}>Resolve</button></article><article><span className={styles.normalTag}>Payment</span><div><strong>Dynamic QR payment not matched</strong><p>PS-2829 · ₹1,899 received · Whitefield</p></div><button onClick={() => notify("Payment matching opened")}>Review</button></article><article><span className={styles.normalTag}>Reschedule</span><div><strong>Preferred groomer unavailable</strong><p>PS-2851 · Customer wants Arun R. · Koramangala</p></div><button onClick={() => notify("Alternative slots displayed")}>Review</button></article></div></section>}
       </section>
       {toast && <div className={styles.toast}>✓ {toast}</div>}
     </main>

@@ -34,6 +34,8 @@
  * TCS/margin. No code change - just a new term version.
  */
 
+import{GOVERNED_CLIENT_ERROR}from"./governed-http-error";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -67,20 +69,35 @@ export async function ensureCommercialTermsTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS commercial_terms_audit (id TEXT PRIMARY KEY,term_id TEXT NOT NULL,action TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);}
 
+/*
+ * A BUSINESS RULE IS NOT A SERVER FAULT. [R3-B5]
+ *
+ * Every refusal in this module was a bare `new Error`, and /api/provider-commercial-terms catches
+ * through authError(), which trusts a governed Response or the GOVERNED_CLIENT_ERROR brand and nothing
+ * else. Measured: save_term with providerSharePct 80 answered 500 "Commercial-terms update failed",
+ * discarding the one sentence that says the field is a FRACTION; and activate_term by the drafter
+ * answered the same 500, reporting a working maker/checker control as a platform outage - so a finance
+ * operator could neither learn the input format nor tell a refusal from an outage. Same brand
+ * lib/payroll-engine.ts and lib/provider-verification-mandate.ts already use; a branded Error still
+ * satisfies assert.rejects(fn,/message/), which a bare Response does not.
+ */
+function refuse(message:string,status:number):never{throw Object.assign(new Error(message),{statusCode:status,[GOVERNED_CLIENT_ERROR]:true});}
+
 function validate(model:string,share:number,gstMode:string){
- if(!(model in MODEL_DEFAULTS))throw new Error("Unknown engagement model");
- if(!(share>=0&&share<=1))throw new Error("Provider share must be a fraction between 0 and 1");
- if(!["none","provider_gst_on_behalf","platform_retained"].includes(gstMode))throw new Error("Unknown GST mode");
- if(model==="direct_employee"&&share!==0)throw new Error("Direct-employee services have no provider revenue share");
+ if(!(model in MODEL_DEFAULTS))refuse(`Unknown engagement model '${model}'. Use one of: ${Object.keys(MODEL_DEFAULTS).join(", ")}`,400);
+ // Named with an example, because the field is called providerSharePct and "Pct" reads as a percentage.
+ if(!(share>=0&&share<=1))refuse(`Provider share must be a fraction between 0 and 1 - 0.8 means 80% - not a percentage. Received ${share}.`,400);
+ if(!["none","provider_gst_on_behalf","platform_retained"].includes(gstMode))refuse(`Unknown GST mode '${gstMode}'. Use none, provider_gst_on_behalf or platform_retained.`,400);
+ if(model==="direct_employee"&&share!==0)refuse("Direct-employee services have no provider revenue share",409);
 }
 
 /** Create (maker) a draft commercial term for a service (provider_id null = the service default) or a specific provider. */
 export async function saveCommercialTerm(db:Db,input:{serviceCode:string;providerId?:string|null;engagementModel:EngagementModel;providerSharePct?:number;gstMode?:GstMode;platformGstRate?:number;cashAllowed?:boolean;onboardingFee?:number;renewalFee?:number;renewalMonths?:number;effectiveFrom:string;reason:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(!text(input.serviceCode))throw new Error("Service code is required");
- if(!/^\d{4}-\d{2}-\d{2}$/.test(text(input.effectiveFrom)))throw new Error("A real effective-from date is required");
- if(text(input.reason).length<8)throw new Error("A clear reason is required");
- const d=MODEL_DEFAULTS[input.engagementModel];if(!d)throw new Error("Unknown engagement model");
+ if(!text(input.serviceCode))refuse("Service code is required",400);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(text(input.effectiveFrom)))refuse("A real effective-from date is required (YYYY-MM-DD)",400);
+ if(text(input.reason).length<8)refuse("A clear reason is required (at least 8 characters)",400);
+ const d=MODEL_DEFAULTS[input.engagementModel];if(!d)refuse(`Unknown engagement model '${text(input.engagementModel)}'. Use one of: ${Object.keys(MODEL_DEFAULTS).join(", ")}`,400);
  const share=input.providerSharePct==null?d.share:Number(input.providerSharePct);
  const gstMode=input.gstMode||d.gstMode;
  validate(input.engagementModel,share,gstMode);
@@ -96,10 +113,11 @@ export async function saveCommercialTerm(db:Db,input:{serviceCode:string;provide
 /** Activate (checker) a drafted term. The activator must differ from the drafter. Supersedes the prior active term for the same scope. */
 export async function activateCommercialTerm(db:Db,input:{termId:string;approvalReference:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(text(input.approvalReference).length<4)throw new Error("An approval reference is required to activate commercial terms");
+ if(text(input.approvalReference).length<4)refuse("An approval reference is required to activate commercial terms",400);
  const term=await db.prepare("SELECT * FROM provider_commercial_terms WHERE id=?").bind(input.termId).first<Row>();
- if(!term||text(term.status)!=="draft")throw new Error("Only a draft commercial term can be activated");
- if(text(term.created_by)===text(input.actorId))throw new Error("Maker/checker: the drafter cannot activate their own commercial term");
+ if(!term)refuse("Commercial term not found",404);
+ if(text(term.status)!=="draft")refuse(`Only a draft commercial term can be activated; this one is '${text(term.status)}'`,409);
+ if(text(term.created_by)===text(input.actorId))refuse("Maker/checker: the drafter cannot activate their own commercial term. A second finance approver must activate it.",409);
  const now=Date.now();
  await db.batch([
   db.prepare("UPDATE provider_commercial_terms SET status='superseded',updated_at=? WHERE service_code=? AND (provider_id IS ? OR provider_id=?) AND status='active'").bind(now,term.service_code,term.provider_id,term.provider_id),
@@ -121,8 +139,8 @@ export async function activateCommercialTerm(db:Db,input:{termId:string;approval
 /** Order-wise override (change the split/model for one booking, reasoned + audited). */
 export async function setOrderCommercialOverride(db:Db,input:{bookingId:string;providerSharePct?:number|null;engagementModel?:EngagementModel|null;gstMode?:GstMode|null;reason:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(text(input.reason).length<8)throw new Error("A clear reason is required for an order-wise commercial override");
- if(input.providerSharePct!=null&&!(input.providerSharePct>=0&&input.providerSharePct<=1))throw new Error("Override share must be a fraction between 0 and 1");
+ if(text(input.reason).length<8)refuse("A clear reason is required for an order-wise commercial override (at least 8 characters)",400);
+ if(input.providerSharePct!=null&&!(input.providerSharePct>=0&&input.providerSharePct<=1))refuse(`Override share must be a fraction between 0 and 1 - 0.8 means 80% - not a percentage. Received ${input.providerSharePct}.`,400);
  const now=Date.now();
  await db.prepare("INSERT INTO order_commercial_overrides (booking_id,provider_share_pct,engagement_model,gst_mode,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET provider_share_pct=excluded.provider_share_pct,engagement_model=excluded.engagement_model,gst_mode=excluded.gst_mode,reason=excluded.reason,actor_id=excluded.actor_id,created_at=excluded.created_at")
   .bind(input.bookingId,input.providerSharePct??null,input.engagementModel??null,input.gstMode??null,text(input.reason),input.actorId,now).run();

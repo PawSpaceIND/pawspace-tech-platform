@@ -1,6 +1,7 @@
 "use client";
 import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
+import{ReadGate,ReadRefusedNotice}from"../../../components/refused-surface";
 
 type Row=Record<string,unknown>;
 type Snapshot={profiles:Row[];intents:Row[];knowledge:Row[];prompts:Row[];killSwitches:Row[];auditEvents:Row[];productionReady:boolean};
@@ -52,9 +53,12 @@ export default function AiConfigurationPage(){
   return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:28,fontFamily:"Arial,sans-serif",color:"#24133f"}}><div style={{maxWidth:1300,margin:"0 auto"}}>
     <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
       <div><small style={{fontWeight:800,color:"#6c39a8"}}>PAWSPACE TEAM · AI BUSINESS CONFIGURATION</small><h1 style={{margin:"7px 0"}}>Assistant configuration & knowledge</h1><p style={{margin:0,color:"#746b7d"}}>Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate.</p></div>
-      <div><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> <Link href="/team/ai" style={{marginLeft:10}}>AI review</Link> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
+      {/* R3-G / F7: the global AI kill switch rendered ABOVE "Permission denied" for an admin whose
+          read had just been refused. A control that cannot be exercised must not be offered: the
+          operator presses it, gets a second refusal, and learns nothing either time. */}
+      <div><ReadGate error={error}><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> </ReadGate><Link href="/team/ai" style={{marginLeft:10}}>AI review</Link> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
     </header>
-    {error&&<div role="alert" style={{padding:12,background:"#fff1f1",borderRadius:10,marginBottom:12}}>{error}</div>}
+    <ReadRefusedNotice error={error} what="AI configuration" />
     {notice&&<div role="status" style={{padding:12,background:"#eefaf1",borderRadius:10,marginBottom:12}}>{notice}</div>}
 
     {status&&<section style={{...card,marginBottom:14}}>

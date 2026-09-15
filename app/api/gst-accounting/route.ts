@@ -46,6 +46,7 @@ const BUSINESS_RULE_REFUSALS:Record<string,{status:number;message:string}>={
  package_not_found:{status:404,message:"No statutory package with that id."},
  maker_checker_required:{status:409,message:"Two-person rule: whoever prepared this draft cannot approve it. A different Finance/CA approver must sign it off."},
  annual_return_source_required:{status:400,message:"An entity and a GST registration are required to generate the annual return."},
+ statutory_package_scope_required:{status:400,message:"An entity, a GST registration and a YYYY-MM period are all required to prepare a statutory package."},
  valid_financial_year_required:{status:400,message:"A valid financial year is required, for example 2026-27."},
  annual_return_not_found:{status:404,message:"No annual return with that id."},
  annual_return_not_draft:{status:409,message:"That annual return has already been signed off."},

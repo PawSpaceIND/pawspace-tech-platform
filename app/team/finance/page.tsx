@@ -4,6 +4,7 @@ import Link from"next/link";
 import{readReportJson}from"../../../lib/read-report-json";
 import{useEffect,useState}from"react";
 import StaffHubWorkspaceLinks,{type HubWorkspaceLink}from"../../components/hub-workspace-links";
+import GroomingTaxPolicyControl,{type GroomingTaxPolicyRow}from"./grooming-tax-policy";
 
 /**
  * Team Finance owns ten per-vertical finance screens and linked two of them (cash flow and
@@ -32,7 +33,7 @@ export const financeWorkspaceLinks:HubWorkspaceLink[]=[
 ];
 
 type LedgerItem=Record<string,unknown>;
-type LedgerResponse={source:string;summary:{bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};items:LedgerItem[];reconciliationExceptions?:LedgerItem[];error?:string};
+type LedgerResponse={source:string;summary:{bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};items:LedgerItem[];reconciliationExceptions?:LedgerItem[];taxPolicies?:GroomingTaxPolicyRow[];error?:string};
 const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(Number(value||0));
 const label=(value:unknown)=>String(value||"not started").replaceAll("_"," ");
 
@@ -51,6 +52,11 @@ export default function TeamFinance(){
       </header>
 
       <StaffHubWorkspaceLinks heading="Service finance workspaces" note="Per-vertical ledgers, settlement and statutory control. Only the workspaces your role can open are listed." links={financeWorkspaceLinks} />
+
+      {/* The remedy the assisted-order 409 names. This screen already IS the Grooming finance surface -
+          it reads /api/grooming-finance - and save_tax_policy was reachable on that API for Grooming
+          over curl only. [R3-C/F8] */}
+      <GroomingTaxPolicyControl policies={data?.taxPolicies??[]} onSaved={load} />
 
       {error&&<section style={{padding:18,borderRadius:12,background:"#fff1f1",border:"1px solid #efc2c2",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"white",borderRadius:14}}>Loading canonical Grooming ledger…</section>}

@@ -4,6 +4,7 @@ import{ensurePayrollTables}from"./payroll-engine";
 import{ensureIncentiveTables}from"./incentive-engine";
 import{ensurePeopleFinanceTables}from"./people-finance-integration";
 import{chunkedIn}from"./d1-chunked-in";
+import{istDayString,istMonthStartMs}from"./ist-day";
 
 type Db=D1Database;type Row=Record<string,unknown>;type Scope={mode:"all"|"manager";managerEmployeeId:string|null;employeeIds:string[];employeeEmails:string[]};
 const text=(v:unknown)=>String(v??"").trim(),num=(v:unknown)=>Number(v||0),has=(p:string[],key:string)=>p.includes("*")||p.includes(key);
@@ -50,7 +51,23 @@ function newestFirst(rows:Row[],limit:number){return rows.sort((left,right)=>num
 // another unusable input: it falls back to the default period exactly as a non-finite one does.
 const MAX_TIME_VALUE_MS=8_640_000_000_000_000;
 const withinTimeValueRange=(value:unknown)=>{const parsed=Number(value);return Number.isFinite(parsed)&&Math.abs(parsed)<=MAX_TIME_VALUE_MS;};
-export async function peopleReports(db:Db,input:{actorEmail:string;roleCode:string;permissions:string[];periodStart?:number|null;periodEnd?:number|null}){await ensurePeopleTables(db);await ensureAttendanceLeaveTables(db);await ensurePayrollTables(db);await ensureIncentiveTables(db);await ensurePeopleFinanceTables(db);const now=Date.now(),d=new Date(now),defaultStart=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1),start=withinTimeValueRange(input.periodStart)&&Number(input.periodStart)>0?Number(input.periodStart):defaultStart,end=withinTimeValueRange(input.periodEnd)&&Number(input.periodEnd)>=start?Number(input.periodEnd):now,startDate=new Date(start).toISOString().slice(0,10),endDate=new Date(end).toISOString().slice(0,10),scope=await resolveScope(db,input);
+/**
+ * The reporting window is an IST window. [R3E-IST-DAY]
+ *
+ * `startDate`/`endDate` were derived with toISOString(), so the calendar day they named rolled over at
+ * 05:30 IST - they bound the attendance and expense reads, which are stored as IST-ish date strings.
+ * The payroll register is bounded on the epoch pair instead, and an IST payroll month begins at 18:30Z
+ * on the last day of the previous month: reproduced against the running product, an AUGUST report
+ * (2026-08-01 → 2026-08-31, sent as UTC day edges by the screen) returned all ten SEPTEMBER payroll
+ * rows and reported "Cost by cost centre: unassigned 6,18,000.00", because September's period_start
+ * (31 Aug 18:30Z) fell inside an end bound of 31 Aug 23:59:59Z. Moving the end date back one day
+ * dropped it to zero, which is the signature of exactly this 5.5-hour overhang.
+ *
+ * app/team/people/reports/page.tsx now sends IST day edges, and both the default window and the two
+ * derived date strings are IST here, so the epoch window and the date-string window describe the same
+ * days.
+ */
+export async function peopleReports(db:Db,input:{actorEmail:string;roleCode:string;permissions:string[];periodStart?:number|null;periodEnd?:number|null}){await ensurePeopleTables(db);await ensureAttendanceLeaveTables(db);await ensurePayrollTables(db);await ensureIncentiveTables(db);await ensurePeopleFinanceTables(db);const now=Date.now(),defaultStart=istMonthStartMs(now),start=withinTimeValueRange(input.periodStart)&&Number(input.periodStart)>0?Number(input.periodStart):defaultStart,end=withinTimeValueRange(input.periodEnd)&&Number(input.periodEnd)>=start?Number(input.periodEnd):now,startDate=istDayString(start),endDate=istDayString(end),scope=await resolveScope(db,input);
  const employees=byDisplayName(await scopedAll(db,scope,"e.id",clause=>`SELECT e.id,e.employee_code,e.display_name,e.work_email,e.user_email,e.employment_status,e.joined_at,e.ended_at,v.team_code,v.manager_employee_id,v.cost_centre_code,v.location_code FROM employees e LEFT JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE 1=1${clause} ORDER BY e.display_name`)),employeeIds=new Set(employees.map(r=>text(r.id))),employeeTeam=new Map(employees.map(r=>[text(r.id),text(r.team_code)||"unassigned"])),active=employees.filter(r=>text(r.employment_status)==="active").length,joiners=employees.filter(r=>num(r.joined_at)>=start&&num(r.joined_at)<=end).length,leavers=employees.filter(r=>num(r.ended_at)>=start&&num(r.ended_at)<=end).length;
  const canAttendance=has(input.permissions,"attendance.view"),canPayroll=has(input.permissions,"payroll.view"),canIncentives=has(input.permissions,"incentives.view"),canFinance=has(input.permissions,"finance.view"),canAudit=has(input.permissions,"audit.view"),attendance=canAttendance?newestFirstBy(await scopedAll(db,scope,"employee_id",clause=>`SELECT id,employee_id,work_date,status,worked_minutes,exception_code FROM attendance_days WHERE work_date>=? AND work_date<=?${clause} ORDER BY work_date DESC LIMIT 500`,[startDate,endDate]),"work_date",500):[],leave=canAttendance?newestFirstBy(await scopedAll(db,scope,"employee_id",clause=>`SELECT id,employee_id,leave_code,start_date,end_date,units,status,created_at FROM leave_requests WHERE end_date>=? AND start_date<=?${clause} ORDER BY created_at DESC LIMIT 300`,[startDate,endDate]),"created_at",300):[];
  const payroll=canPayroll?newestFirstBy(await scopedAll(db,scope,"r.employee_id",clause=>`SELECT r.id result_id,r.run_id,r.employee_id,r.gross_earnings,r.total_deductions,r.reimbursements,r.employer_cost,r.net_pay,p.status run_status,p.period_start,p.period_end,v.team_code,v.cost_centre_code FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id LEFT JOIN employee_employment_versions v ON v.employee_id=r.employee_id AND v.effective_until IS NULL WHERE p.period_end>=? AND p.period_start<=?${clause} ORDER BY p.period_end DESC,r.employee_id LIMIT 500`,[start,end]),"period_end",500):[];

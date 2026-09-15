@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{ReadGate,ReadRefusedNotice}from"../../../components/refused-surface";
 type Scheme={id:string;scheme_code:string;version:number;status:string;role_code:string;team_code:string;effective_from:number;effective_until?:number|null};
 type Result={id:string;employee_id:string;employee_email:string;metric_value:number;calculated_amount:number;approved_amount:number;status:string;scheme_code:string;version:number;period_start:number;period_end:number;reversed_amount?:number;reversal_count?:number;remaining_reversible?:number};
 type Dispute={id:string;result_id:string;status:string;reason:string;opened_by:string;opened_at:number};
@@ -379,8 +380,12 @@ export default function IncentivesPage(){
     <p style={{fontWeight:800,letterSpacing:1}}>PAWSPACE · PEOPLE · INCENTIVES</p>
     <h1>Governed incentive and bonus management</h1>
     <p>Targets, formulas, caps, quality guardrails and clawbacks are versioned configuration. Pipeline revenue never qualifies as earned incentive. Human approval is required before any result can flow into payroll.</p>
-    {error?<p>{error}</p>:null}
+    {/* R3-G / F6: "Scheme versions 0 · Incentive results 0 · Open disputes 0 · Clawbacks recorded 0"
+        rendered from a null payload beside the refusal, and every form below it rendered too - a set
+        of governed write surfaces offered on top of a read that was refused (F7). */}
+    <ReadRefusedNotice error={error} what="incentive governance" />
     {actionError?<p style={{color:"crimson"}}>{actionError}</p>:null}
+    <ReadGate error={error}>
     <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,margin:"18px 0"}}>
       <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Scheme versions</small><strong style={{display:"block",fontSize:28}}>{data?.schemes.length||0}</strong></article>
       <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Incentive results</small><strong style={{display:"block",fontSize:28}}>{data?.results.length||0}</strong></article>
@@ -465,7 +470,8 @@ export default function IncentivesPage(){
         onSubmitResolve={()=>void submitResolve()} onSubmitReverse={()=>void submitReverse()}
         onSubmitAdjust={()=>void submitAdjust()} onApproveAdjustment={adjustmentId=>void approveAdjustment(adjustmentId)}/>;
     })}</section>
-    {loading?<p>Loading incentive governance…</p>:null}
+    </ReadGate>
+    {loading&&!error?<p>Loading incentive governance…</p>:null}
     <footer style={{marginTop:24}}><b>Pipeline revenue eligible:</b> NO · <b>Automatic payroll inclusion before approval:</b> NO · <b>Production ready:</b> NO</footer>
   </main>;
 }

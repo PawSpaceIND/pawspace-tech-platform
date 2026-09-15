@@ -2,6 +2,10 @@
 import{useEffect,useState}from"react";
 import Link from"next/link";
 import{readReportJson}from"../../../../lib/read-report-json";
+import{istDayEnd,istDayStart}from"../../../../lib/ist-day";
+// R3-G / F4: this "back to the hub" cue was unconditional while /team/people needs people.view, so a
+// child screen offered a door its own hub refuses. Same gate as every other link on the platform.
+import{StaffGatedLink}from"../../../components/hub-workspace-links";
 
 /**
  * People reports: the period, and the numbers that depend on it. [W2C-REPORT-PERIOD]
@@ -46,9 +50,18 @@ export type Payload={
 const money=(v:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(v||0);
 const yesNo=(v:boolean)=>v?"YES":"NO";
 
-/** `2026-09-01` -> the UTC instants lib/people-reports.ts compares joined_at/ended_at/period_end against. */
-export const periodStartMs=(date:string)=>new Date(`${date}T00:00:00.000Z`).getTime();
-export const periodEndMs=(date:string)=>new Date(`${date}T23:59:59.999Z`).getTime();
+/**
+ * `2026-09-01` -> the IST instants lib/people-reports.ts compares joined_at/ended_at/period_end
+ * against. [R3E-IST-DAY]
+ *
+ * These were UTC day edges, and a payroll period runs from IST midnight to IST midnight - 18:30Z on
+ * the previous day. An August report therefore reached 5.5 hours into September and pulled in the
+ * whole September payroll register: reproduced against the running product as ten payroll rows for
+ * five people and "Cost by cost centre: unassigned ₹6,18,000.00" under a heading that said August.
+ * Moving the end date to 2026-08-30 dropped it to zero, which is the signature of that overhang.
+ */
+export const periodStartMs=(date:string)=>istDayStart(date);
+export const periodEndMs=(date:string)=>istDayEnd(date);
 
 export type PeriodDraft={start:string;end:string};
 /**
@@ -81,7 +94,7 @@ export function PeopleReportsScreen({data,busy,draft,onDraft,onApply}:{data:Payl
  const invalid=invalidPeriod(draft);
  const companyWide=data?.scope.mode==="all";
  return <main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"system-ui,sans-serif"}}>
-  <p><Link href="/team/people">← People</Link></p>
+  <p><StaffGatedLink href="/team/people" permission="people.view">← People</StaffGatedLink></p>
   <p style={{fontWeight:800,letterSpacing:1}}>PAWSPACE · PEOPLE · REPORTS</p>
   <h1>Gate 6 productivity and audit reports</h1>
   <p>Source-derived People reporting with manager scope, permission-gated payroll/incentive sections and record-ID drill-down. These reports do not become payroll, incentive or disciplinary authority.</p>

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import styles from "./pet-manager.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
+import { PET_VACCINATION_STATUSES } from "../../lib/customer-account";
 import { loadCustomerPets, upsertCustomerPet, type CustomerPet } from "../../lib/customer-account-client";
 import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromDateOfBirth, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
 
@@ -42,6 +43,39 @@ const speciesIcon = (species: string) => (species === "cat" ? "🐈" : species =
 const VACCINATED_STATUSES = new Set(["verified", "recorded", "vaccinated"]);
 const vaccinationStatusCode = (status: string | null | undefined) => String(status ?? "").trim().toLowerCase();
 const isVaccinatedStatus = (status: string | null | undefined) => VACCINATED_STATUSES.has(vaccinationStatusCode(status));
+
+/* A CUSTOMER'S OWN ANSWER IS NOT A STAFF VERIFICATION. [R3-A6]
+ *
+ * MEASURED: a pet created entirely through this form with "Vaccinated? Yes" came back from BOTH
+ * /api/customer-account and the staff /api/customer-360 as "vaccinationStatus":"verified", with no
+ * staff action at any point - while the label two functions below already said, in its own comment,
+ * that a customer-recorded status must not be shown as staff-verified. The card was careful and the
+ * WRITE overclaimed, so the value a host or an ops user reads before accepting a pet was the
+ * strongest one in the enum.
+ *
+ * "pending" is what a customer's declaration may become: a claim awaiting verification, which is the
+ * meaning this repository already gives that value (a profile-less pending pet is still ASKED
+ * "Vaccinated?" on edit, and its card still reads "Vaccination pending"). A pet created through this
+ * form carries a profile, so its own card and its edit pre-fill answer from profile.vaccinated and
+ * are unaffected; what changes is the STORED status a host or an ops user reads.
+ *
+ * Two things it deliberately does NOT do:
+ *   - it never RAISES a status. A customer answering "yes" about a pet PawSpace has already verified
+ *     keeps that verification; editing a pet's NAME must not revoke it and must not re-assert it.
+ *   - it never LOWERS a status the account API would round-trip. The accepted set is read from
+ *     lib/customer-account.ts rather than retyped, so the day that module accepts the platform's own
+ *     'recorded'/'vaccinated' levels (lib/pet-vaccination-governance.ts writes 'recorded'), those are
+ *     preserved here with no further change. Until then they cannot be sent back at all and the
+ *     customer's declaration is stored at the honest lower level.
+ */
+export const CUSTOMER_DECLARED_VACCINATION_STATUS = "pending";
+const accountApiAccepts = (status: string) => (PET_VACCINATION_STATUSES as readonly string[]).includes(status);
+export function customerDeclaredVaccinationStatus(input: { declaredVaccinated: boolean; storedStatus?: string | null }): string {
+  if (!input.declaredVaccinated) return "not_provided";
+  const stored = vaccinationStatusCode(input.storedStatus);
+  if (isVaccinatedStatus(stored) && accountApiAccepts(stored)) return stored;
+  return CUSTOMER_DECLARED_VACCINATION_STATUS;
+}
 
 /* Map a STORED breed onto the catalogue entry the shared validator accepts.
  *
@@ -197,7 +231,7 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
     const candidate = {
       name: form.name.trim(),
       species: form.species,
-      vaccinationStatus: profile.vaccinated ? "verified" : "not_provided",
+      vaccinationStatus: customerDeclaredVaccinationStatus({ declaredVaccinated: profile.vaccinated, storedStatus: pets.find((item) => item.id === form.id)?.vaccinationStatus }),
       ageYears: null,
       weightKg: null,
     };
@@ -375,7 +409,7 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
     const status = vaccinationStatusCode(pet.vaccinationStatus);
     if (status === "verified") return "Vaccination verified";
     if (isVaccinatedStatus(status)) return "Vaccinated"; // recorded by the customer, not staff-verified — say so, don't overclaim
-    if (status === "pending") return "Vaccination pending";
+    if (status === CUSTOMER_DECLARED_VACCINATION_STATUS) return "Vaccination pending";
     return "Vaccination not provided";
   };
 

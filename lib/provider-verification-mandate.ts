@@ -18,6 +18,7 @@ type Row = Record<string, unknown>;
 const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 const text = (v: unknown) => String(v ?? "").trim();
 const empty = () => ({ results: [] as Row[] });
+const parseDetail = (v: unknown): Record<string, unknown> => { try { const parsed = JSON.parse(String(v ?? "{}")); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}; } catch { return {}; } };
 
 export type VerificationType = { code: string; label: string; automatable: boolean };
 export const VERIFICATION_TYPES: VerificationType[] = [
@@ -361,6 +362,51 @@ export async function recordManualVerification(db: Db, input: { applicationId: s
   return { applicationId: text(input.applicationId), verificationType: type.code, status: input.status };
 }
 
+/**
+ * An identity check cleared WITHOUT automation, on a deployment that has none. [R3-B2]
+ *
+ * Measured before this change: every category mandate requires `aadhaar`, aadhaar is automatable, and
+ * an automatable check had exactly one writer - IDfy. IDfy is connected on no deployment of this
+ * platform, so `run` answered 201 {status:"pending"} forever and recordManualVerification refused by
+ * design ("run it through IDfy"). The block was therefore universal: no provider of any category could
+ * reach 'verified', so category_verification_mandate blocked activation for everybody, and because
+ * live=1 is only ever written by addProviderToServiceMap - which needs an activated capacity profile -
+ * the live end state was unreachable for a new partner by any path at all.
+ *
+ * This is NOT a way to pass a check. It is a way to RECORD that a named human looked at the evidence
+ * themselves, and it is deliberately narrower than the automated path in every direction:
+ *   - it exists only where automation does not: with IDfy connected it refuses and names IDfy, so
+ *     nobody can route around a working adapter;
+ *   - it refuses non-automatable checks, which already have recordManualVerification;
+ *   - it demands a written statement of the evidence actually seen, because a check recorded with
+ *     nothing said about it is not an attestation;
+ *   - it writes automated=0 and offlineAttested:true, and updated_by is the person, so no later reader
+ *     can mistake it for something IDfy decided.
+ * Nothing auto-passes: the status is the outcome the human states, and 'failed' is one of them.
+ */
+export async function recordOfflineAttestedVerification(db: Db, env: Env, input: { applicationId: string; verificationType: string; status: string; note: string; method?: string; actorId: string }) {
+  await ensureVerificationMandateTables(db);
+  const type = typeByCode(text(input.verificationType));
+  if (!type) refuse("Unknown verification type", 400);
+  if (!type.automatable) refuse("This check is already a human check - record it with record_manual", 409);
+  if (idfyConfigured(env)) refuse("IDfy is connected for this deployment - run this check through IDfy rather than attesting it offline", 409);
+  const applicationId = text(input.applicationId);
+  if (!applicationId) refuse("An onboarding application ID is required", 400);
+  const status = text(input.status);
+  if (!TERMINAL_VERIFICATION_OUTCOMES.includes(status)) refuse("An offline attestation records a decision: verified or failed", 400);
+  const note = text(input.note);
+  if (note.length < 12) refuse("Write down the evidence you actually saw: an attestation with no stated evidence is not an attestation (at least 12 characters)", 400);
+  const actorId = text(input.actorId);
+  if (!actorId) refuse("The identity of the person recording this check is required", 400);
+  const method = text(input.method) || "in_person_document_check";
+  const now = Date.now();
+  const detail = { manual: true, offlineAttested: true, automationAvailable: false, method, note, attestedBy: actorId, attestedAt: now };
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,verified_at,updated_by,created_at,updated_at) VALUES (?,?,'',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=0,detail_json=excluded.detail_json,verified_at=excluded.verified_at,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(uid("PVER"), applicationId, type.code, status, JSON.stringify(detail), status === "verified" ? now : null, actorId, now, now).run();
+  await syncProviderPoolEligibility(db, applicationId);
+  return { applicationId, verificationType: type.code, status, automated: false, offlineAttested: true, attestedBy: actorId, method };
+}
+
 /** The provider's verification standing: which mandated checks are verified vs pending. Assignment
  * eligibility requires EVERY mandated check verified. */
 /**
@@ -379,9 +425,17 @@ export async function verifiedTypesForApplication(db: Db, applicationId: string)
 export async function verificationMandateStatus(db: Db, input: { applicationId: string; category: string }) {
   await ensureVerificationMandateTables(db);
   const required = await requiredVerifications(db, input.category);
-  const rows = await db.prepare("SELECT verification_type,status FROM provider_verifications WHERE application_id=?").bind(text(input.applicationId)).all<Row>().catch(empty);
-  const byType = new Map(rows.results.map(r => [text(r.verification_type), text(r.status)]));
-  const checks = required.map(t => ({ verificationType: t, automatable: Boolean(typeByCode(t)?.automatable), status: byType.get(t) || "not_started" }));
+  const rows = await db.prepare("SELECT verification_type,status,automated,detail_json,updated_by FROM provider_verifications WHERE application_id=?").bind(text(input.applicationId)).all<Row>().catch(empty);
+  const byType = new Map(rows.results.map(r => [text(r.verification_type), r]));
+  /* HOW a check was cleared travels with WHETHER it was, so a console (and an auditor reading the
+   * snapshot) can tell an IDfy decision from a human's offline attestation. Without this the two are
+   * indistinguishable at every surface above this function. [R3-B2] */
+  const checks = required.map(t => {
+    const row = byType.get(t);
+    const detail = row ? parseDetail(row.detail_json) : {};
+    return { verificationType: t, automatable: Boolean(typeByCode(t)?.automatable), status: row ? text(row.status) : "not_started",
+      automated: Number(row?.automated) === 1, offlineAttested: detail.offlineAttested === true, recordedBy: row ? text(row.updated_by) || null : null };
+  });
   const verified = checks.filter(c => c.status === "verified").map(c => c.verificationType);
   const pending = checks.filter(c => c.status !== "verified").map(c => c.verificationType);
   return { applicationId: text(input.applicationId), category: text(input.category), required, checks, verified, pending, allVerified: pending.length === 0 && required.length > 0, canTakeAssignments: pending.length === 0 && required.length > 0 };

@@ -13,7 +13,7 @@ type PostableRun={id:string;period_start:number;period_end:number;status:string;
 type ReconcilableBatch={id:string;run_id:string;total_amount:number;status:string;period_code:string};
 type UnlinkedExpense={id:string;expense_date:string;merchant:string;amount:number;claimant:string};
 type LinkableEmployee={id:string;employee_code:string;display_name:string};
-type Payload={mappings:Mapping[];expenseLinks:ExpenseLink[];payrollPosts:PayrollPost[];statutoryPolicies:Policy[];statutoryExports:ExportRow[];bankReconciliations:Reconciliation[];periods:Period[];requiredPayrollAccountKeys:string[];postableRuns?:PostableRun[];reconcilableBatches?:ReconcilableBatch[];unlinkedExpenses?:UnlinkedExpense[];linkableEmployees?:LinkableEmployee[];truth:{expenseEmployeeLinkageEnabled:boolean;payrollJournalConfigured:boolean;missingPayrollAccountMappings:string[];statutoryPolicyConfigured:boolean;financePeriodLockingEnforced:boolean;statutoryExternalSubmissionEnabled:boolean;liveBankTransmissionEnabled:boolean;bankReconciliationMode:string;sandboxOnly:boolean;productionReady:boolean}};
+type Payload={mappings:Mapping[];expenseLinks:ExpenseLink[];payrollPosts:PayrollPost[];statutoryPolicies:Policy[];statutoryExports:ExportRow[];bankReconciliations:Reconciliation[];periods:Period[];requiredPayrollAccountKeys:string[];postableRuns?:PostableRun[];exportableRuns?:PostableRun[];reconcilableBatches?:ReconcilableBatch[];unlinkedExpenses?:UnlinkedExpense[];linkableEmployees?:LinkableEmployee[];truth:{expenseEmployeeLinkageEnabled:boolean;payrollJournalConfigured:boolean;missingPayrollAccountMappings:string[];statutoryPolicyConfigured:boolean;financePeriodLockingEnforced:boolean;statutoryExternalSubmissionEnabled:boolean;liveBankTransmissionEnabled:boolean;bankReconciliationMode:string;sandboxOnly:boolean;productionReady:boolean}};
 
 async function loadPayload(){const r=await fetch("/api/people-finance",{cache:"no-store"}),p=await r.json();if(!r.ok)throw new Error(p.error||"People Finance load failed");return p.data as Payload;}
 const rupee=(v:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(v||0);
@@ -162,6 +162,11 @@ export default function PeopleFinancePage(){
 
   const requiredKeys=data?.requiredPayrollAccountKeys??[];
   const runs=data?.postableRuns??[];
+  /* The statutory export lists EXPORTABLE runs, not postable ones. [R3E-STATUTORY-EXPORT-REACH]
+   * `postableRuns` drops a run the moment its Finance journal is posted - which is the normal next
+   * step - so this dropdown emptied itself with no explanation and the month's statutory package
+   * became unreachable, while the same export succeeded over the API. */
+  const exportRuns=data?.exportableRuns??runs;
   const batches=data?.reconcilableBatches??[];
   const expenses=data?.unlinkedExpenses??[];
   const employees=data?.linkableEmployees??[];
@@ -231,8 +236,9 @@ export default function PeopleFinancePage(){
       <article style={card}>
         <b>Create a sandbox statutory export</b>
         <p style={{fontSize:12,color:"#666",margin:0}}>A sandbox package only. It is never submitted to any authority: <code>external_submission</code> stays 0.</p>
-        <label>Payroll run<select style={field} value={exportDraft.runId} onChange={e=>{const run=runs.find(r=>r.id===e.target.value);setExportDraft({...exportDraft,runId:e.target.value,periodCode:run?.period_code??""});}}>
-          <option value="">Choose an approved run…</option>{runs.map(r=><option key={r.id} value={r.id}>{day(r.period_start)} → {day(r.period_end)} · {r.id}</option>)}</select></label>
+        <label>Payroll run<select style={field} value={exportDraft.runId} onChange={e=>{const run=exportRuns.find(r=>r.id===e.target.value);setExportDraft({...exportDraft,runId:e.target.value,periodCode:run?.period_code??""});}}>
+          <option value="">Choose an approved run…</option>{exportRuns.map(r=><option key={r.id} value={r.id}>{day(r.period_start)} → {day(r.period_end)} · {r.id}</option>)}</select></label>
+        {!exportRuns.length?<p style={{fontSize:12,color:"#a35",margin:0}}>No approved payroll run exists yet. A run has to be approved before a statutory package can be built from it.</p>:null}
         <label>Statutory policy version<select style={field} value={exportDraft.policyVersionId} onChange={e=>setExportDraft({...exportDraft,policyVersionId:e.target.value})}>
           <option value="">Choose an active policy version…</option>{activePolicies.map(p=><option key={p.id} value={p.id}>{p.policy_code} v{p.version}</option>)}</select></label>
         <div style={{fontSize:12,color:"#666"}}>Export period: <b>{exportDraft.periodCode||"—"}</b></div>

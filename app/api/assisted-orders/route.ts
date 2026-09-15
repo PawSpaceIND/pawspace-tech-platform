@@ -1,6 +1,9 @@
+import { CANONICAL_PET_UPSERT, resolveCanonicalPets } from "../../../lib/canonical-pet-upsert";
+import { convertLeadOnAssistedOrder } from "../../../lib/lead-conversion-attribution";
 import { groomingCatalogue } from "../../../lib/grooming-governance";
 import { generateCanonicalSalesQuote } from "../../../lib/sales-core-tools";
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { ensureCanonicalBookingCoreTables } from "../../../lib/canonical-booking-core-schema";
 
 type PetInput={sourceId:string;canonicalId?:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
 type Input={
@@ -54,6 +57,33 @@ async function resolveGovernedCustomerPhone(db:Awaited<ReturnType<typeof databas
   if(offered&&!maskedValue(offered)&&plausiblePhone(offered))return{phone:offered,source:"request"};
   return{phone:"",source:offered?(maskedValue(offered)?"masked_request":"unusable_request"):"absent"};
 }
+/* AND THE NAME IS DATA TOO. [R3-C/F10]
+ *
+ * The phone was resolved server-side because a masked display value would have been written over the
+ * customer's real number. The NAME travels in the same object, is masked by the same policy
+ * (maskName in /api/customer-360), and /api/canonical-bookings upserts name=excluded.name - so it had
+ * exactly the same fate and nobody had noticed. MEASURED on the live UAT database after a staff
+ * conversion: GET /api/customer-account for the signed-in customer's OWN record returned
+ * {"name":"R•• C• C•","primaryPhone":"9811100144"} - their own phone number in full, beside a name
+ * that had been REPLACED IN STORAGE by a screen's masking. That is not a masked read; it is a
+ * destroyed record, and it is destroyed for every reader including the customer.
+ *
+ * Same rule as the phone: the server resolves the real name from the customer id, and a masked value
+ * is refused rather than stored. */
+async function resolveGovernedCustomerName(db:Awaited<ReturnType<typeof database>>,customerId:string,submitted:string){
+  const fixture=fixtureCustomers.find(row=>row.id===customerId);
+  if(fixture)return{name:fixture.name,source:"uat_fixture"};
+  for(const [table,source] of [["canonical_customers","canonical_customer"],["crm_contacts","crm_contact"]] as const){
+    const present=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(table).first<Row>();
+    if(!present)continue;
+    const row=await db.prepare(`SELECT name FROM ${table} WHERE id=?`).bind(customerId).first<Row>();
+    const stored=String(row?.name||"").trim();
+    if(stored&&!maskedValue(stored))return{name:stored,source};
+  }
+  const offered=String(submitted||"").trim();
+  if(offered&&!maskedValue(offered))return{name:offered,source:"request"};
+  return{name:"",source:offered?"masked_request":"absent"};
+}
 /* THE SCHEDULER LOOKS UP canonical_pets.id; THIS ROUTE WAS SENDING source_pet_id.
  * /api/uat-scheduling validates ownership with `SELECT customer_id,species FROM canonical_pets WHERE
  * id=?`, and this route mapped `p.sourceId` - the pet's SOURCE identity, "bruno" - into petIds. Every
@@ -64,6 +94,49 @@ async function resolveGovernedCustomerPhone(db:Awaited<ReturnType<typeof databas
  * field the scheduler actually resolves. sourceId is still what travels to the canonical booking,
  * which stores both. */
 const canonicalPetId=(pet:PetInput)=>String(pet.canonicalId||"").trim()||pet.sourceId;
+
+/*
+ * A CRM LEAD HAS NO canonical_pets ROW, AND THE SCHEDULER RESOLVES OWNERSHIP AGAINST THAT TABLE.
+ *
+ * MEASURED: /crm -> "Add lead" with a pet -> "Book this customer" -> the screen asks the operator to
+ * "Confirm the missing pet species" (the lead's pet is only a NAME in crm_contacts.pet_names) ->
+ * "Create" -> 403 "Pet ownership denied". The same 403 on /assisted-booking's OWN fixture customer
+ * Meera Shah / Bruno, and on all three UAT fixtures, because none of them has a canonical_pets row
+ * either. Conversion worked only for customers who already had one - app sign-up or CSV ingest - so
+ * the entire CRM-to-booking path, and the demo path, were dead.
+ *
+ * Two things were wrong and both are fixed here:
+ *
+ *  1. THE RECORD DID NOT EXIST YET. The operator supplied exactly what the screen asked for, so the
+ *     platform creates the pet it was told about: one canonical_pets row, owned by this customer,
+ *     written through lib/canonical-pet-upsert - the SAME resolver /api/canonical-bookings uses, so a
+ *     pet the customer already has is REUSED rather than duplicated, and the row this mints is the row
+ *     the booking a moment later binds to.
+ *
+ *  2. THE REFUSAL BLAMED THE OPERATOR. "Pet ownership denied" means "this animal belongs to somebody
+ *     else". A record that simply does not exist is a different fact and now reads as one - and a pet
+ *     that really is another customer's is refused HERE, by name, before any provider is held.
+ *
+ * A canonicalId the screen already carries stays authoritative (that preference is what made the
+ * scheduler resolve Customer 360 pets correctly in the first place); what is new is that the row it
+ * names is guaranteed to exist and to belong to this customer before the scheduler is asked.
+ */
+const CANONICAL_PETS_DDL="CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)";
+async function ensureCanonicalPetsOwned(db:Awaited<ReturnType<typeof database>>,customerId:string,pets:PetInput[]):Promise<PetInput[]>{
+  await db.prepare(CANONICAL_PETS_DDL).run();
+  const resolution=await resolveCanonicalPets(db,customerId,pets.map(pet=>({sourceId:pet.sourceId,name:pet.name,species:pet.species,breed:pet.breed,vaccinationStatus:pet.vaccinationStatus})));
+  if(!resolution.ok)throw new Response(resolution.error,{status:resolution.status});
+  const now=Date.now();const out:PetInput[]=[];
+  for(let index=0;index<pets.length;index++){
+    const pet=pets[index],resolved=resolution.pets[index];
+    const id=String(pet.canonicalId||"").trim()||resolved.id;
+    const owner=await db.prepare("SELECT customer_id FROM canonical_pets WHERE id=?").bind(id).first<Row>();
+    if(owner&&String(owner.customer_id)!==customerId)throw new Response(`${resolved.name} (${id}) is registered to a different customer, so this booking cannot be created for ${customerId}. Pick the pet from this customer's own profile, or add it to their record first.`,{status:403});
+    if(!owner)await db.prepare(CANONICAL_PET_UPSERT).bind(id,customerId,resolved.name,resolved.species,resolved.breed,resolved.vaccinationStatus,resolved.sourceId,now,now).run();
+    out.push({...pet,canonicalId:id});
+  }
+  return out;
+}
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin assisted order blocked",{status:403});}
 function priceFor(packageCode:string,pets:PetInput[]){
   const item=groomingCatalogue.find(row=>row.active&&row.offerType!=="subscription"&&row.code===packageCode);
@@ -95,7 +168,24 @@ export async function POST(request:Request){let stage="request";try{
   const input=await request.json() as Input;if(!input.idempotencyKey||!input.customer?.id||!input.customer?.name||!input.packageCode||!input.scheduledStart||!input.scheduledEnd||!input.pets?.length)return json({error:"Complete customer, pet, package, schedule and request identity are required"},400);
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);
-const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
+/* THE REPLAY USED TO ANSWER WITH FOUR FIELDS, AND THE SCREEN RENDERED result.provider.name
+ * UNCONDITIONALLY -> TypeError -> the React error boundary replaced /assisted-booking with "This page
+ * didn't load", so the operator was never told the booking already existed. The screen is fixed too,
+ * but a replay that cannot describe the order it is replaying is the reason it could be: the existing
+ * booking's provider and governed total are read back here so the duplicate answer carries the SAME
+ * shape as the original. */
+const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+if(prior){
+  const priorBookingId=String(prior.booking_id||"");
+  if(priorBookingId)await ensureCanonicalBookingCoreTables(db);
+  const priorBooking=priorBookingId?await db.prepare("SELECT provider_id,total_amount,schedule_group_id FROM canonical_bookings WHERE id=?").bind(priorBookingId).first<Row>().catch(()=>null):null;
+  // The work order stores the provider name and model as they were assigned to THIS booking, so the
+  // replay describes the order that exists rather than the provider roster as it stands today.
+  const priorProvider=priorBookingId?await db.prepare("SELECT provider_id,provider_name,provider_model FROM provider_work_orders WHERE booking_id=? ORDER BY created_at LIMIT 1").bind(priorBookingId).first<Row>().catch(()=>null):null;
+  return json({data:{assistedOrderId:String(prior.id),bookingId:priorBookingId,customerId:String(prior.customer_id||""),scheduleGroupId:priorBooking?.schedule_group_id?String(priorBooking.schedule_group_id):null,
+    provider:priorProvider?{id:String(priorProvider.provider_id),name:String(priorProvider.provider_name||priorProvider.provider_id),model:String(priorProvider.provider_model||"")}:priorBooking?.provider_id?{id:String(priorBooking.provider_id),name:String(priorBooking.provider_id),model:""}:null,
+    totalAmount:priorBooking?Number(priorBooking.total_amount||0):null,amountDueNow:0,status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
+}
   stage="customer_identity";
   const resolvedPhone=await resolveGovernedCustomerPhone(db,input.customer.id,input.customer.primaryPhone);
   if(!resolvedPhone.phone)throw new Response(resolvedPhone.source==="masked_request"
@@ -103,7 +193,9 @@ const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_ke
     :`No usable primary phone number could be resolved for ${input.customer.id}. Add the customer's phone number to the CRM record before converting this lead into a booking.`,{status:422});
   /* From here the request's customer identity carries the SERVER's phone number, never the browser's.
    * Everything downstream (including the canonical booking upsert) consumes this object unchanged. */
-  input.customer={...input.customer,primaryPhone:resolvedPhone.phone};
+  const resolvedName=await resolveGovernedCustomerName(db,input.customer.id,input.customer.name);
+  if(!resolvedName.name)throw new Response(`The customer name submitted for ${input.customer.id} is a masked display value, not a real name, and no real name is on file for that customer id. PawSpace refuses the order rather than writing the mask over the customer's name - reveal or correct the name on the customer record first.`,{status:422});
+  input.customer={...input.customer,name:resolvedName.name,primaryPhone:resolvedPhone.phone};
   stage="pricing";
   const cityId=input.cityId||"blr",{item}=priceFor(input.packageCode,input.pets),groupId=`assist-${input.idempotencyKey}`;
   /* generateCanonicalSalesQuote fails CLOSED on a governed precondition - there is no published GST
@@ -117,6 +209,11 @@ const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_ke
   try{quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId});}
   catch(error){throw new Response(`${error instanceof Error?error.message:"The governed price for this package could not be computed"} (city ${cityId}, package ${item.code}). An assisted order cannot be created until the governed Grooming price for this city can be computed - publish the city GST policy through Grooming finance (save_tax_policy) first.`,{status:409});}
   const total=quote.totalAmount;
+  stage="pet_identity";
+  /* Before any provider is held: the pets this order names exist as canonical rows owned by THIS
+   * customer. A CRM lead's confirmed pet becomes a real pet here, which is what the scheduler, the
+   * canonical booking and Customer 360 all read afterwards. */
+  input.pets=await ensureCanonicalPetsOwned(db,input.customer.id,input.pets);
   stage="scheduling";
   const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds:input.pets.map(p=>canonicalPetId(p)),serviceCode:"grooming",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
   const schedule=(schedulePayload.data||{}) as Record<string,unknown>,provider=schedule.provider as {id?:string;name?:string;model?:"full_time"|"commission"}|undefined;if(!provider?.id||!provider.name||!provider.model)throw new Response("Canonical scheduler did not return an assigned Grooming provider",{status:409});
@@ -130,6 +227,19 @@ const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_ke
     db.prepare("UPDATE canonical_bookings SET channel='assisted_staff',updated_at=? WHERE id=?").bind(now,bookingId),
     db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(`EVT-ASST-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bookingId,"assisted_order_created","booking",bookingId,actor.email,JSON.stringify({assistedOrderId,consentMethod:input.consent.method,consentReference:input.consent.reference.trim(),testOnly:true,liveMoney:false}),now),
   ]);
-  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false});
-  return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:total,amountDueNow:0,status:"confirmed",duplicatePrevented:false,testOnly:true,liveMoney:false}},201);
+  /* THE LEAD IS THE OTHER HALF OF THE CONVERSION. Without this the customer showed the booking's
+   * lifetime value while their lead card still read ACTIVE, and the sales team kept chasing somebody
+   * who had already booked. Never fatal: the booking exists and is confirmed, so a failure to close the
+   * lead is reported in the response and the audit rather than thrown over a completed order. */
+  stage="lead_closure";
+  const leadClosure=await convertLeadOnAssistedOrder(db,{customerId:input.customer.id,bookingId,actorId:actor.email}).catch(error=>({leadId:null,converted:false,reason:error instanceof Error?error.message:"lead_closure_failed"}));
+  /* created_by was the CUSTOMER id on every booking, including one a staff member created on a call:
+   * /api/canonical-bookings binds input.customer.id there for every caller. "Who created this booking"
+   * is the whole point of channel='assisted_staff', and the two columns contradicted each other - the
+   * ledger said the customer booked themselves. Corrected outside the batch and tolerantly, because a
+   * confirmed booking must not be failed over an attribution column; whether it landed is recorded in
+   * the audit rather than assumed. [R3-C/F10] */
+  const attributed=await db.prepare("UPDATE canonical_bookings SET created_by=?,updated_at=? WHERE id=?").bind(actor.email,now,bookingId).run().then(result=>Number(result.meta?.changes||0)>0).catch(()=>false);
+  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,createdBy:actor.email,createdByRecorded:attributed,customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false,leadId:leadClosure.leadId,leadConverted:leadClosure.converted,leadClosureReason:leadClosure.reason});
+  return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:total,amountDueNow:0,status:"confirmed",duplicatePrevented:false,lead:leadClosure,testOnly:true,liveMoney:false}},201);
 }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,`Unable to create Assisted Order UAT - the request failed at the ${stage} step`);}}

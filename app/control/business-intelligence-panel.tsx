@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import css from "./business-intelligence.module.css";
 import { TrendChart } from "../components/ui";
+import { pnlHeadline } from "../../lib/pnl-reporting";
 
 type View = "Overview" | "Verticals" | "Accounts" | "Customers" | "Subscriptions" | "Reports";
 type ReportFormat = "CSV" | "Excel" | "PDF" | "JSON";
@@ -64,6 +65,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [liveDataLoaded, setLiveDataLoaded] = useState(false);
   const [liveDataError, setLiveDataError] = useState("");
   const [netProfit, setNetProfit] = useState<number | null>(null);
+  const [pnlExpenses, setPnlExpenses] = useState<number | null>(null);
+  const [pnlTurnover, setPnlTurnover] = useState<number | null>(null);
   const [customerRepeatRate, setCustomerRepeatRate] = useState<number | null>(null);
   const [subscriptionView, setSubscriptionView] = useState<SubscriptionBusinessView | null>(null);
   const [customers, setCustomers] = useState<CustomerBusinessRow[]>([]);
@@ -111,7 +114,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
       });
       setLiveVerticals(rows);
       setCustomerRepeatRate(analyticsBody.data?.customers?.repeatRate != null ? Math.round(analyticsBody.data.customers.repeatRate * 1000) / 10 : null);
-      if (!pnlBody.error && pnlBody.data) setNetProfit(pnlBody.data.nettProfitAmount ?? null);
+      if (!pnlBody.error && pnlBody.data) { setNetProfit(pnlBody.data.nettProfitAmount ?? null); setPnlExpenses(pnlBody.data.totalExpensesAmount ?? null); setPnlTurnover(pnlBody.data.totalTurnoverAmount ?? null); }
       setLiveDataLoaded(true);
     }).catch(e => {
       if (active) { setLiveDataError(e instanceof Error ? e.message : "Unable to load live company data"); setLiveDataLoaded(true); }
@@ -228,7 +231,13 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
         <article><span>Contribution</span><strong>{cost != null ? money(revenue - cost) : "Not tracked yet"}</strong><small>{cost != null && revenue > 0 ? `${(((revenue - cost) / revenue) * 100).toFixed(1)}% before fixed overhead` : "No real direct-cost source per vertical yet"}</small></article>
         <article><span>Bookings</span><strong>{bookings.toLocaleString("en-IN")}</strong><small>Canonical booking records</small></article>
         <article><span>Customer repeat rate</span><strong>{customerRepeatRate != null ? `${customerRepeatRate}%` : "—"}</strong><small>Real canonical customer repeat rate</small></article>
-        {netProfit != null && <article><span>Net profit (P&amp;L, 12 months)</span><strong>{money(netProfit)}</strong><small>From real canonical_bookings + finance_journal_entries</small></article>}
+        {/* This tile printed nettProfitAmount as "NET PROFIT (P&L, 12 MONTHS)". /api/pnl-reporting
+            returns totalExpensesAmount 0 for all twelve months on this deployment, so net was
+            identically equal to turnover - gross revenue under a net-profit heading, two tiles from
+            "CONTRIBUTION — Not tracked yet". The number is only a net profit when expenses were
+            actually posted; when none were, the tile says what it really is. */}
+        {netProfit != null && (() => { const headline = pnlHeadline({ totalTurnoverAmount: pnlTurnover ?? netProfit, totalExpensesAmount: pnlExpenses ?? 0, nettProfitAmount: netProfit });
+          return <article><span>{headline.label}</span><strong>{money(headline.amount)}</strong><small>{headline.isNetProfit ? `Turnover less ${money(headline.expenses)} of posted expenses · canonical_bookings + finance_journal_entries` : headline.note}</small></article>; })()}
       </section>
       <section className={css.grid}>
         <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Real GST-inclusive booking revenue by vertical.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>        <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[

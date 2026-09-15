@@ -99,7 +99,7 @@ test("real execution: adding a pet persists the full profile and reads back type
   assert.equal(record.pets.length, 1);
   assert.deepEqual(
     { name: record.pets[0].name, species: record.pets[0].species, breed: record.pets[0].breed, vaccinationStatus: record.pets[0].vaccinationStatus, ageYears: record.pets[0].ageYears, weightKg: record.pets[0].weightKg },
-    { name: "Bruno", species: "dog", breed: "Labrador", vaccinationStatus: "verified", ageYears: 3, weightKg: 22.5 }
+    { name: "Bruno", species: "dog", breed: "Labrador", vaccinationStatus: "pending", ageYears: 3, weightKg: 22.5 }
   );
 });
 
@@ -117,7 +117,8 @@ test("real execution: edit-in-place updates the same pet row (no duplicate) and 
   const record = await account.readCustomerAccount(db, "CUS-PET-1");
   assert.equal(record.pets.length, 1, "editing never duplicates the pet");
   assert.equal(record.pets[0].breed, "Persian");
-  assert.equal(record.pets[0].vaccinationStatus, "verified");
+  assert.equal(record.pets[0].vaccinationStatus, "pending",
+    "an owner-supplied verification is stored as a claim - only staff may set verified");
   assert.equal(record.pets[0].ageYears, 3);
   assert.equal(record.pets[0].weightKg, 4.4);
   assert.equal(record.pets[0].sourceId, "Coco", "flow source link survives edits");
@@ -222,7 +223,10 @@ test("real execution: the owning lib adds the profile_json column and round-trip
   assert.ok(pet, "the rich pet reads back");
   assert.deepEqual(pet.profile, profile, "the full profile is persisted verbatim");
   assert.equal(pet.breed, "Golden Retriever", "typed breed column stays populated");
-  assert.equal(pet.vaccinationStatus, "verified", "vaccination derived into the typed column");
+// R3-A/A6: a rich profile with vaccinated:true used to derive vaccination_status="verified" - the
+// strongest value in the enum - from the OWNER's own tick-box, with no staff step, and a host
+// deciding whether to accept a pet reads that column. A customer claim is now "pending".
+  assert.equal(pet.vaccinationStatus, "pending", "an owner-declared vaccination is a claim, not a verification");
   assert.equal(pet.weightKg, 32, "weight band derives a representative typed weight");
   assert.ok(pet.ageYears !== null && pet.ageYears >= 0, "age derives a typed value");
 });

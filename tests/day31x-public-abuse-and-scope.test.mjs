@@ -191,11 +191,14 @@ test("an unprovisioned manager is refused rather than given the run of the platf
   const { db } = seedGate();
   const { ensurePeopleTables } = await import("../lib/people-foundation.ts");
   await ensurePeopleTables(db);
-  await assert.rejects(
-    () => scope.resolveManagerOrganizationalScope(db, actor()),
-    refusal(403),
-    "no employment record must mean no access, not unlimited access",
-  );
+  // R3-G/F3: this used to throw 403, which locked out EVERY manager on the deployment - including
+  // the one /staging-login advertises - because nothing joins user-management to People's employment
+  // records. It now degrades instead. The dangerous direction is unchanged and still asserted here:
+  // a missing employment record must never resolve to null, because null means unrestricted.
+  const resolved = await scope.resolveManagerOrganizationalScope(db, actor());
+  assert.notEqual(resolved, null, "no employment record must never mean a null (unrestricted) scope");
+  assert.deepEqual([resolved.unprovisioned, resolved.cityId, resolved.teamCode, resolved.departmentCode], [true, "", "", ""],
+    "it degrades to a scope matching only work that carries no placement, not to the run of the platform");
 });
 
 test("a non-manager resolves to no scope, and no scope means the domain check does not apply", async () => {

@@ -1,3 +1,4 @@
+import { groomingTaxBreakdown, groomingTaxNote } from "./grooming-invoice";
 import { resolveLivePrice } from "./live-pricing-resolver";
 import { addCalendarMonthsClamped } from "./subscription-calendar";
 
@@ -97,7 +98,21 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
     const live=await resolveLivePrice(db,{packageCode:input.packageCode,fallbackPrice:totalAmount,scheduledStart:input.scheduledStart,cityId:input.cityId,zoneId:input.zoneId});
     totalAmount=live.price;
   }
-  if(Math.round(input.submittedTotal)!==Math.round(totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${item.version}`);
+  /* THE CITY GST MODE IS PART OF THE GOVERNED TOTAL. [R3-C/F4]
+   *
+   * generateCanonicalSalesQuote returns the GST-ADDED total under an `exclusive` policy, and this
+   * comparison was against the bare catalogue price - so with `blr` published as exclusive 18% every
+   * single-pet assisted order submitted 1349 x 1.18 = 1592, was refused, and was told the CATALOGUE
+   * disagreed. The multi-pet path (lib/live-grooming-governance.ts) already grossed an exclusive
+   * subtotal up; only this one did not, so `exclusive` was a supported mode that made booking
+   * impossible while `inclusive` worked. One shared implementation now decides it for both. A city
+   * with no published policy is unaffected: the breakdown returns the subtotal unchanged. */
+  const cataloguePrice=totalAmount;
+  const breakdown=await groomingTaxBreakdown(db,input.cityId,cataloguePrice,item.offerType==="subscription"?item.singlePrice:item.singlePrice*petCount);
+  totalAmount=breakdown.gstMode==="exclusive"?breakdown.totalAmount:cataloguePrice;
+  // SAY WHAT ACTUALLY DISAGREED. "does not match governed catalogue v3" named the one thing that was
+  // not in dispute and hid the two that were: the numbers, and the tax mode that produced them.
+  if(Math.round(input.submittedTotal)!==Math.round(totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${item.version}: submitted ${input.submittedTotal}, governed ${totalAmount} for ${item.code} (${petCount} pet${petCount===1?"":"s"} at ${cataloguePrice}, ${groomingTaxNote(breakdown,input.cityId)})`);
   const amountDueNow=input.paymentMode==="prepaid"?totalAmount:0;
   if(Math.round(input.submittedAmountDueNow)!==Math.round(amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
   if(item.offerType==="subscription"&&input.existingSubscriptionId)throw new Error("A subscription-plan purchase cannot also consume an existing subscription");
@@ -105,6 +120,7 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
   if(item.offerType==="subscription"&&reserveSessions>Number(item.sessions||0))throw new Error("The selected subscription does not contain enough credits for all selected pets");
   return {
     packageCode:item.code,packageName:item.name,catalogueVersion:item.version,offerType:item.offerType,petCount,totalAmount,amountDueNow,
+    pricingBreakdown:{...breakdown,totalAmount},
     subscriptionPlan:item.offerType==="subscription"?{planCode:item.code,sessions:Number(item.sessions),validityValue:Number(item.validityValue),validityUnit:item.validityUnit??"months",reserveSessions,servicePackageCode:String(item.servicePackageCode),cityId:input.cityId,zoneId:item.zoneId,familyWallet:item.familyWallet??true,pauseDays:item.pauseDays??0,graceDays:item.graceDays??0,renewalWindowDays:item.renewalWindowDays??30,benefits:item.benefits??[],terms:item.terms??{}}:undefined,
   };
 }

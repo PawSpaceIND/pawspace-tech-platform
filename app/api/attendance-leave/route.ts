@@ -1,6 +1,6 @@
 import{authError,authorize,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{governedJsonError}from"../../../lib/governed-http-error";
-import{approveAdjustment,assignShift,attendanceLeaveDirectory,decideLeave,grantLeaveEntitlement,recordAttendance,requestAdjustment,requestLeave,saveLeavePolicy,saveShiftPolicy,setPeriodLock}from"../../../lib/attendance-leave";
+import{approveAdjustment,assignShift,attendanceLeaveDirectory,decideLeave,grantLeaveEntitlement,recordAttendance,requestAdjustment,requestLeave,saveLeavePolicy,saveShiftPolicy,setPeriodLock,type AttendanceScope}from"../../../lib/attendance-leave";
 type Row=Record<string,unknown>;const text=(v:unknown)=>String(v??"").trim();
 type Actor=Awaited<ReturnType<typeof resolveActor>>;
 const can=(actor:Actor,permission:string)=>actor.permissions.includes("*")||actor.permissions.includes(permission);
@@ -17,19 +17,53 @@ async function ownEmployee(db:D1Database,email:string){return db.prepare("SELECT
  * governedJsonError() is the same mechanism lib/server-auth.ts uses for its own 403s.
  */
 async function assertEmployeeScope(db:D1Database,actor:Actor,employeeId:string){if(managesAttendance(actor)||managesLeave(actor))return;const own=await ownEmployee(db,actor.email);if(!own||text(own.id)!==employeeId)throw governedJsonError({error:"Employee self-service scope denied"},403);}
+/**
+ * A manager's Time & Leave scope is their own reporting line. [R3E-TIME-SCOPE]
+ *
+ * This route handed the whole roster and the 100 most recent attendance rows to any holder of
+ * attendance.manage or leave.manage. Manager One, whose direct reports are EMP1 and EMP2, therefore
+ * read EMP3's attendance row - EMP3 reports to Manager Two - while /team/people/reports restricted the
+ * same identity to two employees off the same `manager_employee_id` column.
+ *
+ * Company-wide scope is the one lib/people-reports.ts already uses: people.manage, payroll.view or
+ * audit.view, plus the wildcard. Below that, an actor who HAS a reporting line is narrowed to it -
+ * their direct reports and themselves, because a manager's own row is what the self section of the
+ * screen renders.
+ *
+ * Two cases deliberately keep the company-wide view, and both are reported back in
+ * `scope.organizationalScope` so the screen states which one it is instead of being silently narrow:
+ * an actor who is not on the employee master at all (an HR or ops identity People has never linked),
+ * and an actor with no direct reports. Neither has a reporting line to scope TO, and narrowing them
+ * to nothing would empty Time & Leave for the identity that runs it - and would also hide every
+ * employee whose employment-version row has never been written, which is not a privacy improvement.
+ * Closing those two is a permission-model decision for the owner, not a fixer's.
+ */
+async function managerScope(db:D1Database,actor:Actor):Promise<AttendanceScope&{reason:string;ownEmployeeId:string|null}>{
+ if(["people.manage","payroll.view","audit.view"].some(permission=>can(actor,permission))){const own=await ownEmployee(db,actor.email);return{employeeIds:null,reason:"global",ownEmployeeId:own?text(own.id):null};}
+ const own=await ownEmployee(db,actor.email);
+ if(!own)return{employeeIds:null,reason:"global_unlinked",ownEmployeeId:null};
+ const directs=await db.prepare("SELECT e.id FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE e.employment_status='active' AND v.manager_employee_id=? ORDER BY e.id LIMIT 300").bind(text(own.id)).all<Row>().catch(()=>({results:[] as Row[]}));
+ if(!directs.results.length)return{employeeIds:null,reason:"global_no_direct_reports",ownEmployeeId:text(own.id)};
+ return{employeeIds:[...new Set([text(own.id),...directs.results.map(r=>text(r.id))])],reason:"reporting_line",ownEmployeeId:text(own.id)};
+}
 export async function GET(request:Request){try{
  const actor=await authorize(request,"attendance.view"),db=await database();
- const directory=await attendanceLeaveDirectory(db);
  const attendanceManager=managesAttendance(actor),leaveManager=managesLeave(actor);
  if(attendanceManager||leaveManager){
+  const scope=await managerScope(db,actor);
+  const directory=await attendanceLeaveDirectory(db,scope);
   // Only a manager gets the roster, and only so the assignment/grant/decision controls can name a
-  // person instead of demanding a raw employee id. Guarded because `employees` belongs to
-  // lib/people-foundation.ts, which this route does not own and cannot assume has been initialised.
-  const roster=await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]}));
-  return Response.json({data:{...directory,employees:roster.results,scope:{mode:"manager",employeeId:null,canManageAttendance:attendanceManager,canManageLeave:leaveManager}},productionReady:false});
+  // person instead of demanding a raw employee id - narrowed to the same reporting line as the rows
+  // above, so the controls cannot name somebody the screen may not show. Guarded because `employees`
+  // belongs to lib/people-foundation.ts, which this route does not own and cannot assume initialised.
+  const roster=scope.employeeIds===null
+   ?await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]}))
+   :await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]})).then(rows=>({results:rows.results.filter(r=>scope.employeeIds?.includes(text(r.id)))}));
+  return Response.json({data:{...directory,employees:roster.results,scope:{mode:"manager",employeeId:scope.ownEmployeeId,organizationalScope:scope.reason,canManageAttendance:attendanceManager,canManageLeave:leaveManager}},productionReady:false});
  }
  const own=await ownEmployee(db,actor.email);
  const id=own?text(own.id):"";
+ const directory=await attendanceLeaveDirectory(db,{employeeIds:id?[id]:[]});
  const mine=(rows:Row[])=>id?rows.filter(r=>text(r.employee_id)===id):[];
  // An employee still needs the leave POLICIES (which codes exist, and whether the engine has any
  // configuration at all) and the period locks (why a check-in was refused). Neither is personal data;

@@ -56,6 +56,7 @@ nodeModule.registerHooks({
 
 const OpsShell = (await import("../app/components/ops-shell/OpsShell.tsx")).default;
 const operationsHub = await import("../app/team/operations/page.tsx");
+const hubSection = (await import("../app/components/hub-workspace-links.tsx")).default;
 const { defaultRoles } = await import("../lib/platform-security.ts");
 
 const permissionsOf = (code) => {
@@ -113,14 +114,24 @@ test("W2H-RAIL-1: the founder still sees everything the rail ever showed", async
   assert.equal(await railFor("superuser").then((r) => r.hrefs.length), rail.hrefs.length, "superuser is ['*'] too and sees the same rail");
 });
 
-test("W2H-RAIL-2: an admin is offered twelve of thirteen - Reminders is settings.manage, which admin does not hold", async () => {
+test("W2H-RAIL-2: an admin is offered all thirteen - settings.manage is now an admin permission", async () => {
   const rail = await railFor("admin");
   assertRail(rail, [
     "/team", "/team/operations", "/team/scheduling", "/team/customer-experience", "/team/cases",
+    "/team/customer-reminders",
     "/team/meet-and-greet", "/team/subscription-plans", "/team/performance", "/team/marketing",
     "/team/people", "/team/finance-compliance", "/team/analytics",
     "/team/operations/bookings", "/control/integrations", "/mobile-app",
   ], "admin");
+});
+
+test("W2H-RAIL-2b: a role WITHOUT settings.manage is still not offered Reminders", async () => {
+  // The negative case W2H-RAIL-2 used to carry. Without it, granting settings.manage to admin would
+  // have quietly removed the only proof that this rail entry is gated at all.
+  const rail = await railFor("associate");
+  assert.ok(!rail.hrefs.includes("/team/customer-reminders"),
+    "associate holds no settings.manage and must not be offered the reminder engine");
+  assert.ok(rail.hrefs.length > 0, "the rail rendered something, so the absence above is not vacuous");
 });
 
 test("W2H-RAIL-3: a manager loses Finance as well - manager holds no finance.view", async () => {
@@ -198,7 +209,11 @@ test("W2H-OPS-QUEUE: the Operations hub lists the Fresh Food and Taxi queues bes
   const restore = staffFetch(permissionsOf("manager"));
   let html;
   try {
-    const rendered = mount(operationsHub.default, {}, { label: "/team/operations" });
+    // The queue cards moved into the gated section (R3-G/F4: six hardcoded cards were rendered to
+    // every role, including a signed-in customer). mount() runs the ROOT component's effects only,
+    // so the section is mounted directly with the page's OWN exported catalogue - same real gate.
+    // The page-wires-the-catalogue half is asserted separately below, so nothing is lost.
+    const rendered = mount(hubSection, { heading: "Operations workspaces", links: operationsHub.operationsWorkspaceLinks }, { label: "/team/operations" });
     await rendered.settle();
     html = rendered.html();
   } finally { restore(); }
@@ -207,4 +222,20 @@ test("W2H-OPS-QUEUE: the Operations hub lists the Fresh Food and Taxi queues bes
   }
   assert.match(html, /Fresh Food exception queue/);
   assert.match(html, /Taxi exception queue/);
+});
+
+test("W2H-OPS-WIRED: the Operations hub really renders its catalogue through the gated section", async () => {
+  // Mounting the section directly (above) proves the gate filters. This proves the PAGE is what
+  // hands it that catalogue - otherwise the queue cards could drift back into an ungated literal
+  // and every test above would still pass.
+  const source = await import("node:fs").then((fs) => fs.readFileSync("app/team/operations/page.tsx", "utf8"));
+  assert.ok(Array.isArray(operationsHub.operationsWorkspaceLinks) && operationsHub.operationsWorkspaceLinks.length > 0,
+    "the page must export the catalogue the gate filters");
+  assert.match(source, /StaffHubWorkspaceLinks|hubSection|HubWorkspaceLinks/,
+    "the page must render its links through the shared gated section, not a bare array");
+  assert.ok(!/const QUEUES\s*=/.test(source),
+    "the ungated QUEUES literal must not come back - that was the defect");
+  for (const link of operationsHub.operationsWorkspaceLinks) {
+    assert.ok(link.permission, `${link.href} must carry the permission its API enforces`);
+  }
 });

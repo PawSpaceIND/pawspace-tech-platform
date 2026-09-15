@@ -5,10 +5,31 @@
  * and provider availability is constrained to capacity profiles effective on the displayed IST day.
  */
 
+import { maskName } from "./platform-security";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
 const text = (value: unknown) => String(value ?? "").trim();
+
+/*
+ * R3-G / F1. The live-activity feed on /admin served c.name STRAIGHT OUT OF canonical_customers, and
+ * this whole payload is gated at `dashboard.view` - which auditor, finance, associate and manager all
+ * hold, and none of which is `customers.view`. auditor is defined as "read-only compliance and audit
+ * access WITH MASKED PERSONAL DATA" and finance as "…without customer contact exposure"; both were
+ * reading "R3A Grooming D" and "E2E UI Customer" off the admin calendar rows.
+ *
+ * Every sibling list masks the customer name at the boundary and does it unconditionally - not by
+ * role, so there is no branch to get wrong and a founder sees the same masked value (app/api/crm,
+ * app/api/customer-360). The mask lives HERE rather than in app/api/operations-overview/route.ts so
+ * the next reader of buildOperationsOverview inherits it; the raw name never leaves this module.
+ * A customer id is not personal data and still identifies the row when a name is missing, so the
+ * fallback is left as it was.
+ */
+const maskedCustomer = (name: unknown, fallbackId: unknown) => {
+  const raw = text(name);
+  return raw ? maskName(raw) : text(fallbackId);
+};
 const money = (value: number) => Math.round(value * 100) / 100;
 const recognized = (row: Row) => !["cancelled", "draft"].includes(text(row.status));
 const istDate = (at: number) => new Date(at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -177,7 +198,7 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
     slots: OVERVIEW_SLOTS.map(slot => slot.label),
     activity: activityBookings.map(row => ({
       bookingId: text(row.id),
-      customer: text(row.customer_name) || text(row.customer_id),
+      customer: maskedCustomer(row.customer_name, row.customer_id),
       service: text(row.service_code),
       packageName: text(row.package_name),
       status: text(row.status),

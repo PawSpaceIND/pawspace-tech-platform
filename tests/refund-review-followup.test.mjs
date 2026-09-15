@@ -45,8 +45,25 @@ test("already duplicated legacy refund task is superseded once, not deleted",asy
  assert.equal(f.sqlite.prepare("SELECT count(*) n FROM ops_work_queue_events WHERE id='OLD-NOTE'").get().n,1);
  const before=f.sqlite.prepare("SELECT * FROM ops_work_queue_events ORDER BY id").all();await queue.sweepWorkQueue(f.db,{actorId:"review-sweep",now:f.now});assert.deepEqual(f.sqlite.prepare("SELECT * FROM ops_work_queue_events ORDER BY id").all(),before);
 });
-test("a resolved legacy refund task is not reopened by the new rule",async t=>{
- const f=await queueWorld(t,{closed:true});await queue.sweepWorkQueue(f.db,{actorId:"review-sweep",now:f.now});const rows=f.sqlite.prepare("SELECT * FROM ops_work_queue_tasks").all();assert.equal(rows.length,1);assert.equal(rows[0].status,"resolved");assert.equal(rows[0].rule,"refund_failed");
+test("a resolved refund task returns while its exception is still open, and stays closed once settled",async t=>{
+ const f=await queueWorld(t,{closed:true});await queue.sweepWorkQueue(f.db,{actorId:"review-sweep",now:f.now});
+ const rows=f.sqlite.prepare("SELECT * FROM ops_work_queue_tasks").all();assert.equal(rows.length,1,"reopened in place, never duplicated");
+ assert.equal(rows[0].rule,"refund_failed");
+ assert.equal(rows[0].status,"open","the exception is still open, so closing the task must not retire the refund");
+
+ const settled=await queueWorld(t,{closed:true});
+ settled.sqlite.prepare("UPDATE payment_reconciliation_exceptions SET status='resolved' WHERE id='EX-REVIEW'").run();
+ await queue.sweepWorkQueue(settled.db,{actorId:"review-sweep",now:settled.now});
+ const done=settled.sqlite.prepare("SELECT * FROM ops_work_queue_tasks").all();assert.equal(done.length,1);
+ assert.equal(done[0].status,"resolved","a task closed on a source that really settled stays closed");
+});
+
+test("a DISMISSED refund task is never reopened, even while its exception is still open",async t=>{
+ const f=await queueWorld(t);
+ f.sqlite.prepare("UPDATE ops_work_queue_tasks SET status='dismissed',rule='refund_failed',source_key='refund_failed:EX-REVIEW' WHERE id='OLD-TASK'").run();
+ await queue.sweepWorkQueue(f.db,{actorId:"review-sweep",now:f.now});
+ const rows=f.sqlite.prepare("SELECT * FROM ops_work_queue_tasks WHERE id='OLD-TASK'").all();
+ assert.equal(rows[0].status,"dismissed","dismissal is a judgement about the same facts, not a claim they changed");
 });
 test("concurrent sweeps migrate one legacy task and create no duplicate",async t=>{
  const f=await queueWorld(t);await Promise.all([queue.sweepWorkQueue(f.db,{actorId:"sweep-a",now:f.now}),queue.sweepWorkQueue(f.db,{actorId:"sweep-b",now:f.now})]);assert.equal(f.sqlite.prepare("SELECT count(*) n FROM ops_work_queue_tasks").get().n,1);

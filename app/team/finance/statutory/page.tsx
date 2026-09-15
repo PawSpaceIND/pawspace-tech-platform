@@ -20,21 +20,34 @@ import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
 
 type Row=Record<string,unknown>;
-type Snapshot={entities:Row[];registrations:Row[];policies:Row[];invoices:Row[];adjustments:Row[];vendorReviews:Row[];packages:Row[];mappings:Row[];exports:Row[];closeEvidence:Row[];annualReturns?:Row[];productionReady:false;liveFilingEnabled:false;liveAccountingPostEnabled:false};
+type Snapshot={entities:Row[];registrations:Row[];policies:Row[];classifications?:Row[];invoices:Row[];adjustments:Row[];vendorReviews:Row[];packages:Row[];mappings:Row[];exports:Row[];closeEvidence:Row[];annualReturns?:Row[];productionReady:false;liveFilingEnabled:false;liveAccountingPostEnabled:false};
 type ReturnsSnapshot={documents:Row[]};
 type Actor={email:string;roleCode:string};
-type Payload={data?:Snapshot;returns?:ReturnsSnapshot;actor?:Actor;canManage?:boolean;error?:string};
+type Payload={data?:Snapshot;returns?:ReturnsSnapshot;actor?:Actor;canManage?:boolean;error?:string;configurationKey?:string};
 
 const label=(v:unknown)=>String(v??"—").replaceAll("_"," ");
 const money=(v:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(Number(v||0));
 const LOAD_FAILED="Unable to load statutory finance";
 const ACTION_FAILED="GST/accounting action failed";
 
+/* [R3-D/F2] A refused write used to reach the alert as `payload.error` alone, so a missing piece of
+ * configuration arrived as the bare token "configuration_required" - true, unreadable, and silent about
+ * WHICH configuration. The route already returns the key (409 {error,configurationKey}); the screen just
+ * threw it away. Now the alert names the missing configuration, so the operator knows what to go and set
+ * up instead of guessing which of five panels is the one being complained about. */
+const REFUSAL_LABEL:Record<string,string>={configuration_required:"Missing configuration"};
+function refusalMessage(payload:Payload,fallback:string){
+ const code=payload.error||fallback;
+ const key=payload.configurationKey;
+ if(!key)return code;
+ return `${REFUSAL_LABEL[code]||code}: ${key}`;
+}
+
 /** Module scope on purpose: the load effect must not close over a component-scoped function. */
 async function requestSnapshot():Promise<Payload>{
  const response=await fetch("/api/gst-accounting",{cache:"no-store"});
  const payload=await response.json() as Payload;
- if(!response.ok)throw new Error(payload.error||LOAD_FAILED);
+ if(!response.ok)throw new Error(refusalMessage(payload,LOAD_FAILED));
  return payload;
 }
 
@@ -79,7 +92,7 @@ export default function GstAccountingUat(){
   try{
    const response=await fetch("/api/gst-accounting",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
    const payload=await response.json() as Payload;
-   if(!response.ok)throw new Error(payload.error||ACTION_FAILED);
+   if(!response.ok)throw new Error(refusalMessage(payload,ACTION_FAILED));
    setNotice(success);
    apply(await requestSnapshot());
   }catch(problem){setError(problem instanceof Error?problem.message:ACTION_FAILED);}
@@ -95,6 +108,12 @@ export default function GstAccountingUat(){
    <option value="">—</option>
    {rows.map(row=><option key={String(row[idKey])} value={String(row[idKey])}>{String(row[textKey]??row[idKey])}</option>)}
   </select>;
+ /** Only the heads the operator actually gave a rate to. An empty list is refused by the engine as
+  *  configuration_required:approved_tax_components, which is correct - a classification with no tax
+  *  components would silently issue zero-rated invoices. */
+ const taxComponents=()=>([["CGST","cfgClassCgst"],["SGST","cfgClassSgst"],["IGST","cfgClassIgst"]] as const)
+  .map(([code,key])=>({code,rate:Number(value(key,""))}))
+  .filter(component=>Number.isFinite(component.rate)&&component.rate>0);
  const button=(text:string,onClick:()=>void,style:Record<string,unknown>=primary)=>
   <button onClick={onClick} disabled={busy} style={style}>{text}</button>;
 
@@ -128,6 +147,80 @@ export default function GstAccountingUat(){
  {notice&&!error&&<section role="status" style={{padding:16,borderRadius:12,background:"#eefaf1",border:"1px solid #bfe3ca",marginBottom:18}}>{notice}</section>}
  {loading&&<section style={{background:"white",padding:24,borderRadius:14}}>Loading statutory finance controls…</section>}
  {data&&!loading&&<><section style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:18}}>{card("Entities",data.entities.length,"Legal entity master")}{card("Issued invoices",data.invoices.length,"Immutable canonical invoices")}{card("Adjustments",data.adjustments.length,"Credit/debit notes")}{card("Close evidence",data.closeEvidence.length,"FIN-01 reconciliation inputs")}</section>
+
+ {/* [R3-D/F1] The configuration every statutory control fails closed without, and which no screen in
+     the product created. On a fresh database a Finance operator saw "Entities 0", empty pickers and a
+     refusal from every control below - GSTR-1 400, GSTR-3B 400, GSTR-9C configuration_required, annual
+     return 400, issue invoice 400, compute_tcs configuration_required:active_operator_gstin - and the
+     ONLY way to create an entity, a registration, a tax policy or a SAC classification was to POST
+     /api/gst-accounting by hand. This panel is that surface. It is the first thing on the page because
+     nothing else on the page works until it is filled in, and it is gated on finance.manage - the same
+     permission the route requires - so a read-only reviewer sees the registers and no controls.
+     The two-person rule is enforced in the engine, not here; the screen shows who saved each draft and
+     refuses to offer self-approval, exactly like the returns path. */}
+ {canManage&&<section data-testid="statutory-configuration" style={panel}>
+  <h2 style={{marginTop:0}}>Statutory configuration</h2>
+  <p style={{margin:0,color:"#6d6379",fontSize:13}}>Legal entity, GST registration, effective-dated tax policy and SAC/HSN classification. Everything below on this page fails closed until these exist — that is deliberate, and this is where they are created. Each save is a DRAFT; a second Finance/CA identity activates it.</p>
+
+  <h3 style={{marginBottom:4,fontSize:15}}>Legal entity</h3>
+  <div style={rowBox}>
+   {field("cfgEntityName","Entity legal name","PawSpace India Pvt Ltd")}
+   {field("cfgEntityCountry","Entity country code","IN",value("cfgEntityCountry","IN"))}
+   {field("cfgReason","Configuration reason","Why this configuration is being changed")}
+   {button("Save legal entity",()=>void act({action:"save_entity",legalName:value("cfgEntityName"),countryCode:value("cfgEntityCountry","IN"),reason:value("cfgReason")},"Legal entity saved as a draft. A second Finance/CA identity must activate it."))}
+  </div>
+  <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",marginTop:8}}>{head(["Entity","Legal name","Status","Activate"])}<tbody>
+   {entities.map(row=><tr key={String(row.id)}><td style={cell}><code>{String(row.id)}</code></td><td style={cell}>{String(row.legal_name??"")}</td><td style={cell}>{String(row.status??"")}</td>
+    <td style={cell}>{String(row.status)==="active"?<small style={{color:"#746b7d"}}>active · {label(row.approved_by)}</small>:button("Activate legal entity",()=>void act({action:"approve_entity",id:String(row.id),reason:`Activate legal entity ${String(row.id)}`},"Legal entity is now active."),secondary)}</td></tr>)}
+   {entities.length===0&&<tr><td style={cell} colSpan={4}>No legal entity yet. Nothing statutory can be prepared until one exists and is active.</td></tr>}
+  </tbody></table></div>
+
+  <h3 style={{marginBottom:4,fontSize:15}}>GST registration</h3>
+  <div style={rowBox}>
+   {picker("cfgRegEntity","Registration entity",entities,"id","legal_name",entityId)}
+   {field("cfgRegJurisdiction","Registration jurisdiction","KA")}
+   {field("cfgRegType","Registration type","GSTIN",value("cfgRegType","GSTIN"))}
+   {field("cfgRegReference","Registration GSTIN","29AABCP1234A1Z5")}
+   {field("cfgRegFrom","Registration effective from","2026-04-01")}
+   {button("Save GST registration",()=>void act({action:"save_registration",entityId:value("cfgRegEntity",entityId),jurisdiction:value("cfgRegJurisdiction"),registrationType:value("cfgRegType","GSTIN"),registrationReference:value("cfgRegReference"),effectiveFrom:value("cfgRegFrom"),reason:value("cfgReason")},"GST registration saved as a draft. A second Finance/CA identity must activate it."))}
+  </div>
+  <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",marginTop:8}}>{head(["Registration","GSTIN","Effective from","Status","Activate"])}<tbody>
+   {registrations.map(row=><tr key={String(row.id)}><td style={cell}><code>{String(row.id)}</code></td><td style={cell}>{String(row.registration_reference??"")}</td><td style={cell}>{label(row.effective_from)}</td><td style={cell}>{String(row.status??"")}</td>
+    <td style={cell}>{String(row.status)==="active"?<small style={{color:"#746b7d"}}>active · {label(row.approved_by)}</small>:button("Activate GST registration",()=>void act({action:"approve_registration",id:String(row.id),reason:`Activate GST registration ${String(row.id)}`},"GST registration is now active."),secondary)}</td></tr>)}
+   {registrations.length===0&&<tr><td style={cell} colSpan={5}>No GST registration yet. Every return generator resolves the GSTIN from here.</td></tr>}
+  </tbody></table></div>
+
+  <h3 style={{marginBottom:4,fontSize:15}}>Tax policy version</h3>
+  <div style={rowBox}>
+   {picker("cfgPolicyEntity","Policy entity",entities,"id","legal_name",entityId)}
+   {field("cfgPolicyVersion","Policy version","1",value("cfgPolicyVersion","1"),"number")}
+   {field("cfgPolicyFrom","Policy effective from","2026-04-01")}
+   {field("cfgPolicyRegime","Policy regime","gst_in",value("cfgPolicyRegime","gst_in"))}
+   {button("Save tax policy",()=>void act({action:"save_policy",entityId:value("cfgPolicyEntity",entityId),version:Number(value("cfgPolicyVersion","1")),effectiveFrom:value("cfgPolicyFrom"),policy:{regime:value("cfgPolicyRegime","gst_in")},reason:value("cfgReason")},"Tax policy saved as a draft. A second Finance/CA identity must activate it."))}
+  </div>
+  <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",marginTop:8}}>{head(["Policy","Version","Effective from","Status","Activate"])}<tbody>
+   {(data.policies??[]).map(row=><tr key={String(row.id)}><td style={cell}><code>{String(row.id)}</code></td><td style={cell}>{String(row.version??"")}</td><td style={cell}>{label(row.effective_from)}</td><td style={cell}>{String(row.status??"")}</td>
+    <td style={cell}>{String(row.status)==="active"?<small style={{color:"#746b7d"}}>active · {label(row.approval_reference)}</small>:<span style={{display:"flex",gap:6,flexWrap:"wrap"}}>{field(`cfgPolicyApproval:${String(row.id)}`,`Policy approval reference for ${String(row.id)}`,"CA sign-off reference")}{button("Activate tax policy",()=>void act({action:"approve_policy",id:String(row.id),approvalReference:value(`cfgPolicyApproval:${String(row.id)}`),reason:`Activate tax policy ${String(row.id)}`},"Tax policy is now active."),secondary)}</span>}</td></tr>)}
+   {(data.policies??[]).length===0&&<tr><td style={cell} colSpan={5}>No tax policy yet. An invoice cannot be classified, so none can be issued.</td></tr>}
+  </tbody></table></div>
+
+  <h3 style={{marginBottom:4,fontSize:15}}>Service tax classification</h3>
+  <div style={rowBox}>
+   {picker("cfgClassPolicy","Classification policy",data.policies??[],"id","id")}
+   {field("cfgClassService","Classification service code","pet_grooming")}
+   {field("cfgClassCode","Classification SAC/HSN code","SAC998729")}
+   {field("cfgClassCgst","Classification CGST rate","9","","number")}
+   {field("cfgClassSgst","Classification SGST rate","9","","number")}
+   {field("cfgClassIgst","Classification IGST rate","18","","number")}
+   {field("cfgClassPos","Classification place of supply rule","service_location",value("cfgClassPos","service_location"))}
+   {field("cfgClassItc","Classification input tax rule","eligible",value("cfgClassItc","eligible"))}
+   {button("Save tax classification",()=>void act({action:"save_classification",policyId:value("cfgClassPolicy"),serviceCode:value("cfgClassService"),classificationCode:value("cfgClassCode"),taxComponents:taxComponents(),placeOfSupplyRule:value("cfgClassPos","service_location"),inputTaxRule:value("cfgClassItc","eligible"),reason:value("cfgReason")},"Tax classification saved."))}
+  </div>
+  <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",marginTop:8}}>{head(["Policy","Service code","SAC/HSN","Components"])}<tbody>
+   {(data.classifications??[]).map(row=><tr key={String(row.id)}><td style={cell}><code>{String(row.policy_id)}</code></td><td style={cell}>{String(row.service_code??"")}</td><td style={cell}>{String(row.classification_code??"")}</td><td style={cell}><code>{String(row.tax_component_json??"")}</code></td></tr>)}
+   {(data.classifications??[]).length===0&&<tr><td style={cell} colSpan={4}>No classification yet. Issuing an invoice for an unclassified service is refused, by design.</td></tr>}
+  </tbody></table></div>
+ </section>}
 
  <section data-testid="filing-scope" style={panel}>
   <h2 style={{marginTop:0}}>Filing scope</h2>
@@ -268,9 +361,14 @@ export default function GstAccountingUat(){
   {field("invoiceSourceId","Invoice source id","source id")}
   {field("invoiceDate","Invoice issue date","YYYY-MM-DD",value("invoiceDate",`${period}-01`))}
   {field("invoiceServiceCode","Invoice service code","pet_grooming")}
+   {/* [R3-D/F1] Without a place of supply the statutory invoice path refuses
+       configuration_required:place_of_supply_state, and on a fresh install there is no customer tax
+       profile and no booking to infer one from - so the only control that issues an invoice could not
+       be used at all. Two digits, the state code of the supply. */}
+   {field("invoiceServiceState","Invoice place of supply state","29")}
   {field("invoiceTaxable","Invoice taxable amount","0","","number")}
   {field("invoiceReason","Invoice reason","Why this invoice is being issued")}
-  {button("Issue canonical invoice",()=>void act({action:"issue_invoice",entityId,customerId:value("invoiceCustomerId"),sourceType:value("invoiceSourceType","booking"),sourceId:value("invoiceSourceId"),sourceEventKey:`${value("invoiceSourceType","booking")}:${value("invoiceSourceId")}:invoice`,issueDate:value("invoiceDate",`${period}-01`),currency:"INR",reason:value("invoiceReason"),lines:[{lineKey:"1",description:value("invoiceReason")||"Service",serviceCode:value("invoiceServiceCode"),taxableAmount:Number(value("invoiceTaxable","0"))}]},"Canonical invoice issued."))}
+  {button("Issue canonical invoice",()=>void act({action:"issue_invoice",entityId,customerId:value("invoiceCustomerId"),sourceType:value("invoiceSourceType","booking"),sourceId:value("invoiceSourceId"),sourceEventKey:`${value("invoiceSourceType","booking")}:${value("invoiceSourceId")}:invoice`,issueDate:value("invoiceDate",`${period}-01`),currency:"INR",serviceState:value("invoiceServiceState"),reason:value("invoiceReason"),lines:[{lineKey:"1",description:value("invoiceReason")||"Service",serviceCode:value("invoiceServiceCode"),taxableAmount:Number(value("invoiceTaxable","0"))}]},"Canonical invoice issued."))}
  </div>}
  <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr>{["Invoice","Customer","Source","Date","Subtotal","Tax","Total","Status"].map(h=><th key={h} style={{textAlign:"left",padding:11,background:"#faf8fc"}}>{h}</th>)}</tr></thead><tbody>{data.invoices.length===0?<tr><td colSpan={8} style={{padding:24,textAlign:"center",color:"#746b7d"}}>No issued UAT invoices yet. Configure approved entity/registration/policy/classifications/series before issuing.</td></tr>:data.invoices.map(r=><tr key={String(r.id)}>{[r.invoice_number,r.customer_id,`${label(r.source_type)}:${label(r.source_id)}`,r.issue_date,money(r.subtotal),money(r.tax_total),money(r.total),label(r.status)].map((v,i)=><td key={i} style={cell}>{String(v)}</td>)}</tr>)}</tbody></table></div></section>
  <footer style={{fontSize:12,color:"#746b7d",marginTop:16}}>No production GST filing, tax payment, bank instruction or Tally/Zoho production post is enabled by this workspace. Export acknowledgement is evidence only, never canonical accounting truth.</footer></>}

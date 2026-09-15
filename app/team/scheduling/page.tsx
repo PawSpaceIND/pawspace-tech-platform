@@ -7,7 +7,7 @@ import RecoveryControl from "./recovery-control";
 import AssignmentControl from "./assignment-control";
 import {apiSend} from "../../../lib/api-fetch";
 
-type Reservation={id:string;groupId:string;bookingId?:string|null;bookingStatus?:string|null;canRecover?:boolean;canRetryNotifications?:boolean;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
+type Reservation={id:string;groupId:string;bookingId?:string|null;bookingStatus?:string|null;canRecover?:boolean;canRetryNotifications?:boolean;recoverySubjectId?:string|null;recoveryQueuePath?:string|null;recoveryInFlight?:boolean;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
 type ProviderColumn={providerId:string;providerName:string;providerModel:string;reservations:Reservation[]};
 type PendingRequest={revision?:string;candidates?:{providerId:string;providerName:string;providerModel:string}[];groupId:string;status:"awaiting_admin";customerId:string;serviceCode:string;zoneId:string;petCount:number;occurrences:{start:string;end:string;occurrenceNumber:number}[]};
 type Board={pendingRequests?:PendingRequest[];date:string;providers:ProviderColumn[];total:number};
@@ -111,10 +111,10 @@ export function SchedulingDayBoard({embedded=false}:{embedded?:boolean}={}){
             <small>{row.serviceCode.replaceAll("_"," ")} · occ {row.occurrenceNumber} · {row.zoneId}</small>
             <small>customer {row.customerId}</small>
             <small className={styles.muted}>{row.groupId}</small>
-            {row.bookingId&&<small>Booking {row.bookingId} · provider changes require service recovery.</small>}
+            {row.bookingId&&<small>Booking {row.bookingId} · a booked slot is never moved by reassignment: the provider is released through service recovery so the customer is notified and the booking, slot and payment are preserved.</small>}
           </div>
-          <Button size="sm" variant="secondary" disabled={Boolean(row.bookingId)||Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
-          {row.bookingId&&(row.canRecover||row.canRetryNotifications)&&<RecoveryControl bookingId={row.bookingId} providerId={column.providerId} providerName={column.providerName} canRecover={row.canRecover===true} canRetryNotifications={row.canRetryNotifications===true} disabled={Boolean(busyGroup)||loading} onBusy={busy=>setBusyGroup(busy?row.groupId:"")} onResult={text=>{setMessage(text);refresh();}} onRefresh={refresh}/>}
+          <Button size="sm" variant="secondary" disabled={Boolean(row.bookingId)||Boolean(busyGroup)||loading||row.status==="cancelled"||row.decisionStatus!=="assigned"} title={row.bookingId?"This slot is booked. Use Recover provider below — reassigning a booked slot directly would move the provider without telling the customer.":row.status==="cancelled"?"This reservation is cancelled.":row.decisionStatus!=="assigned"?"Only an assigned reservation can be reassigned.":undefined} onClick={()=>{void reassign(row.groupId,column.providerName);}}>{busyGroup===row.groupId?"Reassigning…":"Reassign"}</Button>
+          {row.bookingId&&(row.canRecover||row.canRetryNotifications||row.recoveryInFlight)&&<RecoveryControl bookingId={row.bookingId} serviceCode={row.serviceCode} recoverySubjectId={row.recoverySubjectId??null} recoveryQueuePath={row.recoveryQueuePath??null} recoveryInFlight={row.recoveryInFlight===true} providerId={column.providerId} providerName={column.providerName} canRecover={row.canRecover===true} canRetryNotifications={row.canRetryNotifications===true} disabled={Boolean(busyGroup)||loading} onBusy={busy=>setBusyGroup(busy?row.groupId:"")} onResult={text=>{setMessage(text);refresh();}} onRefresh={refresh}/>}
         </article>)}
       </section>)}</div>}
 

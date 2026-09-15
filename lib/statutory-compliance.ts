@@ -21,6 +21,7 @@
 // this module makes the deadline impossible to miss and the numbers ready.
 
 import{governedJsonError}from"./governed-http-error";
+import{defaultRoles,fullAccessRoleCodes,parsePermissions}from"./platform-security";
 
 /* Caller-input refusals below are raised with governedJsonError(), NOT `new Response(...)`.
  * authError() (lib/server-auth.ts) returns a thrown Response verbatim ONLY when
@@ -129,12 +130,39 @@ export async function recordStatutoryFiling(db:Db,input:{obligationCode:Obligati
  return{obligationCode:input.obligationCode,period:input.period,status:"filed" as const,acknowledgementRef:ack};
 }
 
-export async function recordBoardApproval(db:Db,input:{period:string;approvedBy:string;approverRole:string;minutesReference?:string;resolutionText?:string;asOf?:number}){
+/* [R3-D/F8] The board's own approval of the month's accounts is not a Finance self-certification.
+ *
+ * "Monthly board approval recorded (founder policy)" is the LAST item before a month is closed and
+ * locked, and it was satisfiable by whoever happened to be signed in: a `finance` operator clicked
+ * Record board approval, the row was written with approver_role='finance', and that same identity then
+ * closed and locked the month. No second person, no board-role check, no separation from the closer -
+ * while every other statutory sign-off on this platform (the monthly package, the annual return, every
+ * GST return) enforces two people. The check that everything else is gated on was the one check that
+ * gated on nothing.
+ *
+ * Board-level means an identity that carries the wildcard - founder or superuser - derived from the role
+ * catalogue rather than hard-coded, so a renamed owner role still qualifies and no ordinary operating
+ * role ever does. That is what makes the two-person property real here: the board approves and FINANCE
+ * closes, so the approval and the lock can no longer be the same person wearing one hat. Identity-level
+ * separation on top of it (approver !== closer) is deliberately NOT added: after this gate the approver
+ * is always a wildcard identity, which could perform either action regardless, so refusing it would be
+ * ceremony rather than control. Who approved and who locked are both written onto the close event
+ * (lib/finance-monthly-close.ts closeMonth) so the pair is evidenced on the record either way. */
+const BOARD_ROLE_CODES=new Set<string>(fullAccessRoleCodes(defaultRoles as unknown as Array<{code:string;permissions?:unknown}>));
+export function isBoardApprover(role:unknown,permissions?:unknown){
+ return BOARD_ROLE_CODES.has(String(role??"").trim().toLowerCase())||parsePermissions(permissions).includes("*");
+}
+
+export async function recordBoardApproval(db:Db,input:{period:string;approvedBy:string;approverRole:string;approverPermissions?:unknown;minutesReference?:string;resolutionText?:string;asOf?:number}){
  await ensureStatutoryTables(db);
  if(!/^\d{4}-\d{2}$/.test(input.period))throw governedJsonError({error:"Board approval period must be YYYY-MM"},400);
  const now=input.asOf??Date.now();
  const existing=await db.prepare("SELECT id,approved_by,approved_at FROM board_approvals WHERE period=?").bind(input.period).first<Row>();
  if(existing)return{period:input.period,approvedBy:String(existing.approved_by),approvedAt:Number(existing.approved_at),duplicatePrevented:true};
+ // Gated on the attempt that would actually WRITE an approval. A duplicate above is a no-op that
+ // reports who really approved the period, so there is nothing there to gate; what must never happen is
+ // a board approval coming INTO existence without a board-level identity behind it.
+ if(!isBoardApprover(input.approverRole,input.approverPermissions))throw governedJsonError({error:`Board approval of the monthly accounts must be recorded by a board-level identity (founder or superuser). ${input.approverRole||"That role"} cannot resolve the board's own approval, and the month cannot be closed without it.`},403);
  const text=input.resolutionText??`RESOLVED THAT the management accounts of PawSpace for ${input.period}, having been reviewed, are approved and taken on record; statutory filings for the period may proceed on these numbers.`;
  await db.prepare("INSERT INTO board_approvals (id,period,resolution_type,approved_by,approver_role,minutes_reference,resolution_text,approved_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
   .bind(`BRD-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"monthly_accounts",input.approvedBy,input.approverRole,input.minutesReference??null,text,now,now).run();

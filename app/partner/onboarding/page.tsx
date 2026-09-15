@@ -25,6 +25,7 @@ type Snapshot = {
   marketplaceLive?: boolean;
   orderEligible?: boolean;
   agreementAcceptance?: { mode?: string; action?: string; available?: boolean };
+  documentUpload?: { available?: boolean; message?: string | null };
 };
 
 const MEDIA_TYPES = [
@@ -65,7 +66,17 @@ export function partnerOnboardingControls(data: Snapshot | null) {
   const approvedAndAccepted = text(app?.human_decision) === "approved" && agreementAccepted;
   return {
     canStartApplication: !current,
-    canUploadDocument: Boolean(current) && status === "draft",
+    /*
+     * A CONTROL WHOSE ONLY POSSIBLE OUTCOME IS A RED ALERT IS NOT A CONTROL. [R3-B1]
+     *
+     * On a deployment with no document storage the button was offered, the applicant chose a file, and
+     * the server answered 500 with the name of an internal binding. The server now reports the
+     * capability on the snapshot, so the screen says the standing truth instead of discovering it.
+     */
+    canUploadDocument: Boolean(current) && status === "draft" && data?.documentUpload?.available !== false,
+    documentUploadNotice: data?.documentUpload?.available === false
+      ? text(data?.documentUpload?.message) || "Document upload is not available yet. Our team will contact you as soon as we can take your documents."
+      : "",
     canSubmit: Boolean(current) && status === "draft",
     canTakeQuiz: Array.isArray(current?.quiz?.questions) && (current?.quiz?.questions as unknown[]).length > 0,
     canAcceptAgreement: text(current?.agreement?.status) === "awaiting_acceptance",
@@ -306,6 +317,10 @@ export default function PartnerOnboardingUatPage() {
                 <button className={styles.btnGhost} disabled={busy || uploading !== ""} onClick={() => void post({ action: "submit_application", applicationId: appId })}>Submit application</button>
                 <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>Submitting checks that every document we ask for is on file and still current — if one is missing, we&apos;ll say which.</p>
               </>
+            ) : controls.documentUploadNotice ? (
+              /* The standing state, said once and plainly, instead of a file picker that can only end
+               * in a red alert naming an internal binding. [R3-B1] */
+              <p role="status" className={styles.statusRow}>{controls.documentUploadNotice}</p>
             ) : null}
           </div>
 

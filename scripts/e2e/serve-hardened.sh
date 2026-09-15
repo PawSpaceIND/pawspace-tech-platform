@@ -34,8 +34,22 @@ if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
   echo "[e2e] refusing to start: PAWSPACE_PAYMENT_LIVE_APPROVED must be false" >&2
   exit 1
 fi
+# FORBID_PRODUCTION is the third leg of the same lock, and it was missing. [R3-A8]
+#
+# lib/customer-checkout-server.ts customerCheckoutEnvironment() refuses unless ALL THREE of
+# PAWSPACE_PAYMENT_ENV=sandbox, PAWSPACE_PAYMENT_LIVE_APPROVED=false and FORBID_PRODUCTION=true are
+# declared. This harness declared two of them, so every prepaid vertical - boarding, sitting, training
+# - died at the pay button with 503 "Customer checkout is not enabled for this environment." on the
+# ENV-LOCK branch, before the credential branch was ever reached. No browser audit had therefore ever
+# exercised the payment path at all. The same value is what the test suite runs with; it makes the
+# posture stricter, never looser.
+if [ "${FORBID_PRODUCTION:-true}" != "true" ]; then
+  echo "[e2e] refusing to start: FORBID_PRODUCTION must be true" >&2
+  exit 1
+fi
 export PAWSPACE_PAYMENT_ENV="sandbox"
 export PAWSPACE_PAYMENT_LIVE_APPROVED="false"
+export FORBID_PRODUCTION="true"
 export PAWSPACE_SCHEDULING_ENV="uat"
 export PAWSPACE_MEDIA_ENV="uat"
 # Server-owned deterministic service-discovery evidence for the local hardened journey only.
@@ -84,6 +98,7 @@ exec npx wrangler dev \
   --var PAWSPACE_IDENTITY_ENV:sandbox \
   --var PAWSPACE_PAYMENT_ENV:sandbox \
   --var PAWSPACE_PAYMENT_LIVE_APPROVED:false \
+  --var FORBID_PRODUCTION:true \
   --var PAWSPACE_SCHEDULING_ENV:uat \
   --var PAWSPACE_MEDIA_ENV:uat \
   --var PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE:on \

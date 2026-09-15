@@ -27,6 +27,8 @@ export type WorkQueueName="operations"|"finance"|"qc"|"sales_relocation"|"retent
 export type WorkQueueTaskStatus="open"|"acknowledged"|"in_progress"|"resolved"|"dismissed";
 export type WorkQueueAction="claim"|"acknowledge"|"start"|"resolve"|"dismiss"|"add_note";
 
+import{observeBackgroundScheduler,SCHEDULER_CRON,SCHEDULER_RUNNER}from"./scheduler-observation";
+import{istDayStart,istDayString}from"./ist-day";
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const OPEN_STATUSES=["open","acknowledged","in_progress"];
 /*
@@ -49,7 +51,13 @@ const OPEN_STATUSES=["open","acknowledged","in_progress"];
  * the screens saying so.
  */
 export const WORK_QUEUE_DETECTORS=["provider_unassigned","refund_requested","refund_failed","payment_exception","low_rating_callback","relocation_enquiry","food_renewal_payment_overdue","lead_response_overdue"] as const;
-export const WORK_QUEUE_SCHEDULER={configured:true,cron:"*/5 * * * *",runner:"worker.scheduled"} as const;
+/*
+ * The schedule this queue is WIRED to run on. It is not, and can no longer pretend to be, evidence
+ * that anything runs: `configured:true` here was a compile-time constant that an audit disproved on
+ * a live deployment (two five-minute boundaries passed with nothing created). Every surface now
+ * reports observeBackgroundScheduler(), which counts rows the scheduled handler actually wrote.
+ */
+export const WORK_QUEUE_SCHEDULER={cron:SCHEDULER_CRON,runner:SCHEDULER_RUNNER} as const;
 export const UNASSIGNED_GRACE_MS=30*60_000;
 export const RENEWAL_OVERDUE_MS=24*3_600_000;
 
@@ -65,11 +73,33 @@ async function addTaskEvent(db:Db,taskId:string,eventType:string,actorId:string,
 
 type Candidate={rule:string;queue:WorkQueueName;priority:"critical"|"high"|"medium";title:string;bookingId?:string|null;customerId?:string|null;providerId?:string|null;entityType:string;entityId:string;slaMinutes:number;detail?:Record<string,unknown>};
 
-async function openTask(db:Db,candidate:Candidate,now:number){
+/*
+ * A task closed as RESOLVED whose source condition is still true in the canonical table.
+ *
+ * source_key is UNIQUE and every detector inserts with INSERT OR IGNORE, so once a task existed for
+ * a given entity NOTHING could ever raise it again. An audit resolved the refund_requested task for
+ * refund case af4c107b-... and the queue then read "0 refunds pending" while booking_refund_cases
+ * still held that row at status `requested`, amount 1500 - and no sweep, then or ever, would raise
+ * it again. Resolving a task is a claim about the work, not about the table; if the condition is
+ * still live on the next sweep the task comes back, with a fresh SLA clock and an event saying why.
+ *
+ * `dismissed` is deliberately NOT reopened: that is an operator deciding the condition is not
+ * actionable, which is a judgement about the same facts rather than a claim they changed.
+ */
+async function reopenIfStillLive(db:Db,candidate:Candidate,sourceKey:string,now:number):Promise<"reopened"|false>{
+ const reopened=await db.prepare("UPDATE ops_work_queue_tasks SET status='open',escalated=0,escalated_at=NULL,resolution_note=NULL,resolved_by=NULL,resolved_at=NULL,priority=?,title=?,detail_json=?,sla_minutes=?,due_at=?,updated_at=? WHERE source_key=? AND status='resolved'")
+  .bind(candidate.priority,candidate.title,JSON.stringify(candidate.detail??{}),candidate.slaMinutes,now+candidate.slaMinutes*60_000,now,sourceKey).run();
+ if(!Number(reopened.meta?.changes||0))return false;
+ const task=await db.prepare("SELECT id FROM ops_work_queue_tasks WHERE source_key=?").bind(sourceKey).first<Row>();
+ if(task)await addTaskEvent(db,String(task.id),"reopened","system:work-queue-sweep","Closed as resolved, but the source condition is still live in the canonical table.");
+ return "reopened";
+}
+
+async function openTask(db:Db,candidate:Candidate,now:number):Promise<"created"|"reopened"|false>{
  const sourceKey=`${candidate.rule}:${candidate.entityId}`;
  const insert=db.prepare("INSERT OR IGNORE INTO ops_work_queue_tasks (id,rule,queue,priority,title,detail_json,booking_id,customer_id,provider_id,entity_type,entity_id,source_key,status,owner,sla_minutes,due_at,escalated,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',NULL,?,?,0,?,?)")
   .bind(uid("WQT"),candidate.rule,candidate.queue,candidate.priority,candidate.title,JSON.stringify(candidate.detail??{}),candidate.bookingId??null,candidate.customerId??null,candidate.providerId??null,candidate.entityType,candidate.entityId,sourceKey,candidate.slaMinutes,now+candidate.slaMinutes*60_000,now,now);
- if(candidate.rule!=="refund_failed")return Number((await insert.run()).meta?.changes||0)>0;
+ if(candidate.rule!=="refund_failed")return Number((await insert.run()).meta?.changes||0)>0?"created":reopenIfStillLive(db,candidate,sourceKey,now);
 
  // Old deployments used payment_exception:<id> for the same failed refund. Migrate that
  // task in place (including closed tasks), retaining its owner, history and original SLA
@@ -92,13 +122,30 @@ async function openTask(db:Db,candidate:Candidate,now:number){
    .bind(sourceKey,actor,now,now,legacyKey,sourceKey),
   insert,
  ]);
- return Number(results[results.length-1]?.meta?.changes||0)>0;
+ return Number(results[results.length-1]?.meta?.changes||0)>0?"created":reopenIfStillLive(db,candidate,sourceKey,now);
+}
+
+/*
+ * Raise ONE task from a surface that is not a detector - a human asking Operations for something.
+ *
+ * The Command Center's "Reassign" wrote a booking_admin_actions row, returned 201 and showed "recorded".
+ * Nothing in the repository read that action: no queue, no screen, no sweep. The booking's provider_id,
+ * provider_name and work_order_status were all unchanged, so a success toast sat over a booking nothing
+ * had happened to. A request that a human must act on belongs in the same owned, SLA-tracked, escalating
+ * queue as every other piece of Operations work, and this is the door to it.
+ */
+export async function raiseWorkQueueTask(db:Db,candidate:Candidate,input:{now?:number}={}){
+ await ensureWorkQueueTables(db);
+ const now=input.now??Date.now();
+ const outcome=await openTask(db,candidate,now);
+ const task=await db.prepare("SELECT id,queue,status,due_at FROM ops_work_queue_tasks WHERE source_key=?").bind(`${candidate.rule}:${candidate.entityId}`).first<Row>();
+ return{outcome:outcome||"existing",taskId:task?String(task.id):null,queue:task?String(task.queue):candidate.queue,status:task?String(task.status):"open",dueAt:task?Number(task.due_at):null};
 }
 
 export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={actorId:"system:work-queue"}){
  await ensureWorkQueueTables(db);
- const now=input.now??Date.now(),created:Record<string,number>={};
- const record=async(candidate:Candidate)=>{if(await openTask(db,candidate,now))created[candidate.rule]=(created[candidate.rule]||0)+1;};
+ const now=input.now??Date.now(),created:Record<string,number>={},reopened:Record<string,number>={};
+ const record=async(candidate:Candidate)=>{const outcome=await openTask(db,candidate,now);if(outcome==="created")created[candidate.rule]=(created[candidate.rule]||0)+1;else if(outcome==="reopened")reopened[candidate.rule]=(reopened[candidate.rule]||0)+1;};
 
  if(await tableExists(db,"provider_work_orders")){
   const rows=await db.prepare("SELECT id,booking_id,provider_id,provider_name,service_code,scheduled_start,created_at FROM provider_work_orders WHERE status='awaiting_acceptance' AND created_at<? ORDER BY created_at LIMIT 200").bind(now-UNASSIGNED_GRACE_MS).all<Row>();
@@ -146,7 +193,8 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
   if(Number(flagged.meta?.changes||0)>0){escalatedCount++;await addTaskEvent(db,String(row.id),"escalated",input.actorId,`SLA breached in ${String(row.queue)} queue`);}
  }
  const totalCreated=Object.values(created).reduce((sum,n)=>sum+n,0);
- return{created,totalCreated,escalated:escalatedCount,sweptAt:now,backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER};
+ const scheduler=await observeBackgroundScheduler(db,{now}),totalReopened=Object.values(reopened).reduce((sum,n)=>sum+n,0);
+ return{created,totalCreated,reopened,totalReopened,escalated:escalatedCount,sweptAt:now,backgroundSchedulerConfigured:scheduler.configured,backgroundScheduler:scheduler};
 }
 
 export async function mutateWorkQueueTask(db:Db,input:{taskId:string;action:WorkQueueAction;actorId:string;note?:string;owner?:string}){
@@ -188,7 +236,15 @@ export async function mutateWorkQueueTask(db:Db,input:{taskId:string;action:Work
 }
 
 export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
- const now=input.now??Date.now(),today=new Date(now).toISOString().slice(0,10);
+/* The Operations day is an IST day. This computed `today` in UTC, so "resolved today" counted from
+  * 05:30 IST - work resolved between midnight and 05:30 IST was already excluded from today - and at
+  * 02:00 IST on the 16th the threshold was still 05:30 IST on the 15th. The same date drove
+  * commandCentre.date and the booking match, so a booking scheduled between midnight and 05:30 IST
+  * fell out of "today's bookings" entirely. lib/control-tower.ts and /api/uat-scheduling both already
+  * build their day from Asia/Kolkata; the work queue was the outlier, and this is not a preference -
+  * two Operations screens disagreeing about which day it is cannot both be right. lib/ist-day.ts is
+  * that single definition; this reads it rather than making a third copy of the same convention. */
+ const now=input.now??Date.now(),scheduler=await observeBackgroundScheduler(db,{now}),today=istDayString(now),dayStart=istDayStart(today);
  const tasks=await tableExists(db,"ops_work_queue_tasks")
   ?await db.prepare("SELECT * FROM ops_work_queue_tasks ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,due_at LIMIT 500").all<Row>()
   :{results:[] as Row[]};
@@ -198,11 +254,17 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
 
  let commandCentre:Record<string,unknown>={available:false};
  if(await tableExists(db,"canonical_bookings")){
-  const todays=await db.prepare("SELECT id,service_code,status,total_amount,scheduled_start FROM canonical_bookings WHERE substr(scheduled_start,1,10)=?").bind(today).all<Row>();
+  const todays=await db.prepare("SELECT id,service_code,status,total_amount,scheduled_start FROM canonical_bookings WHERE date(scheduled_start,'+330 minutes')=?").bind(today).all<Row>();
   const recognized=(row:Row)=>!["cancelled","draft"].includes(String(row.status));
   const active=todays.results.filter(recognized);
   const byService:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>={};
   for(const row of todays.results){const service=String(row.service_code);byService[service]??={bookings:0,revenue:0,completed:0,cancelled:0};const bucket=byService[service];if(String(row.status)==="cancelled")bucket.cancelled++;else if(recognized(row)){bucket.bookings++;bucket.revenue+=Number(row.total_amount||0);}if(String(row.status)==="completed")bucket.completed++;}
+  /* "Refunds pending" counted OPEN TASKS carrying rule='refund_requested', so resolving the task
+   * took the number to zero while booking_refund_cases still held the refund at status `requested`
+   * - the Case & Escalation Center, reading the real table, went on showing it. Money owed to a
+   * customer is a fact about the refund ledger, never about whether someone closed a to-do. */
+  const refunds={refundPending:0,refundPendingAmount:0};
+  if(await tableExists(db,"booking_refund_cases")){const row=await db.prepare("SELECT COUNT(*) count,COALESCE(SUM(amount),0) amount FROM booking_refund_cases WHERE status='requested'").first<Row>();refunds.refundPending=Number(row?.count||0);refunds.refundPendingAmount=Math.round(Number(row?.amount||0)*100)/100;}
   let openComplaints=0;
   if(await tableExists(db,"customer_experience_tickets")){const row=await db.prepare("SELECT COUNT(*) count FROM customer_experience_tickets WHERE status NOT IN ('resolved','closed')").first<Row>();openComplaints=Number(row?.count||0);}
   commandCentre={
@@ -213,16 +275,16 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
    upcoming:active.filter(row=>new Date(String(row.scheduled_start)).getTime()>now&&String(row.status)!=="completed").length,
    cancelled:todays.results.filter(row=>String(row.status)==="cancelled").length,
    unassigned:open.filter(row=>String(row.rule)==="provider_unassigned").length,
-   refundPending:open.filter(row=>String(row.rule)==="refund_requested").length,
+   ...refunds,
    openComplaints,
    byService,
   };
  }
  return{
   generatedAt:now,
-  metrics:{total:tasks.results.length,open:open.length,escalated:open.filter(row=>Number(row.escalated)===1).length,critical:open.filter(row=>String(row.priority)==="critical").length,resolvedToday:tasks.results.filter(row=>String(row.status)==="resolved"&&Number(row.resolved_at||0)>=new Date(today).getTime()).length},
+  metrics:{total:tasks.results.length,open:open.length,escalated:open.filter(row=>Number(row.escalated)===1).length,critical:open.filter(row=>String(row.priority)==="critical").length,resolvedToday:tasks.results.filter(row=>String(row.status)==="resolved"&&Number(row.resolved_at||0)>=dayStart).length},
   queues,commandCentre,
-  truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER,productionReady:false},
+  truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:scheduler.configured,backgroundScheduler:scheduler,productionReady:false},
  };
 }
 

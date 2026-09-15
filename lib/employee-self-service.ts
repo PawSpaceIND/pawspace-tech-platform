@@ -52,7 +52,22 @@ async function ownCompensation(db:Db,employeeId:string){
  try{components=(JSON.parse(text(structure.components_json)||"[]") as Row[]).map(c=>({code:text(c.code),label:text(c.label),kind:text(c.kind),amount:money(c.amount)}));}catch{components=[];}
  const gross=money(components.filter(c=>c.kind==="earning").reduce((a,c)=>a+c.amount,0));
  const deductions=money(components.filter(c=>c.kind==="deduction").reduce((a,c)=>a+c.amount,0));
- return{structureCode:text(structure.structure_code),version:num(structure.version),currency:text(structure.currency)||"INR",components,grossMonthly:gross,fixedDeductions:deductions,netMonthly:money(gross-deductions)};
+ /*
+  * The employee's own net must be computed the way PAYROLL computes it. [R3E-SELF-NET]
+  *
+  * netMonthly was `gross - deductions` and ignored every reimbursement component, while
+  * lib/payroll-engine.ts calculatePayroll uses `gross - deductions + reimbursements`. On one screen
+  * that produced "MY SALARY … net ₹58,200" ten lines above "Net take-home (latest) ₹60,200" from the
+  * employee's actual payslip - two numbers for the same thing, both labelled net, differing by the
+  * ₹2,000 travel reimbursement. Before a first payroll run the header has nothing else to show, so
+  * the understated figure was the ONLY take-home an employee was ever told.
+  *
+  * `reimbursements` is returned separately as well, because a payslip that prints Gross, Deductions
+  * and Net without it cannot be made to add up by the person reading it.
+  */
+ const reimbursements=money(components.filter(c=>c.kind==="reimbursement").reduce((a,c)=>a+c.amount,0));
+ const employerCost=money(components.filter(c=>c.kind==="employer_cost").reduce((a,c)=>a+c.amount,0));
+ return{structureCode:text(structure.structure_code),version:num(structure.version),currency:text(structure.currency)||"INR",components,grossMonthly:gross,fixedDeductions:deductions,reimbursements,employerCost,netMonthly:money(gross-deductions+reimbursements)};
 }
 
 /** Approved incentives credited to the employee (own only). */

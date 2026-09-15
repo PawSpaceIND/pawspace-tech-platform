@@ -3,6 +3,7 @@ import{useCallback,useEffect,useMemo,useState}from"react";
 import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
+import{ReadGate,ReadRefusedNotice}from"../../components/refused-surface";
 
 type SopRequirement={id:string;title:string;module_version:number;status:string;evidence_note?:string|null};
 type TimelineItem={kind:string;type:string;actor:string;detail:unknown;at:number};
@@ -56,8 +57,10 @@ export default function CasesPage(){
     actions={<Badge tone={data?.summary.critical?"danger":"success"} dot>{data?.summary.critical||0} critical</Badge>}
     >
 
-  {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
-
+  {/* R3-G / F6: the five tiles below default to 0 from an empty payload, so a refused read rendered
+      a clear Case Center beside "Permission denied". A refusal is not a measurement. */}
+  <ReadRefusedNotice error={error} what="the Case Center" />
+  <ReadGate error={error}>
   <section className={styles.tiles}>
    <StatCard label="Open" value={data?.summary.open||0} />
    <StatCard label="Critical" value={data?.summary.critical||0} />
@@ -66,6 +69,9 @@ export default function CasesPage(){
    <StatCard label="Resolution overdue" value={data?.summary.resolutionOverdue||0} />
   </section>
 
+  </ReadGate>
+
+  <ReadGate error={error}>
   <section className={styles.controls}>
    {FILTERS.map(([value,label])=><Button key={value} size="sm" variant={filter===value?"primary":"secondary"} onClick={()=>setFilter(value)}>{label}</Button>)}
    <Button size="sm" variant="ghost" onClick={()=>{void act({action:"sync_native"});}}>Sync refunds / SLA / reconciliation</Button>
@@ -109,6 +115,8 @@ export default function CasesPage(){
     {["resolved","closed"].includes(row.status)?<Button size="sm" variant="ghost" onClick={()=>{const note=window.prompt("Why is this being reopened?");if(note)void act({action:"reopen",caseId:row.id,note});}}>Reopen</Button>:null}
    </div>
   </article>)}</div>}
+
+  </ReadGate>
 
   <footer className={styles.footnote}><b>Production ready: NO.</b> External alerts are not yet automatic; that is the next workstream.</footer>
  </OpsShell>;

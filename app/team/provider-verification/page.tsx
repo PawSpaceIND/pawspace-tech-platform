@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
-type Snap = { types?: { code: string; label: string; automatable: boolean }[]; categories?: { category: string; required: string[] }[] };
-type Status = { required?: string[]; checks?: { verificationType: string; status: string; automatable: boolean }[]; canTakeAssignments?: boolean };
+type Snap = { types?: { code: string; label: string; automatable: boolean }[]; categories?: { category: string; required: string[] }[]; idfyConnected?: boolean };
+type Status = { required?: string[]; checks?: { verificationType: string; status: string; automatable: boolean; automated?: boolean; offlineAttested?: boolean; recordedBy?: string | null }[]; canTakeAssignments?: boolean };
 const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
 const card = { background: "white", border: "1px solid #e5dcef", borderRadius: 14, padding: 16 } as const;
 const act = { border: "1px solid #c9b9de", background: "white", borderRadius: 8, padding: "5px 10px", fontSize: 12 } as const;
@@ -15,13 +15,34 @@ const act = { border: "1px solid #c9b9de", background: "white", borderRadius: 8,
  * drive the real route with exactly that - rather than re-deciding it and passing whatever the engine
  * happens to accept.
  */
-export function verificationControlsFor(check: { verificationType: string; status: string; automatable: boolean }) {
+export function verificationControlsFor(
+  check: { verificationType: string; status: string; automatable: boolean },
+  options: { idfyConnected?: boolean } = {},
+) {
   if (check.status === "verified") return [];
-  if (check.automatable) return [{ label: "Run via IDfy", payload: { action: "run", verificationType: check.verificationType, payload: {} } as Record<string, unknown> }];
+  /*
+   * WHERE THERE IS NO AUTOMATION, THERE MUST STILL BE A WAY TO DECIDE. [R3-B2]
+   *
+   * Every category mandate requires aadhaar, aadhaar is automatable, and "Run via IDfy" was the only
+   * control this screen offered for an automatable check. With IDfy unconnected - which is every
+   * deployment of this platform - that button answers 'pending' forever and record_manual refuses by
+   * design, so category_verification_mandate blocked activation for every provider of every category
+   * and nobody could ever go live. The attestation below is offered ONLY when the server has told this
+   * screen automation is absent, it carries requiresNote so the operator must state what they actually
+   * saw, and the server refuses it outright wherever IDfy is connected. Nothing auto-approves: the
+   * operator still chooses verified or failed, and the record says a human decided it.
+   */
+  if (check.automatable) {
+    if (options.idfyConnected === false) return [
+      { label: "Record verified offline", requiresNote: true, payload: { action: "record_offline_verification", verificationType: check.verificationType, status: "verified" } as Record<string, unknown> },
+      { label: "Record failed offline", requiresNote: true, payload: { action: "record_offline_verification", verificationType: check.verificationType, status: "failed" } as Record<string, unknown> },
+    ];
+    return [{ label: "Run via IDfy", requiresNote: false, payload: { action: "run", verificationType: check.verificationType, payload: {} } as Record<string, unknown> }];
+  }
   return [
-    { label: "Record verified", payload: { action: "record_manual", verificationType: check.verificationType, status: "verified", note: "Agent-recorded: check completed and passed" } as Record<string, unknown> },
-    { label: "Needs review", payload: { action: "record_manual", verificationType: check.verificationType, status: "manual_review", note: "Agent-recorded: needs a second look" } as Record<string, unknown> },
-    { label: "Record failed", payload: { action: "record_manual", verificationType: check.verificationType, status: "failed", note: "Agent-recorded: check did not pass" } as Record<string, unknown> },
+    { label: "Record verified", requiresNote: false, payload: { action: "record_manual", verificationType: check.verificationType, status: "verified", note: "Agent-recorded: check completed and passed" } as Record<string, unknown> },
+    { label: "Needs review", requiresNote: false, payload: { action: "record_manual", verificationType: check.verificationType, status: "manual_review", note: "Agent-recorded: needs a second look" } as Record<string, unknown> },
+    { label: "Record failed", requiresNote: false, payload: { action: "record_manual", verificationType: check.verificationType, status: "failed", note: "Agent-recorded: check did not pass" } as Record<string, unknown> },
   ];
 }
 
@@ -66,8 +87,15 @@ export default function ProviderVerificationPage() {
   }
 
   /** Ask IDfy to decide an automatable check, or record the outcome an agent actually observed. */
-  async function record(payload: Record<string, unknown>, describe: string) {
+  async function record(payload: Record<string, unknown>, describe: string, requiresNote = false) {
     if (!subject) return;
+    /* An offline attestation without a written statement of the evidence is refused by the server, so
+     * the screen asks for it rather than sending a canned sentence on the operator's behalf. */
+    if (requiresNote) {
+      const note = typeof window === "undefined" ? "" : String(window.prompt("What evidence did you see? (recorded against your name)") || "").trim();
+      if (note.length < 12) { setError("Describe the evidence you saw - at least 12 characters. Nothing was recorded."); return; }
+      payload = { ...payload, note };
+    }
     setBusy(true); setError(""); setNotice("");
     try {
       const r = await fetch("/api/provider-verification", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, applicationId: subject.applicationId, category: subject.category }) });
@@ -84,6 +112,7 @@ export default function ProviderVerificationPage() {
 
   return <main style={wrap}><div style={{ maxWidth: 1100, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}><div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · PROVIDER VERIFICATION</small><h1 style={{ margin: "7px 0" }}>KYC mandate (IDfy)</h1><p style={{ margin: 0, color: "#746b7d" }}>Per-category checks. A provider takes assignments only when every mandated check is verified. IDfy fail-closed.</p></div><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></header>
+    {snap.idfyConnected === false && <div role="status" style={{ padding: 12, background: "#fff8e8", border: "1px solid #f0dcae", borderRadius: 10, marginBottom: 12 }}>IDfy is not connected on this deployment, so an automatable check will sit at <b>pending</b> forever. Record what you verified yourself instead: the outcome is stored against your name, marked as not automated, and it is refused as soon as IDfy is switched on.</div>}
     {error && <div role="alert" style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
     {notice && <div role="status" style={{ padding: 12, background: "#eef9f4", borderRadius: 10, marginBottom: 12 }}>{notice}</div>}
     <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, marginBottom: 18 }}>
@@ -95,10 +124,10 @@ export default function ProviderVerificationPage() {
       {status && <div style={{ marginTop: 12 }}>
         <span style={{ fontWeight: 800, color: status.canTakeAssignments ? "#1f8a5b" : "#c47a00" }}>{status.canTakeAssignments ? "✓ Eligible to take assignments" : "⏳ Not yet eligible"}</span>
         {(status.checks || []).map(c => <div key={c.verificationType} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #f0ebf4", flexWrap: "wrap" }}>
-          <span>{c.verificationType.replace(/_/g, " ")} <small style={{ color: "#746b7d" }}>· {c.automatable ? "IDfy" : "manual"}</small></span>
+          <span>{c.verificationType.replace(/_/g, " ")} <small style={{ color: "#746b7d" }}>· {c.automatable ? "IDfy" : "manual"}{c.offlineAttested ? ` · attested offline by ${c.recordedBy || "staff"}` : c.automated ? " · decided by IDfy" : ""}</small></span>
           <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <b>{c.status}</b>
-            {verificationControlsFor(c).map(control => <button key={control.label} style={act} disabled={busy} onClick={() => void record(control.payload, `${c.verificationType} · ${control.label}`)}>{control.label}</button>)}
+            {verificationControlsFor(c, { idfyConnected: snap.idfyConnected }).map(control => <button key={control.label} style={act} disabled={busy} onClick={() => void record(control.payload, `${c.verificationType} · ${control.label}`, control.requiresNote === true)}>{control.label}</button>)}
           </span>
         </div>)}
         <p style={{ fontSize: 12, color: "#746b7d", marginTop: 10 }}>Nothing here auto-approves: IDfy returns its own outcome, and a manual check records the outcome a person actually observed. Until every mandated check reads &ldquo;verified&rdquo;, provider activation stays blocked on <code>category_verification_mandate</code>.</p>

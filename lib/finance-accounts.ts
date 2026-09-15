@@ -12,6 +12,27 @@
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
+/* [R3-D/F6] The journal group a line belongs to, without guessing at punctuation.
+ *
+ * Journal lines are written by four modules and they do NOT agree on how an id is built:
+ * app/api/finance-control/route.ts mints `${group}_${suffix}` (UNDERSCORE) while lib/finance-accounts.ts,
+ * lib/people-finance-integration.ts and lib/escrow-custody-support.ts mint `${group}-${index}` (HYPHEN).
+ * lib/finance-intelligence-governance.ts grouped by String(id).replace(/-\d+$/,"") and
+ * lib/cash-flow-statement.ts did the same, so for every underscore-minted journal NOTHING was stripped:
+ * each line became its own group and a correctly balanced double entry was published as TWO
+ * `unbalanced_journal` anomalies at severity "high" - and atlas ledgerReconcile, which derives
+ * `balanced` from exactly that list, answered "is the ledger balanced?" with false.
+ *
+ * The real identity of a journal is (source_type, source_id) - both NOT NULL on every row and written
+ * by every one of those four writers - so that is what groups them. The id suffix is only a fallback for
+ * a legacy row with no source, and it now accepts either punctuation instead of privileging one.
+ */
+export function journalGroupKey(row:{id?:unknown;source_type?:unknown;source_id?:unknown}){
+  const sourceType=String(row.source_type??"").trim(),sourceId=String(row.source_id??"").trim();
+  if(sourceType&&sourceId)return `${sourceType}:${sourceId}`;
+  return String(row.id??"").replace(/[-_]\d+$/,"");
+}
+
 export const ACCT = {
   CASH: "1000-Cash in Hand",
   BANK: "1010-Bank",

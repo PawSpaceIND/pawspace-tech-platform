@@ -1,4 +1,4 @@
-import { authorize, database } from "../../../../lib/server-auth";
+import { authError, authorize, database } from "../../../../lib/server-auth";
 import { ensureCanonicalBookingCoreTables } from "../../../../lib/canonical-booking-core-schema";
 import { OPERATIONS_MANAGER_DOMAIN, requireManagerDomain, resolveManagerOrganizationalScope } from "../../../../lib/organizational-scope";
 
@@ -18,7 +18,23 @@ async function snapshot(db: D1Database, cityId?: string) {
   return { version: Number(row?.version || 0), created: Number(row?.created || 0), assigned: Number(row?.assigned || 0), captured: Number(row?.captured || 0) };
 }
 
+/*
+ * R3-G / F5: authorize() and requireManagerDomain() THROW a governed Response, and both were called
+ * outside any try/catch - so a refusal escaped the handler as an unhandled error and the runtime
+ * answered 500 with Content-Length 0 and an empty body. Signed out was 401 (the gateway refuses
+ * first, before this handler runs), while associate, manager, finance and auditor each got a 500:
+ * the platform logged a server fault every time someone who is simply not allowed in opened a
+ * screen that subscribes to this stream. An SSE endpoint has no reason to answer a refusal
+ * differently from its non-streaming sibling - app/api/booking-command-center/route.ts already
+ * wraps the identical two calls - so the refusal is returned, with its real status, as JSON.
+ */
 export async function GET(request: Request) {
+  try {
+    return await stream(request);
+  } catch (error) { return authError(error, "Unable to open the Booking Command Center stream"); }
+}
+
+async function stream(request: Request) {
   const actor = await authorize(request, "bookings.manage");
   const db = await database();
   const scope = await resolveManagerOrganizationalScope(db, actor); requireManagerDomain(scope, OPERATIONS_MANAGER_DOMAIN);
@@ -27,7 +43,7 @@ export async function GET(request: Request) {
   // to fail the whole request with "no such table: booking_payments".
   await ensureCanonicalBookingCoreTables(db);
   let closed = false, current = await snapshot(db, scope?.cityId), timer: ReturnType<typeof setInterval> | undefined;
-  const stream = new ReadableStream<Uint8Array>({
+  const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(frame("ready", current));
       timer = setInterval(() => { void (async () => {
@@ -39,5 +55,5 @@ export async function GET(request: Request) {
     },
     cancel() { closed = true; if (timer) clearInterval(timer); },
   });
-  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store, no-transform", connection: "keep-alive", "x-accel-buffering": "no" } });
+  return new Response(body, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store, no-transform", connection: "keep-alive", "x-accel-buffering": "no" } });
 }

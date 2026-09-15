@@ -1,6 +1,7 @@
 import{seedProviderCapacityDefaults}from"./provider-capacity-governance";
 import{splitPaymentPlan}from"./stay-split-payments";
 import{sameInstant}from"./booking-window-instant";
+import{assertAreaMatchesZone}from"./service-zones";
 
 type Row=Record<string,unknown>;
 export type BoardingPaymentMode="prepaid"|"split_50_50";
@@ -11,10 +12,15 @@ const packages=[
  {code:"boarding-10h",name:"Premium Stay",kind:"daycare",maxHours:10,basePrice:599,maxPets:4},
  {code:"boarding-24h",name:"Luxury Stay",kind:"overnight",maxHours:24,basePrice:699,maxPets:4},
 ] as const;
+// Every host's zone_id is the zone its AREA belongs to in lib/service-zones.ts - the same map every
+// customer address is resolved through. host_sana (HSR Layout) and host_arjun_tara (Koramangala) were
+// seeded as blr-east while the zone service put both areas in blr-south, so a Jayanagar/HSR/Koramangala
+// customer saw "No verified Boarding host currently has capacity" while a host card named their own
+// neighbourhood. assertBoardingHostZone below refuses the contradiction at the write, not in review.
 const hosts=[
  {providerId:"host_maya_rohan",cityId:"blr",zoneId:"blr-east",area:"Indiranagar",species:["dog"],maxGuestPets:2,oneFamilyOnly:1,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
- {providerId:"host_sana",cityId:"blr",zoneId:"blr-east",area:"HSR Layout",species:["dog","cat"],maxGuestPets:2,oneFamilyOnly:1,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
- {providerId:"host_arjun_tara",cityId:"blr",zoneId:"blr-east",area:"Koramangala",species:["dog"],maxGuestPets:3,oneFamilyOnly:0,medicationSupport:0,residentPets:"beagle",homeVerified:1,kyc:"verified",background:"verified"},
+ {providerId:"host_sana",cityId:"blr",zoneId:"blr-south",area:"HSR Layout",species:["dog","cat"],maxGuestPets:2,oneFamilyOnly:1,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
+ {providerId:"host_arjun_tara",cityId:"blr",zoneId:"blr-south",area:"Koramangala",species:["dog"],maxGuestPets:3,oneFamilyOnly:0,medicationSupport:0,residentPets:"beagle",homeVerified:1,kyc:"verified",background:"verified"},
  // Second cat-accepting host: host_sana is one_family_only, so without this any single overlapping
  // commitment made dog+cat boarding (the app's default pet selection) fully unavailable.
  {providerId:"host_priya_dev",cityId:"blr",zoneId:"blr-east",area:"Whitefield",species:["dog","cat"],maxGuestPets:4,oneFamilyOnly:0,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
@@ -40,7 +46,23 @@ export async function ensureBoardingGovernanceTables(db:D1Database){await seedPr
   // governed as {basePricePerPet:699, stayUnits:2, totalAmount:5000} - 699 x 2 = 1398 against 5000
   // actually charged - because the priced unit was never written back to the quote row. Nullable and
   // additive; a quote that was never repriced falls back to the package column. [PTJA-W1-F15]
-  await ensureQuoteColumn(db,"priced_base_price_per_pet","REAL");const now=Date.now();for(const item of packages)await db.prepare("INSERT OR IGNORE INTO boarding_commercial_packages (package_code,name,care_kind,max_hours,base_price_per_pet,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.kind,item.maxHours,item.basePrice,item.maxPets,now).run();for(const host of hosts)await db.prepare("INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,1,1,'founder_seed',?)").bind(host.providerId,host.cityId,host.zoneId,host.area,JSON.stringify(host.species),host.maxGuestPets,host.oneFamilyOnly,host.medicationSupport,host.residentPets,host.homeVerified,host.kyc,host.background,now).run();for(const host of hosts)await db.prepare("UPDATE provider_capacity_profiles SET capacity=?,updated_at=? WHERE id=? AND updated_by='founder_seed' AND version=1").bind(host.maxGuestPets,now,host.providerId).run();}
+  await ensureQuoteColumn(db,"priced_base_price_per_pet","REAL");const now=Date.now();for(const item of packages)await db.prepare("INSERT OR IGNORE INTO boarding_commercial_packages (package_code,name,care_kind,max_hours,base_price_per_pet,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.kind,item.maxHours,item.basePrice,item.maxPets,now).run();for(const host of hosts)assertBoardingHostZone(host.area,host.zoneId,host.providerId);for(const host of hosts)await db.prepare("INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,1,1,'founder_seed',?)").bind(host.providerId,host.cityId,host.zoneId,host.area,JSON.stringify(host.species),host.maxGuestPets,host.oneFamilyOnly,host.medicationSupport,host.residentPets,host.homeVerified,host.kyc,host.background,now).run();for(const host of hosts)await db.prepare("UPDATE provider_capacity_profiles SET capacity=?,updated_at=? WHERE id=? AND updated_by='founder_seed' AND version=1").bind(host.maxGuestPets,now,host.providerId).run();
+  // INSERT OR IGNORE leaves an already-seeded row exactly as it was, so a database seeded before the
+  // area/zone rule existed would keep serving the contradiction for ever - which is precisely how every
+  // host ended up filed in blr-east. Repair the two derived fields on rows still owned by the seed; a
+  // row an operator has edited carries their id in updated_by (or a bumped version) and is left alone.
+  for(const host of hosts){const zones=JSON.stringify([host.zoneId]);
+   await db.prepare("UPDATE boarding_host_profiles SET zone_id=?,area=?,updated_at=? WHERE provider_id=? AND updated_by='founder_seed' AND version=1 AND (zone_id!=? OR area!=?)").bind(host.zoneId,host.area,now,host.providerId,host.zoneId,host.area).run();
+   await db.prepare("UPDATE provider_capacity_profiles SET zones_json=?,updated_at=? WHERE id=? AND updated_by='founder_seed' AND version=1 AND zones_json!=?").bind(zones,now,host.providerId,zones).run();}}
+
+/**
+ * The boarding-host form of the platform's area/zone integrity rule. A host row may not claim an area
+ * that the service-zone map files under a different zone: discovery matches on zone_id, the host card
+ * shows area, and when they disagree one of the two lies to the customer.
+ */
+export function assertBoardingHostZone(area:unknown,zoneId:unknown,providerId?:string){
+ assertAreaMatchesZone(area,zoneId,`Boarding host ${String(providerId||"").trim()||"profile"}`.trim());
+}
 
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}
 function durationHours(start:string,end:string){return(new Date(end).getTime()-new Date(start).getTime())/3_600_000;}

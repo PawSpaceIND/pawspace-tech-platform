@@ -5,6 +5,26 @@ import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 import ServiceProofReview from "./service-proof-review";
+import { ReadGate, ReadRefusedNotice } from "../components/refused-surface";
+import { useVisibleStaffLinks, type HubWorkspaceLink } from "../components/hub-workspace-links";
+
+/**
+ * The operations rail on this screen.
+ *
+ * R3-G / F4: it was six hardcoded links offered to everyone who could render the page - a SIGNED-OUT
+ * visitor included - and every destination refuses most of them. Each permission is the one the
+ * destination's API enforces: /api/team-overview dashboard.view, /api/booking-command-center and the
+ * live calendar bookings.manage, /api/customer-360 customers.view, /api/control-tower audit.view,
+ * and launch.view for the integration screen (app/control/page.tsx controlRoutes).
+ */
+const OPS_RAIL_LINKS: HubWorkspaceLink[] = [
+  { href: "/team", label: "⌂ Team home", detail: "", permission: "dashboard.view" },
+  { href: "/team/operations/bookings", label: "▤ Booking Command Center", detail: "", permission: "bookings.manage" },
+  { href: "/team/operations", label: "▦ Live calendar", detail: "", permission: "bookings.view" },
+  { href: "/team/sales", label: "⚡ Revenue & CX", detail: "", permission: "customers.view" },
+  { href: "/control", label: "◇ Launch essentials", detail: "", permission: "audit.view" },
+  { href: "/control/integrations", label: "◎ System integration", detail: "", permission: "launch.view" },
+];
 
 type Row = Record<string, unknown>;
 type Booking = Row & { pets: Row[]; lifecycle: Row[]; operations: Row[]; notifications: Row[]; rebooking: Row[]; refunds: Row[]; tickets: Row[]; adminActions: Row[] };
@@ -16,6 +36,8 @@ const when = (value: unknown) => { const date = new Date(typeof value === "numbe
 const initials = (name: unknown) => String(name || "PS").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
 
 export default function BookingCommandCenter() {
+  const railLinks = useVisibleStaffLinks(OPS_RAIL_LINKS);
+  const canOpenTeam = railLinks.some(link => link.href === "/team");
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
@@ -71,8 +93,15 @@ export default function BookingCommandCenter() {
   async function adminAction(action: string) {
     if (!selected) return;
     const response = await fetch("/api/booking-command-center", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.id, action, reason: actionReason }) });
-    const payload = await response.json() as { error?: string; deliveryStatus?: string };
-    setToast(response.ok ? `${pretty(action)} recorded · ${payload.deliveryStatus || "saved"}` : payload.error || "Action failed");
+    const payload = await response.json() as { error?: string; deliveryStatus?: string; queued?: { taskId?: string | null; queue?: string } | null };
+    // "Reassign recorded" over a booking whose provider had not changed was the worst possible
+    // outcome of this button. It is a REQUEST, and the toast now names the task it created and the
+    // queue a human will pick it up from - or says plainly that nothing was queued.
+    const queuedTask = payload.queued?.taskId;
+    setToast(!response.ok ? (payload.error || "Action failed")
+      : action === "review_reassignment"
+        ? (queuedTask ? `Reassignment requested · Operations task ${queuedTask} is open in the work queue. The provider has not changed yet.` : "Reassignment request could not be queued for Operations. Nothing has changed on this booking.")
+        : `${pretty(action)} recorded · ${payload.deliveryStatus || "saved"}`);
     if (response.ok) await load();
     window.setTimeout(() => setToast(""), 3200);
   }
@@ -85,25 +114,39 @@ export default function BookingCommandCenter() {
 
   return <main className={styles.shell}>
     <aside className={styles.side}>
-      <Link href="/team" className={styles.logo}><b>paw</b>space <span>TEAM · OPS</span></Link>
-      <nav><strong>OPERATIONS</strong><Link href="/team">⌂ Team home</Link><Link className={styles.active} href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/operations">▦ Live calendar</Link><Link href="/team/sales">⚡ Revenue & CX</Link><Link href="/control">◇ Launch essentials</Link><Link href="/control/integrations">◎ System integration</Link></nav>
+      {/* The brand mark is also a link to /team, which is dashboard.view like every other entry. */}
+      {canOpenTeam
+        ? <Link href="/team" className={styles.logo}><b>paw</b>space <span>TEAM · OPS</span></Link>
+        : <span className={styles.logo}><b>paw</b>space <span>TEAM · OPS</span></span>}
+      <nav><strong>OPERATIONS</strong>{railLinks.map(link => <Link key={link.href} className={link.href === "/team/operations/bookings" ? styles.active : undefined} href={link.href}>{link.label}</Link>)}</nav>
       <div className={styles.uatrecord}><b>UAT CONTROLLED</b><span>Canonical booking records</span><span>Sandbox payments</span><span>Queued communications</span></div>
-      <Link href="/team" className={styles.back}>← Back to Team</Link>
+      {canOpenTeam && <Link href="/team" className={styles.back}>← Back to Team</Link>}
     </aside>
 
     <section className={styles.workspace}>
-      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
-      <section className={styles.metrics}>
-        <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
-        <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
-        <article><span>Payment pending</span><b>{paymentPending}</b><small>Includes pay-after service</small></article>
-        <article><span>Open revenue</span><b>{money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0))}</b><small>Due now across records</small></article>
-      </section>
+      {/* R3-G / F7: "↻ Refresh snapshot" and "＋ Add booking" were rendered to an associate whose read
+          had just been refused - a write offered on top of a denied read. They belong to the same
+          gate as the data, so they go with it. */}
+      <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><ReadGate error={error}><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></ReadGate></header>
 
-      <section className={styles.controls}><label>⌕<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search booking, customer, pet, phone or provider" /></label><div>{["All bookings", "Needs attention", "Payment pending", "Confirmed", "Completed"].map(item => <button key={item} className={filter === item ? styles.filterActive : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></section>
+      <ReadRefusedNotice error={error} what="the Booking Command Center" />
+
+      {/* R3-G / F6: these four tiles counted an EMPTY array and rendered "0 · 0 · 0 · ₹0" above the
+          refusal, so a denied read looked exactly like a quiet day. They are computed from data that
+          was never read, so they are not rendered when there is none. */}
+      <ReadGate error={error} loading={loading}>
+        <section className={styles.metrics}>
+          <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
+          <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
+          <article><span>Payment pending</span><b>{paymentPending}</b><small>Includes pay-after service</small></article>
+          <article><span>Open revenue</span><b>{money(bookings.reduce((sum, booking) => sum + Number(booking.outstanding_amount ?? booking.amount_due_now ?? 0), 0))}</b><small>Still to collect · captured payments excluded</small></article>
+        </section>
+
+        <section className={styles.controls}><label>⌕<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search booking, customer, pet, phone or provider" /></label><div>{["All bookings", "Needs attention", "Payment pending", "Confirmed", "Completed"].map(item => <button key={item} className={filter === item ? styles.filterActive : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></section>
+      </ReadGate>
 
       {loading && <div className={styles.state}>Loading connected booking records…</div>}
-      {error && <div className={`${styles.state} ${styles.error}`}>{error}<button onClick={() => void load()}>Try again</button></div>}
+      {error && <div className={`${styles.state} ${styles.error}`}><button onClick={() => void load()}>Try again</button></div>}
       {!loading && !error && !bookings.length && <div className={styles.state}><b>No canonical bookings yet</b><span>Create a UAT booking from the customer app and it will appear here with the same linked IDs.</span><Link href="/mobile-app">Open customer test app</Link></div>}
 
       {!loading && !error && bookings.length > 0 && <section className={styles.commandGrid}>
@@ -128,7 +171,7 @@ export default function BookingCommandCenter() {
 
         {selected && <aside className={styles.detail}>
           <header className={styles.detailHead}><div><span>{String(selected.id)} · {pretty(selected.service_code)}</span><h2>{pretty(selected.status)}</h2><p>{when(selected.scheduled_start)} · {pretty(selected.zone_id)}</p></div><em>{selected.tickets.some(ticket => isSupportCaseOpen(ticket.status)) ? "ACTION NEEDED" : "ON TRACK"}</em></header>
-          <div className={styles.actionBar}><button onClick={() => void adminAction("call_customer")}>☎ Call</button><button onClick={() => void adminAction("whatsapp_customer")}>◉ WhatsApp</button><button onClick={() => void adminAction("open_tracking")}>⌖ Tracking</button><button onClick={() => void adminAction("review_reassignment")}>↻ Reassign</button></div>
+          <div className={styles.actionBar}><button onClick={() => void adminAction("call_customer")}>☎ Call</button><button onClick={() => void adminAction("whatsapp_customer")}>◉ WhatsApp</button><button onClick={() => void adminAction("open_tracking")}>⌖ Tracking</button><button title="Raises an Operations work-queue task. It does not move the provider by itself — use the service exception queue or the scheduling day board to recover a provider." onClick={() => void adminAction("review_reassignment")}>⇄ Request reassignment</button></div>
           <label className={styles.reason}>Action reason<input value={actionReason} onChange={event => setActionReason(event.target.value)} /></label>
           <div className={styles.tabs}>{(["Overview", "Journey", "Payments", "Communication", "Tickets & refunds"] as Tab[]).map(item => <button key={item} className={tab === item ? styles.tabActive : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
 

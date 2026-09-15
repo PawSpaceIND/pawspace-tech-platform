@@ -157,7 +157,7 @@ test("a negative balance is refused, and allowed only when the policy version in
   assert.equal(balance(sqlite, "EMP-A", "CL"), 2);
 
   // Requesting more than the balance is refused at REQUEST time under a no-negative policy.
-  const overdrawn = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5" }))));
+  const overdrawn = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5", endDate: "2026-09-25" }))));
   assert.equal(overdrawn.status, 422);
   assert.match(overdrawn.body.error, /Insufficient leave balance/);
   assert.equal(count(sqlite, "leave_requests"), 0);
@@ -166,7 +166,7 @@ test("a negative balance is refused, and allowed only when the policy version in
   const v2 = await read(await post(MANAGER, screen.leavePolicyBody({ name: "Casual leave", leaveCode: "CL", allowNegative: true, entitlementUnits: "2", effectiveFrom: "2026-06-01" })));
   assert.equal(v2.body.data.version, 2, "saving the same policy name publishes the next version");
 
-  const allowed = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5" }))));
+  const allowed = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5", endDate: "2026-09-25" }))));
   assert.equal(allowed.status, 200, "the same request the previous version refused is accepted under the new one");
   const approved = await read(await post(MANAGER, screen.leaveDecisionBody(allowed.body.data.id, "approved", "unpaid overflow agreed")));
   assert.equal(approved.status, 200);
@@ -194,7 +194,7 @@ test("two policy versions published on the same effective date resolve to the ne
   assert.equal(v2.body.data.version, 2);
   await post(MANAGER, screen.grantEntitlementBody({ employeeId: "EMP-A", leaveCode: "CL", units: "2", reason: "annual entitlement" }));
 
-  const overdrawn = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5" }))));
+  const overdrawn = await read(await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "5", endDate: "2026-09-25" }))));
   assert.equal(overdrawn.status, 200, "version 2 permits the negative balance, so version 2 is what must be in force");
   const approved = await read(await post(MANAGER, screen.leaveDecisionBody(overdrawn.body.data.id, "approved", "unpaid overflow agreed")));
   assert.equal(approved.status, 200, "the approval must read the same version the request was judged against");
@@ -205,7 +205,7 @@ test("maker/checker: the person who raised a leave request cannot approve it", a
   const { sqlite } = await world();
   await post(MANAGER, screen.leavePolicyBody({ name: "Casual leave", leaveCode: "CL", allowNegative: true, entitlementUnits: "5", effectiveFrom: "2026-04-01" }));
   await post(MANAGER, screen.grantEntitlementBody({ employeeId: "EMP-MGR", leaveCode: "CL", units: "", reason: "annual entitlement" }));
-  const own = await read(await post(MANAGER, screen.leaveRequestBody("EMP-MGR", leaveDraft({ units: "1" }))));
+  const own = await read(await post(MANAGER, screen.leaveRequestBody("EMP-MGR", leaveDraft({ units: "1", endDate: "2026-09-21" }))));
   assert.equal(own.status, 200);
   const selfApproval = await read(await post(MANAGER, screen.leaveDecisionBody(own.body.data.id, "approved", "mine")));
   assert.equal(selfApproval.status, 409);
@@ -322,8 +322,8 @@ test("employee self-scope: an associate cannot read or mutate another employee's
   await post(MANAGER, screen.leavePolicyBody({ name: "Casual leave", leaveCode: "CL", allowNegative: true, entitlementUnits: "5", effectiveFrom: "2026-04-01" }));
   await post(ASHA, { action: "check_in", employeeId: "EMP-A", occurredAt: NOW, idempotencyKey: "asha:in" });
   await post(BHAVNA, { action: "check_in", employeeId: "EMP-B", occurredAt: NOW, idempotencyKey: "bhavna:in" });
-  await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "1" })));
-  await post(BHAVNA, screen.leaveRequestBody("EMP-B", leaveDraft({ units: "1" })));
+  await post(ASHA, screen.leaveRequestBody("EMP-A", leaveDraft({ units: "1", endDate: "2026-09-21" })));
+  await post(BHAVNA, screen.leaveRequestBody("EMP-B", leaveDraft({ units: "1", endDate: "2026-09-21" })));
 
   const mine = await read(await get(ASHA));
   assert.equal(mine.status, 200);
@@ -339,7 +339,7 @@ test("employee self-scope: an associate cannot read or mutate another employee's
   const crossRead = await read(await post(ASHA, { action: "check_in", employeeId: "EMP-B", occurredAt: NOW, idempotencyKey: "asha-as-bhavna" }));
   assert.equal(crossRead.status, 403);
   assert.equal(crossRead.body.error, "Employee self-service scope denied");
-  const crossLeave = await read(await post(ASHA, screen.leaveRequestBody("EMP-B", leaveDraft({ units: "1" }))));
+  const crossLeave = await read(await post(ASHA, screen.leaveRequestBody("EMP-B", leaveDraft({ units: "1", endDate: "2026-09-21" }))));
   assert.equal(crossLeave.status, 403);
   assert.equal(crossLeave.body.error, "Employee self-service scope denied");
   assert.equal(count(sqlite, "leave_requests"), 2, "a scope refusal must not create a request for the other employee");

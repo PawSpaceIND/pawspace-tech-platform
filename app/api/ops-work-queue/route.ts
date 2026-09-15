@@ -1,14 +1,17 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEvents,WORK_QUEUE_DETECTORS,WORK_QUEUE_SCHEDULER,type WorkQueueAction}from"../../../lib/ops-work-queue";
+import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEvents,WORK_QUEUE_DETECTORS,type WorkQueueAction}from"../../../lib/ops-work-queue";
+import{observeBackgroundScheduler}from"../../../lib/scheduler-observation";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function workQueueExists(db:Awaited<ReturnType<typeof database>>){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ops_work_queue_tasks'").first<Record<string,unknown>>());}
-function emptyWorkQueueSnapshot(){return{generatedAt:Date.now(),metrics:{total:0,open:0,escalated:0,critical:0,resolvedToday:0},queues:{},commandCentre:{available:false},truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER,productionReady:false}};}
+// A database with no queue tables has certainly never been swept by anything, so the cold snapshot
+// reports an unobserved scheduler rather than repeating a configured:true constant.
+async function emptyWorkQueueSnapshot(db:Awaited<ReturnType<typeof database>>){const scheduler=await observeBackgroundScheduler(db);return{generatedAt:Date.now(),metrics:{total:0,open:0,escalated:0,critical:0,resolvedToday:0},queues:{},commandCentre:{available:false},truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:scheduler.configured,backgroundScheduler:scheduler,productionReady:false}};}
 
 export async function GET(request:Request){try{
  const db=await database(),url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
  // Keep the cold-database read side effect-free; once queue tables exist, this is a platform-wide Operations surface.
- if(!await workQueueExists(db)){if(taskId)return json({error:"Work queue task not found"},404);return json({data:emptyWorkQueueSnapshot()});}
+ if(!await workQueueExists(db)){if(taskId)return json({error:"Work queue task not found"},404);return json({data:await emptyWorkQueueSnapshot(db)});}
  const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");
  if(taskId){const task=await workQueueTaskWithEvents(db,taskId);if(!task)return json({error:"Work queue task not found"},404);return json({data:task});}
  return json({data:await workQueueSnapshot(db)});

@@ -2,7 +2,7 @@ import{database}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
 import{addOwnedProviderDocument,addOwnedProviderProfileMedia,acceptOwnedProviderSla,createOwnedProviderApplication,providerOnboardingSelfServiceSnapshot,saveOwnedProviderProfile,scoreOwnedProviderQuiz,submitOwnedProviderApplication,updateOwnedActivatedProfile}from"../../../lib/provider-onboarding-self-service";
 import{generateProviderProfileBioDraft}from"../../../lib/provider-profile-ai-bio";
-import{storeProviderDocumentSecurely}from"../../../lib/provider-document-secure-upload";
+import{PROVIDER_DOCUMENT_STORAGE_BINDING,PROVIDER_DOCUMENT_UPLOAD_UNAVAILABLE,providerDocumentStorageConfigured,storeProviderDocumentSecurely}from"../../../lib/provider-document-secure-upload";
 import{acceptProviderAgreementProduction}from"../../../lib/provider-agreement-production-esign";
 import{governedClientErrorResponse}from"../../../lib/governed-http-error";
 
@@ -29,6 +29,19 @@ async function failure(error:unknown){
 }
 
 /*
+ * An unprovisioned bucket is a CONFIGURATION state, not a server fault. [R3-B1]
+ *
+ * Measured: /partner/onboarding -> choose file -> upload_document answered
+ * 500 {"error":"Private PAWSPACE_MEDIA_BUCKET binding is not configured"} and the applicant read that
+ * sentence, verbatim, in a red alert. No r2_buckets binding exists in wrangler.toml or
+ * wrangler.e2e.toml, so this is the state of any deployment that has not provisioned the bucket - not
+ * a rare fault. The applicant is told what is true and what happens next; the binding to provision is
+ * named only in the server log and the security audit, and on the settings.manage-gated configuration
+ * surface, never in a response a member of the public receives.
+ */
+const documentStorageRefusal=()=>json({error:"document_upload_unavailable",detail:PROVIDER_DOCUMENT_UPLOAD_UNAVAILABLE},503);
+
+/*
  * Which acceptance the applicant's screen must post. [W2-F]
  *
  * `accept_sla_uat` is refused with a 409 in production and `accept_sla` (the real e-sign) is refused
@@ -42,13 +55,17 @@ function agreementAcceptanceMode(env:Record<string,unknown>){
  return{mode:production||signingConfigured?"production":"uat",action:production||signingConfigured?"accept_sla":"accept_sla_uat",available:production?signingConfigured:true};
 }
 
-export async function GET(request:Request){try{const{db,actor}=await providerActor(request);const data=await providerOnboardingSelfServiceSnapshot(db,actor.subjectId);await audit(db,actor,"provider.onboarding.self_service.read",null,"allowed");return json({data:{...data,agreementAcceptance:agreementAcceptanceMode(await runtimeEnv())}});}catch(error){return await failure(error);}}
+export async function GET(request:Request){try{const{db,actor}=await providerActor(request);const data=await providerOnboardingSelfServiceSnapshot(db,actor.subjectId);await audit(db,actor,"provider.onboarding.self_service.read",null,"allowed");const env=await runtimeEnv();
+ /* Reported as a capability so the screen can say so standing, instead of offering a control whose
+  * only possible outcome is a red alert after the applicant has already chosen a file. [R3-B1] */
+ const documentUpload={available:providerDocumentStorageConfigured(env),message:providerDocumentStorageConfigured(env)?null:PROVIDER_DOCUMENT_UPLOAD_UNAVAILABLE};
+ return json({data:{...data,agreementAcceptance:agreementAcceptanceMode(env),documentUpload}});}catch(error){return await failure(error);}}
 
 export async function POST(request:Request){let db:D1Database|undefined,actor:Awaited<ReturnType<typeof resolvePlatformSession>>=null,action="unknown",resourceId:string|null=null;try{sameOrigin(request);const resolved=await providerActor(request);db=resolved.db;actor=resolved.actor;const body=await request.json() as Body;action=String(body.action||"");let data:unknown,status=200;
  if(action==="create_application"){if(!body.payload)return json({error:"Application payload is required"},400);data=await createOwnedProviderApplication(db,{providerId:actor.subjectId,actorId:actor.auditId,payload:body.payload});resourceId=(data as{ id:string}).id;status=201;}
- else if(action==="upload_document"){if(!body.applicationId||!body.documentType||!body.fileBase64||!body.mimeType)return json({error:"Application, document type, MIME type and document payload are required"},400);resourceId=body.applicationId;await (await import("../../../lib/provider-onboarding-self-service")).ensureProviderOwnsOnboardingApplication(db,actor.subjectId,body.applicationId);const stored=await storeProviderDocumentSecurely(await runtimeEnv(),{providerId:actor.subjectId,applicationId:body.applicationId,documentType:body.documentType,mimeType:body.mimeType,fileBase64:body.fileBase64});const record=await addOwnedProviderDocument(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,documentType:body.documentType,fileRef:stored.fileRef,expiresAt:body.expiresAt});data={record,storage:{sha256:stored.sha256,sizeBytes:stored.sizeBytes,mimeType:stored.mimeType,serverOwned:true,privateStorage:true}};status=201;}
+ else if(action==="upload_document"){if(!body.applicationId||!body.documentType||!body.fileBase64||!body.mimeType)return json({error:"Application, document type, MIME type and document payload are required"},400);resourceId=body.applicationId;if(!providerDocumentStorageConfigured(await runtimeEnv())){console.error(`[provider-onboarding] document upload refused: the private ${PROVIDER_DOCUMENT_STORAGE_BINDING} R2 binding is not provisioned on this deployment`);await audit(db,actor,`provider.onboarding.self_service.${action}`,resourceId,"denied",{reason:"document_storage_unavailable",requiredBinding:PROVIDER_DOCUMENT_STORAGE_BINDING}).catch(()=>{});return documentStorageRefusal();}await (await import("../../../lib/provider-onboarding-self-service")).ensureProviderOwnsOnboardingApplication(db,actor.subjectId,body.applicationId);const stored=await storeProviderDocumentSecurely(await runtimeEnv(),{providerId:actor.subjectId,applicationId:body.applicationId,documentType:body.documentType,mimeType:body.mimeType,fileBase64:body.fileBase64});const record=await addOwnedProviderDocument(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,documentType:body.documentType,fileRef:stored.fileRef,expiresAt:body.expiresAt});data={record,storage:{sha256:stored.sha256,sizeBytes:stored.sizeBytes,mimeType:stored.mimeType,serverOwned:true,privateStorage:true}};status=201;}
  else if(action==="add_document"){const env=await runtimeEnv();if(String(env.DEPLOYMENT_PROFILE||env.PAWSPACE_DEPLOYMENT_ENV).toLowerCase()==="production")return json({error:"Client-supplied document references are disabled in production; use upload_document"},409);if(!body.applicationId||!body.documentType||!body.fileRef)return json({error:"Application, document type and secure file reference are required"},400);resourceId=body.applicationId;data=await addOwnedProviderDocument(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,documentType:body.documentType,fileRef:body.fileRef,expiresAt:body.expiresAt});status=201;}
- else if(action==="submit_application"){if(!body.applicationId)return json({error:"Application ID is required"},400);resourceId=body.applicationId;data=await submitOwnedProviderApplication(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId});}
+ else if(action==="submit_application"){if(!body.applicationId)return json({error:"Application ID is required"},400);resourceId=body.applicationId;data=await submitOwnedProviderApplication(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,env:await runtimeEnv()});}
  else if(action==="score_quiz"){if(!body.applicationId||!body.quizVersionId||!body.answers)return json({error:"Application, frozen quiz version and answers are required"},400);resourceId=body.applicationId;data=await scoreOwnedProviderQuiz(db,{providerId:actor.subjectId,applicationId:body.applicationId,quizVersionId:body.quizVersionId,answers:body.answers});status=201;}
  else if(action==="accept_sla"){if(!body.applicationId||!body.agreementId)return json({error:"Application and agreement IDs are required"},400);resourceId=body.applicationId;data=await acceptProviderAgreementProduction(db,await runtimeEnv(),{agreementId:body.agreementId,providerId:actor.subjectId,actorId:actor.auditId});}
  else if(action==="accept_sla_uat"){const env=await runtimeEnv();if(String(env.DEPLOYMENT_PROFILE||env.PAWSPACE_DEPLOYMENT_ENV).toLowerCase()==="production")return json({error:"UAT agreement acceptance is disabled in production"},409);if(!body.applicationId||!body.agreementId)return json({error:"Application and agreement IDs are required"},400);resourceId=body.applicationId;data=await acceptOwnedProviderSla(db,{providerId:actor.subjectId,actorId:actor.auditId,applicationId:body.applicationId,agreementId:body.agreementId});}
@@ -63,6 +80,7 @@ export async function POST(request:Request){let db:D1Database|undefined,actor:Aw
    resourceId=body.applicationId;
    let mediaRef=String(body.fileRef||"").trim();
    if(body.fileBase64&&body.mimeType){
+     if(!providerDocumentStorageConfigured(await runtimeEnv())){console.error(`[provider-onboarding] profile media refused: the private ${PROVIDER_DOCUMENT_STORAGE_BINDING} R2 binding is not provisioned on this deployment`);await audit(db,actor,`provider.onboarding.self_service.${action}`,resourceId,"denied",{reason:"document_storage_unavailable",requiredBinding:PROVIDER_DOCUMENT_STORAGE_BINDING}).catch(()=>{});return documentStorageRefusal();}
      await (await import("../../../lib/provider-onboarding-self-service")).ensureProviderOwnsOnboardingApplication(db,actor.subjectId,body.applicationId);
      const stored=await storeProviderDocumentSecurely(await runtimeEnv(),{providerId:actor.subjectId,applicationId:body.applicationId,documentType:`profile_media_${body.mediaType}`,mimeType:body.mimeType,fileBase64:body.fileBase64});
      mediaRef=stored.fileRef;

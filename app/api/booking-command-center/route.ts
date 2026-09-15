@@ -1,4 +1,6 @@
 import { bookingSupportCases } from "../../../lib/booking-support-cases";
+import { raiseWorkQueueTask } from "../../../lib/ops-work-queue";
+import { ensureStayPaymentTables } from "../../../lib/stay-split-payments";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
@@ -20,6 +22,10 @@ async function ensureTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS customer_experience_tickets (id TEXT PRIMARY KEY,customer_id TEXT,booking_id TEXT,lead_id TEXT,category TEXT NOT NULL,priority TEXT NOT NULL,subject TEXT NOT NULL,detail TEXT NOT NULL,owner TEXT NOT NULL,manager TEXT NOT NULL,sla_due_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',escalation_level INTEGER NOT NULL DEFAULT 0,customer_status TEXT NOT NULL DEFAULT 'We received your request',resolution TEXT,root_cause TEXT,resolution_evidence TEXT,reopened_count INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,resolved_at INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_admin_actions (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,reason TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',actor_email TEXT NOT NULL,created_at INTEGER NOT NULL)"),
   ]);
+  // Outstanding revenue reads stay_payment_schedules: a split booking captures its first instalment
+  // and still owes the balance, which booking_payments alone cannot tell you. Provisioned here with
+  // the rest rather than only guarded, so a cold D1 answers the read instead of "no such table".
+  await ensureStayPaymentTables(db);
 }
 
 function parse(value: unknown) {
@@ -41,6 +47,20 @@ export function parseBookingListOptions(url:URL):BookingListOptions{
   const limit=Number.isFinite(requested)&&requested>0?Math.min(BOOKING_LIST_MAX_LIMIT,Math.floor(requested)):BOOKING_LIST_DEFAULT_LIMIT;
   return{q,limit,sort:url.searchParams.get("sort")==="schedule"?"schedule":"created"};
 }
+/*
+ * What is STILL OWED on a booking, as opposed to what was owed the moment it was created.
+ *
+ * booking_payments.amount_due_now is written at booking creation and NOTHING decrements it on
+ * capture, so E2E-BK-UI-001 showed "PAYMENT STATUS Captured - Prepaid - Card - INR 1,500" with
+ * "Due now INR 1,500" printed directly underneath, and that same 1,500 inside the header's
+ * "Open revenue INR 29,190". Money already in the bank was being counted as money to collect.
+ *
+ * Collected statuses are the ones lib/collected-funds.ts already treats as money having changed
+ * hands, so the two surfaces cannot disagree about what "paid" means. A split-payment booking is the
+ * case where the payment row alone is not enough - its first instalment captures while the balance
+ * is genuinely still outstanding - so the schedule, when the table exists, decides instead.
+ */
+const COLLECTED_PAYMENT_STATUSES_SQL="('captured','paid','refunded','partially_refunded')";
 async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
   const where:string[]=[],binds:unknown[]=[];
   if(scope){where.push("lower(b.city_id)=?");binds.push(scope.cityId);}
@@ -52,13 +72,20 @@ async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerO
   }
   const limit=Math.min(BOOKING_LIST_MAX_LIMIT,Math.max(1,Math.floor(Number(options.limit)||BOOKING_LIST_DEFAULT_LIMIT)));
   const order=options.sort==="schedule"?"b.scheduled_start DESC":"b.created_at DESC, b.scheduled_start DESC";
+  // One expression, no fallback branch: ensureTables() above provisions stay_payment_schedules, so
+  // the schedule is always readable and a branch for its absence would be untestable dead code.
+  const outstanding=`CASE WHEN sps.booking_id IS NOT NULL THEN (CASE WHEN sps.status='paid' THEN 0 ELSE MAX(COALESCE(sps.balance_amount,0),0) END)
+            WHEN p.status IN ${COLLECTED_PAYMENT_STATUSES_SQL} THEN 0
+            ELSE MAX(COALESCE(p.amount_due_now,0),0) END`;
   const sql=`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,
     w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,w.assignment_json,
-    p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json
+    p.id payment_id,p.amount payment_amount,p.amount_due_now,p.method payment_method,p.mode payment_mode,p.status payment_status,p.gateway,p.detail_json payment_detail_json,
+    ${outstanding} outstanding_amount
     FROM canonical_bookings b
     JOIN canonical_customers c ON c.id=b.customer_id
     JOIN provider_work_orders w ON w.booking_id=b.id
     JOIN booking_payments p ON p.booking_id=b.id
+    LEFT JOIN stay_payment_schedules sps ON sps.booking_id=b.id
     ${where.length?`WHERE ${where.join(" AND ")}`:""}
     ORDER BY ${order} LIMIT ${limit}`;
   return db.prepare(sql).bind(...binds).all<Row>();
@@ -143,8 +170,22 @@ export async function POST(request: Request) {
       .bind(eventId, bookingId, action, reason, JSON.stringify({ uat: true, organizationalScope:scope??"global" }), actor.email, now).run();
     if (action === "whatsapp_customer") await db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
       .bind(crypto.randomUUID(), bookingId, booking.customer_id, "whatsapp", "admin_booking_update", "PawSpace Admin opened a service update for this booking.", "uat_queued", eventId, now).run();
-    await securityAudit(db, actor, action, "booking", bookingId, "completed", { reason, uat: true, organizationalScope:scope??"global" });
-    return Response.json({ ok: true, id: eventId, deliveryStatus: action === "whatsapp_customer" ? "uat_queued" : "recorded" }, { status: 201 });
+    /* A reassignment request used to end at the booking_admin_actions INSERT above - a row no queue,
+     * screen or sweep ever read - while the caller got 201 "recorded" over a booking whose provider,
+     * provider name and work-order status were all unchanged. It now raises a real Operations task:
+     * owned, SLA-tracked, escalating, visible in /team/operations/work-queue and counted by the
+     * Control Tower. The request is still a request - it does not move the provider by itself, and
+     * the response below says so rather than implying a reassignment happened. */
+    let queued: Awaited<ReturnType<typeof raiseWorkQueueTask>> | null = null;
+    if (action === "review_reassignment") queued = await raiseWorkQueueTask(db, {
+      rule: "reassignment_requested", queue: "operations", priority: "high",
+      title: `Reassignment requested on booking ${bookingId}`,
+      bookingId, customerId: String(booking.customer_id || "") || null,
+      entityType: "booking", entityId: bookingId, slaMinutes: 60,
+      detail: { reason, requestedBy: actor.email, adminActionId: eventId, source: "booking_command_center" },
+    }, { now });
+    await securityAudit(db, actor, action, "booking", bookingId, "completed", { reason, uat: true, organizationalScope:scope??"global", workQueueTaskId: queued?.taskId ?? null });
+    return Response.json({ ok: true, id: eventId, queued, deliveryStatus: action === "whatsapp_customer" ? "uat_queued" : action === "review_reassignment" ? (queued?.taskId ? `queued_to_operations_work_queue:${queued.taskId}` : "queue_unavailable") : "recorded" }, { status: 201 });
   } catch (error) {
     return authError(error, "Unable to record booking action");
   }

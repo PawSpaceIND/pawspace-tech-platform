@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{leaveSpanDays,leaveUnitsFor}from"../../lib/leave-span";
 
 type Line={code:string;label:string;kind:string;amount:number};
 type Payslip={resultId:string;runId:string;periodStart:number;periodEnd:number;status:string;gross:number;deductions:number;reimbursements:number;net:number};
@@ -10,7 +11,7 @@ type Perf={appears:boolean;teamCode:string;ofEmployees:number;rank?:number;netCo
 type View={
   linked:boolean;email?:string;engagement?:"employee"|"contract";
   employee?:{id:string;code:string;name:string;workEmail:string;joinedAt:number};
-  compensation?:{structureCode:string;version:number;currency:string;components:Line[];grossMonthly:number;fixedDeductions:number;netMonthly:number}|null;
+  compensation?:{structureCode:string;version:number;currency:string;components:Line[];grossMonthly:number;fixedDeductions:number;reimbursements:number;employerCost:number;netMonthly:number}|null;
   payslips?:{list:Payslip[];latest:Payslip|null;latestLines:Line[]};
   incentives?:{list:{scheme:string;periodStart:number;periodEnd:number;status:string;calculated:number;approved:number}[];approvedTotal:number};
   dailyIncentive?:{list:{date:string;baseVertical:string;achievedValue:number;incentive:number;blitz:boolean;status:string}[];total:number};
@@ -29,14 +30,19 @@ async function loadView(){const r=await fetch("/api/me",{cache:"no-store"});cons
 
 export default function MyPortalPage(){
   const[data,setData]=useState<View|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[msg,setMsg]=useState("");
-  const[leave,setLeave]=useState({leaveCode:"",startDate:"",endDate:"",units:"1",reason:""});
+  // The days are DERIVED from the dates, not typed. [R3E-LEAVE-UNITS]
+  // This field used to be a free number, and `units` is what the balance is debited by - so a
+  // 1 Jan → 10 Jan absence could be, and was, booked against a single day of leave.
+  const[leave,setLeave]=useState({leaveCode:"",startDate:"",endDate:"",halfDay:false,reason:""});
+  const leaveSpan=leaveSpanDays(leave.startDate,leave.endDate);
+  const leaveUnits=leaveUnitsFor(leave.startDate,leave.endDate,leave.halfDay);
 
   const refresh=async()=>{try{setData(await loadView());setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}};
   useEffect(()=>{let active=true;void loadView().then(x=>{if(active){setData(x);setError("");}}).catch(e=>{if(active)setError(e instanceof Error?e.message:String(e));}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
 
   async function post(payload:Record<string,unknown>){const r=await fetch("/api/me",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const b=await r.json() as{error?:string};if(!r.ok)throw new Error(b.error||"Request failed");}
   async function clock(action:"check_in"|"check_out"){setBusy(true);setMsg("");try{await post({action});setMsg(action==="check_in"?"Checked in.":"Checked out.");await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
-  async function submitLeave(){if(!leave.leaveCode.trim()||!leave.startDate||!leave.endDate||leave.reason.trim().length<4){setMsg("Fill leave type, dates and a reason (4+ chars).");return;}setBusy(true);setMsg("");try{await post({action:"apply_leave",leaveCode:leave.leaveCode.trim(),startDate:leave.startDate,endDate:leave.endDate,units:Number(leave.units)||1,reason:leave.reason.trim()});setMsg("Leave request submitted for manager approval.");setLeave({leaveCode:"",startDate:"",endDate:"",units:"1",reason:""});await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
+  async function submitLeave(){if(!leave.leaveCode.trim()||!leave.startDate||!leave.endDate||leave.reason.trim().length<4){setMsg("Fill leave type, dates and a reason (4+ chars).");return;}if(leaveUnits===null||leaveUnits<=0){setMsg("Choose an end date on or after the start date.");return;}setBusy(true);setMsg("");try{await post({action:"apply_leave",leaveCode:leave.leaveCode.trim(),startDate:leave.startDate,endDate:leave.endDate,units:leaveUnits,reason:leave.reason.trim()});setMsg("Leave request submitted for manager approval.");setLeave({leaveCode:"",startDate:"",endDate:"",halfDay:false,reason:""});await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
 
   const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18};
   const stat:React.CSSProperties={background:C.panel2,border:`1px solid ${C.line}`,borderRadius:14,padding:16};
@@ -80,7 +86,10 @@ export default function MyPortalPage(){
         <h2 style={h2}>My salary</h2>
         <div style={card}>
           {data.compensation?<>
-            <p style={{marginTop:0,color:C.dim}}>{data.compensation.structureCode} v{data.compensation.version} · gross {INR(data.compensation.grossMonthly)}/mo · fixed deductions {INR(data.compensation.fixedDeductions)} · net {INR(data.compensation.netMonthly)}</p>
+            {/* Gross − deductions + reimbursements, the same arithmetic lib/payroll-engine.ts pays on.
+              * Reimbursements were left out of the net here while the payslip included them, so this
+              * line and "Net take-home (latest)" above it disagreed about the same employee's pay. */}
+            <p style={{marginTop:0,color:C.dim}}>{data.compensation.structureCode} v{data.compensation.version} · gross {INR(data.compensation.grossMonthly)}/mo · fixed deductions {INR(data.compensation.fixedDeductions)} · reimbursements {INR(data.compensation.reimbursements)} · net {INR(data.compensation.netMonthly)}</p>
             <div style={{display:"grid",gap:6}}>{data.compensation.components.map(c=><div key={c.code} style={{display:"flex",justifyContent:"space-between",borderBottom:`1px solid ${C.line}`,padding:"6px 0"}}><span>{c.label} <small style={{color:C.dim}}>({c.kind})</small></span><span style={{fontVariantNumeric:"tabular-nums"}}>{INR(c.amount)}</span></div>)}</div>
           </>:<p style={{margin:0,color:C.dim}}>No active compensation assignment yet.</p>}
         </div>
@@ -90,8 +99,8 @@ export default function MyPortalPage(){
           {data.payslips?.latest?<>
             <p style={{marginTop:0}}><b>Latest:</b> {day(data.payslips.latest.periodStart)} → {day(data.payslips.latest.periodEnd)} · <span style={{color:C.gold}}>{data.payslips.latest.status}</span> · net {INR(data.payslips.latest.net)}</p>
             <div style={{display:"grid",gap:5,margin:"8px 0 14px"}}>{data.payslips.latestLines.map((l,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:14}}><span style={{color:l.kind==="deduction"?"#ff9a9a":C.ink}}>{l.label}</span><span style={{fontVariantNumeric:"tabular-nums"}}>{l.kind==="deduction"?"− ":""}{INR(l.amount)}</span></div>)}</div>
-            <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr style={{color:C.dim,textAlign:"left"}}><th style={{padding:"6px 8px"}}>Period</th><th>Status</th><th style={{textAlign:"right"}}>Gross</th><th style={{textAlign:"right"}}>Deductions</th><th style={{textAlign:"right",padding:"6px 8px"}}>Net</th></tr></thead>
-              <tbody>{data.payslips.list.map(p=><tr key={p.resultId} style={{borderTop:`1px solid ${C.line}`}}><td style={{padding:"6px 8px"}}>{day(p.periodStart)} → {day(p.periodEnd)}</td><td>{p.status}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.gross)}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.deductions)}</td><td style={{textAlign:"right",padding:"6px 8px",fontVariantNumeric:"tabular-nums"}}>{INR(p.net)}</td></tr>)}</tbody></table></div>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr style={{color:C.dim,textAlign:"left"}}><th style={{padding:"6px 8px"}}>Period</th><th>Status</th><th style={{textAlign:"right"}}>Gross</th><th style={{textAlign:"right"}}>Deductions</th><th style={{textAlign:"right"}}>Reimbursements</th><th style={{textAlign:"right",padding:"6px 8px"}}>Net</th></tr></thead>
+              <tbody>{data.payslips.list.map(p=><tr key={p.resultId} style={{borderTop:`1px solid ${C.line}`}}><td style={{padding:"6px 8px"}}>{day(p.periodStart)} → {day(p.periodEnd)}</td><td>{p.status}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.gross)}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.deductions)}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.reimbursements)}</td><td style={{textAlign:"right",padding:"6px 8px",fontVariantNumeric:"tabular-nums"}}>{INR(p.net)}</td></tr>)}</tbody></table></div>
           </>:<p style={{margin:0,color:C.dim}}>No payslips generated yet.</p>}
         </div>
         </>:null}
@@ -118,8 +127,9 @@ export default function MyPortalPage(){
             <div style={{display:"flex",gap:8}}>
               <label style={{fontSize:13,color:C.dim,flex:1}}>From<input type="date" style={inp} value={leave.startDate} onChange={ev=>setLeave({...leave,startDate:ev.target.value})}/></label>
               <label style={{fontSize:13,color:C.dim,flex:1}}>To<input type="date" style={inp} value={leave.endDate} onChange={ev=>setLeave({...leave,endDate:ev.target.value})}/></label>
-              <label style={{fontSize:13,color:C.dim,width:80}}>Days<input type="number" min="0.5" step="0.5" style={inp} value={leave.units} onChange={ev=>setLeave({...leave,units:ev.target.value})}/></label>
             </div>
+            <p style={{fontSize:13,color:C.dim,margin:"8px 0 0"}}>Days: <b style={{color:C.ink}}>{leaveUnits==null?"—":leaveUnits}</b>{leaveSpan==null&&leave.startDate&&leave.endDate?" · the end date must fall on or after the start date":leaveSpan!=null?` · counted from ${leave.startDate} to ${leave.endDate}`:""}</p>
+            <label style={{fontSize:13,color:C.dim,display:"block",marginTop:4}}><input type="checkbox" checked={leave.halfDay} disabled={leaveSpan==null} onChange={ev=>setLeave({...leave,halfDay:ev.target.checked})}/> Half day (deducts 0.5 less)</label>
             <label style={{fontSize:13,color:C.dim}}>Reason<input style={inp} value={leave.reason} onChange={ev=>setLeave({...leave,reason:ev.target.value})}/></label>
             <button disabled={busy} style={{...btn,marginTop:12}} onClick={()=>void submitLeave()}>{busy?"Working…":"Submit for approval"}</button>
           </div>

@@ -63,7 +63,16 @@ const json=(value:unknown,status=200)=>Response.json(value,{status});
  * renders. pickup_address, alternate_contact and customer_id are not in it and cannot leave through
  * this path; a column added to funeral_cases later is excluded by default rather than included.
  */
-const FUNERAL_FINANCE_FIELDS=["id","status","service_type","memorial_option","urgency","pet_name","pet_species","vendor_id","assigned_agent_id","certificate_status","support_status","created_at","updated_at"];
+/* [R3-D/F4] The pet is not in this projection.
+ *
+ * `finance` is the role scoped, in this module's own words, "without customer contact exposure":
+ * customer_id, pickup_address and alternate_contact are excluded, and the sibling relocation finance
+ * read deliberately excludes the pet too. In a bereavement module the pet's name IS the personal
+ * detail - it is the one identifying fact about the family's loss - and handing it to a role that is
+ * explicitly not meant to see the customer is the wrong default. The screen identifies a case by its
+ * case id and its dates, which is what a payment, a refund and a vendor settlement are actually about.
+ */
+const FUNERAL_FINANCE_FIELDS=["id","status","service_type","memorial_option","urgency","vendor_id","assigned_agent_id","certificate_status","support_status","created_at","updated_at"];
 const FUNERAL_FINANCE_NESTED=["payment","invoice","refunds","vendorCost","settlement","reconciliation"];
 function funeralFinanceView(item:Row){const out:Row={};for(const field of [...FUNERAL_FINANCE_FIELDS,...FUNERAL_FINANCE_NESTED])if(field in item)out[field]=item[field];return out;}
 

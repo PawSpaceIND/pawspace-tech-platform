@@ -142,7 +142,7 @@ export default function Home() {
       <header className="topbar">
         <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <div className="location"><span>Doorstep grooming in</span><strong>📍 Bengaluru</strong></div>
-        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/mobile-app">My PawSpace</Link><Link href="/team">Team</Link>{customer ? <Link className="login-link" href="/mobile-app">{customer.customerName}</Link> : <a className="login-link" href="#customer-login-modal">Login</a>}</div>
+        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/grooming">Grooming</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/relocation">Pet Relocation</Link><Link href="/funeral-memorial">Funeral &amp; Memorial</Link><Link href="/mobile-app">My PawSpace</Link><Link href="/team">Team</Link>{customer ? <Link className="login-link" href="/mobile-app">{customer.customerName}</Link> : <a className="login-link" href="#customer-login-modal">Login</a>}</div>
       </header>
       <TestSyncPanel surface="customer" />
 

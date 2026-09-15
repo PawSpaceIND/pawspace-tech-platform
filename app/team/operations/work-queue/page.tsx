@@ -5,7 +5,8 @@ import{StatCard}from"../../../components/ui";
 
 type Row=Record<string,unknown>;
 type Task=Row&{id:string;rule:string;queue:string;priority:string;title:string;status:string;owner:string|null;due_at:number;escalated:number;booking_id:string|null;customer_id:string|null;provider_id:string|null};
-type Truth={source:string;detectors:string[];backgroundSchedulerConfigured:boolean;backgroundScheduler?:{configured:boolean;cron:string;runner:string};productionReady:boolean};
+type SchedulerTruth={configured:boolean;everRan:boolean;running:boolean;runCount:number;lastRunAt:number|null;lastRunStatus:string|null;cron:string;runner:string;summary:string};
+type Truth={source:string;detectors:string[];backgroundSchedulerConfigured:boolean;backgroundScheduler?:SchedulerTruth;productionReady:boolean};
 type Snapshot={generatedAt:number;metrics:{total:number;open:number;escalated:number;critical:number;resolvedToday:number};queues:Record<string,{open:number;escalated:number;tasks:Task[]}>;commandCentre:Record<string,unknown>&{available:boolean;byService?:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>};truth?:Truth};
 
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());
@@ -36,7 +37,7 @@ export default function OpsWorkQueuePage(){
   </section>}
   {centre?.available===true&&<section style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
    <h2>Business command centre · today</h2>
-   <p>{String(centre.bookings)} bookings · {money(centre.revenue)} · {String(centre.completed)} completed · {String(centre.upcoming)} upcoming · {String(centre.unassigned)} unassigned · {String(centre.cancelled)} cancelled · {String(centre.refundPending)} refunds pending · {String(centre.openComplaints)} open complaints</p>
+   <p>{String(centre.bookings)} bookings · {money(centre.revenue)} · {String(centre.completed)} completed · {String(centre.upcoming)} upcoming · {String(centre.unassigned)} unassigned · {String(centre.cancelled)} cancelled · {String(centre.refundPending)} refunds pending{Number(centre.refundPendingAmount||0)>0?` (${money(centre.refundPendingAmount)})`:""} · {String(centre.openComplaints)} open complaints</p>
    <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{Object.entries(centre.byService||{}).map(([service,stats])=><span key={service} style={{border:"1px solid #eee",borderRadius:10,padding:"6px 10px"}}><b>{label(service)}</b> · {stats.bookings} bookings · {money(stats.revenue)}</span>)}</div>
   </section>}
   <div>
@@ -77,18 +78,16 @@ export default function OpsWorkQueuePage(){
     </>}
    </section>
   </section>
-  {/* This footer used to hardcode its own list of seven detectors and the sentence "cron wiring
-      pending (backgroundSchedulerConfigured:false)". Both were false: the eighth detector,
-      refund_failed - a refund the gateway REJECTED, critical, 60-minute SLA - was missing from the
-      list, and the scheduled worker has been sweeping this queue every five minutes for longer than
-      that sentence has been on the screen. It now prints the same truth block the API returns, so
-      it cannot describe a different platform from the one answering the request. */}
+  {/* This footer has now been wrong in BOTH directions. It first hardcoded "cron wiring pending
+      (backgroundSchedulerConfigured:false)"; that was replaced with a hardcoded TRUE, and a runtime
+      audit then created a task at 09:07:09Z, watched two five-minute boundaries pass with nothing
+      created, and got it only from a manual sweep at 09:18. Neither version measured anything.
+      snapshot.truth.backgroundScheduler is now an OBSERVATION of background_scheduler_runs - rows
+      only the scheduled handler writes - so the sentence below states when this deployment last
+      actually swept, or says plainly that it never has. */}
   <footer><small>{snapshot?.truth
-   ?<>Detectors ({snapshot.truth.detectors.length}): {snapshot.truth.detectors.map(rule=>label(rule)).join(" · ")}. Idempotent sweep. {snapshot.truth.backgroundSchedulerConfigured&&snapshot.truth.backgroundScheduler
-    ?`Swept automatically by ${snapshot.truth.backgroundScheduler.runner} on ${snapshot.truth.backgroundScheduler.cron}, and on demand with Sweep now.`
-    :snapshot.truth.backgroundSchedulerConfigured
-     ?"Swept automatically by the scheduled worker, and on demand with Sweep now."
-     :"No background sweep is configured on this deployment, so tasks appear only when Sweep now is pressed."}</>
+   ?<>Detectors ({snapshot.truth.detectors.length}): {snapshot.truth.detectors.map(rule=>label(rule)).join(" · ")}. Idempotent sweep. {snapshot.truth.backgroundScheduler?.summary
+    ??(snapshot.truth.backgroundSchedulerConfigured?"Swept automatically by the scheduled worker, and on demand with Sweep now.":"No automatic sweep has been observed on this deployment, so tasks appear only when Sweep now is pressed.")}</>
    :"This build did not report which detectors run or whether anything sweeps them automatically, so nothing is claimed about either."}</small></footer>
  </main>;
 }

@@ -209,7 +209,12 @@ test("FIN-4: the finance read carries the money and nothing that identifies the 
   assert.ok(!serialised.includes("Residency Road"), "the pickup address must not appear anywhere in the finance payload");
   assert.ok(!serialised.includes("+919812345678"), "nor the alternate contact number");
   assert.ok(!serialised.includes("CUS-PII-2"), "nor the customer id");
-  for (const field of ["id", "status", "service_type", "pet_name"]) assert.ok(field in financeRows[0], `the finance screen needs ${field} to name the case`);
+  // [R3-D/F4] The pet left this projection. `finance` is scoped "without customer contact exposure", and
+  // in a bereavement module the pet's name is the personal detail, not a neutral label - the sibling
+  // relocation finance read above already excludes it. The screen identifies a case by its id and dates.
+  for (const field of ["pet_name", "pet_species"]) assert.ok(!(field in financeRows[0]), `the finance read must not carry ${field}`);
+  assert.ok(!serialised.includes("Bruno"), "the pet's name must not appear anywhere in the finance payload");
+  for (const field of ["id", "status", "service_type", "created_at", "updated_at"]) assert.ok(field in financeRows[0], `the finance screen needs ${field} to identify the case`);
   sqlite.close();
 });
 

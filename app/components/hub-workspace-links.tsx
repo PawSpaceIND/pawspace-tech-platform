@@ -80,25 +80,71 @@ export function HubWorkspaceLinks({ heading, note, links, permissions, loaded }:
 }
 
 type Access = { permissions: string[]; loaded: boolean };
+export type StaffActor = { name: string; email: string; roleCode: string; permissions: string[] };
+type ActorAccess = { actor: StaffActor | null; permissions: string[]; loaded: boolean };
 
 /**
- * Staff permissions, from the same endpoint app/control/page.tsx reads. A failure resolves to no
- * permissions rather than to an error: the hub's own content still renders, and no link is offered
- * that the actor has not been shown to hold.
+ * The signed-in staff actor, from the same endpoint app/control/page.tsx reads. A failure resolves
+ * to no actor and no permissions rather than to an error: the hub's own content still renders, and
+ * no link is offered that the actor has not been shown to hold.
  */
-export function useStaffPermissions(): Access {
-  const [state, setState] = useState<Access>({ permissions: [], loaded: false });
+export function useStaffActor(): ActorAccess {
+  const [state, setState] = useState<ActorAccess>({ actor: null, permissions: [], loaded: false });
   useEffect(() => {
     let active = true;
     void fetch("/api/team-overview", { cache: "no-store" })
       .then(async (response) => {
-        const body = await response.json() as { data?: { actor?: { permissions?: string[] } } };
-        if (active) setState({ permissions: response.ok ? body.data?.actor?.permissions ?? [] : [], loaded: true });
+        const body = await response.json() as { data?: { actor?: Partial<StaffActor> } };
+        const actor = response.ok && body.data?.actor
+          ? { name: String(body.data.actor.name ?? ""), email: String(body.data.actor.email ?? ""), roleCode: String(body.data.actor.roleCode ?? ""), permissions: body.data.actor.permissions ?? [] }
+          : null;
+        if (active) setState({ actor, permissions: actor?.permissions ?? [], loaded: true });
       })
-      .catch(() => { if (active) setState({ permissions: [], loaded: true }); });
+      .catch(() => { if (active) setState({ actor: null, permissions: [], loaded: true }); });
     return () => { active = false; };
   }, []);
   return state;
+}
+
+/** Staff permissions only - the shape every hub gate has used. */
+export function useStaffPermissions(): Access {
+  const { permissions, loaded } = useStaffActor();
+  return { permissions, loaded };
+}
+
+/**
+ * The entries of `links` this actor may open, loaded once for the whole list.
+ *
+ * R3-G / F4: the OpsShell RAIL was gated but six page BODIES still carried hardcoded link lists, and
+ * between them they offered 60 distinct page-link-403 combinations - /team/operations alone offered
+ * six `bookings.manage` queues to associate, provider, customer and a signed-out visitor, directly
+ * above a section that says "Only the workspaces your role can open are listed". This is the same
+ * gate as HubWorkspaceLinks, in the shape a nav, a sidebar or a footer needs: one actor load, N
+ * links. Nothing is offered before the actor has loaded, because a link shown and then withdrawn
+ * reads as a permission that was just taken away.
+ */
+export function useVisibleStaffLinks<T extends { permission: Permission }>(links: readonly T[]): T[] {
+  const { permissions, loaded } = useStaffActor();
+  return loaded ? visibleHubLinks(permissions, links) : [];
+}
+
+/**
+ * One permission-gated link, for a single control that is neither a card nor part of a list: a hero
+ * call to action, or the "back to the hub" cue a child screen shows. It renders nothing at all when
+ * the actor may not open the destination - offering a link whose screen answers "Permission denied"
+ * is worse than not offering it, because the operator cannot tell a missing permission from a
+ * broken page.
+ */
+export function StaffGatedLink({ href, permission, className, style, children }: {
+  href: string;
+  permission: Permission;
+  className?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  const { permissions, loaded } = useStaffActor();
+  if (!loaded || !hasPermission(permissions, permission)) return null;
+  return <Link href={href} className={className} style={style}>{children}</Link>;
 }
 
 /**

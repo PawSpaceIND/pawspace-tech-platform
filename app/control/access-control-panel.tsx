@@ -17,6 +17,17 @@ const u_role=(data:Data|null,roleCode:string)=>(data?.roles||[]).find(role=>role
 type User={id:string;email:string;name:string;role_code:string;status:string};
 type Data={current:{name:string;email:string;roleCode:string;permissions:string[]};permissionCatalog:string[];roles:Role[];users:User[]};
 
+/** Exported so the numbers this panel prints can be executed by a test rather than read as text. */
+export function accessControlMetrics(data:Data|null):string[][]{
+  const fullAccessUsers=(data?.users||[]).filter(user=>isFullAccessRole(u_role(data,user.role_code))).length;
+  return[
+    ["Full-access identities",data?String(fullAccessUsers):"—","Protected, cannot be reassigned here"],
+    ["Enforced permissions",data?String(data.permissionCatalog.length):"—","Server-enforced RBAC catalogue"],
+    ["Write safety","Same-origin","Cross-origin writes blocked"],
+    ["Audit","Every request","Allowed, failed or denied"],
+  ];
+}
+
 export default function AccessControlPanel(){
   const[data,setData]=useState<Data|null>(null);const[selected,setSelected]=useState("admin");const[toast,setToast]=useState("");const[busy,setBusy]=useState(false);
   const load=async()=>{try{const response=await fetch("/api/platform-governance");if(!response.ok)throw new Error();setData(await response.json());}catch{setToast("Open this Site inside the PawSpace workspace to manage access.");}};
@@ -24,7 +35,18 @@ export default function AccessControlPanel(){
   const role=useMemo(()=>data?.roles.find(r=>r.code===selected),[data,selected]);
   async function create(e:FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);const fd=new FormData(e.currentTarget);const res=await fetch("/api/platform-governance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"create_user",name:fd.get("name"),email:fd.get("email"),roleCode:fd.get("role")})});const body=await res.json();setToast(res.ok?"User created with controlled access":body.error||"Unable to create user");if(res.ok){e.currentTarget.reset();void load();}setBusy(false);}
   async function changeUser(id:string,roleCode:string,status="active"){const res=await fetch("/api/platform-governance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"update_user",id,roleCode,status})});setToast(res.ok?"User access updated":"Protected or unauthorised change blocked");if(res.ok)void load();}
-  const metrics=[["Founder","1","Protected identity"],["Privileged APIs","10","Server-enforced RBAC"],["Write safety","Same-origin","Cross-origin writes blocked"],["Audit","Every request","Allowed, failed or denied"]];
+  /* "Privileged APIs 10" was a literal, on a page one click from a Control tower hero that says "No
+   * sample metrics are rendered. Every number is counted from a canonical operational or governance
+   * table." lib/api-gateway.ts carries 141 "/api/..." entries and app/api holds 243 route folders,
+   * so 10 was not even close - and "Founder 1" beside it was a literal too. Both are now counted
+   * from the governance payload this panel already fetched: the permission catalogue the gateway
+   * actually enforces, and the provisioned identities holding a full-access role. Until that payload
+   * arrives the tiles read "—" rather than a number nothing measured.
+   *
+   * The count of privileged API PATHS is deliberately not reproduced here. It lives in
+   * lib/api-gateway.ts as a conditional chain rather than an enumerable table, so any number this
+   * screen printed for it would be a second hardcoded copy - exactly the defect being removed. */
+  const metrics=accessControlMetrics(data);
   return <div className={css.stack}>
     <section className={css.hero}><div><span>IDENTITY · LEAST PRIVILEGE · FOUNDER PROTECTION</span><h2>Control every user and every permission.</h2><p>Every privileged API passes through one server-side access gateway. Unknown identities are denied, disabled users are blocked, and role checks happen before finance, CRM, marketing, pricing, scheduling or launch data is read or changed.</p></div><div className={css.badge}>{data?`${data.users.length} provisioned identities`:"Secure workspace sign-in"}</div></section>
     <section className={css.metrics}>{metrics.map(x=><article key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></article>)}</section>

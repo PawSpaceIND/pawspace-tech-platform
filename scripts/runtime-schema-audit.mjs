@@ -20,11 +20,22 @@ function walk(root, relative) {
 
 function sqlArguments(source) {
   const values = [];
-  const pattern = /\.(?:prepare|exec)\(\s*(`(?:\\.|[^`])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gs;
-  for (const match of source.matchAll(pattern)) {
-    const literal = match[1];
-    const body = literal.slice(1, -1);
-    values.push(body.replace(/\$\{[\s\S]*?\}/g, " "));
+  const push = (literal) => values.push(literal.slice(1, -1).replace(/\$\{[\s\S]*?\}/g, " "));
+  const LITERAL = "`(?:\\\\.|[^`])*`|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'";
+
+  // SQL written inline at the call site.
+  for (const match of source.matchAll(new RegExp(`\\.(?:prepare|exec)\\(\\s*(${LITERAL})`, "gs"))) push(match[1]);
+
+  // SQL held in a named constant and passed by identifier - e.g. lib/document-series.ts's
+  // DOCUMENT_SERIES_V2_DDL, or lib/canonical-booking-core-schema.ts's array of statements. That
+  // pattern is BETTER than inlining (it is what lets a test pin one copy byte-for-byte against the
+  // writer's), and this scanner could not see it: finance_document_series_v2 read as having no
+  // schema source at all while the module that creates it sat two lines above the INSERT.
+  // A string literal that begins with CREATE TABLE is DDL by construction, so collect it wherever
+  // it is declared. Only lib/app/worker are walked, so no test fixture reaches this.
+  for (const match of source.matchAll(new RegExp(`(${LITERAL})`, "gs"))) {
+    const body = match[1].slice(1, -1);
+    if (/^\s*CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)\b/i.test(body)) push(match[1]);
   }
   return values;
 }

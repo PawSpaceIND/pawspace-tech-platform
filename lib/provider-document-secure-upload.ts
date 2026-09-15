@@ -22,9 +22,38 @@ export function detectProviderDocumentMime(bytes:Uint8Array):string|null{
  return null;
 }
 
+/**
+ * The private R2 bucket provider identity documents are written to. [R3-B1]
+ *
+ * Named here, once, for the STAFF surfaces that have to tell an operator what to provision. It is
+ * deliberately not part of any message a member of the public can receive: an applicant who tried to
+ * upload their Aadhaar was shown "Private PAWSPACE_MEDIA_BUCKET binding is not configured" in a red
+ * alert, with HTTP 500, which told them nothing they could act on and told everyone else the name of
+ * an internal binding.
+ */
+export const PROVIDER_DOCUMENT_STORAGE_BINDING="PAWSPACE_MEDIA_BUCKET";
+/** What the applicant is told instead. No binding, no vendor, no acronym - just the state and what happens next. */
+export const PROVIDER_DOCUMENT_UPLOAD_UNAVAILABLE="Document upload is not available yet on this deployment. Your application stays saved and our team will contact you as soon as we can take your documents.";
+/** What an operator is told, on a staff-only surface, so the dead end is actionable rather than mysterious. */
+export const PROVIDER_DOCUMENT_STORAGE_OPERATOR_NOTE=`Provision the private R2 bucket and bind it as ${PROVIDER_DOCUMENT_STORAGE_BINDING} (r2_buckets in wrangler config) before caregivers can upload identity documents.`;
+
+/**
+ * Whether this deployment can accept a provider document at all.
+ *
+ * An unprovisioned bucket is a CONFIGURATION state, not a server fault, and it is knowable before a
+ * single byte is read - so every caller can refuse early, in words, instead of throwing out of the
+ * storage boundary and being reported as a platform outage.
+ */
+export function providerDocumentStorageConfigured(env:Record<string,unknown>|null|undefined){
+ const bucket=(env||{}).PAWSPACE_MEDIA_BUCKET as Bucket|undefined;
+ return Boolean(bucket&&typeof bucket.put==="function");
+}
+
 export async function storeProviderDocumentSecurely(env:Record<string,unknown>,input:{providerId?:string|null;applicationId:string;documentType:string;mimeType:string;fileBase64:string}){
  const bucket=env.PAWSPACE_MEDIA_BUCKET as Bucket|undefined;
- if(!bucket||typeof bucket.put!=="function")throw new Error("Private PAWSPACE_MEDIA_BUCKET binding is not configured");
+ // Defence in depth behind providerDocumentStorageConfigured(): a caller that forgot to check still
+ // must not hand a member of the public the name of an internal binding.
+ if(!bucket||typeof bucket.put!=="function")throw new Error(PROVIDER_DOCUMENT_UPLOAD_UNAVAILABLE);
  const applicationId=text(input.applicationId),documentType=text(input.documentType),declaredMime=text(input.mimeType).toLowerCase();
  const providerId=text(input.providerId)||`unassigned-${applicationId}`;
  if(!applicationId||!documentType)throw new Error("Application and document type are required");

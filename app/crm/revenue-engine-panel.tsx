@@ -2,7 +2,7 @@
 import {FormEvent,useCallback,useEffect,useMemo,useState} from "react";
 import styles from "./revenue-engine.module.css";
 
-type Tab="revenue"|"leads"|"rnr"|"tickets"|"leaderboard"|"command";
+type Tab="revenue"|"leads"|"callbacks"|"rnr"|"tickets"|"leaderboard"|"command";
 type Opportunity={id:string;rank:number;customer_name?:string;pet_names?:string;reason:string;opportunity_type:string;score:number;expected_revenue:number;margin_percent:number;suggested_offer:string;preferred_channel:string;owner:string;status:string;due_at:number};
 /* sla_breached/sla_state come from /api/revenue-crm and carry the CANONICAL breach state
  * (lead_sla_clocks.status='breached'), not the legacy lead_work_items.status flag that only the
@@ -21,8 +21,14 @@ type Leader={id:string;employee_name:string;target_revenue:number;eligible_reven
 type Delivery={id:string;entity_id:string;channel:string;provider:string;template_code:string;consent_status:string;delivery_status:string;created_at:number};
 type Report={id:string;period_type:string;status:string;generated_at:number;recipients_json:string};
 type Ops={id:string;booking_id:string;vertical:string;owner:string;scheduled_end_at:number;status:string;service_evidence?:string;payment_confirmed:number;provider_settlement_ready:number;exception_reason?:string;escalation_level:number};
+/* CALLBACKS HAD NO SCREEN. [R3-C/F7]
+ * schedule_callback and complete_callback work over /api/revenue-crm, and the SAME GET this panel
+ * already reads serves `dueCallbacks` and `stats.overdueCallbacks` - and nothing rendered either, so a
+ * customer who asked to be called at 6pm could only be called back over curl. /team/sales/power-dialler
+ * is not that queue: it writes to the outbound-orchestrator, not crm_lead_callbacks. */
+type Callback={id:string;leadId:string;owner:string;customerId:string;service:string;requestedAt:number;reason:string;status:string;overdue:boolean;minutesUntilDue:number};
 type Closure={closure_date:string;status:string;checklist:Record<string,{done:boolean;note:string}>;variance_amount:number;escalation_level:number};
-type Payload={stats:{revenue100:number;expectedRevenue:number;slaBreaches:number;rnrComplete:number;openTickets:number;escalatedTickets:number;reopened:number;teamRevenue:number;teamIncentive:number;opsBlocked:number};sourceStatus:Record<string,string>;opportunities:Opportunity[];leads:Lead[];tickets:Ticket[];leaderboard:Leader[];deliveries:Delivery[];reports:Report[];closure:Closure;ops:Ops[]};
+type Payload={stats:{revenue100:number;expectedRevenue:number;slaBreaches:number;rnrComplete:number;openTickets:number;escalatedTickets:number;reopened:number;overdueCallbacks:number;teamRevenue:number;teamIncentive:number;opsBlocked:number};sourceStatus:Record<string,string>;opportunities:Opportunity[];leads:Lead[];tickets:Ticket[];leaderboard:Leader[];deliveries:Delivery[];reports:Report[];closure:Closure;dueCallbacks?:Callback[];ops:Ops[]};
 // The engine's load failure must say WHAT failed: a 401/403 is an access problem, anything else is
 // the API erroring (schema drift, server bug) - previously both collapsed into a misleading
 // "check your CRM access" message even when the caller's permissions were fine.
@@ -36,16 +42,20 @@ async function describeLoadFailure(response:Response){
 }
 const money=(value:number)=>`₹${Number(value||0).toLocaleString("en-IN")}`;
 const time=(value:number)=>new Date(value).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+/** A datetime-local value the browser can show for "one hour from now". */
+function inOneHour(){const at=new Date(Date.now()+60*60000);const pad=(value:number)=>String(value).padStart(2,"0");return `${at.getFullYear()}-${pad(at.getMonth()+1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;}
 const closeLabels:Record<string,string>={online_cash_collections:"Online & cash collections",unmatched_payments:"Unmatched payments",refunds:"Refunds",provider_payouts:"Provider payouts",expenses_bills:"Expenses & bills",bank_ledger_variance:"Bank / ledger variance"};
 
 export default function RevenueEnginePanel({notify}:{notify:(message:string)=>void}){
   const[tab,setTab]=useState<Tab>("revenue"),[data,setData]=useState<Payload|null>(null),[busy,setBusy]=useState(""),[error,setError]=useState("");
+  const[callbackLeadId,setCallbackLeadId]=useState(""),[callbackAt,setCallbackAt]=useState(inOneHour),[callbackReason,setCallbackReason]=useState(""),[outcomes,setOutcomes]=useState<Record<string,string>>({});
   const load=useCallback(async()=>{const response=await fetch("/api/revenue-crm",{cache:"no-store"});if(!response.ok)throw new Error(await describeLoadFailure(response));setData(await response.json() as Payload)},[]);
   useEffect(()=>{let active=true;fetch("/api/revenue-crm",{cache:"no-store"}).then(async response=>{if(!response.ok)throw new Error(await describeLoadFailure(response));return response.json() as Promise<Payload>}).then(payload=>{if(active)setData(payload)}).catch(reason=>{if(active)setError(reason instanceof Error&&reason.message?reason.message:"Revenue engine could not load: the network request failed before reaching the API.")});return()=>{active=false}},[]);
   async function act(action:string,body:Record<string,unknown>={},success="Saved"){setBusy(action+String(body.id||body.leadId||""));setError("");try{const response=await fetch("/api/revenue-crm",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,...body})});const result=await response.json() as {error?:string};if(!response.ok)throw new Error(result.error||"Action failed");await load();notify(success)}catch(reason){setError(reason instanceof Error?reason.message:"Action failed")}finally{setBusy("")}}
+  const callbacks=useMemo(()=>data?.dueCallbacks??[],[data]);
   const rnrLeads=useMemo(()=>data?.leads.filter(lead=>!['closed','converted','cold_exhausted'].includes(lead.status))||[],[data]);
   if(!data)return <section className={styles.loading}>{error||"Preparing today’s governed revenue worklist…"}</section>;
-  const tabs:[Tab,string][]=[["revenue","Revenue 100"],["leads","Lead lifecycle"],["rnr","Mandatory RNR"],["tickets","Tickets"],["leaderboard","Incentives"],["command","7 PM control"]];
+  const tabs:[Tab,string][]=[["revenue","Revenue 100"],["leads","Lead lifecycle"],["callbacks",data.stats.overdueCallbacks?`Callbacks (${data.stats.overdueCallbacks} overdue)`:"Callbacks"],["rnr","Mandatory RNR"],["tickets","Tickets"],["leaderboard","Incentives"],["command","7 PM control"]];
   return <div className={styles.engine}>
     <section className={styles.hero}><div><span>REVENUE, CRM & CUSTOMER EXPERIENCE ENGINE</span><h2>Every lead worked. Every service closed. Every rupee accounted for.</h2><p>Persistent UAT records · automated controls · company-wide operating visibility</p></div><div className={styles.heroStatus}><i></i><span>Automation active</span><small>Live provider delivery needs credentials</small></div></section>
     <section className={styles.metrics}>
@@ -53,6 +63,7 @@ export default function RevenueEnginePanel({notify}:{notify:(message:string)=>vo
       <article className={data.stats.slaBreaches?styles.risk:""}><span>Lead SLA breaches</span><strong>{data.stats.slaBreaches}</strong><small>{data.stats.reopened} leads reopened</small></article>
       <article><span>Team eligible revenue</span><strong>{money(data.stats.teamRevenue)}</strong><small>{money(data.stats.teamIncentive)} incentive</small></article>
       <article className={data.stats.opsBlocked?styles.risk:""}><span>Ops awaiting closure</span><strong>{data.stats.opsBlocked}</strong><small>{data.stats.openTickets} open CX tickets</small></article>
+      <article className={data.stats.overdueCallbacks?styles.risk:""}><span>Callbacks overdue</span><strong>{data.stats.overdueCallbacks??0}</strong><small>{callbacks.length} due in the next 2 hours</small></article>
     </section>
     <nav className={styles.tabs}>{tabs.map(item=><button key={item[0]} className={tab===item[0]?styles.active:""} onClick={()=>setTab(item[0])}>{item[1]}</button>)}</nav>
     {error&&<div className={styles.error}>{error}</div>}
@@ -63,7 +74,28 @@ export default function RevenueEnginePanel({notify}:{notify:(message:string)=>vo
     </section>}
     {tab==="leads"&&<section className={styles.workspace}>
       <header><div><span>POLICY-GOVERNED SLA · MANAGER ESCALATION · 30/60/90-DAY REOPENING</span><h3>Automatic ownership, rotation and recycling</h3><p>Three working days, mandatory outreach, then governed 30, 60 and 90-day reopening until conversion, opt-out or exhaustion.</p></div><div className={styles.headerActions}><button disabled={Boolean(busy)} onClick={()=>act("run_sla",{},"SLA monitor completed")}>Run SLA</button><button disabled={Boolean(busy)} onClick={()=>act("run_reopening",{},"Due leads reopened")}>Run reopening</button></div></header>
-      <div className={styles.leadGrid}>{data.leads.map(lead=><article className={`${styles.leadCard} ${leadIsSlaBreached(lead)?styles.breached:""}`} key={lead.id}><header><div><span>{lead.id}</span><h4>{lead.customer_name||lead.customer_id}</h4><p>{lead.pet_names||"Pet"} · {lead.service} · {lead.source}</p></div><em>{leadStateLabel(lead)}</em></header><dl><div><dt>Owner</dt><dd>{lead.owner}</dd></div><div><dt>Work cycle</dt><dd>Day {lead.work_day}/3 · reopen {lead.recycle_cycle}/3</dd></div><div><dt>First action</dt><dd>{time(lead.first_action_due_at)}</dd></div><div><dt>Manager alert</dt><dd>{time(lead.manager_alert_at)}</dd></div></dl><div className={styles.attemptProgress}><span>Calls <b>{lead.call_attempts}/4</b></span><span>WhatsApp <b>{lead.whatsapp_attempts}/4</b></span></div><footer><button disabled={lead.work_day>=3||Boolean(busy)} onClick={()=>act("advance_day",{leadId:lead.id},"Lead rotated")}>Rotate day</button><button disabled={Boolean(busy)} onClick={()=>setTab("rnr")}>Work lead</button></footer></article>)}</div>
+      <div className={styles.leadGrid}>{data.leads.map(lead=><article className={`${styles.leadCard} ${leadIsSlaBreached(lead)?styles.breached:""}`} key={lead.id}><header><div><span>{lead.id}</span><h4>{lead.customer_name||lead.customer_id}</h4><p>{lead.pet_names||"Pet"} · {lead.service} · {lead.source}</p></div><em>{leadStateLabel(lead)}</em></header><dl><div><dt>Owner</dt><dd>{lead.owner}</dd></div><div><dt>Work cycle</dt><dd>Day {lead.work_day}/3 · reopen {lead.recycle_cycle}/3</dd></div><div><dt>First action</dt><dd>{time(lead.first_action_due_at)}</dd></div><div><dt>Manager alert</dt><dd>{time(lead.manager_alert_at)}</dd></div></dl><div className={styles.attemptProgress}><span>Calls <b>{lead.call_attempts}/4</b></span><span>WhatsApp <b>{lead.whatsapp_attempts}/4</b></span></div><footer><button disabled={lead.work_day>=3||Boolean(busy)} onClick={()=>act("advance_day",{leadId:lead.id},"Lead rotated")}>Rotate day</button><button disabled={Boolean(busy)} onClick={()=>{setCallbackLeadId(lead.id);setTab("callbacks")}}>Schedule callback</button><button disabled={Boolean(busy)} onClick={()=>setTab("rnr")}>Work lead</button></footer></article>)}</div>
+    </section>}
+    {tab==="callbacks"&&<section className={styles.workspace}>
+      <header><div><span>WHEN THE CUSTOMER ASKED TO BE CALLED</span><h3>Scheduled callbacks</h3><p>A callback is a promise to a named customer at a real time. Scheduling one also moves the lead&rsquo;s next action to that time, so this queue and the lead worklist never disagree.</p></div></header>
+      {/* Inline rather than a child component: the controls belong to the same worklist state as the
+          lead cards that hand a lead over to them. A callback needs a REAL lead and a REAL future
+          time, so the form collects both instead of inventing either. */}
+      <form className={styles.ticketForm} onSubmit={event=>{event.preventDefault();const at=new Date(callbackAt).getTime();act("schedule_callback",{leadId:callbackLeadId,requestedAt:Number.isFinite(at)?at:0,reason:callbackReason},"Callback scheduled").then(()=>setCallbackReason(""),()=>{});}}>
+        <select aria-label="Lead" value={callbackLeadId} onChange={event=>setCallbackLeadId(event.target.value)} required><option value="">Select a lead</option>{data.leads.map(lead=><option key={lead.id} value={lead.id}>{lead.id} · {lead.customer_name||lead.customer_id}</option>)}</select>
+        <input aria-label="Callback time" type="datetime-local" value={callbackAt} onChange={event=>setCallbackAt(event.target.value)} required/>
+        <input aria-label="Callback reason" value={callbackReason} onChange={event=>setCallbackReason(event.target.value)} required minLength={8} placeholder="What the customer actually asked for"/>
+        <button disabled={Boolean(busy)||!callbackLeadId}>＋ Schedule callback</button>
+      </form>
+      <div className={styles.ticketList}>
+        {callbacks.length===0&&<p>No callback is due in the next two hours. Schedule one above when a customer asks to be called.</p>}
+        {callbacks.map(callback=><article key={callback.id} className={styles.ticket}>
+          <header><div><span>{callback.id} · {callback.leadId}</span><h4>{callback.customerId}</h4><p>{callback.service} · {callback.owner}</p></div><em className={callback.overdue?styles.risk:""}>{callback.overdue?`Overdue by ${Math.abs(callback.minutesUntilDue)} min`:`Due in ${callback.minutesUntilDue} min`}</em></header>
+          <p>{callback.reason}</p>
+          <dl><div><dt>Requested for</dt><dd>{time(callback.requestedAt)}</dd></div><div><dt>Status</dt><dd>{callback.status}</dd></div></dl>
+          <footer><input aria-label="Call outcome" value={outcomes[callback.id]||""} onChange={event=>setOutcomes(current=>({...current,[callback.id]:event.target.value}))} placeholder="What happened on the call?"/><button disabled={Boolean(busy)||!(outcomes[callback.id]||"").trim()} onClick={()=>act("complete_callback",{callbackId:callback.id,outcome:(outcomes[callback.id]||"").trim()},"Callback completed")}>Log call outcome</button></footer>
+        </article>)}
+      </div>
     </section>}
     {tab==="rnr"&&<section className={styles.workspace}>
       <header><div><span>MANDATORY CONTACT POLICY</span><h3>Four calls + four WhatsApp attempts</h3><p>Cold is locked until all eight attempts and three working days are complete. Consent withdrawal or invalid contact stops promotion immediately.</p></div></header>

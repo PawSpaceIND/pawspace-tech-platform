@@ -20,7 +20,7 @@
 // computed. Missing Finance/CA-approved configuration throws ConfigurationRequired (HTTP 409), never
 // a default. Import-safe for `node --experimental-strip-types` (no TS parameter properties).
 
-import{ConfigurationRequired,ensureGstAccountingTables}from"./gst-accounting";
+import{ConfigurationRequired,ensureGstAccountingTables,outputTaxAdjustments}from"./gst-accounting";
 import{serviceVerticalOutputTax}from"./service-output-tax";
 
 type Db=D1Database;
@@ -34,6 +34,25 @@ const now=()=>Date.now();
 const periodMs=(period:string)=>{const[y,m]=period.split("-").map(Number);return{startMs:Date.UTC(y,m-1,1)-330*60_000,endMs:Date.UTC(m===12?y+1:y,m===12?0:m,1)-330*60_000};};
 async function sha256(value:string){const bytes=new TextEncoder().encode(value),digest=await crypto.subtle.digest("SHA-256",bytes);return[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,"0")).join("");}
 async function safeFirst(db:Db,sql:string,b:unknown[]):Promise<Row|null>{try{return await db.prepare(sql).bind(...b).first<Row>();}catch{return null;}}
+/* GSTR-3B table 3.1(a) has no credit-note line of its own: the period's notes are declared as a REDUCED
+ * outward supply, so the adjustment has to land on the tax heads themselves. issueAdjustment posts one
+ * aggregate ledger row (component 'aggregate_tax'), so the split is carried over from the period's own
+ * gross heads and the last head present absorbs the rounding - the four heads therefore always add back
+ * to exactly the liability being declared, whatever the proportions. With no gross heads at all the
+ * adjustment lands on IGST, which is where an unrecognised output component already goes. */
+type TaxHeads={iamt:number;camt:number;samt:number;csamt:number};
+const TAX_HEADS=["iamt","camt","samt","csamt"] as const;
+function applyAdjustmentToHeads(gross:TaxHeads,adjustment:number):TaxHeads{
+ const out:TaxHeads={iamt:round2(gross.iamt),camt:round2(gross.camt),samt:round2(gross.samt),csamt:round2(gross.csamt)};
+ if(!adjustment)return out;
+ const total=TAX_HEADS.reduce((s,k)=>s+out[k],0);
+ if(total<=0){out.iamt=round2(out.iamt+adjustment);return out;}
+ const present=TAX_HEADS.filter(k=>out[k]>0);
+ let allocated=0;
+ for(let i=0;i<present.length;i++){const k=present[i];
+  const share=i===present.length-1?round2(adjustment-allocated):round2(adjustment*(out[k]/total));
+  allocated=round2(allocated+share);out[k]=round2(out[k]+share);}
+ return out;}
 // serviceVerticalOutputTax (the PawSpace-own vs provider-supply output-tax split) lives in
 // ./service-output-tax so the monthly close, statutory package, GSTR-9 and these return generators all read
 // one identical figure.
@@ -160,15 +179,21 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE v.review_status='eligible' AND substr(b.bill_date,1,7)=?",[period]);
  const eligibleItc=round2(num(itc?.total));
  const outputTaxLedger=round2(iamt0.iamt+iamt0.camt+iamt0.samt+iamt0.csamt);
- const totalOutputTax=round2(outputTaxLedger+serviceTax);
+ // [R3-D/F3] Credit and debit notes are part of the month's liability. They post to the SAME ledger as
+ // the invoices, as signed ledger_type='adjustment' rows, and GSTR-9 has always read them - this return,
+ // the one the money is actually paid on, did not, so every credit note was billed to the company twice
+ // over: once as output tax it no longer owed and once as a disagreement with its own annual return.
+ const adjustment=await outputTaxAdjustments(db,period,{entityId,registrationId:regId});
+ const netHeads=applyAdjustmentToHeads(iamt0,adjustment.tax);
+ const totalOutputTax=round2(outputTaxLedger+adjustment.tax+serviceTax);
  const netTaxPayable=round2(Math.max(0,totalOutputTax-eligibleItc));
  // Portal 3B shape: 3.1(a) outward taxable supplies; 4 eligible ITC; 5.1 interest/late (0 in UAT).
  const payload={gstin,ret_period:returnPeriod(period),
-  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),iamt:round2(iamt0.iamt),camt:round2(iamt0.camt),samt:round2(iamt0.samt),csamt:round2(iamt0.csamt)}},
+  sup_details:{osup_det:{txval:round2(ledgerTaxable+adjustment.taxableValue+serviceTaxable),iamt:netHeads.iamt,camt:netHeads.camt,samt:netHeads.samt,csamt:netHeads.csamt}},
   itc_elg:{itc_avl:[{ty:"OTH",iamt:eligibleItc,camt:0,samt:0,csamt:0}],itc_net:{iamt:eligibleItc,camt:0,samt:0,csamt:0}},
   intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}}};
- const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:iamt0,
-  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
+ const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,adjustments:adjustment.tax,adjustmentTaxableValue:adjustment.taxableValue,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:netHeads,grossOutputTaxByComponent:iamt0,
+  taxCollectedFromCustomers:round2(outputTaxLedger+adjustment.tax+svc.totalTaxCollected),providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
  return persist(db,entityId,regId,"GSTR-3B",period,payload,summary,actor,reason);
 }
 

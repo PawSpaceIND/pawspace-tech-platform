@@ -70,10 +70,18 @@ export async function buildControlTower(db: Db, input: { asOf?: number } = {}) {
     "SELECT COUNT(*) count FROM unified_cases WHERE status NOT IN ('resolved','closed') AND resolution_due_at IS NOT NULL AND resolution_due_at<=?", [asOf]);
   const casesOpen = await tally(db, "unified_cases",
     "SELECT COUNT(*) count FROM unified_cases WHERE status NOT IN ('resolved','closed')");
+  /* The work queue's own definition of "open" is open + acknowledged + in_progress
+   * (OPEN_STATUSES in lib/ops-work-queue.ts). The tower counted status='open' alone, so CLAIMING a
+   * task deleted it from the tower: 8 open tasks read {good:8,total:8}, one claim moved that task to
+   * `acknowledged`, and the tower immediately read {good:7,total:7} while the queue still said Open
+   * 8. The same predicate fed "Escalated operations tasks", so a task claimed before it breached its
+   * SLA could never appear there at all - the tower lost sight of work exactly when someone picked
+   * it up. One definition, stated once, shared by both counts. */
+  const OPEN_WORK_QUEUE_STATUSES = "('open','acknowledged','in_progress')";
   const queueEscalated = await tally(db, "ops_work_queue_tasks",
-    "SELECT COUNT(*) count FROM ops_work_queue_tasks WHERE status='open' AND escalated=1");
+    `SELECT COUNT(*) count FROM ops_work_queue_tasks WHERE status IN ${OPEN_WORK_QUEUE_STATUSES} AND escalated=1`);
   const queueOpen = await tally(db, "ops_work_queue_tasks",
-    "SELECT COUNT(*) count FROM ops_work_queue_tasks WHERE status='open'");
+    `SELECT COUNT(*) count FROM ops_work_queue_tasks WHERE status IN ${OPEN_WORK_QUEUE_STATUSES}`);
   const reconciliationOpen = await tally(db, "payment_reconciliation_exceptions",
     "SELECT COUNT(*) count FROM payment_reconciliation_exceptions WHERE status='open'");
   const reconciliationTotal = await tally(db, "payment_reconciliation_exceptions",

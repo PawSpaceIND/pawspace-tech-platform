@@ -24,6 +24,7 @@
 import{computeMonthlyTds,payrollRunsForPeriod}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
 import{serviceVerticalOutputTax}from"./service-output-tax";
+import{outputTaxAdjustments}from"./gst-accounting";
 import{governedJsonError}from"./governed-http-error";
 
 /* Every refusal below is the operator's own action being declined - a month that is already locked, a
@@ -60,7 +61,7 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
 }
 
 export type CloseChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number;runCount:number;runIds:string[];allFinalised:boolean};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
+export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;adjustments?:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number;runCount:number;runIds:string[];allFinalised:boolean};boardApproval:{approved:boolean;approvedBy:string|null;approverRole?:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
 
 /** Build the month's close view from real data. READ-ONLY unless `persist` is explicitly true; never
  *  mutates a locked close. */
@@ -96,7 +97,12 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // GSTR-3B net-payable liability; the provider-supply GST collected on their behalf is a separate
  // pass-through (remitted via s52 GST TCS / GSTR-8), disclosed but NOT part of PawSpace's net payable.
  const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
- const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf};
+ // [R3-D/F3] A credit note reduces the tax owed for the period it adjusts, and a debit note raises it.
+ // The close read finance_invoices.tax_total only, so it locked and published a GSTR-3B net payable that
+ // overstated the liability by the full value of every credit note - the same defect GSTR-3B itself had,
+ // which is why the two agreed with each other and both disagreed with GSTR-9. Same reader as the return.
+ const adjustments=await outputTaxAdjustments(db,input.period);
+ const gst={outputTax:round2(Number(output?.tax||0)+adjustments.tax+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,adjustments:adjustments.tax,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+adjustments.tax+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data, then check the deposit. A plain view computes WITHOUT writing;
@@ -128,16 +134,16 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  };
 
  const approval=await getBoardApproval(db,input.period);
- const boardApproval={approved:Boolean(approval),approvedBy:approval?.approvedBy??null,approvedAt:approval?.approvedAt??null};
+ const boardApproval={approved:Boolean(approval),approvedBy:approval?.approvedBy??null,approverRole:approval?.approverRole??null,approvedAt:approval?.approvedAt??null};
 
  const checklist:CloseChecklistItem[]=[
   {key:"revenue_reconciled",label:"Revenue aggregated from canonical bookings + food orders",ok:true,value:revenue.total,detail:`${revenue.bookingCount} bookings + ${revenue.foodOrderCount} food orders`},
-  {key:"gst_computed",label:"GSTR-3B net payable computed (own output - eligible input)",ok:true,value:gst.netPayable,detail:`own output ${gst.outputTax} - eligible input ${gst.eligibleInputTax}${gst.providerSupplyGstCollectedOnBehalf?` · provider-supply GST collected on behalf ${gst.providerSupplyGstCollectedOnBehalf} -> s52 TCS/GSTR-8`:""}`},
+  {key:"gst_computed",label:"GSTR-3B net payable computed (own output - eligible input)",ok:true,value:gst.netPayable,detail:`own output ${gst.outputTax}${gst.adjustments?` (net of credit/debit notes ${gst.adjustments})`:""} - eligible input ${gst.eligibleInputTax}${gst.providerSupplyGstCollectedOnBehalf?` · provider-supply GST collected on behalf ${gst.providerSupplyGstCollectedOnBehalf} -> s52 TCS/GSTR-8`:""}`},
   {key:"tds_computed",label:"TDS liability computed from payroll + payouts",ok:true,value:tds.totalTds,detail:Object.entries(tds.sections).map(([section,bucket])=>`${section}: ${bucket.tds}`).join(" · ")||"no deductions this month"},
   {key:"tds_deposited",label:`TDS deposited (due ${tds.depositDueDate})`,ok:tds.totalTds===0||Boolean(deposit),value:deposit?round2(Number(deposit.amount)):null,detail:tds.totalTds===0?"no liability":deposit?"challan recorded":"deposit pending"},
   {key:"tds_pans_verified",label:"Deductee PANs verified (s206AA)",ok:tds.panPending===0,value:tds.panPending,detail:tds.panPending===0?(tds.deducteeRows?`${tds.deducteeRows} deductee row(s), all PANs verified`:"no deductions this month"):`${tds.panPending} of ${tds.deducteeRows} deductee PAN(s) unverified - s206AA levies 20% without a PAN; record them before filing`},
   {key:"payroll_finalised",label:"Payroll run approved for the month",ok:payroll.runCount===0||payroll.allFinalised,value:payroll.runStatus,detail:payroll.runCount===0?"no payroll run attributed to this month (acceptable for pre-payroll months)":`${payroll.runCount} run(s) ${payroll.runIds.join(", ")} · ${payroll.employees} employees · gross ${payroll.grossTotal}`},
-  {key:"board_approved",label:"Monthly board approval recorded (founder policy)",ok:boardApproval.approved,value:boardApproval.approvedBy,detail:boardApproval.approved?`approved by ${boardApproval.approvedBy}`:"board approval pending - required before close"},
+  {key:"board_approved",label:"Monthly board approval recorded (founder policy)",ok:boardApproval.approved,value:boardApproval.approvedBy,detail:boardApproval.approved?`approved by ${boardApproval.approvedBy}${boardApproval.approverRole?` (${boardApproval.approverRole})`:""}`:"board approval pending - a board-level identity (founder or superuser) must record it before close"},
  ];
  const status:"open"|"ready"=checklist.every(item=>item.ok)?"ready":"open";
  const view:MonthlyCloseView={period:input.period,status,checklist,revenue,gst,tds:{total:tds.totalTds,sections:tds.sections,deposited:Boolean(deposit)||tds.totalTds===0,depositDueDate:tds.depositDueDate},payroll,boardApproval,closedBy:null,closedAt:null};
@@ -162,6 +168,11 @@ export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?
   const blocking=view.checklist.filter(item=>!item.ok).map(item=>item.key);
   throw governedJsonError({error:`Close blocked - unresolved checklist items: ${blocking.join(", ")}`},409);
  }
+ /* [R3-D/F8] Who approved and who locked are both recorded on the close event, so the separation the
+  * board-role gate now guarantees (lib/statutory-compliance.ts recordBoardApproval: only a board-level
+  * identity can resolve the board's own approval, never the Finance operator who closes on it) is
+  * evidenced on the record rather than merely enforced at the door. */
+ const boardApprover=await getBoardApproval(db,input.period);
  const now=input.asOf??Date.now();
  const result=await db.prepare("UPDATE finance_monthly_closes SET status='closed',closed_by=?,closed_at=?,snapshot_json=?,updated_at=? WHERE period=? AND status!='closed'")
   .bind(input.actorId,now,JSON.stringify({...view,status:"closed",closedBy:input.actorId,closedAt:now}),now,input.period).run();
@@ -170,7 +181,7 @@ export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?
   db.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked',?,?,?,?) ON CONFLICT(period_code) DO UPDATE SET status='locked',checklist_json=excluded.checklist_json,locked_at=excluded.locked_at,locked_by=excluded.locked_by,updated_at=excluded.updated_at")
    .bind(input.period,JSON.stringify(view.checklist),now,input.actorId,now),
   db.prepare("INSERT INTO finance_close_events (id,period,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)")
-   .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,gstNetPayable:view.gst.netPayable,tds:view.tds.total}),now),
+   .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,gstNetPayable:view.gst.netPayable,tds:view.tds.total,boardApprovedBy:boardApprover?.approvedBy??null,boardApproverRole:boardApprover?.approverRole??null}),now),
  ]);
  return{period:input.period,status:"closed" as const,closedBy:input.actorId,closedAt:now};
 }

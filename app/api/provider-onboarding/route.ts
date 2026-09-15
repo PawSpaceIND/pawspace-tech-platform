@@ -3,7 +3,7 @@ import{addProviderDocument,approveQuiz,clearManualVerificationReview,createProvi
 import{acceptProviderSla,activateProviderUat,addProviderProfileMedia,addProviderToServiceMap,completeProviderInterview,createProviderSla,evaluateProviderActivation,onboardingHumanActivationSnapshot,recordProviderHumanDecision,saveInterviewAiSummaryDraft,saveProviderProfile,scheduleProviderInterview,updateActivatedProviderProfile}from"../../../lib/provider-onboarding-human-activation";
 import{generateProviderQuizDraft}from"../../../lib/provider-quiz-ai-draft";
 import{generateInterviewSummaryDraft}from"../../../lib/provider-interview-ai-summary";
-import{storeProviderDocumentSecurely}from"../../../lib/provider-document-secure-upload";
+import{PROVIDER_DOCUMENT_STORAGE_OPERATOR_NOTE,providerDocumentStorageConfigured,storeProviderDocumentSecurely}from"../../../lib/provider-document-secure-upload";
 
 type Row=Record<string,unknown>;
 type Body={action?:string;applicationId?:string;documentId?:string;documentType?:string;fileRef?:string;fileBase64?:string;mimeType?:string;expiresAt?:number|null;adapterKey?:string;manualReviewRequired?:boolean;verificationId?:string;verificationStatus?:"verified"|"manual_review_required"|"failed";detail?:unknown;payload?:Record<string,unknown>;quizVersionId?:string;answers?:Record<string,string>;applicationAction?:"submit"|"start_verification"|"complete_quiz"|"ready_for_interview";startAt?:string;opsEmail?:string;interviewId?:string;notes?:string;summary?:string;providerRef?:string;modelRef?:string;decision?:"approved"|"rejected"|"review";decisionNotes?:string;agreementId?:string;acceptedBy?:string;mediaType?:"provider_photo"|"home_photo"|"facility_photo"|"business_photo"|"reference";changes?:Record<string,unknown>;reason?:string;verticalKey?:string;cityCode?:string;quizResult?:string;providerId?:string;zoneIds?:string[]};
@@ -22,6 +22,9 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
    if(body.expiresAt!==undefined&&body.expiresAt!==null&&(!Number.isFinite(Number(body.expiresAt))||Number(body.expiresAt)<=Date.now()))return json({error:"Expired provider documents cannot be accepted"},400);
    const app=await db.prepare("SELECT provider_id FROM provider_onboarding_applications WHERE id=?").bind(body.applicationId).first<Row>();
    if(!app)return json({error:"Application not found"},404);
+   /* Same configuration state as the applicant's path, told to the audience that can act on it. This
+    * surface is providers.manage-gated, so naming the binding here is the point. [R3-B1] */
+   if(!providerDocumentStorageConfigured(await runtimeEnv()))return json({error:"configuration_required",detail:PROVIDER_DOCUMENT_STORAGE_OPERATOR_NOTE},503);
    const stored=await storeProviderDocumentSecurely(await runtimeEnv(),{providerId:app.provider_id?String(app.provider_id):null,applicationId:body.applicationId,documentType:body.documentType,mimeType:body.mimeType,fileBase64:body.fileBase64});
    const record=await addProviderDocument(db,{applicationId:body.applicationId,documentType:body.documentType,fileRef:stored.fileRef,expiresAt:body.expiresAt,actorEmail:actor.email});
    data={record,storage:{sha256:stored.sha256,sizeBytes:stored.sizeBytes,mimeType:stored.mimeType,serverOwned:true,privateStorage:true,magicBytesVerified:stored.magicBytesVerified}};resourceId=body.applicationId;auditAction="provider.onboarding.document.add";status=201;

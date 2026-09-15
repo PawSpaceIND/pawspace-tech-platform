@@ -208,8 +208,17 @@ export async function peopleFinanceDirectory(db:Db){
   * because postPayrollJournal and createSandboxStatutoryExport both REFUSE a caller-supplied period
   * that disagrees with that date (period_mismatch); deriving it means the control cannot produce that
   * refusal by hand. */
- const [postableRuns,reconcilableBatches,unlinkedExpenses,linkableEmployees]=await Promise.all([
+ /* EXPORTABLE is not the same set as POSTABLE. [R3E-STATUTORY-EXPORT-REACH]
+  *
+  * The statutory export control was fed from `postableRuns`, which excludes a run once its journal has
+  * been posted - and posting the journal is the normal next step. So the moment an operator did the
+  * obvious thing, the export's run dropdown went empty with no explanation, and the statutory package
+  * for that month became unreachable through the product. The engine has no such rule:
+  * createSandboxStatutoryExport accepts any approved or payment_prepared run and was proved to succeed
+  * over the API for an already-posted run. This is that set. */
+ const [postableRuns,exportableRuns,reconcilableBatches,unlinkedExpenses,linkableEmployees]=await Promise.all([
   db.prepare("SELECT r.id,r.period_start,r.period_end,r.status FROM payroll_runs r LEFT JOIN people_payroll_finance_posts p ON p.payroll_run_id=r.id WHERE r.status IN ('approved','payment_prepared') AND p.payroll_run_id IS NULL ORDER BY r.period_end DESC LIMIT 24").all<Row>(),
+  db.prepare("SELECT id,period_start,period_end,status FROM payroll_runs WHERE status IN ('approved','payment_prepared') ORDER BY period_end DESC LIMIT 24").all<Row>(),
   db.prepare("SELECT b.id,b.run_id,b.total_amount,b.status,r.period_end FROM payroll_payment_batches b JOIN payroll_runs r ON r.id=b.run_id LEFT JOIN people_bank_reconciliation_refs x ON x.payroll_batch_id=b.id WHERE b.status='sandbox_prepared' AND b.external_transmission=0 AND x.payroll_batch_id IS NULL ORDER BY b.created_at DESC LIMIT 24").all<Row>(),
   db.prepare("SELECT x.id,x.expense_date,x.merchant,x.amount,x.claimant FROM finance_expenses x LEFT JOIN people_expense_links l ON l.expense_id=x.id WHERE l.expense_id IS NULL ORDER BY x.expense_date DESC LIMIT 50").all<Row>(),
   db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY employee_code LIMIT 200").all<Row>(),
@@ -218,6 +227,7 @@ export async function peopleFinanceDirectory(db:Db){
  const configured=new Set(mappings.results.map(row=>text(row.source_key))),missingPayrollAccountMappings=requiredPayrollAccountKeys.filter(key=>!configured.has(key));
  return{mappings:mappings.results,expenseLinks:expenseLinks.results,payrollPosts:payrollPosts.results,statutoryPolicies:statutoryPolicies.results,statutoryExports:statutoryExports.results,bankReconciliations:bankReconciliations.results,periods:periods.results,requiredPayrollAccountKeys,
   postableRuns:postableRuns.results.map(row=>({...row,period_code:periodCodeOf(row.period_end)})),
+  exportableRuns:exportableRuns.results.map(row=>({...row,period_code:periodCodeOf(row.period_end)})),
   reconcilableBatches:reconcilableBatches.results.map(row=>({...row,period_code:periodCodeOf(row.period_end)})),
   unlinkedExpenses:unlinkedExpenses.results,linkableEmployees:linkableEmployees.results,
   truth:{expenseEmployeeLinkageEnabled:true,payrollJournalConfigured:missingPayrollAccountMappings.length===0,missingPayrollAccountMappings,statutoryPolicyConfigured:statutoryPolicies.results.some(row=>text(row.status)==="active_uat"),financePeriodLockingEnforced:true,statutoryExternalSubmissionEnabled:false,liveBankTransmissionEnabled:false,bankReconciliationMode:"sandbox_reference_only",sandboxOnly:true,productionReady:false}};

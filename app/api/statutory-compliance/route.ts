@@ -95,7 +95,7 @@ export async function POST(request:Request){try{
   return json({data:result},201);
  }
  if(action==="board_approve"){
-  const result=await recordBoardApproval(db,{period,approvedBy:actor.email,approverRole:actor.roleCode,minutesReference:body.minutesReference,resolutionText:body.resolutionText});
+  const result=await recordBoardApproval(db,{period,approvedBy:actor.email,approverRole:actor.roleCode,approverPermissions:actor.permissions,minutesReference:body.minutesReference,resolutionText:body.resolutionText});
   await securityAudit(db,actor,"statutory.board_approve","board_approval",period,"completed",{duplicatePrevented:result.duplicatePrevented});
   return json({data:result},result.duplicatePrevented?200:201);
  }

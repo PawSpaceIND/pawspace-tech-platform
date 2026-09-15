@@ -18,6 +18,7 @@ import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrain
 import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";
 import { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";
 import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/training-session-preview";
+import { trainingScheduleWithinValidity } from "../../lib/training-booking-guards";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 import { trainingProgrammeRequestId } from "../../lib/booking-state-integrity";
 import { useFlowHistory } from "../../lib/use-flow-history";
@@ -148,6 +149,17 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);
   const selectedStartIso=selectedStart.toISOString();
   const calendarPreview=trainingSessionPreviewDates(selectedStart,weekdayMap[frequency]||weekdayMap["Tue & Sat"],previewHour(time),trainingPreviewCount(plan.sessions));
+  /*
+   * The calendar and the validity on the same screen have to agree. Sixteen weekly sessions run 105
+   * days; the Pro plan's validity was 93, so the last two sessions the customer was about to pay for
+   * fell after the package expired and the server reserved them anyway. The catalogue value is fixed,
+   * and this is the guard that keeps any future cadence/validity pair from doing it again. [R3-A3]
+   */
+  const scheduleWeekdays=weekdayMap[frequency]||weekdayMap["Tue & Sat"];
+  const lastSessionDate=calendarPreview[calendarPreview.length-1]||selectedStart;
+  const validityEnds=new Date(selectedStart.getTime()+plan.validityDays*86_400_000);
+  const validityVerdict=trainingScheduleWithinValidity({weekdays:scheduleWeekdays,sessions:plan.sessions||1,startWeekday:new Date(selectedStart.getTime()+IST_OFFSET).getUTCDay(),validityDays:plan.validityDays});
+  const scheduleOverrunsValidity=plan.sessions>0&&plan.validityDays>0&&!validityVerdict.ok;
   const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
   const discount=checkoutQuote?.discount??0;
   const payableNow=checkoutQuote?.amountDueNow??0;
@@ -343,7 +355,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           </div>
           <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
           <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
-          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "Book a Meet & Greet"}</button>
+          {/* This button advances to the package step; it books nothing. It was labelled "Book a Meet & Greet",
+              * so a customer who wanted only a meeting got a five-step package wizard instead. The real Meet &
+              * Greet control is on step 2 and still books one. [R3-A5] */}
+          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "Choose a training package"}</button>
         </section>
       )}
       {stage === 2 && (
@@ -397,10 +412,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <label className={styles.field}>Service start date<select value={startDateIndex} onChange={(event)=>setStartDateIndex(Number(event.target.value))}>{startOptions.map((date,index)=><option value={index} key={date.toISOString()}>{slotLabel(date)}</option>)}</select></label>
           <label className={styles.field}>Repeat schedule<select value={frequency} onChange={(e) => setFrequency(e.target.value)}><option>Tue & Sat</option><option>Wed & Sun</option><option>Every Saturday</option></select></label>
           <div className={styles.trainingTimes}>{["9:00 AM", "3:00 PM"].map((item) => <button key={item} className={time === item ? styles.selected : ""} onClick={() => setTime(item)}>{item}<small>{item === time ? "Recommended" : "Available"}</small></button>)}</div>
-          <article className={styles.calendarPreview}><b>{plan.sessions>0?`Full session calendar · ${plan.sessions} session${plan.sessions===1?"":"s"}`:"Full session calendar"}</b>{calendarPreview.map((date,i)=><span key={date.toISOString()}><i>{i+1}</i>{slotLabel(date)}<em>{serviceMinutes} min</em></span>)}</article>
+          <article className={styles.calendarPreview}><b>{plan.sessions>0?`Full session calendar · ${plan.sessions} session${plan.sessions===1?"":"s"}`:"Full session calendar"}</b>{calendarPreview.map((date,i)=><span key={date.toISOString()}><i>{i+1}</i>{slotLabel(date)}<em>{serviceMinutes} min</em></span>)}{plan.sessions>0&&plan.validityDays>0&&<span><i>✓</i>Last session {slotLabel(lastSessionDate)} · validity ends {slotLabel(validityEnds)}<em>{plan.validityDays} days</em></span>}</article>{scheduleOverrunsValidity&&<p role="alert" className={styles.editable}>This repeat schedule needs {validityVerdict.spanDays} days to deliver all {plan.sessions} sessions, but {plan.name} is valid for {plan.validityDays} days from your first session. Choose a more frequent repeat schedule so every session you pay for falls inside the validity.</p>}
           <article className={styles.sessionLogic}><b>{selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"} · {serviceMinutes}-minute calendar block</b><span>Every pet has one paid {plan.directMinutes+plan.coachingMinutes}-minute session: {plan.directMinutes} minutes of hands-on training plus its own {plan.coachingMinutes}-minute closeout for parent/caretaker coaching, homework, a short reference video and the app update.</span><span>{attendanceMode === "parent" ? "The pet parent or caretaker joins the closeout and practises the assigned technique." : "No handler attending: where the selected package supports it, the trainer uses the visit for outdoor leash walking and toilet-routine practice, then uploads the reference video and homework."}</span><span>A 30–45 minute travel buffer is blocked before the trainer&apos;s next bookable appointment.</span></article>
           <p className={styles.editable}>Choose one of the supported repeat schedules above. Every package session is shown before payment, and app reminders go 24 hours and 2 hours before each session; expiry alerts start 15 days before validity ends.</p>
-          <button className={styles.back} onClick={() => setStage(3)}>← Trainer</button><button className={styles.primary} onClick={() => setStage(5)}>Review & pay</button>
+          <button className={styles.back} onClick={() => setStage(3)}>← Trainer</button><button className={styles.primary} disabled={scheduleOverrunsValidity} onClick={() => setStage(5)}>Review & pay</button>
         </section>
       )}
       {stage === 5 && (

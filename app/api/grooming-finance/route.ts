@@ -1,6 +1,6 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
-import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{ensureGroomingInvoiceTables,issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
 
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
@@ -46,14 +46,14 @@ const CAPTURED_PAYMENT_STATUSES=new Set(["captured","paid","refunded","partially
 const REFUNDED_PAYMENT_STATUSES=new Set(["refunded","partially_refunded"]);
 const round2=(value:number)=>Math.round(value*100)/100;
 type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number;capturedPerPaymentLedger:number;capturedPerReconciliation:number;capturedAwaitingReconciliation:number;refundsPendingReconciliation:number;paymentsWithReconciliationRecord:number};
-type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[];basis:Record<string,string>};
+type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[];basis:Record<string,string>;taxPolicies:Row[]};
 // Finance GET is actor-independent after finance.view authorization. Coalesce only requests that overlap
 // in time on the same D1 binding; the promise is removed immediately after settlement, so this is NOT a
 // TTL/stale-data cache and the next read always observes subsequent finance writes.
 const financeReads=new WeakMap<Db,Promise<FinanceSnapshot>>();
 async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
  const running=financeReads.get(db);if(running)return running;
- const pending=(async()=>{await ensureTables(db);
+ const pending=(async()=>{await ensureTables(db);await ensureGroomingInvoiceTables(db);
   const ledgerStatement=db.prepare(`SELECT b.id booking_id,b.customer_id,b.package_name,b.status booking_status,b.total_amount,b.currency,b.scheduled_start,b.updated_at,
     p.id payment_id,p.status payment_status,p.method payment_method,p.mode payment_mode,p.gateway,p.amount payment_amount,p.amount_due_now,
     i.id invoice_id,i.invoice_number,i.status invoice_status,i.gross_amount,i.tax_amount,i.net_amount,i.issued_at,
@@ -95,7 +95,11 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
     if(item.reconciled_captured_amount!=null)acc.paymentsWithReconciliationRecord+=1;if(item.refund_amount_unknown)acc.refundsPendingReconciliation+=1;return acc;
   },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0,capturedPerPaymentLedger:0,capturedPerReconciliation:0,capturedAwaitingReconciliation:0,refundsPendingReconciliation:0,paymentsWithReconciliationRecord:0});
   for(const key of ["invoiced","collected","refunded","receivable","capturedPerPaymentLedger","capturedPerReconciliation","capturedAwaitingReconciliation"] as const)summary[key]=round2(summary[key]);
-  return{source:"canonical Grooming booking/payment/invoice ledger · Captured and Receivable from booking_payments; reconciliation reported separately",summary,items,reconciliationExceptions:recentExceptions,
+  /* The published city GST policy, so the screen that publishes it can also SHOW it. Without this the
+   * only way to know whether `blr` was inclusive or exclusive - the difference between every assisted
+   * order succeeding and every one of them being refused - was to read the database. [R3-C/F8] */
+  const taxPolicies=(await db.prepare("SELECT city_id,tax_mode,tax_rate,status,version,effective_from,updated_by,reason,updated_at FROM grooming_tax_policies ORDER BY city_id").all<Row>().catch(()=>({results:[] as Row[]}))).results;
+  return{source:"canonical Grooming booking/payment/invoice ledger · Captured and Receivable from booking_payments; reconciliation reported separately",summary,items,reconciliationExceptions:recentExceptions,taxPolicies,
     basis:{
       invoiced:"booking_invoices.net_amount where an invoice has been issued",
       collected:"booking_payments.amount where status is captured/paid/refunded/partially_refunded - the money the payment ledger says reached PawSpace",

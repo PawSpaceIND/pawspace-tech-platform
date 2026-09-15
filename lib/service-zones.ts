@@ -81,6 +81,40 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
 };
 
 export const BENGALURU_SUPPORTED_PINCODES=Object.freeze(Object.keys(PINCODE_ZONE_MAP).sort());
+
+/**
+ * AREA -> ZONE AUTHORITY.
+ *
+ * Two boarding hosts were seeded with zone_id "blr-east" while advertising themselves as "HSR
+ * Layout" and "Koramangala" - areas this same module maps to "blr-south". A customer whose address
+ * resolved to blr-south was told "No verified Boarding host currently has capacity", while a host
+ * card claimed a host lived in their neighbourhood. Two records disagreed about the same city.
+ *
+ * The pincode map is the single authority: it is what every customer address is resolved through,
+ * and it is what the booking carries. An area therefore determines its zone, and any roster row
+ * that says otherwise is wrong by construction - not a judgement call. Derived from the map itself
+ * so the two can never drift apart again.
+ */
+const AREA_ZONE_INDEX:Record<string,string>=(()=>{const index:Record<string,string>={};for(const entry of Object.values(PINCODE_ZONE_MAP)){const key=normalizeAreaName(entry.area);if(!key)continue;const existing=index[key];if(existing&&existing!==entry.zoneId)throw new Error(`Service zone map is ambiguous: area "${entry.area}" is mapped to both ${existing} and ${entry.zoneId}`);index[key]=entry.zoneId;}return index;})();
+
+export function normalizeAreaName(area:unknown){return String(area??"").trim().toLowerCase().replace(/\s+/g," ");}
+
+/** The zone an area belongs to, or null when the area is not part of the served map at all. */
+export function zoneIdForArea(area:unknown):string|null{return AREA_ZONE_INDEX[normalizeAreaName(area)]??null;}
+
+export const KNOWN_SERVICE_AREAS=Object.freeze(Object.keys(AREA_ZONE_INDEX).sort());
+
+/**
+ * The data-integrity rule. Refuses a provider/host record whose free-text area contradicts the zone
+ * it is filed under. An area the map has never heard of is NOT refused - the roster is allowed to
+ * grow past the seeded pincode list - but an area the map does know must be filed in that area's
+ * zone and nowhere else.
+ */
+export function assertAreaMatchesZone(area:unknown,zoneId:unknown,subject="This record"):void{
+  const expected=zoneIdForArea(area);if(!expected)return;
+  const actual=String(zoneId??"").trim().toLowerCase();if(!actual||actual===expected)return;
+  throw new Response(`${subject} is filed under zone ${actual} but its area "${String(area).trim()}" belongs to ${expected}. The service-zone map is authoritative - correct the zone or the area.`,{status:409});
+}
 export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-east":{zoneId:"blr-east",zoneName:"East Bengaluru",description:"Indiranagar, Whitefield, Marathahalli, Bellandur",color:"#00BCD4",serviceAvailable:true},
   "blr-north":{zoneId:"blr-north",zoneName:"North Bengaluru",description:"Hebbal, Yelahanka, Malleswaram, RT Nagar",color:"#FF9800",serviceAvailable:true},

@@ -127,6 +127,27 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const indicativeTotal = cart.reduce((sum, line) => sum + (itemBySku.get(line.sku)?.unit_price ?? 0) * line.quantity, 0);
   const suggestedFor = (item: FoodCatalogueItem) => pets.filter((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type).map((pet) => pet.name);
 
+  /*
+   * The two conditions reviewOrder() enforces, stated where the customer can still act on them. [R3-A7]
+   *
+   * MEASURED: deselecting the default-selected pet left every Continue button enabled. The customer
+   * chose food, set a delivery address and a schedule, and only at step 4/5 was told "Select at least
+   * one pet before ordering Fresh Food" - four screens away from the control that caused it. Blocking
+   * at step 1 puts the refusal next to the thing to fix, and the same predicate still guards the
+   * submit, so nothing is loosened.
+   */
+  const petSelectionIssue = (() => {
+    if (!selectedPets.length) return "Select at least one pet before ordering Fresh Food.";
+    for (const line of cart) {
+      const item = itemBySku.get(line.sku);
+      if (!item) continue;
+      if (!pets.some((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type)) {
+        return `Select at least one ${item.pet_type} for ${lineName(item)}.`;
+      }
+    }
+    return "";
+  })();
+
   const togglePet = (id: string) => setSelectedPets((current) => (current.includes(id) ? current.filter((pet) => pet !== id) : [...current, id]));
   const qtyOf = (sku: string) => cart.find((line) => line.sku === sku)?.quantity ?? 0;
   const setQty = (item: FoodCatalogueItem, quantity: number) => {
@@ -317,8 +338,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
               })}
             </div>
           ))}
-          <button className={styles.primary} disabled={cart.length === 0 || !coverage} onClick={() => setStep(2)}>
-            {cart.length === 0 ? "Add food to continue" : `Review cart · ${cartCount} item${cartCount > 1 ? "s" : ""}`}
+          {petSelectionIssue && cart.length > 0 && <p className={styles.hint} role="alert">{petSelectionIssue}</p>}
+          <button className={styles.primary} disabled={cart.length === 0 || !coverage || Boolean(petSelectionIssue)} onClick={() => setStep(2)}>
+            {cart.length === 0 ? "Add food to continue" : petSelectionIssue ? "Choose the pet this food is for" : `Review cart · ${cartCount} item${cartCount > 1 ? "s" : ""}`}
           </button>
         </>
       )}

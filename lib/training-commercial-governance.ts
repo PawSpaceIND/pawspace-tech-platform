@@ -1,5 +1,6 @@
 import{resolveLivePrice}from"./live-pricing-resolver";
 import{sameInstant}from"./booking-window-instant";
+import{trainingPackageValidityCoversSessions,trainingSlowestScheduleSpanDays}from"./training-booking-guards";
 
 type Row=Record<string,unknown>;
 export type TrainingPaymentMode="prepaid"|"split";
@@ -21,7 +22,11 @@ export const TRAINING_PACKAGE_DEFAULTS=[
  {code:"training-8-leash",name:"Leash Obedience Plan · 8",sessions:8,validityDays:62,price:12000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-12-leash",name:"Leash Obedience Plan · 12",sessions:12,validityDays:93,price:16500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-12-advanced",name:"Advanced Obedience Plan",sessions:12,validityDays:93,price:16500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
- {code:"training-16-pro",name:"Pro Training Plan",sessions:16,validityDays:93,price:20000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
+ // 16 weekly sessions span 105 days, so 93 could never hold them: the card promised "93 days
+ // validity" while the calendar under it ran to day 105 and the server reserved all 16. 93 was the
+ // TWELVE-session row's number. The ladder here is 1 month (2 and 4 sessions), 2 months (8), 3
+ // months (12) - so sixteen sessions is four months. [R3-A3]
+ {code:"training-16-pro",name:"Pro Training Plan",sessions:16,validityDays:124,price:20000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
 ] as const;
 const defaults=TRAINING_PACKAGE_DEFAULTS;
 
@@ -33,7 +38,21 @@ export async function ensureTrainingCommercialTables(db:D1Database){await db.bat
  db.prepare("CREATE TABLE IF NOT EXISTS training_coupon_rules (code TEXT PRIMARY KEY,discount_type TEXT NOT NULL,value REAL NOT NULL,max_discount REAL,status TEXT NOT NULL DEFAULT 'active',effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_balance_payment_events (id TEXT PRIMARY KEY,quote_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL UNIQUE,bound_payment_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
-]);const now=Date.now();for(const item of defaults)await db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now).run();}
+]);const now=Date.now();for(const item of defaults)assertTrainingPackageValidity(item);for(const item of defaults)await db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now).run();
+ // INSERT OR IGNORE leaves an already-seeded row alone, so a database seeded while the Pro plan still
+ // carried the twelve-session row's 93 days would keep selling a validity it cannot honour. Repair the
+ // impossible value on rows the seed still owns; a row Pricing Control has edited is left untouched.
+ for(const item of defaults)await db.prepare("UPDATE training_commercial_packages SET validity_days=?,updated_at=? WHERE package_code=? AND updated_by='founder_seed' AND version=1 AND validity_days<?").bind(item.validityDays,now,item.code,trainingSlowestScheduleSpanDays(item.sessions)).run();}
+
+/**
+ * A package whose validity cannot hold its own sessions is unsellable as described: whatever cadence
+ * the customer picks, the last sessions land after the validity the card promised. Refused where the
+ * catalogue is written rather than discovered by a customer at session fifteen. [R3-A3]
+ */
+export function assertTrainingPackageValidity(input:{code:string;sessions:number;validityDays:number}){
+ if(trainingPackageValidityCoversSessions(input))return;
+ throw new Response(`Training package ${input.code} sells ${input.sessions} sessions but only ${input.validityDays} days of validity; ${input.sessions} sessions at the slowest schedule offered need ${trainingSlowestScheduleSpanDays(input.sessions)} days.`,{status:409});
+}
 
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}
 async function discountFor(db:D1Database,couponCode:string|undefined,total:number,scheduledStart:string){const code=String(couponCode||"").trim().toUpperCase();if(!code)return{code:null,discount:0};const row=await db.prepare("SELECT * FROM training_coupon_rules WHERE code=? AND status='active'").bind(code).first<Row>();if(!row)return{code,discount:0,invalid:true};const date=scheduledStart.slice(0,10);if(date<String(row.effective_from)||row.effective_to&&date>String(row.effective_to))return{code,discount:0,invalid:true};let discount=String(row.discount_type)==="percent"?total*Number(row.value)/100:Number(row.value);if(row.max_discount!==null&&row.max_discount!==undefined)discount=Math.min(discount,Number(row.max_discount));return{code,discount:Math.max(0,Math.min(total,Math.round(discount)))};}

@@ -10,7 +10,22 @@ export async function GET(request:Request){try{const bookingId=(new URL(request.
 
 export async function POST(request:Request){try{
   const input=await request.json() as Input;if(!input.bookingId||!input.action)return json({error:"Booking and action are required"},400);const db=await database();await ensurePaymentReconciliationTables(db);
-  if(input.action==="request_after_service"){const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!work)return json({error:"Provider work order not found"},404);const providerId=String(work.provider_id);await requireProviderOwnership(db,actor,providerId);const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const data=await createPostServicePaymentRequest(db,runtime,{bookingId:input.bookingId,providerId,actorId:actor.email});await securityAudit(db,actor,"grooming.payment_request.create","booking",input.bookingId,"completed",{providerId,providerReference:data.providerReference,sandboxOnly:true,capturePerformed:false});return json({data},201);}
+  if(input.action==="request_after_service"){const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!work)return json({error:"Provider work order not found"},404);const providerId=String(work.provider_id);await requireProviderOwnership(db,actor,providerId);const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
+    /*
+     * SAME CONDITION, SAME ANSWER. [R3-B3]
+     *
+     * createPostServicePaymentRequest ends at createSandboxPaymentLink, which refuses with
+     * connected:false when the Razorpay sandbox key id/secret are absent; the reason was then thrown as
+     * a bare Error, which authError() reports as 500 "Unable to run Grooming payment sandbox". A partner
+     * who had just finished a real job read that, having no idea whether to retry, call somebody, or
+     * collect cash. The staff action for the identical missing configuration - create_order, twelve
+     * lines below - already answers 503 configuration_required, and so does this one now. The wording
+     * differs because the audience does: an operator is told which credentials to add, a partner is told
+     * that online collection is not switched on and what to do instead. No credential name crosses to
+     * the partner, and nothing here fakes a capture.
+     */
+    if(!sandboxCapabilitiesUnlocked(runtime)||!runtime.RAZORPAY_KEY_ID_SANDBOX||!runtime.RAZORPAY_KEY_SECRET_SANDBOX){await securityAudit(db,actor,"grooming.payment_request.create","booking",input.bookingId,"denied",{providerId,reason:"configuration_required"});return json({error:"configuration_required",detail:"Online payment collection is not switched on for this deployment yet, so we cannot raise a payment link for this job. Your completed work order is recorded - please tell the PawSpace team so they can collect and settle it."},503);}
+    const data=await createPostServicePaymentRequest(db,runtime,{bookingId:input.bookingId,providerId,actorId:actor.email});await securityAudit(db,actor,"grooming.payment_request.create","booking",input.bookingId,"completed",{providerId,providerReference:data.providerReference,sandboxOnly:true,capturePerformed:false});return json({data},201);}
   const actor=await authorize(request,"payments.manage");const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;if(!sandboxCapabilitiesUnlocked(runtime))return json({error:"Payment sandbox is disabled unless PAWSPACE_PAYMENT_ENV is explicitly set to sandbox"},403);
   const payment=await db.prepare("SELECT id,amount,currency,status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!payment)return json({error:"Canonical payment record not found"},404);
 

@@ -390,8 +390,8 @@ test("an approved incentive enters payroll exactly once, however many runs are c
   assert.equal(Number(first.results[0].gross_earnings), 60000, "50,000 salary + the 10,000 approved incentive");
   assert.equal(Number(first.results[0].net_pay), 60000);
 
-  // A SECOND run over the same period - a new key, a genuinely new run, not the idempotent replay.
-  const second = await payroll.calculatePayroll(w.db, { periodStart: JULY_START, periodEnd: JULY_RUN_END, idempotencyKey: "once-b", actorId: MAKER });
+  // A second run over the NEXT period - a new key, a genuinely new run, not the idempotent replay.
+  const second = await payroll.calculatePayroll(w.db, { periodStart: AUG_START, periodEnd: AUG_RUN_END, idempotencyKey: "once-b", actorId: MAKER });
   assert.equal(second.duplicatePrevented, false, "this must be a real second run, or the test proves nothing");
   assert.equal(Number(second.results[0].net_pay), 50000, "the incentive was already paid; the second run pays salary only");
 
@@ -433,7 +433,7 @@ test("a reversal of a paid incentive becomes an explicit DEDUCTION line with the
   assert.equal(Number(link.amount), -10000, "the payroll link records a clawback with a NEGATIVE sign");
 
   // And it is never deducted twice.
-  const again = await payroll.calculatePayroll(w.db, { periodStart: AUG_START, periodEnd: AUG_RUN_END, idempotencyKey: "rev-aug-2", actorId: MAKER });
+  const again = await payroll.calculatePayroll(w.db, { periodStart: AUG_RUN_END, periodEnd: AUG_RUN_END + 30 * 86_400_000, idempotencyKey: "rev-aug-2", actorId: MAKER });
   assert.equal(Number(again.results[0].net_pay), 50000, "a clawback already deducted must never be deducted again");
   assert.equal(count(w.sqlite, "payroll_result_lines", "component_code='INCENTIVE_REVERSAL'"), 1);
 });
@@ -489,9 +489,14 @@ test("the payroll route separates view, manage, approve and compensation.manage 
   assert.equal(adminApprove.status, 409, "and land on the engine's own rule instead");
   assert.equal((await adminApprove.json()).error, "Only reviewed payroll can be approved");
 
-  // compensation.manage is NOT payroll.manage: finance holds manage+approve but cannot edit compensation.
-  await denied(await asRole("finance@pawspace.in", { action: "save_structure", structureCode: "STD", effectiveFrom: NOW, components: [{ code: "BASIC", label: "Basic", kind: "earning", amount: 1 }] }), "finance save_structure");
-  await denied(await asRole("finance@pawspace.in", { action: "assign_compensation", employeeId: "E", structureId: "S", effectiveFrom: NOW, reason: "A clear reason" }), "finance assign_compensation");
+  // compensation.manage is still its OWN permission, separate from payroll.manage - but it used to be
+  // held by no role at all, which left salary structures unversionable by anyone the product could
+  // create. The owner granted it to finance, so finance now passes this gate and `admin` - which
+  // holds payroll.approve but NOT compensation.manage - is the case that proves the gate still bites.
+  const financeStructure = await asRole("finance@pawspace.in", { action: "save_structure", structureCode: "STD", effectiveFrom: NOW, components: [] });
+  assert.notEqual(financeStructure.status, 403, "compensation.manage must let finance past the permission gate");
+  await denied(await asRole("admin@pawspace.in", { action: "save_structure", structureCode: "STD", effectiveFrom: NOW, components: [{ code: "BASIC", label: "Basic", kind: "earning", amount: 1 }] }), "admin save_structure");
+  await denied(await asRole("admin@pawspace.in", { action: "assign_compensation", employeeId: "E", structureId: "S", effectiveFrom: NOW, reason: "A clear reason" }), "admin assign_compensation");
   const financeCalculate = await asRole("finance@pawspace.in", { action: "calculate", periodStart: JULY_RUN_END, periodEnd: JULY_START, idempotencyKey: "" });
   assert.notEqual(financeCalculate.status, 403, "payroll.manage must let finance past the permission gate");
   assert.equal(financeCalculate.status, 400);

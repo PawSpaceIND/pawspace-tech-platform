@@ -22,6 +22,17 @@ export async function captureSittingQuoteSandbox(db:D1Database,input:{quoteId:st
  await ensureSittingPaymentTables(db);
  const paymentKey=String(input.paymentKey||"").trim();
  if(!paymentKey)throw new Response("MISSING_CAPTURE_KEY",{status:400});
+ // sitting_commercial_quotes belongs to lib/sitting-governance.ts and this function only READS it. On a
+ // genuinely cold database - before any Sitting quote has ever been created - the read below threw
+ // "no such table", which is not a Response, so the route's authError answered 500 "Sitting sandbox
+ // payment failed". Every later identical call answered the correct 404 "Sitting quote not found",
+ // because by then some other request had created the table: the first-call-only 500 the round-3 audit
+ // reported, and a missing existence check rather than a race. A quote table that does not exist holds
+ // no quotes, so the honest answer is the same 404. Same shape and same reason as the cold-database
+ // guard in lib/boarding-host-discovery.ts; creating another module's tables from a payment capture
+ // would be a heavier side effect than this read deserves. [R3-A-COLD-SIT]
+ const quotesTable=await db.prepare("SELECT 1 present FROM sqlite_master WHERE type='table' AND name='sitting_commercial_quotes'").first<Row>();
+ if(!quotesTable)throw new Response("Sitting quote not found",{status:404});
  const quote=await db.prepare("SELECT id,total_amount,amount_due_now,status,expires_at FROM sitting_commercial_quotes WHERE id=?").bind(input.quoteId).first<Row>();
  if(!quote)throw new Response("Sitting quote not found",{status:404});
  if(String(quote.status)!=="open")throw new Response("Only an open Sitting quote can be sandbox-captured",{status:409});

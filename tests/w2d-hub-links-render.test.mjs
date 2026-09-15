@@ -265,21 +265,28 @@ test("W2D-RENDER-6: Sales, People and Voice gate on the permission their API enf
     present: [], absent: ["/team/people/provider-training"],
   }, "people as finance");
 
-  // The AI voice bench needs settings.manage on top of the console's own permissions; admin has none.
+  // The AI voice bench needs settings.manage on top of the console's own permissions. That used to be
+  // held by NO role - only founder/superuser through "*" - which made this and six other screens
+  // founder-only and, worse, made incentives unapprovable (the engine enforces maker != checker and
+  // there was exactly one identity that could be either). The owner granted settings.manage to admin,
+  // so admin is now offered it and `associate`, who holds neither, is the negative case.
   assertLinks(await renderSection(Staff, voiceHub.voiceWorkspaceLinks, () => staffFetch(permissionsOf("founder"))), {
     present: ["/team/voice/ai-test"], absent: [],
   }, "voice as founder");
   assertLinks(await renderSection(Staff, voiceHub.voiceWorkspaceLinks, () => staffFetch(permissionsOf("admin"))), {
-    present: [], absent: ["/team/voice/ai-test"],
+    present: ["/team/voice/ai-test"], absent: [],
   }, "voice as admin");
+  assertLinks(await renderSection(Staff, voiceHub.voiceWorkspaceLinks, () => staffFetch(permissionsOf("associate"))), {
+    present: [], absent: ["/team/voice/ai-test"],
+  }, "voice as associate");
 });
 
 test("W2D-RENDER-7: Marketing keeps WhatsApp on communications.manage and the reminder engine on settings.manage", async () => {
   const Staff = hubLinks.default;
   const links = marketingHub.marketingWorkspaceLinks;
   assertLinks(await renderSection(Staff, links, () => staffFetch(permissionsOf("admin"))), {
-    present: ["/team/marketing/content", "/team/whatsapp/templates", "/team/whatsapp/automation", "/team/whatsapp/analytics", "/team/haptik"],
-    absent: ["/team/lifecycle-reminders"],
+    present: ["/team/marketing/content", "/team/whatsapp/templates", "/team/whatsapp/automation", "/team/whatsapp/analytics", "/team/haptik", "/team/lifecycle-reminders"],
+    absent: [],
   }, "marketing as admin");
   // associate holds communications.manage and nothing else here.
   assertLinks(await renderSection(Staff, links, () => staffFetch(permissionsOf("associate"))), {

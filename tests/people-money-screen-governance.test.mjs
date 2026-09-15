@@ -235,7 +235,7 @@ test("control: an ungoverned thrown Response is still redacted, so the test abov
 
 const MAX_TIME_VALUE_MS = 8_640_000_000_000_000;
 const REPORT_ACTOR = { actorEmail: "ops@pawspace.in", roleCode: "people_ops", permissions: ["people.manage"] };
-const defaultStartOfMonth = () => { const now = new Date(); return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1); };
+const defaultStartOfMonth = () => Date.parse(`${new Date(Date.now() + 19_800_000).toISOString().slice(0, 7)}-01T00:00:00.000+05:30`);
 
 test("the proven boundary still answers, and one millisecond past it falls back instead of throwing", async () => {
   const { db } = freshCountingD1();
@@ -244,7 +244,7 @@ test("the proven boundary still answers, and one millisecond past it falls back 
 
   const past = await peopleReports(db, { ...REPORT_ACTOR, periodStart: MAX_TIME_VALUE_MS + 1 });
   assert.equal(past.period.start, defaultStartOfMonth(), "?start=8640000000000001 falls back to the default period");
-  assert.equal(past.period.startDate, new Date(defaultStartOfMonth()).toISOString().slice(0, 10));
+  assert.equal(past.period.startDate, new Date(defaultStartOfMonth() + 19_800_000).toISOString().slice(0, 10));
 });
 
 test("every out-of-range period bound degrades to the default the way a non-finite one does", async () => {

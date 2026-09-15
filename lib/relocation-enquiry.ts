@@ -55,6 +55,23 @@ function rowToEnquiry(row:Row):RelocationEnquiry{return{
   status:"new",createdAt:Number(row.created_at||0),
 };}
 
+/**
+ * The coarsest useful shape of a free-text pickup/drop address. [PTJA-R3-RELQ-PII]
+ *
+ * Pickup and drop are somebody's home and somebody's destination, entered as one free-text line, so
+ * there is no `line1`/`area` split to lean on. Under lib/purpose-based-access the area survives a
+ * masked read and the doorstep does not, and in "Flat 9, Koramangala, Bengaluru" the area is the LAST
+ * comma-separated segment. A single-segment value cannot be told apart from a doorstep, so it is
+ * withheld whole rather than guessed at. Returns a masked string, never an empty one: a row staff
+ * cannot recognise is a row they will go and find in a spreadsheet.
+ */
+export function maskLocation(value:unknown){
+  const raw=text(value);
+  if(!raw)return "";
+  const parts=raw.split(",").map(part=>part.trim()).filter(Boolean);
+  return parts.length>1?`••• ${parts[parts.length-1]}`:"•••";
+}
+
 /** Strict field-contract validation. Throws a plain Error with a human-readable message on the first violation. */
 function validate(input:RelocationEnquiryInput){
   const customerName=text(input.customerName);

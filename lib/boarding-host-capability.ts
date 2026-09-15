@@ -22,7 +22,7 @@
  * use; "nobody asked" is not, and both would otherwise be stored as 0. The write path takes booleans
  * and refuses null/undefined, which is what keeps those two apart.
  */
-import{ensureBoardingGovernanceTables}from"./boarding-governance";
+import{ensureBoardingGovernanceTables,assertBoardingHostZone}from"./boarding-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -78,6 +78,10 @@ export async function saveBoardingHostCapability(db:Db,input:BoardingHostCapabil
   if(!providerId||!text(input.cityId)||!text(input.zoneId))refuse("A provider, city and zone are required");
   if(!text(actorId))refuse("An actor is required");
   if(!text(input.area))refuse("The host's service area must be answered",400,{code:"missing_service_area"});
+  // The area and the zone are two statements about one address. Discovery matches on zone_id while the
+  // customer reads the area off the host card, so a row that says "HSR Layout" under blr-east makes the
+  // platform contradict itself: the neighbourhood a customer recognises is invisible to their search.
+  assertBoardingHostZone(input.area,input.zoneId,providerId);
   const species=(Array.isArray(input.species)?input.species:[]).map(entry=>text(entry).toLowerCase()).filter(Boolean);
   if(!species.length)refuse("The species this host accepts must be answered",400,{code:"missing_species_accepted"});
   const capacity=Number(input.maxGuestPets);

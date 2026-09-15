@@ -231,11 +231,14 @@ for (const [i, b] of BOOKINGS.filter((x) => x.status === "completed").entries())
 }
 
 // --- boarding: host profile + stays (Boarding ops queue) ---------------------
-for (const host of ["host_maya_rohan", "host_sana"]) {
-  insert("boarding_host_profiles", { provider_id: host, city_id: "blr", zone_id: "blr-east", area: "HSR Layout", species_json: JSON.stringify(["dog", "cat"]), max_guest_pets: 3, one_family_only: 0, medication_support: 1, resident_pets: 1, home_verified: 1, kyc_status: "verified", background_check_status: "verified", active: 1, version: 1, updated_by: "uat_demo_seed", updated_at: at(-60) });
+// area and zone_id are two statements about one address: lib/service-zones.ts is the authority that
+// decides which zone an area belongs to, and lib/boarding-governance.ts refuses a host row where they
+// disagree. Keep this fixture on the same side of that rule as the founder roster it shadows.
+for (const host of [{ id: "host_maya_rohan", zone: "blr-east", area: "Indiranagar" }, { id: "host_sana", zone: "blr-south", area: "HSR Layout" }]) {
+  insert("boarding_host_profiles", { provider_id: host.id, city_id: "blr", zone_id: host.zone, area: host.area, species_json: JSON.stringify(["dog", "cat"]), max_guest_pets: 3, one_family_only: 0, medication_support: 1, resident_pets: 1, home_verified: 1, kyc_status: "verified", background_check_status: "verified", active: 1, version: 1, updated_by: "uat_demo_seed", updated_at: at(-60) });
 }
 insert("boarding_stays", { id: "UATD-STAY-1", booking_id: "UATD-BK-BOARD-1", customer_id: "UATD-CUS-1", host_provider_id: "host_maya_rohan", city_id: "blr", zone_id: "blr-east", package_code: "boarding", check_in_at: isoAt(-1, 10), check_out_at: isoAt(2, 11), billed_units: 3, pet_count: 1, status: "in_progress", care_plan_status: "ready", check_in_status: "complete", check_out_status: "pending", extension_status: "none", created_at: at(-3), updated_at: at(-1) });
-insert("boarding_stays", { id: "UATD-STAY-2", booking_id: "UATD-BK-BOARD-2", customer_id: "UATD-CUS-5", host_provider_id: "host_sana", city_id: "blr", zone_id: "blr-east", package_code: "boarding", check_in_at: isoAt(4, 10), check_out_at: isoAt(6, 11), billed_units: 2, pet_count: 1, status: "awaiting_host_acceptance", care_plan_status: "required", check_in_status: "pending", check_out_status: "pending", extension_status: "none", created_at: at(-1), updated_at: at(-1) });
+insert("boarding_stays", { id: "UATD-STAY-2", booking_id: "UATD-BK-BOARD-2", customer_id: "UATD-CUS-5", host_provider_id: "host_sana", city_id: "blr", zone_id: "blr-south", package_code: "boarding", check_in_at: isoAt(4, 10), check_out_at: isoAt(6, 11), billed_units: 2, pet_count: 1, status: "awaiting_host_acceptance", care_plan_status: "required", check_in_status: "pending", check_out_status: "pending", extension_status: "none", created_at: at(-1), updated_at: at(-1) });
 
 // --- walking sessions (Walking ops queue) ------------------------------------
 insert("walking_sessions", { id: "UATD-WALK-1-1", booking_id: "UATD-BK-WALK-1", schedule_group_id: "UATD-GRP-UATD-BK-WALK-1", reservation_id: "UATD-BK-WALK-1-RES", provider_id: "walk_nisha", occurrence_number: 1, scheduled_start: isoAt(-5, 8), scheduled_end: isoAt(-5, 9), status: "completed", handover_status: "complete", completion_status: "complete", created_at: at(-7), updated_at: at(-5) });

@@ -10,6 +10,39 @@ const positive=(v:unknown,n:string)=>{const x=Number(v);if(!Number.isInteger(x)|
 export const GLOBAL_DEFAULT_CASE_SLA={id:"GLOBAL_DEFAULT_SLA",version:1,firstResponseMinutes:60,managerEscalationMinutes:720,resolutionMinutes:1440} as const;
 const deadline=(createdAt:number,minutes:number)=>createdAt+minutes*60_000;
 
+/**
+ * An operator-readable description, from a detail column that holds JSON.
+ *
+ * The Case & Escalation Center printed `description` straight onto the card, and two sync paths
+ * passed `detail_json` into it unchanged — so a manager's case body read, in full,
+ * `{"dueAt":1789...,"policyId":"GLOBAL_DEFAULT_SLA","clock":"first_response"}`. That is a machine
+ * record shown to a human as the explanation of what is wrong. The JSON is not discarded: it stays
+ * in the source row, and what the card carries is the same facts in words.
+ */
+const CASE_DETAIL_TIME_KEYS=/(^|_|[a-z])(at|due|deadline|timestamp)$/i;
+const humanKey=(key:string)=>key.replace(/[_-]+/g," ").replace(/([a-z0-9])([A-Z])/g,"$1 $2").toLowerCase().replace(/^./,c=>c.toUpperCase());
+const humanValue=(key:string,value:unknown):string=>{
+ if(value===null||value===undefined)return "not recorded";
+ if(typeof value==="boolean")return value?"yes":"no";
+ if(typeof value==="number"&&CASE_DETAIL_TIME_KEYS.test(key)&&value>1_000_000_000_000)return new Date(value).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})+" IST";
+ if(Array.isArray(value))return value.map(item=>humanValue(key,item)).join(", ")||"none";
+ if(typeof value==="object")return Object.entries(value as Record<string,unknown>).map(([k,v])=>`${humanKey(k)} ${humanValue(k,v)}`).join(", ");
+ // Only a lowercase snake_case token is an enum reading as words; an identifier like
+ // GLOBAL_DEFAULT_SLA is a name and must survive intact.
+ const rendered=String(value);
+ return /^[a-z0-9]+(_[a-z0-9]+)+$/.test(rendered)?rendered.replaceAll("_"," "):rendered;
+};
+export function describeCaseDetail(raw:unknown,fallback:string):string{
+ const source=text(raw);
+ if(!source)return fallback;
+ let parsed:unknown;
+ try{parsed=JSON.parse(source);}catch{return source;}
+ if(parsed===null||typeof parsed!=="object"||Array.isArray(parsed))return source===String(parsed)?source:String(parsed);
+ const entries=Object.entries(parsed as Record<string,unknown>);
+ if(!entries.length)return fallback;
+ return entries.map(([key,value])=>`${humanKey(key)}: ${humanValue(key,value)}`).join(" · ");
+}
+
 export async function ensureUnifiedCaseTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS case_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,case_type TEXT NOT NULL,severity TEXT NOT NULL,first_response_minutes INTEGER NOT NULL,resolution_minutes INTEGER NOT NULL,manager_escalation_minutes INTEGER NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,approval_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS unified_cases (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,case_type TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',title TEXT NOT NULL,description TEXT NOT NULL,customer_id TEXT,booking_id TEXT,payment_id TEXT,lead_id TEXT,provider_id TEXT,source_type TEXT NOT NULL,source_id TEXT NOT NULL,owner_team TEXT NOT NULL,owner_email TEXT,policy_id TEXT,policy_version INTEGER,first_response_due_at INTEGER NOT NULL,resolution_due_at INTEGER NOT NULL,manager_escalation_due_at INTEGER NOT NULL,first_responded_at INTEGER,resolved_at INTEGER,closed_at INTEGER,resolution_code TEXT,resolution_note TEXT,reopen_count INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -66,7 +99,7 @@ export async function updateUnifiedCase(db:Db,input:{caseId:string;action:"assig
 export async function runUnifiedCaseEscalations(db:Db,input:{actorId:string;asOf?:number}){await ensureUnifiedCaseTables(db);const now=input.asOf??Date.now(),rows=await db.prepare("SELECT * FROM unified_cases WHERE status NOT IN ('resolved','closed') AND (first_response_due_at<=? OR resolution_due_at<=? OR manager_escalation_due_at<=?) ORDER BY severity DESC,created_at ASC").bind(now,now,now).all<Row>();let firstResponseBreaches=0,resolutionBreaches=0,managerEscalations=0;for(const row of rows.results){const id=text(row.id);if(!row.first_responded_at&&row.first_response_due_at!=null&&Number(row.first_response_due_at)<=now){if(await event(db,id,"first_response_breached",input.actorId,{dueAt:Number(row.first_response_due_at)},`first-response-breach:${id}`))firstResponseBreaches++;}if(row.resolution_due_at!=null&&Number(row.resolution_due_at)<=now){if(await event(db,id,"resolution_breached",input.actorId,{dueAt:Number(row.resolution_due_at)},`resolution-breach:${id}`))resolutionBreaches++;}if(row.manager_escalation_due_at!=null&&Number(row.manager_escalation_due_at)<=now){if(await event(db,id,"manager_escalation_due",input.actorId,{dueAt:Number(row.manager_escalation_due_at),ownerTeam:row.owner_team,ownerEmail:row.owner_email},`manager-escalation:${id}`))managerEscalations++;}}return{processed:rows.results.length,firstResponseBreaches,resolutionBreaches,managerEscalations,automaticExternalNotification:false};}
 
 export async function syncNativeCases(db:Db,actorId:string){await ensureUnifiedCaseTables(db);let created=0;const refunds=await db.prepare("SELECT id,booking_id,status,reason,amount,created_at FROM booking_refund_cases WHERE status NOT IN ('completed','rejected') ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const r of refunds.results){const result=await createUnifiedCase(db,{idempotencyKey:`refund:${text(r.id)}`,caseType:"refund",severity:"high",title:`Refund ${text(r.id)}`,description:text(r.reason)||"Refund case",bookingId:text(r.booking_id),sourceType:"booking_refund_case",sourceId:text(r.id),ownerTeam:"finance",actorId});if(!result.duplicatePrevented)created++;}
- const sla=await db.prepare("SELECT e.id,e.lead_id,e.event_type,e.detail_json,e.created_at FROM lead_sla_events e WHERE e.event_type IN ('breached','manager_escalation_due','reassignment_due') ORDER BY e.created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const e of sla.results){const sev=text(e.event_type)==="manager_escalation_due"?"high":"medium";const result=await createUnifiedCase(db,{idempotencyKey:`lead-sla:${text(e.id)}`,caseType:"lead_escalation",severity:sev as CaseSeverity,title:`Lead SLA ${text(e.event_type).replaceAll("_"," ")}`,description:text(e.detail_json),leadId:text(e.lead_id),sourceType:"lead_sla_event",sourceId:text(e.id),ownerTeam:"sales",actorId});if(!result.duplicatePrevented)created++;}
+ const sla=await db.prepare("SELECT e.id,e.lead_id,e.event_type,e.detail_json,e.created_at FROM lead_sla_events e WHERE e.event_type IN ('breached','manager_escalation_due','reassignment_due') ORDER BY e.created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const e of sla.results){const sev=text(e.event_type)==="manager_escalation_due"?"high":"medium";const result=await createUnifiedCase(db,{idempotencyKey:`lead-sla:${text(e.id)}`,caseType:"lead_escalation",severity:sev as CaseSeverity,title:`Lead SLA ${text(e.event_type).replaceAll("_"," ")}`,description:describeCaseDetail(e.detail_json,`Lead SLA ${text(e.event_type).replaceAll("_"," ")}`),leadId:text(e.lead_id),sourceType:"lead_sla_event",sourceId:text(e.id),ownerTeam:"sales",actorId});if(!result.duplicatePrevented)created++;}
  const legacy=await db.prepare("SELECT * FROM customer_experience_tickets ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));
  for(const t of legacy.results){
   const priority=text(t.priority),legacyStatus=text(t.status),severity=(priority==="critical"?"critical":priority==="high"?"high":priority==="low"?"low":"medium") as CaseSeverity;
@@ -78,7 +111,7 @@ export async function syncNativeCases(db:Db,actorId:string){await ensureUnifiedC
    .bind(mappedStatus,text(t.owner),resolutionNote?"legacy_resolution":null,resolutionNote,resolvedAt,closedAt,Number(t.reopened_count||0),actorId,Number(t.updated_at||Date.now()),`legacy-cx:${text(t.id)}`).run();
   await event(db,text((result.case as Row).id),"legacy_ticket_synced",actorId,{legacyTicketId:text(t.id),legacyStatus,mappedStatus,rootCause:text(t.root_cause)||null,resolutionEvidence:text(t.resolution_evidence)||null},`legacy-ticket-sync:${text(t.id)}:${legacyStatus}:${Number(t.updated_at||0)}`);
  }
- const recon=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const x of recon.results){const severity=(text(x.severity)==="critical"?"critical":"high") as CaseSeverity;const result=await createUnifiedCase(db,{idempotencyKey:`recon:${text(x.id)}`,caseType:"reconciliation",severity,title:`Payment reconciliation: ${text(x.exception_type)}`,description:text(x.detail_json),bookingId:text(x.booking_id),paymentId:text(x.payment_id),sourceType:"payment_reconciliation_exception",sourceId:text(x.id),ownerTeam:"finance",actorId});if(!result.duplicatePrevented)created++;}
+ const recon=await db.prepare("SELECT id,booking_id,payment_id,exception_type,severity,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at DESC LIMIT 300").all<Row>().catch(()=>({results:[]} as {results:Row[]}));for(const x of recon.results){const severity=(text(x.severity)==="critical"?"critical":"high") as CaseSeverity;const result=await createUnifiedCase(db,{idempotencyKey:`recon:${text(x.id)}`,caseType:"reconciliation",severity,title:`Payment reconciliation: ${text(x.exception_type)}`,description:describeCaseDetail(x.detail_json,`Payment reconciliation exception: ${text(x.exception_type).replaceAll("_"," ")}`),bookingId:text(x.booking_id),paymentId:text(x.payment_id),sourceType:"payment_reconciliation_exception",sourceId:text(x.id),ownerTeam:"finance",actorId});if(!result.duplicatePrevented)created++;}
  await syncCaseSopRequirements(db,{actorId});
  return{created};}
 

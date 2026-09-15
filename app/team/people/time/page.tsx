@@ -1,6 +1,10 @@
 "use client";
 import{useEffect,useState}from"react";
-import Link from"next/link";
+// R3-G / F4: this "back to the hub" cue was unconditional while /team/people needs people.view, so a
+// child screen offered a door its own hub refuses. Same gate as every other link on the platform.
+import{StaffGatedLink}from"../../../components/hub-workspace-links";
+import{istDayEnd,istDayStart,istDayString}from"../../../../lib/ist-day";
+import{leaveSpanDays}from"../../../../lib/leave-span";
 
 /**
  * Time & leave: the screen that makes /api/attendance-leave reachable. [W2C-TIME-CONTROLS]
@@ -33,7 +37,7 @@ export type ShiftAssignment={id:string;employee_id:string;shift_policy_id:string
 export type LeaveBalance={employee_id:string;leave_code:string;balance:number};
 export type PeriodLock={id:string;period_start:number;period_end:number;status:string};
 export type EmployeeRow={id:string;employee_code:string;display_name:string};
-export type Scope={mode:"manager"|"self";employeeId:string|null;canManageAttendance:boolean;canManageLeave:boolean};
+export type Scope={mode:"manager"|"self";employeeId:string|null;organizationalScope?:string;canManageAttendance:boolean;canManageLeave:boolean};
 export type Payload={
   attendanceDays:AttendanceDay[];pendingAdjustments:Adjustment[];leaveRequests:LeaveRequest[];
   leavePolicies:LeavePolicy[];shiftPolicies:ShiftPolicy[];shiftAssignments:ShiftAssignment[];
@@ -42,12 +46,21 @@ export type Payload={
 };
 
 const when=(v?:number|null)=>v?new Date(v).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}):"—";
-const day=(v?:number|null)=>v?new Date(v).toISOString().slice(0,10):"—";
+const day=(v?:number|null)=>v?istDayString(v):"—";
 /** "2026-09-15T09:00" from a datetime-local input, or NaN when the field is empty or unparseable. */
 export const epochOf=(value:string)=>{const parsed=new Date(value).getTime();return Number.isFinite(parsed)?parsed:NaN;};
-/** A payroll period is bounded in UTC, the same calendar the attendance replay stamps work_date in. */
-export const utcDayStart=(date:string)=>new Date(`${date}T00:00:00.000Z`).getTime();
-export const utcDayEnd=(date:string)=>new Date(`${date}T23:59:59.999Z`).getTime();
+/**
+ * Every date this screen sends is an IST calendar day. [R3E-IST-DAY]
+ *
+ * These were utcDayStart/utcDayEnd, and the period lock was the place it hurt: a lock typed as
+ * "2026-09-01 → 2026-09-14" was stored as 1 Sep 00:00Z → 14 Sep 23:59Z, which is 1 Sep 05:30 IST to
+ * 15 Sep 05:29 IST. Reproduced against the running product: a check-in on 15 September - a day the
+ * operator never locked - was refused 409, while a check-in at 02:00 IST on 1 September - a day they
+ * DID lock - was accepted, and filed itself against 31 August, inside the previous payroll month.
+ * The same shift applies to every effective date on this screen, which is what a leave policy, a
+ * shift policy and a shift assignment are dated by.
+ */
+export{istDayStart,istDayEnd};
 
 /*
  * Each `missing*` predicate mirrors the engine rule it fronts, so a control is live only when the
@@ -56,6 +69,8 @@ export const utcDayEnd=(date:string)=>new Date(`${date}T23:59:59.999Z`).getTime(
  */
 
 export type LeaveDraft={leaveCode:string;startDate:string;endDate:string;units:string;reason:string};
+/** Both dates present -> the Days field is the span they describe, so the two cannot disagree. */
+export function withDerivedDays(draft:LeaveDraft):LeaveDraft{const span=leaveSpanDays(draft.startDate,draft.endDate);return span===null?draft:{...draft,units:String(span)};}
 export function missingLeaveRequestFields(draft:LeaveDraft,policies:LeavePolicy[]){
   const missing:string[]=[];
   if(!policies.length)missing.push("an active leave policy — ask People Ops to publish one before requesting leave");
@@ -65,6 +80,9 @@ export function missingLeaveRequestFields(draft:LeaveDraft,policies:LeavePolicy[
   if(draft.startDate&&draft.endDate&&draft.endDate<draft.startDate)missing.push("an end date on or after the start date");
   const units=Number(draft.units);
   if(!draft.units.trim()||!Number.isFinite(units)||units<=0)missing.push("a positive number of days");
+  // `units` is what the balance is debited by, and it was free text with no tie to the dates at all -
+  // a ten-day range could be, and was, booked against one day of leave. [R3E-LEAVE-UNITS]
+  else{const span=leaveSpanDays(draft.startDate,draft.endDate);if(span!==null&&units!==span&&units!==span-0.5)missing.push(`days that match the dates — ${draft.startDate} to ${draft.endDate} is ${span} day(s)`);}
   if(draft.reason.trim().length<4)missing.push("a reason of at least 4 characters");
   return missing;
 }
@@ -86,7 +104,7 @@ export function missingLeavePolicyFields(draft:LeavePolicyDraft){
   const missing:string[]=[];
   if(!draft.name.trim())missing.push("a policy name");
   if(!draft.leaveCode.trim())missing.push("a leave code");
-  if(!draft.effectiveFrom||Number.isNaN(utcDayStart(draft.effectiveFrom)))missing.push("an effective date");
+  if(!draft.effectiveFrom||Number.isNaN(istDayStart(draft.effectiveFrom)))missing.push("an effective date");
   if(draft.entitlementUnits.trim()&&!(Number(draft.entitlementUnits)>0))missing.push("entitlement units above zero, or none at all");
   return missing;
 }
@@ -109,7 +127,7 @@ export function missingShiftPolicyFields(draft:ShiftPolicyDraft){
   const missing:string[]=[];
   if(!draft.name.trim())missing.push("a shift name");
   if(!draft.timezone.trim())missing.push("a timezone");
-  if(!draft.effectiveFrom||Number.isNaN(utcDayStart(draft.effectiveFrom)))missing.push("an effective date");
+  if(!draft.effectiveFrom||Number.isNaN(istDayStart(draft.effectiveFrom)))missing.push("an effective date");
   return missing;
 }
 
@@ -118,7 +136,7 @@ export function missingAssignShiftFields(draft:AssignShiftDraft){
   const missing:string[]=[];
   if(!draft.employeeId.trim())missing.push("an employee");
   if(!draft.shiftPolicyId.trim())missing.push("a shift policy");
-  if(!draft.effectiveFrom||Number.isNaN(utcDayStart(draft.effectiveFrom)))missing.push("an effective date");
+  if(!draft.effectiveFrom||Number.isNaN(istDayStart(draft.effectiveFrom)))missing.push("an effective date");
   if(draft.reason.trim().length<8)missing.push("a reason of at least 8 characters");
   return missing;
 }
@@ -142,11 +160,11 @@ export const leaveRequestBody=(employeeId:string,draft:LeaveDraft)=>({action:"re
 export const adjustmentRequestBody=(employeeId:string,draft:AdjustmentDraft)=>({action:"request_adjustment",employeeId,workDate:draft.workDate,requestedStatus:draft.requestedStatus.trim()||null,requestedCheckIn:draft.checkIn?epochOf(draft.checkIn):null,requestedCheckOut:draft.checkOut?epochOf(draft.checkOut):null,reason:draft.reason.trim()});
 export const leaveDecisionBody=(requestId:string,decision:"approved"|"rejected",reason:string)=>({action:"decide_leave",requestId,decision,reason:reason.trim()});
 export const adjustmentApprovalBody=(requestId:string)=>({action:"approve_adjustment",requestId});
-export const leavePolicyBody=(draft:LeavePolicyDraft)=>({action:"save_leave_policy",name:draft.name.trim(),leaveCode:draft.leaveCode.trim(),allowNegative:draft.allowNegative,entitlementUnits:draft.entitlementUnits.trim()?Number(draft.entitlementUnits):null,effectiveFrom:utcDayStart(draft.effectiveFrom)});
+export const leavePolicyBody=(draft:LeavePolicyDraft)=>({action:"save_leave_policy",name:draft.name.trim(),leaveCode:draft.leaveCode.trim(),allowNegative:draft.allowNegative,entitlementUnits:draft.entitlementUnits.trim()?Number(draft.entitlementUnits):null,effectiveFrom:istDayStart(draft.effectiveFrom)});
 export const grantEntitlementBody=(draft:GrantDraft)=>({action:"grant_leave_entitlement",employeeId:draft.employeeId,leaveCode:draft.leaveCode.trim(),units:draft.units.trim()?Number(draft.units):null,reason:draft.reason.trim()});
-export const shiftPolicyBody=(draft:ShiftPolicyDraft)=>({action:"save_shift_policy",name:draft.name.trim(),timezone:draft.timezone.trim(),startTime:draft.startTime||null,endTime:draft.endTime||null,weeklyOff:draft.weeklyOff.split(",").map(d=>d.trim()).filter(Boolean),locationRule:draft.locationRule,effectiveFrom:utcDayStart(draft.effectiveFrom)});
-export const assignShiftBody=(draft:AssignShiftDraft)=>({action:"assign_shift",employeeId:draft.employeeId,shiftPolicyId:draft.shiftPolicyId,effectiveFrom:utcDayStart(draft.effectiveFrom),reason:draft.reason.trim()});
-export const periodLockBody=(draft:PeriodLockDraft)=>({action:"set_period_lock",periodStart:utcDayStart(draft.periodStart),periodEnd:utcDayEnd(draft.periodEnd),status:draft.status});
+export const shiftPolicyBody=(draft:ShiftPolicyDraft)=>({action:"save_shift_policy",name:draft.name.trim(),timezone:draft.timezone.trim(),startTime:draft.startTime||null,endTime:draft.endTime||null,weeklyOff:draft.weeklyOff.split(",").map(d=>d.trim()).filter(Boolean),locationRule:draft.locationRule,effectiveFrom:istDayStart(draft.effectiveFrom)});
+export const assignShiftBody=(draft:AssignShiftDraft)=>({action:"assign_shift",employeeId:draft.employeeId,shiftPolicyId:draft.shiftPolicyId,effectiveFrom:istDayStart(draft.effectiveFrom),reason:draft.reason.trim()});
+export const periodLockBody=(draft:PeriodLockDraft)=>({action:"set_period_lock",periodStart:istDayStart(draft.periodStart),periodEnd:istDayEnd(draft.periodEnd),status:draft.status});
 
 const box={border:"1px solid #ddd",borderRadius:12,padding:14} as const;
 const field={width:"100%",marginBottom:6,minHeight:34,boxSizing:"border-box"} as const;
@@ -169,9 +187,9 @@ export function LeaveRequestForm({employeeId,policies,balances,busy,onSubmit}:{e
       {policies.map(p=><option key={p.id} value={p.leave_code}>{p.leave_code} · {p.name} (v{p.version}){Number(p.allow_negative)===1?" · negative allowed":""}</option>)}
     </select>
     <div style={{display:"flex",gap:8}}>
-      <label style={{flex:1,fontSize:13}}>From<input type="date" value={draft.startDate} style={field} onChange={e=>setDraft({...draft,startDate:e.target.value})}/></label>
-      <label style={{flex:1,fontSize:13}}>To<input type="date" value={draft.endDate} style={field} onChange={e=>setDraft({...draft,endDate:e.target.value})}/></label>
-      <label style={{width:90,fontSize:13}}>Days<input type="number" min="0.5" step="0.5" value={draft.units} style={field} onChange={e=>setDraft({...draft,units:e.target.value})}/></label>
+      <label style={{flex:1,fontSize:13}}>From<input type="date" value={draft.startDate} style={field} onChange={e=>setDraft(withDerivedDays({...draft,startDate:e.target.value}))}/></label>
+      <label style={{flex:1,fontSize:13}}>To<input type="date" value={draft.endDate} style={field} onChange={e=>setDraft(withDerivedDays({...draft,endDate:e.target.value}))}/></label>
+      <label style={{width:90,fontSize:13}}>Days<input type="number" min="0.5" step="0.5" aria-label="Leave days" value={draft.units} style={field} onChange={e=>setDraft({...draft,units:e.target.value})}/></label>
     </div>
     <input placeholder="Reason" aria-label="Leave reason" value={draft.reason} style={field} onChange={e=>setDraft({...draft,reason:e.target.value})}/>
     <p style={{fontSize:13,margin:"0 0 6px"}}>Balance on {draft.leaveCode||"—"}: <b>{balance?balance.balance:0}</b> day(s)</p>
@@ -339,7 +357,7 @@ async function fetchPayload(){const r=await fetch("/api/attendance-leave",{cache
 export function TimeAndLeaveScreen({data,busy,loading,error,message,onPost,onRefresh}:{data:Payload|null;busy:boolean;loading:boolean;error:string;message:string;onPost:Post;onRefresh:()=>void}){
   const scope=data?.scope,selfId=scope?.employeeId??"";
   return <main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"system-ui,sans-serif"}}>
-    <p><Link href="/team/people">← People</Link></p>
+    <p><StaffGatedLink href="/team/people" permission="people.view">← People</StaffGatedLink></p>
     <p style={{fontWeight:800,letterSpacing:1}}>PAWSPACE · PEOPLE · TIME &amp; LEAVE</p>
     <h1>Attendance, adjustments and leave</h1>
     <p>Policy-driven attendance and leave truth. Grace periods, entitlements, overtime and location requirements stay configuration-required until approved.</p>
@@ -355,6 +373,15 @@ export function TimeAndLeaveScreen({data,busy,loading,error,message,onPost,onRef
 
     {data&&!data.leavePolicies.length?<p role="status"><b>No active leave policy exists.</b> Every leave request is refused with &quot;Active leave policy configuration is required&quot; until someone holding leave.manage publishes one below.</p>:null}
     {data&&scope?.mode==="self"&&!selfId?<p role="status">Your sign-in is not linked to an active employee record, so there is nothing of your own to show. Ask People Ops to link your work email.</p>:null}
+    {/* Which rows this screen is showing, stated rather than guessed at. A manager scoped to their own
+      * reporting line sees a different roster from one who is not scoped at all, and until now there
+      * was nothing on the page that said which of the two you were looking at. [R3E-TIME-SCOPE] */}
+    {data&&scope?.mode==="manager"?<p role="status">{
+      scope.organizationalScope==="reporting_line"?"Showing your own reporting line: you and your direct reports."
+      :scope.organizationalScope==="global_no_direct_reports"?"Showing every employee: nobody currently reports to you, so there is no reporting line to narrow this to."
+      :scope.organizationalScope==="global_unlinked"?"Showing every employee: your sign-in is not linked to an employee record, so there is no reporting line to narrow this to."
+      :"Showing every employee: you hold company-wide People access."
+    }</p>:null}
 
     {data&&selfId?<>
       <h2>My time and leave</h2>

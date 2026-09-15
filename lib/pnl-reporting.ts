@@ -25,6 +25,20 @@ export interface PnlClosedPeriod{month:string;status:string;closedAt:number|null
 
 export interface PnlReport{months:string[];revenue:PnlSection;indirectIncome:PnlSection;totalTurnover:Record<string,number>;totalTurnoverAmount:number;expenses:PnlSection;totalExpenses:Record<string,number>;totalExpensesAmount:number;nettProfit:Record<string,number>;nettProfitAmount:number;generatedAt:number;dataSource:"platform_live"|"platform_live_with_closed_periods";closedPeriods:PnlClosedPeriod[];note:string}
 
+/**
+ * What a headline tile may honestly call nettProfitAmount.
+ *
+ * Business 360 rendered nettProfitAmount under "NET PROFIT (P&L, 12 MONTHS)". On a deployment where
+ * totalExpensesAmount is 0 for all twelve months, nett profit is identically equal to turnover - so
+ * the tile printed gross revenue as net profit, two tiles away from "CONTRIBUTION - Not tracked yet".
+ * A figure is only a net profit once something has been deducted from it.
+ */
+export function pnlHeadline(report:{totalTurnoverAmount:number;totalExpensesAmount:number;nettProfitAmount:number},monthCount=12){
+ const expenses=Number(report.totalExpensesAmount||0);
+ if(expenses>0)return{isNetProfit:true,label:`Net profit (P&L, ${monthCount} months)`,amount:Number(report.nettProfitAmount||0),note:"Turnover less posted expenses · canonical_bookings + finance_journal_entries",expenses};
+ return{isNetProfit:false,label:`Turnover (P&L, ${monthCount} months)`,amount:Number(report.totalTurnoverAmount||0),note:"Not a net profit: no expense journal entries are posted for this period, so nothing has been deducted",expenses:0};
+}
+
 function monthKey(value:string|number):string{const date=new Date(value);return`${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}`;}
 function monthRange(fromMonth:string,toMonth:string):string[]{
   const months:string[]=[];let[y,m]=fromMonth.split("-").map(Number);const[toY,toM]=toMonth.split("-").map(Number);

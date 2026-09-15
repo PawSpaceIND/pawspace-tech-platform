@@ -11,7 +11,7 @@
  * cash when it arrives, while the P&L (revenue-recognition module) shows revenue when it is earned.
  */
 
-import { CASH_ACCOUNTS, cashFlowSection, ensureFinanceJournalTable, round } from "./finance-accounts";
+import { CASH_ACCOUNTS, cashFlowSection, ensureFinanceJournalTable, journalGroupKey, round } from "./finance-accounts";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -29,11 +29,12 @@ export async function generateCashFlowStatement(db: Db, input: { fromPeriod?: st
   const toPeriod = String(input.toPeriod || input.periodCode || fromPeriod).trim();
   if (!/^\d{4}-\d{2}$/.test(fromPeriod) || !/^\d{4}-\d{2}$/.test(toPeriod)) throw new Error("A period (YYYY-MM) is required");
 
-  const rows = await db.prepare("SELECT id,source_type,account_code,debit,credit,narration,period_code FROM finance_journal_entries ORDER BY period_code,id").all<Row>().catch(() => ({ results: [] as Row[] }));
-  // group lines by their journal group (id prefix before the final -N segment)
+  const rows = await db.prepare("SELECT id,source_type,source_id,account_code,debit,credit,narration,period_code FROM finance_journal_entries ORDER BY period_code,id").all<Row>().catch(() => ({ results: [] as Row[] }));
+  // Same grouping rule as every other journal reader - (source_type, source_id), never a punctuation
+  // convention in the id. [R3-D/F6]
   const groups = new Map<string, Row[]>();
   for (const r of rows.results) {
-    const id = String(r.id), group = id.replace(/-\d+$/, "");
+    const group = journalGroupKey(r);
     (groups.get(group) || groups.set(group, []).get(group)!).push(r);
   }
 

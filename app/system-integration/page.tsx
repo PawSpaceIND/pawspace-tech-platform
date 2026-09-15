@@ -3,6 +3,23 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./page.module.css";
+import { RefusedScreen } from "../components/refused-surface";
+import { useVisibleStaffLinks, type HubWorkspaceLink } from "../components/hub-workspace-links";
+
+/*
+ * R3-G / F4: this rail was five hardcoded links rendered to every actor that could render the page,
+ * and four of the five refuse most of them. Each permission is the one the destination's API
+ * enforces: /api/team-overview dashboard.view, /api/booking-command-center bookings.manage,
+ * /api/customer-360 customers.view, /api/control-tower audit.view, /api/integration-readiness
+ * launch.view.
+ */
+const RAIL_LINKS: HubWorkspaceLink[] = [
+  { href: "/team", label: "⌂ Team", detail: "", permission: "dashboard.view" },
+  { href: "/team/operations/bookings", label: "▤ Booking Command Center", detail: "", permission: "bookings.manage" },
+  { href: "/team/sales", label: "⚡ Revenue & CX", detail: "", permission: "customers.view" },
+  { href: "/control", label: "◇ Launch essentials", detail: "", permission: "audit.view" },
+  { href: "/control/integrations", label: "◎ System integration", detail: "", permission: "launch.view" },
+];
 
 type Control = { id: string; label: string; status: string; evidence: string };
 type Integration = { name: string; from: string; to: string; passed: boolean; detail?: string };
@@ -12,6 +29,7 @@ const pretty = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, le
 const when = (value: number) => new Date(value).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export default function SystemIntegrationPage() {
+  const railLinks = useVisibleStaffLinks(RAIL_LINKS);
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -36,12 +54,16 @@ export default function SystemIntegrationPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Confirmation failed"); }
     finally { setBusy(false); }
   }
-  if (!data) return <main className={styles.loading}>{error || "Checking every PawSpace system connection…"}</main>;
+  // R3-G / F11: a refused read rendered nothing but the raw error string inside a bare <main> - no
+  // heading, no navigation, no way back - for six actor profiles. A loading state still loads; a
+  // refusal now gets a screen that says what happened and offers the doors this actor can open.
+  if (!data && error) return <RefusedScreen eyebrow="PAWSPACE RELEASE CONTROL" title="System Integration Control" error={error} what="the System Integration Control screen" />;
+  if (!data) return <main className={styles.loading}>Checking every PawSpace system connection…</main>;
   const internalDone = data.summary.internalPassed === data.summary.internalTotal;
   return <main className={styles.shell}>
     <aside className={styles.side}>
       <Link href="/control" className={styles.brand}><b>paw</b>space <span>CONTROL</span></Link>
-      <nav><Link href="/team">⌂ Team</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/sales">⚡ Revenue & CX</Link><Link href="/control">◇ Launch essentials</Link><Link className={styles.active} href="/control/integrations">◎ System integration</Link></nav>
+      <nav>{railLinks.map(link => <Link key={link.href} className={link.href === "/control/integrations" ? styles.active : undefined} href={link.href}>{link.label}</Link>)}</nav>
       <div className={styles.boundary}><b>UAT BOUNDARY</b><span>No live payments</span><span>No customer rollout</span><span>Vendor delivery stays locked until verified</span></div>
     </aside>
     <section className={styles.workspace}>

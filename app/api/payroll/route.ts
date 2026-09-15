@@ -9,6 +9,7 @@ import {
   assignCompensation,
   calculatePayroll,
   payrollDirectory,
+  payrollRunRegister,
   prepareSandboxPaymentBatch,
   reviewPayroll,
   saveSalaryStructure,
@@ -24,9 +25,12 @@ import { authorizeLivePayrollDisbursement } from "../../../lib/payroll-live-disb
 type Row = Record<string, unknown>;
 const text = (value: unknown) => String(value ?? "").trim();
 
+const holds = (permissions: string[], permission: string) =>
+  permissions.includes("*") || permissions.includes(permission);
+
 export async function GET(request: Request) {
   try {
-    await authorize(request, "payroll.view");
+    const actor = await authorize(request, "payroll.view");
     const db = await database();
     const url = new URL(request.url);
     if (url.searchParams.get("mode") === "advances") {
@@ -37,8 +41,32 @@ export async function GET(request: Request) {
         productionReady: false,
       });
     }
+    if (url.searchParams.get("mode") === "register") {
+      return Response.json({
+        data: await payrollRunRegister(db, {
+          runId: text(url.searchParams.get("runId")),
+        }),
+        productionReady: false,
+      });
+    }
+    /*
+     * The screen is told WHO is signed in and which payroll authorities they hold, so it can draw only
+     * the controls this route would accept and enforce the engine's maker/checker before the round
+     * trip rather than after it. The engine stays the authority; this is what lets the screen say
+     * "you calculated this run, so somebody else must review it" instead of surfacing a 409.
+     * [R3E-PAYROLL-CONTROLS]
+     */
     return Response.json({
-      data: await payrollDirectory(db),
+      data: {
+        ...(await payrollDirectory(db)),
+        scope: {
+          email: actor.email,
+          roleCode: actor.roleCode,
+          canManagePayroll: holds(actor.permissions, "payroll.manage"),
+          canApprovePayroll: holds(actor.permissions, "payroll.approve"),
+          canManageCompensation: holds(actor.permissions, "compensation.manage"),
+        },
+      },
       productionReady: false,
     });
   } catch (error) {

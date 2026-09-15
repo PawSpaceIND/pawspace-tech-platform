@@ -37,7 +37,12 @@ test("DIRECTIVE-1: every use client / use server directive is the first statemen
   const misplaced = [];
   for (const file of SOURCE) {
     const source = readFileSync(path.join(ROOT, file), "utf8");
-    if (!DIRECTIVE.test(source)) continue;
+    // Look for the directive as CODE, not as prose. A module whose docstring explains that its
+    // callers are "use client" components declares no directive at all, and reporting it as one
+    // sends the reader hunting for a bug that is not there (lib/leave-span.ts did exactly this).
+    // Same rule schema-read-coverage already applies to SQL: strip comments before you scan.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    if (!DIRECTIVE.test(code)) continue;
     const body = source.replace(LEADING_TRIVIA, "");
     if (/^["']use (client|server)["'];?/.test(body)) continue;
     // The directive exists but does not lead: report what pushed it down.

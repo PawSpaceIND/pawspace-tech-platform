@@ -6,6 +6,7 @@ import { dailyClosureReadiness } from "./rep-daily-closure-governance";
 import { dailyTalkTimeSummary } from "./talk-time-governance";
 import{chunkedIn}from"./d1-chunked-in";
 import{salesIncentivePeriodTruth}from"./daily-incentive-accrual";
+import{istDayString}from"./ist-day";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -151,7 +152,18 @@ async function trainerRow(db:Db,email:string,name:string,today:string,actorId:st
  */
 export async function buildManagerDashboard(db:Db,input:{actorEmail:string;permissions:string[];asOf?:number}){
   await ensurePeopleTables(db); // cold-DB safe: the dashboard reads employees/employment versions before any people module has run
-  const asOf=input.asOf??Date.now(),today=new Date(asOf).toISOString().slice(0,10);
+  /*
+   * "Today" on a manager's dashboard is the IST day, not the UTC one. [R3E-IST-DAY]
+   *
+   * `new Date(asOf).toISOString().slice(0,10)` rolled over at 05:30 IST, and `today` is what dates
+   * every per-day figure on this screen: the daily sales incentive, the seven-day window through
+   * daysAgo(), the month start the monthly incentives are computed from, daily closure readiness and
+   * "talk time today". Between midnight and 05:30 IST every one of them silently described YESTERDAY
+   * while the header said "As of" today. The route does not expose `asOf`, so this could not be
+   * demonstrated from outside the process; it is the same expression, and the same defect, as
+   * lib/attendance-leave.ts's work_date, and it is fixed the same way.
+   */
+  const asOf=input.asOf??Date.now(),today=istDayString(asOf);
   const scope=await resolveDashboardScope(db,{actorEmail:input.actorEmail,permissions:input.permissions});
   const employees=await employeesInScope(db,scope);
   const sales:Array<Awaited<ReturnType<typeof salesRow>>>=[],groomers:Array<Awaited<ReturnType<typeof groomerRow>>>=[],trainers:Array<Awaited<ReturnType<typeof trainerRow>>>=[],other:Array<{employeeEmail:string;name:string;title:string}>=[];

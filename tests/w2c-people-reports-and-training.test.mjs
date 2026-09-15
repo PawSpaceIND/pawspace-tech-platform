@@ -67,8 +67,8 @@ const ADMIN = "admin@pawspace.test";        // + finance.view, still company-wid
 // rendered at reporting-line scope, which is exactly where the statutory zero was misleading.
 const CITY_FINANCE = "cityfin@pawspace.test";
 const NOW = Date.UTC(2026, 8, 15);
-const AUGUST_START = Date.UTC(2026, 7, 1);
-const AUGUST_END = Date.UTC(2026, 7, 31, 23, 59, 59, 999);
+const AUGUST_START = Date.parse("2026-08-01T00:00:00.000+05:30");
+const AUGUST_END = Date.parse("2026-08-31T23:59:59.999+05:30");
 
 const getReports = (email, query = "") => reportsRoute.GET(new Request(`https://uat.pawspace.in${query || "/api/people-reports"}`, { headers: { "oai-authenticated-user-email": email } }));
 const getLms = (email, query = "") => lmsRoute.GET(new Request(`https://uat.pawspace.in/api/provider-lms${query}`, { headers: { "oai-authenticated-user-email": email } }));

@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ReadGate, ReadRefusedNotice } from "../../components/refused-surface";
 
 type Funnel = { appAcquisitionFunnel?: Record<string, number>; paymentRecovery?: Record<string, number>; inboundSalesFunnel?: { appInbound?: Record<string, number>; paymentRecovery?: Record<string, number> } };
 const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
@@ -18,9 +19,12 @@ export default function AcquisitionFunnelPage() {
   return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
       <div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · ACQUISITION FUNNEL</small><h1 style={{ margin: "7px 0" }}>App-to-Revenue funnel</h1><p style={{ margin: 0, color: "#746b7d" }}>Download → identify → booked / payment-pending / not-booked → convert. Payment-truthful.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button disabled={busy} onClick={refresh} style={{ padding: 10, background: "#F6920A", color: "white", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "Refreshing…" : "Refresh sweep"}</button><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div style={{ display: "flex", gap: 8 }}><ReadGate error={error}><button disabled={busy} onClick={refresh} style={{ padding: 10, background: "#F6920A", color: "white", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "Refreshing…" : "Refresh sweep"}</button></ReadGate><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
     </header>
-    {error && <div style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
+    {/* R3-G / F6: every tile below counts an empty payload, so a refused read rendered a full board
+        of zeros - "Downloads 0 · Identified 0 · Converted 0" - next to the refusal. */}
+    <ReadRefusedNotice error={error} what="the acquisition funnel" />
+    <ReadGate error={error}>
     <h3>App Acquisition</h3>
     <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 20 }}>
       {stat("Downloads", f.downloads)}{stat("Identified", f.identified)}{stat("Converted", f.converted, "payment captured")}{stat("Payment pending", f.paymentPending, "→ ₹300 + Sales")}{stat("Not booked", f.noBooking, "→ App-Inbound")}{stat("Conversion %", f.conversionRateFromIdentified, "of identified")}
@@ -29,6 +33,7 @@ export default function AcquisitionFunnelPage() {
       <div><h3>Payment recovery (₹300)</h3><section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{stat("Issued", rec.issued)}{stat("Active", rec.active)}{stat("Redeemed", rec.redeemed)}{stat("Recovered", rec.recoveredBookings, "bookings")}</section></div>
       <div><h3>Inbound to Sales</h3><section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{stat("App-Inbound active", (inb.appInbound || {}).active)}{stat("Recovery tasks active", (inb.paymentRecovery || {}).active)}</section></div>
     </div>
+    </ReadGate>
     <p style={{ fontSize: 12, color: "#746b7d", marginTop: 18 }}>Advisory intelligence — outreach stays human-launched. Refresh recomputes the funnel from the live book of record.</p>
   </div></main>;
 }

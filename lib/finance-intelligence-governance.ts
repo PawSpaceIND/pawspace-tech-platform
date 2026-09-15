@@ -10,7 +10,7 @@
  * Read failures propagate: unavailable ledger data must never look like a clean report.
  */
 
-import { ACCT } from "./finance-accounts";
+import { ACCT, journalGroupKey } from "./finance-accounts";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -25,10 +25,10 @@ export async function detectFinanceAnomalies(db: Db, input: { periodCode?: strin
   const anomalies: Array<Record<string, unknown>> = [];
 
   // 1) unbalanced journals - group lines by their journal group (id without the trailing -N)
-  const jrn = await db.prepare(`SELECT id,debit,credit,period_code,narration FROM finance_journal_entries${period ? " WHERE period_code=?" : ""}`).bind(...(period ? [period] : [])).all<Row>();
+  const jrn = await db.prepare(`SELECT id,source_type,source_id,debit,credit,period_code,narration FROM finance_journal_entries${period ? " WHERE period_code=?" : ""}`).bind(...(period ? [period] : [])).all<Row>();
   const groups = new Map<string, { debit: number; credit: number; period: string; narration: string }>();
   for (const r of jrn.results) {
-    const g = String(r.id).replace(/-\d+$/, "");
+    const g = journalGroupKey(r);
     const cur = groups.get(g) || { debit: 0, credit: 0, period: String(r.period_code), narration: String(r.narration) };
     cur.debit += Number(r.debit) || 0; cur.credit += Number(r.credit) || 0;
     groups.set(g, cur);

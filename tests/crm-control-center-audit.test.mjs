@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { maskEmployeePhone } from "../lib/people-foundation.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__CRM_CONTROL_CENTER_AUDIT_DB__");
+
+const { maskEmployeePhone } = await import("../lib/people-foundation.ts");
 
 const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 

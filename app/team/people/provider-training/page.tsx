@@ -1,7 +1,9 @@
 "use client";
-import Link from"next/link";
 import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
+// R3-G / F4: this "back to the hub" cue was unconditional while /team/people needs people.view, so a
+// child screen offered a door its own hub refuses. Same gate as every other link on the platform.
+import{StaffGatedLink}from"../../../components/hub-workspace-links";
 
 type Row=Record<string,unknown>;
 export type Readiness={providerId:string;services:string[];servicesResolved:boolean;modules:Array<{moduleId:string;title:string;serviceCode:string;version:number;required:boolean;passPct:number;state:string;completedAt:number|null;scorePct:number|null}>;requiredTotal:number;requiredComplete:number;trainingReady:boolean;readinessReason:string};
@@ -73,7 +75,7 @@ export default function ProviderTrainingPage(){
   void run({action:"save_module",title,serviceCode,summary,sections:sections.split("\n").map(section=>section.trim()).filter(Boolean),quiz,passPct:Number(passPct)},"Module saved as draft");
  }
  return <main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:16}}>
-  <header><Link href="/team/people">← People home</Link><p>TEAM OS · PEOPLE · PROVIDER TRAINING</p><h1>Provider training & SOP library</h1><p>Versioned SOP modules with a real pass mark. Republishing a module invalidates completions — retraining is the point of a content change.</p></header>
+  <header><StaffGatedLink href="/team/people" permission="people.view">← People home</StaffGatedLink><p>TEAM OS · PEOPLE · PROVIDER TRAINING</p><h1>Provider training & SOP library</h1><p>Versioned SOP modules with a real pass mark. Republishing a module invalidates completions — retraining is the point of a content change.</p></header>
   {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}}>
    {[["Published modules",overview.metrics.published],["Drafts",overview.metrics.draft],["Providers not ready",overview.metrics.providersNotReady]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
   </section>}

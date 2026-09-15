@@ -13,4 +13,55 @@ export async function bookingAttributionSummary(db:Db,input:{from?:number;to?:nu
 
 export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string|null;converted:boolean;attribution:BookingAttributionType}>{await ensureLeadWorkItemsTable(db);const booked=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null),bookedService=normalizeLeadServiceCode(booked?.service_code);const candidates=bookedService?await db.prepare("SELECT id,service FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') AND lifecycle_state NOT IN ('converted','dropped') ORDER BY assigned_at DESC LIMIT 100").bind(input.customerId).all<Row>().catch(()=>({results:[]as Row[]})):{results:[]as Row[]};const openLead=candidates.results.find(row=>normalizeLeadServiceCode(row.service)===bookedService)||null;if(!openLead){await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"direct_booking",detail:{reason:bookedService?"no_open_lead_for_this_service":"booking_service_unknown"}});return{leadId:null,converted:false,attribution:"direct_booking"};}const leadId=String(openLead.id),now=Date.now();const payment=await latestPayment(db,input.bookingId);const captured=String(payment?.status||"")==="captured";await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"lead",leadId,detail:{matchedOn:"customer_and_normalized_service"}});const commercial=await commercials(db,input.bookingId);await recordMarketingConversionFact(db,{eventType:"booking_created",businessReference:input.bookingId,leadId,customerId:input.customerId,bookingId:input.bookingId,valueMinor:commercial.valueMinor,currency:commercial.currency,occurredAt:now}).catch(()=>{});if(captured){await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',lifecycle_state='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state!='dropped'").bind(input.bookingId,now,leadId).run();await recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:String(payment?.id||input.bookingId),leadId,customerId:input.customerId,bookingId:input.bookingId,paymentId:String(payment?.id||""),valueMinor:Math.max(0,Math.round(Number(payment?.amount||0)*100)),currency:String(payment?.currency||commercial.currency),occurredAt:now}).catch(()=>{});await creditSalesOwner(db,leadId,input.bookingId);return{leadId,converted:true,attribution:"lead"};}await db.prepare("UPDATE lead_work_items SET last_outcome='booking_initiated',initiated_booking_id=?,lifecycle_state=CASE WHEN lifecycle_state IN ('new','contacted') THEN 'qualified' ELSE lifecycle_state END,next_action_at=?,updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state NOT IN ('converted','dropped')").bind(input.bookingId,now,now,leadId).run();await recordMarketingConversionFact(db,{eventType:"lead_qualified",businessReference:leadId,leadId,customerId:input.customerId,occurredAt:now}).catch(()=>{});return{leadId,converted:false,attribution:"lead"};}
 
+/**
+ * A STAFF-ASSISTED ORDER IS THE CONVERSION. [R3-C/F3]
+ *
+ * MEASURED: an operator converts a CRM lead on /assisted-booking, the canonical booking is created and
+ * the customer immediately shows that booking's lifetime value and latest_booking_id - while
+ * lead_work_items still reads status 'active' with converted_booking_id NULL and crm_contacts.stage is
+ * still "New lead". The lead card renders ACTIVE, so the sales team keeps chasing a customer who has
+ * already booked.
+ *
+ * WHY attributeBookingToOpenLead DID NOT CLOSE IT, twice over. It converts only when a payment is
+ * CAPTURED, and an assisted order is deliberately pay-after-service with no capture; and it matches a
+ * lead only when the lead's own `service` normalizes to the booked service, while a lead created
+ * through /api/crm carries whatever the rep typed ("Discover requirement"). Both are right for a
+ * customer-initiated booking, where the platform is INFERRING which lead a booking belongs to.
+ *
+ * Here nothing is inferred. A staff member selected this customer, captured consent evidence against
+ * their name and created the order: the commitment is the order, not a later capture, and the customer
+ * is stated rather than guessed. So this closes the customer's open lead - preferring one whose service
+ * matches, falling back to their most recent open lead - and records the booking against it.
+ *
+ * Guarded by the same WHERE clause as its payment sibling, so a replay, a concurrent capture or an
+ * already-dropped lead changes nothing and says so instead of reporting a close that did not happen.
+ */
+export async function convertLeadOnAssistedOrder(db:Db,input:{customerId:string;bookingId:string;actorId:string}):Promise<{leadId:string|null;converted:boolean;reason:string}>{
+ await ensureLeadWorkItemsTable(db);
+ const booked=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+ const bookedService=normalizeLeadServiceCode(booked?.service_code);
+ const open=await db.prepare("SELECT id,service FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') AND lifecycle_state NOT IN ('converted','dropped') ORDER BY assigned_at DESC LIMIT 100").bind(input.customerId).all<Row>().catch(()=>({results:[] as Row[]}));
+ const rows=open.results??[];
+ const byService=bookedService?rows.find(row=>normalizeLeadServiceCode(row.service)===bookedService)??null:null;
+ const lead=byService??rows[0]??null;
+ if(!lead)return{leadId:null,converted:false,reason:"no_open_lead_for_this_customer"};
+ const leadId=String(lead.id),now=Date.now();
+ const changed=await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',lifecycle_state='converted',last_outcome='assisted_order_created',next_action_at=NULL,updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state NOT IN ('converted','dropped')").bind(input.bookingId,now,leadId).run();
+ if(Number(changed.meta?.changes||0)!==1)return{leadId,converted:false,reason:"lead_changed_concurrently"};
+ const matchedOn=byService?"customer_and_normalized_service":"staff_assisted_customer_selection";
+ await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"lead",leadId,detail:{matchedOn,channel:"assisted_staff"}});
+ /* recordAttribution is INSERT OR IGNORE and the canonical booking already wrote a row a moment ago -
+  * as "direct_booking" whenever the lead's typed service did not normalize to the booked one. Leaving
+  * that behind would report this conversion as an unattributed walk-in in every funnel that reads the
+  * table, so the existing row is corrected rather than duplicated. */
+ await db.prepare("UPDATE booking_attribution SET attribution_type='lead',lead_id=?,source='lead_work_item',detail_json=? WHERE booking_id=?").bind(leadId,JSON.stringify({matchedOn,channel:"assisted_staff"}),input.bookingId).run().catch(()=>{});
+ // The board reads crm_contacts.stage, not lead_work_items, so a lead closed only in one of the two
+ // still renders as an open lead on /crm.
+ await db.prepare("UPDATE crm_contacts SET stage='Active customer',next_action=?,updated_at=? WHERE id=? AND stage NOT IN ('Active customer','Merged')").bind(`Booked ${input.bookingId} - confirm the service window`,now,input.customerId).run().catch(()=>{});
+ const commercial=await commercials(db,input.bookingId);
+ await recordMarketingConversionFact(db,{eventType:"booking_created",businessReference:input.bookingId,leadId,customerId:input.customerId,bookingId:input.bookingId,valueMinor:commercial.valueMinor,currency:commercial.currency,occurredAt:now}).catch(()=>{});
+ await attributeConvertedLeadBookingToOwner(db,{leadId,bookingId:input.bookingId,actorId:input.actorId}).catch(()=>null);
+ return{leadId,converted:true,reason:matchedOn};
+}
+
 export async function convertLeadOnPaymentCaptured(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string}|null>{await ensureLeadWorkItemsTable(db);const openLead=await db.prepare("SELECT id FROM lead_work_items WHERE customer_id=? AND initiated_booking_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') AND lifecycle_state NOT IN ('converted','dropped') ORDER BY assigned_at DESC LIMIT 1").bind(input.customerId,input.bookingId).first<Row>().catch(()=>null);if(!openLead){const booked=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:normalizeLeadServiceCode(booked?.service_code),type:"direct_booking",detail:{reason:"no_lead_linked_at_booking_creation"}});return null;}const leadId=String(openLead.id),now=Date.now(),changed=await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',lifecycle_state='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL AND lifecycle_state NOT IN ('converted','dropped')").bind(input.bookingId,now,leadId).run();if(Number(changed.meta?.changes||0)!==1)return null;const payment=await latestPayment(db,input.bookingId,true),commercial=await commercials(db,input.bookingId);await recordMarketingConversionFact(db,{eventType:"payment_captured",businessReference:String(payment?.id||input.bookingId),leadId,customerId:input.customerId,bookingId:input.bookingId,paymentId:String(payment?.id||""),valueMinor:payment?Math.max(0,Math.round(Number(payment.amount||0)*100)):commercial.valueMinor,currency:String(payment?.currency||commercial.currency),occurredAt:now}).catch(()=>{});await creditSalesOwner(db,leadId,input.bookingId);return{leadId};}

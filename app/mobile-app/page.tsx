@@ -54,7 +54,17 @@ export default function MobileApp(){
   * the customer on discovery home. Mirrors the ?service= handler above: the parameter only ever
   * selects an existing tab, never creates one. */
  useEffect(()=>{if(!requestedTab)return;const next=(["home","book","activity","pets","account"] as const).find(item=>item===requestedTab);if(next)setTab(next);},[requestedTab]);
- useEffect(()=>{if(!requestedService)return;const next=services.find(item=>item.serviceCode===requestedService);if(next&&requestedService!==service.serviceCode){setService(next);setTab("book");}},[requestedService,service.serviceCode]);
+ /* A deep link selects the service AND the Book tab, once per parameter value. [R3-A4]
+  *
+  * MEASURED: ?service=grooming alone did nothing and left the customer on discovery Home, while the
+  * other seven codes worked. Grooming is services[0], so `requestedService!==service.serviceCode`
+  * was already false on the first pass and the tab was never switched - the flagship service was the
+  * one whose deep links were dead. That same guard also re-ran on every `service.serviceCode` change,
+  * so a customer who arrived on ?service=boarding and then tapped Fresh Food was dragged back to
+  * Boarding. Depending on the PARAMETER only fixes both: it applies when the link is opened and never
+  * again, whatever the customer does next.
+  */
+ useEffect(()=>{if(!requestedService)return;const next=services.find(item=>item.serviceCode===requestedService);if(next){setService(next);setTab("book");}},[requestedService]);
  useEffect(()=>{let active=true;fetch("/api/service-availability",{cache:"no-store"}).then(r=>r.ok?r.json():Promise.reject()).then((body:{data?:Array<{code:string;enabled:boolean}>})=>{if(!active||!body.data)return;setDisabledServices(new Set(body.data.filter(s=>!s.enabled).map(s=>s.code)));}).catch(()=>{});return()=>{active=false};},[]);
  useEffect(()=>{let savedTheme:string|null=null,savedAppearance:string|null=null;try{savedTheme=window.localStorage.getItem(THEME_STORAGE_KEY);savedAppearance=window.localStorage.getItem(APPEARANCE_STORAGE_KEY);}catch{/* defaults */}const media=window.matchMedia("(prefers-color-scheme: dark)");if(isThemeId(savedTheme))setTheme(savedTheme);if(isAppearanceMode(savedAppearance))setAppearance(savedAppearance);const sync=()=>setSystemDark(media.matches);sync();media.addEventListener?.("change",sync);return()=>media.removeEventListener?.("change",sync);},[]);
  const resolvedAppearance=appearance==="system"?(systemDark?"dark":"light"):appearance;

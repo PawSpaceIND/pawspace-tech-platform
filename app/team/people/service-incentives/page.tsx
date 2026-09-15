@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+// R3-G / F4: this "back to the hub" cue was unconditional while /team/people needs people.view, so a
+// child screen offered a door its own hub refuses. Same gate as every other link on the platform.
+import{StaffGatedLink}from"../../../components/hub-workspace-links";
 
 type Kind = "groomer" | "trainer" | "sales";
 
@@ -185,7 +187,7 @@ export default function ServiceIncentivesPage() {
           Real, governed calculation - matches the published rate sheets exactly, sourced from real completed bookings.
           Every input here is an explicit record with a real reason, never invented. Each card below carries its own
           employee and its own dates: nothing is ever saved against a person you did not name on that card.
-          <Link href="/team/people">Back to People</Link>
+          <StaffGatedLink href="/team/people" permission="people.view">Back to People</StaffGatedLink>
         </p>
       </header>
 

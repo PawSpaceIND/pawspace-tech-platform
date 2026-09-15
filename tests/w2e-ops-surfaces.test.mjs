@@ -246,8 +246,11 @@ test("W2E-3: EXECUTED - the footer names every detector that runs, and does not 
   assert.doesNotMatch(text, /cron wiring pending/i,
     "worker/index.ts scheduled() runs runBackgroundScheduler, which sweeps this queue, on the cron in wrangler.toml");
   assert.doesNotMatch(text, /backgroundSchedulerConfigured:false/);
-  assert.match(text, /Swept automatically by worker\.scheduled on \*\/5 \* \* \* \*/,
-    "say which runner sweeps it and how often, so the claim can be checked against wrangler.toml");
+  assert.match(text, /worker\.scheduled/,
+    "name the runner, so the claim can be checked against wrangler.toml");
+  assert.doesNotMatch(text, /Swept automatically by worker\.scheduled on \*\/5 \* \* \* \*/,
+    "an unconditional 'it is swept automatically' is a compile-time claim, and it was wrong here: " +
+    "the footer must report whether a run has ACTUALLY been recorded (R3-F F-P2b)");
 });
 
 // =================================================================================================

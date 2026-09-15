@@ -5,7 +5,9 @@ import{backgroundSchedulerStatus}from"../../../lib/background-scheduler";
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
-export async function GET(request:Request){try{await authorize(request,"reports.view");const db=await database(),directory=await staffAlertDirectory(db),scheduler=await backgroundSchedulerStatus(db);return json({directory:{...directory,truth:{...directory.truth,automaticMode:"scheduled_worker",runnerBoundary:"worker.scheduled + manual staff-alert sweep",backgroundSchedulerConfigured:true,schedulerProductionReady:true,productionReady:false}},scheduler,schedulerProductionReady:true,productionReady:false,externalDelivery:false});}catch(error){return authError(error,"Unable to load staff alerts");}}
+export async function GET(request:Request){try{await authorize(request,"reports.view");const db=await database(),directory=await staffAlertDirectory(db),scheduler=await backgroundSchedulerStatus(db);// backgroundSchedulerConfigured was the literal `true` here while /team/alerts printed "not
+ // configured yet" underneath it. Both are now the same measured observation.
+ return json({directory:{...directory,truth:{...directory.truth,automaticMode:scheduler.running?"scheduled_worker":"manual_sweep_only",runnerBoundary:"worker.scheduled + manual staff-alert sweep",backgroundSchedulerConfigured:scheduler.configured,backgroundSchedulerSummary:scheduler.summary,backgroundSchedulerLastRunAt:scheduler.lastRunAt,schedulerProductionReady:false,productionReady:false}},scheduler,schedulerProductionReady:false,productionReady:false,externalDelivery:false});}catch(error){return authError(error,"Unable to load staff alerts");}}
 
 // The door only establishes identity. Authority over an individual alert belongs to the team that
 // owns it and is decided per alert in lib/staff-alert-authority.ts - gating the whole endpoint on
