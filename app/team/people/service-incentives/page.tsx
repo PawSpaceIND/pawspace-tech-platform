@@ -29,6 +29,7 @@ const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0
 const btnOff: React.CSSProperties = { opacity: 0.45, cursor: "not-allowed" };
 const hint: React.CSSProperties = { margin: "8px 0 0", fontSize: 12, color: "#8a2d2d" };
 const row: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 };
+const rankCell: React.CSSProperties = { border: "1px solid #e3dbea", padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" };
 
 function Field({ text, onChange, placeholder, name }: { text: string; onChange: (v: string) => void; placeholder: string; name?: string }) {
   return <input style={input} name={name} value={text} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
@@ -78,6 +79,30 @@ export const specialBody = (f: SpecialForm) => ({ headGroomerId: f.headGroomerId
 
 export type ReviewForm = { headGroomerId: string; monthStart: string };
 export const reviewBody = (f: ReviewForm) => ({ headGroomerId: f.headGroomerId.trim(), monthStart: f.monthStart.trim() });
+
+/**
+ * `rank_groomers`, which no screen posted.
+ *
+ * app/api/service-incentives/route.ts has always accepted it and no .tsx in the product sent it, so
+ * the month's ranking - and with it the winner bonus each bracket pays at rank 1, 2 and 3 - could
+ * only be obtained with curl. It is a HUMAN control rather than a scheduled job:
+ * lib/grooming-incentive-engine.ts rankGroomersForMonth() WRITES NOTHING (it computes each groomer's
+ * achievement against their published target and sorts), worker/index.ts's `scheduled()` handler
+ * never calls it, and the set of people being compared is a manager's choice - which salon, which
+ * month, which groomers - not something a cron could know.
+ *
+ * The ids are entered as a list, and BLANK ENTRIES ARE DROPPED HERE, because one blank id in the
+ * list is exactly what the route refuses with "Head groomer is required": it ranks nobody against
+ * everybody else. Dropping them means the operator's trailing comma is not a refusal; the route's
+ * guard still stands behind it.
+ */
+export type RankForm = { monthStart: string; headGroomerIds: string };
+export const rankIds = (value: string) => String(value ?? "").split(/[\n,]/).map((id) => id.trim()).filter(Boolean);
+export const rankBody = (f: RankForm) => ({ monthStart: f.monthStart.trim(), headGroomerIds: rankIds(f.headGroomerIds) });
+/** A ranking needs a month and at least one identified head groomer; the engine needs both too. */
+export function missingRanking(f: RankForm): string[] {
+  return [...missingFields({ Month: f.monthStart }), ...(rankIds(f.headGroomerIds).length ? [] : ["at least one head groomer ID"])];
+}
 
 /**
  * A submit control that cannot be fired twice and cannot fire at all while its own card is
@@ -132,6 +157,9 @@ export default function ServiceIncentivesPage() {
   const [gSpecialHead, setGSpecialHead] = useState(""), [gSpecialMonth, setGSpecialMonth] = useState("2026-08-01"), [gSpecialAmount, setGSpecialAmount] = useState(""), [gSpecialReason, setGSpecialReason] = useState("");
   // Groomer — incentive review card
   const [gReviewHead, setGReviewHead] = useState(""), [gReviewMonth, setGReviewMonth] = useState("2026-08-01");
+  // Ranking card — its own month and its own list of people, like every other card on this screen.
+  const [gRankMonth, setGRankMonth] = useState("2026-08-01"), [gRankIds, setGRankIds] = useState("");
+  const [gRanking, setGRanking] = useState<{ headGroomerId: string; bracket: string; monthTotal: number; targetAmount: number | null; achievementPercent: number; rank: number; winnerHeadBonus: number; winnerHelperBonus: number }[] | null>(null);
 
   // Trainer form state
   const [tTrainer, setTTrainer] = useState(""), [tMeet, setTMeet] = useState(""), [tConverted, setTConverted] = useState("");
@@ -271,6 +299,39 @@ export default function ServiceIncentivesPage() {
                 missing={missingFields({ "Head Groomer ID": gReviewHead, "Month": gReviewMonth })}
                 onRun={() => runAction("finalize_groomer_incentive", reviewBody({ headGroomerId: gReviewHead, monthStart: gReviewMonth }), "Reviewed incentive finalized")}>Finalize reviewed incentive</ActionButton>
             </div>
+          </section>
+
+          <section style={card}>
+            <h2 style={{ marginTop: 0, fontSize: 16 }}>Rank head groomers for the month</h2>
+            <p style={{ color: "#6e6576", fontSize: 13 }}>Ranks the head groomers you name by achievement against their own published targets, and shows the winner bonus their bracket pays at that rank. This reads only - it writes no row, pays nothing and does not finalize anybody&apos;s incentive. Only groomers with a published target are ranked.</p>
+            <div style={row}>
+              <div><span style={label}>Month</span><Field name="rank-month" text={gRankMonth} onChange={setGRankMonth} placeholder="2026-08-01" /></div>
+            </div>
+            <span style={label}>Head Groomer IDs (one per line, or comma separated)</span>
+            <textarea name="rank-ids" value={gRankIds} onChange={(e) => setGRankIds(e.target.value)} placeholder={"head groomer employee ID\nhead groomer employee ID"}
+              style={{ width: "100%", minHeight: 70, padding: 8, fontFamily: "monospace", boxSizing: "border-box" }} />
+            <ActionButton action="rank_groomers" busy={busy} busyLabel="Ranking…"
+              missing={missingRanking({ monthStart: gRankMonth, headGroomerIds: gRankIds })}
+              onRun={() => run("rank_groomers", () => callApi("rank_groomers", rankBody({ monthStart: gRankMonth, headGroomerIds: gRankIds }))
+                .then((r) => { const ranking = (r as { ranking?: typeof gRanking }).ranking ?? []; setGRanking(ranking); flash(ranking.length ? `Ranked ${ranking.length} head groomer(s)` : "No ranked head groomers: a published monthly target is required to be ranked"); }))}>Rank the month</ActionButton>
+            {gRanking && gRanking.length > 0 && (
+              <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                  <thead><tr><th style={rankCell}>Rank</th><th style={rankCell}>Head groomer</th><th style={rankCell}>Bracket</th><th style={rankCell}>Month total</th><th style={rankCell}>Target</th><th style={rankCell}>Achievement</th><th style={rankCell}>Winner bonus (head / helper)</th></tr></thead>
+                  <tbody>{gRanking.map((rowData) => (
+                    <tr key={rowData.headGroomerId}>
+                      <td style={rankCell}>{rowData.rank}</td>
+                      <td style={rankCell}>{rowData.headGroomerId}</td>
+                      <td style={rankCell}>{rowData.bracket}</td>
+                      <td style={rankCell}>₹{Number(rowData.monthTotal || 0).toLocaleString("en-IN")}</td>
+                      <td style={rankCell}>₹{Number(rowData.targetAmount || 0).toLocaleString("en-IN")}</td>
+                      <td style={rankCell}>{rowData.achievementPercent}%</td>
+                      <td style={rankCell}>₹{Number(rowData.winnerHeadBonus || 0).toLocaleString("en-IN")} / ₹{Number(rowData.winnerHelperBonus || 0).toLocaleString("en-IN")}</td>
+                    </tr>))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}

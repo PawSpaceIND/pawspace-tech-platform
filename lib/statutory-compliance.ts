@@ -2,6 +2,12 @@
 // Deadlines encoded per current Indian law for a Karnataka-registered private limited company:
 //   GSTR-1   : 11th of the following month (monthly filer)
 //   GSTR-3B  : 20th of the following month (monthly filer)
+//   GSTR-8   : 10th of the following month - the s52 TCS statement every e-commerce operator files,
+//              and the same date by which the collected TCS must be deposited (CGST s52(3)/(4)).
+//              PawSpace collects the consideration for marketplace provider supplies, so this is a
+//              MONTHLY return with a hard due date, not an optional register. lib/tcs-governance.ts
+//              computes it and /team/finance-compliance prepares and deposits it; without a calendar
+//              row it had no due-date tracking, no reminder sweep and no recordable acknowledgement.
 //   GSTR-9   : 31 December following the financial year (annual)
 //   TDS deposit: 7th of the following month; EXCEPTION - March TDS deposits by 30 April
 //   TDS returns: 24Q (salary) & 26Q (non-salary), quarterly - 31 Jul / 31 Oct / 31 Jan / 31 May
@@ -29,7 +35,7 @@ import{governedJsonError}from"./governed-http-error";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-export type ObligationCode="gstr1"|"gstr3b"|"gstr9"|"tds_deposit"|"tds_return_24q"|"tds_return_26q"|"epf"|"esi"|"professional_tax"|"advance_tax"|"roc_aoc4"|"roc_mgt7"|"board_approval";
+export type ObligationCode="gstr1"|"gstr3b"|"gstr8"|"gstr9"|"tds_deposit"|"tds_return_24q"|"tds_return_26q"|"epf"|"esi"|"professional_tax"|"advance_tax"|"roc_aoc4"|"roc_mgt7"|"board_approval";
 export type ObligationStatus="upcoming"|"due_soon"|"overdue"|"filed";
 export type StatutoryObligation={code:ObligationCode;label:string;authority:string;period:string;dueDate:string;kind:"monthly"|"quarterly"|"annual";notes:string};
 
@@ -53,6 +59,7 @@ export function statutoryObligationsFor(period:string):StatutoryObligation[]{
   {code:"board_approval",label:`Board approval of ${period} management accounts`,authority:"Board of Directors",period,dueDate:`${next.year}-${pad(next.month)}-05`,kind:"monthly",notes:"Founder policy: monthly board approval so every filing rides on approved numbers (Companies Act s173 minimum is quarterly)"},
   {code:"gstr1",label:`GSTR-1 for ${period}`,authority:"GST",period,dueDate:`${next.year}-${pad(next.month)}-11`,kind:"monthly",notes:"Outward supplies statement"},
   {code:"gstr3b",label:`GSTR-3B for ${period}`,authority:"GST",period,dueDate:`${next.year}-${pad(next.month)}-20`,kind:"monthly",notes:"Summary return + tax payment"},
+  {code:"gstr8",label:`GSTR-8 (s52 TCS) for ${period}`,authority:"GST",period,dueDate:`${next.year}-${pad(next.month)}-10`,kind:"monthly",notes:"E-commerce operator TCS statement; the collected s52 TCS is also due by the 10th (challan)"},
   {code:"tds_deposit",label:`TDS deposit for ${period}`,authority:"Income Tax",period,dueDate:month===3?`${year}-04-30`:`${next.year}-${pad(next.month)}-07`,kind:"monthly",notes:month===3?"March exception: deposit by 30 April":"Challan ITNS-281 by the 7th"},
   {code:"epf",label:`EPF remittance for ${period}`,authority:"EPFO",period,dueDate:`${next.year}-${pad(next.month)}-15`,kind:"monthly",notes:"Employee + employer PF contribution"},
   {code:"esi",label:`ESI remittance for ${period}`,authority:"ESIC",period,dueDate:`${next.year}-${pad(next.month)}-15`,kind:"monthly",notes:"Applicable while any employee is within the ESI wage ceiling"},

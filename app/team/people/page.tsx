@@ -3,6 +3,7 @@ import{useCallback,useEffect,useMemo,useState}from"react";
 import Link from"next/link";
 import{Badge,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
+import StaffHubWorkspaceLinks,{type HubWorkspaceLink}from"../../components/hub-workspace-links";
 import styles from"../team-console.module.css";
 
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
@@ -18,6 +19,16 @@ const WORKSPACES=[
  ["/team/people/reports","People reports"],
  ["/team/performance","Employee performance"],
 ] as const;
+
+/**
+ * The provider (not employee) training library sat under /team/people with nothing linking to it.
+ * It is gated on bookings.view rather than people.view because that is what /api/provider-lms
+ * demands to read a module; authoring one additionally needs settings.manage, which the screen
+ * enforces itself.
+ */
+export const peopleWorkspaceLinks:HubWorkspaceLink[]=[
+ {href:"/team/people/provider-training",label:"Provider training & SOP library",detail:"Service-provider training modules, quizzes and completion records - the partner LMS, not employee HR.",permission:"bookings.view"},
+];
 
 // A field the HR record has never been given reads as "not set" rather than as a demand on the reader.
 const value=(input:unknown)=>{const text=String(input??"").trim();return text?{text,set:true}:{text:"not set",set:false};};
@@ -67,6 +78,8 @@ export default function PeoplePage(){
    <div className={styles.panelHead}><h2>People workspaces</h2></div>
    <nav className={styles.nav} aria-label="People workspaces">{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav>
   </section>
+
+  <StaffHubWorkspaceLinks heading="Provider-side people workspaces" note="Only the workspaces your role can open are listed." links={peopleWorkspaceLinks} />
 
   <section className={styles.panel}>
    <label className={styles.field}>Find someone<input value={query} onChange={event=>setQuery(event.target.value)} placeholder="name, code, email, team or role" /></label>

@@ -29,7 +29,6 @@
   "app/api/taxi-bookings/route.ts",
   "app/api/taxi-finance/route.ts",
   "app/api/taxi-ride-bookings/route.ts",
-  "app/api/training-ops/route.ts",
   "app/api/training-programmes/route.ts",
   "app/api/training-reconciliation/route.ts",
   "app/api/trust-safety/route.ts",

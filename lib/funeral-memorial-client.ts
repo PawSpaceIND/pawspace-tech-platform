@@ -13,6 +13,11 @@ async function envelope<T>(response:Response,fallback:string){const body=await r
 
 export async function loadMyFuneralRequests(customerId:string){return envelope<FuneralCase[]>(await fetch(`/api/funeral-memorial?scope=customer&customerId=${encodeURIComponent(customerId)}`),"Unable to load funeral or memorial requests");}
 export async function loadFuneralStaff(){return envelope<FuneralCase[]>(await fetch("/api/funeral-memorial"),"Unable to load funeral or memorial queue");}
+/* The finance read: commercial fields only, at finance.view. The unscoped staff read above requires
+ * customers.view because the record carries the pickup address and alternate contact, and the
+ * `finance` role holds neither that nor bookings.view - so /team/finance/funeral-memorial was refused
+ * to the only role that can set an amount, record a payment or resolve a refund on these cases. */
+export async function loadFuneralFinanceQueue(){return envelope<FuneralCase[]>(await fetch("/api/funeral-memorial?scope=finance",{cache:"no-store"}),"Unable to load funeral or memorial finance queue");}
 export async function loadFuneralCase(caseId:string,scope:"customer"|"staff"="staff"){return envelope<FuneralCase>(await fetch(`/api/funeral-memorial?caseId=${encodeURIComponent(caseId)}${scope==="customer"?"&scope=customer":""}`),"Unable to load funeral or memorial request");}
 export async function loadFuneralConfig(){return envelope<FuneralServiceConfig[]>(await fetch("/api/funeral-memorial?config=1"),"Unable to load funeral service configuration");}
 export async function loadFuneralReport(){return envelope<FuneralReport>(await fetch("/api/funeral-memorial?report=summary"),"Unable to load funeral fulfillment report");}

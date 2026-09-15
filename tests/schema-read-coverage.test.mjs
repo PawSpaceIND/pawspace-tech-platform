@@ -126,7 +126,7 @@ test("SCHEMA-READ-4: the shared booking DDL has not drifted from the writer's co
   const shared = readFileSync(path.join(ROOT, "lib/canonical-booking-core-schema.ts"), "utf8");
   const writer = readFileSync(path.join(ROOT, "app/api/canonical-bookings/route.ts"), "utf8");
   const statements = [...shared.matchAll(/"(CREATE TABLE IF NOT EXISTS [^"]+)"/g)].map((m) => m[1]);
-  assert.equal(statements.length, 3, "expected the three canonical booking core tables");
+  assert.equal(statements.length, 4, "expected the three canonical booking core tables plus canonical_customers");
   for (const statement of statements) {
     assert.ok(writer.includes(statement),
       `this statement no longer matches app/api/canonical-bookings/route.ts byte for byte:\n  ${statement.slice(0, 120)}...`);

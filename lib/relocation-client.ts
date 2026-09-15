@@ -3,4 +3,8 @@ async function payload<T>(response:Response){const body=await response.json() as
 export async function createRelocationCase(input:Record<string,unknown>){return payload<RelocationCase>(await fetch("/api/relocation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"create",...input})}));}
 export async function loadRelocationCase(caseId:string){return payload<RelocationCase>(await fetch(`/api/relocation?scope=customer&caseId=${encodeURIComponent(caseId)}`,{cache:"no-store"}));}
 export async function loadRelocationQueue(){return payload<Array<Record<string,unknown>>>(await fetch("/api/relocation",{cache:"no-store"}));}
+/* The finance read: commercial fields only, at finance.view. The unscoped read above is a staff
+ * booking/customer read the `finance` role does not hold, which is why /team/finance/relocation could
+ * not open a case at all. See app/api/relocation/route.ts for the field allow-list. */
+export async function loadRelocationFinanceCase(caseId:string){return payload<RelocationCase>(await fetch(`/api/relocation?scope=finance&caseId=${encodeURIComponent(caseId)}`,{cache:"no-store"}));}
 export async function updateRelocationCase(input:Record<string,unknown>){return payload<RelocationCase>(await fetch("/api/relocation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}));}

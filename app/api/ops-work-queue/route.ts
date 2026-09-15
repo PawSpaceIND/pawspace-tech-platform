@@ -1,9 +1,9 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEvents,type WorkQueueAction}from"../../../lib/ops-work-queue";
+import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEvents,WORK_QUEUE_DETECTORS,WORK_QUEUE_SCHEDULER,type WorkQueueAction}from"../../../lib/ops-work-queue";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function workQueueExists(db:Awaited<ReturnType<typeof database>>){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ops_work_queue_tasks'").first<Record<string,unknown>>());}
-function emptyWorkQueueSnapshot(){return{generatedAt:Date.now(),metrics:{total:0,open:0,escalated:0,critical:0,resolvedToday:0},queues:{},commandCentre:{available:false},truth:{source:"canonical tables only",detectors:["provider_unassigned","refund_requested","payment_exception","low_rating_callback","relocation_enquiry","food_renewal_payment_overdue","lead_response_overdue"],backgroundSchedulerConfigured:false,productionReady:false}};}
+function emptyWorkQueueSnapshot(){return{generatedAt:Date.now(),metrics:{total:0,open:0,escalated:0,critical:0,resolvedToday:0},queues:{},commandCentre:{available:false},truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER,productionReady:false}};}
 
 export async function GET(request:Request){try{
  const db=await database(),url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();

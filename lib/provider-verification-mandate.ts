@@ -10,6 +10,7 @@
  */
 
 import { idfyConfigured, verifyWithIdfy } from "./idfy-verification-client";
+import { GOVERNED_CLIENT_ERROR } from "./governed-http-error";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;
@@ -47,6 +48,15 @@ export const VERIFICATION_TYPES: VerificationType[] = [
   { code: "vci_registration", label: "Veterinary Council registration", automatable: true },
 ];
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
+/*
+ * A business rule is not a server fault. [W2-F]
+ *
+ * /api/provider-verification catches through authError(), which trusts a governed Response or the
+ * GOVERNED_CLIENT_ERROR brand and nothing else - so "This is an automatable check - run it through
+ * IDfy" reached the operator as HTTP 500 "Unable to update verification", with the one sentence that
+ * told them what to press instead thrown away. Same brand lib/payroll-engine.ts already uses.
+ */
+function refuse(message: string, status: number): never { throw Object.assign(new Error(message), { statusCode: status, [GOVERNED_CLIENT_ERROR]: true }); }
 /*
  * dog_walker and pet_taxi_driver were missing, and setCategoryMandate refused every category outside the
  * four above - so there was no way to require Aadhaar of a dog walker at all, let alone a police check
@@ -294,14 +304,14 @@ export async function syncProviderPoolEligibility(db: Db, applicationId: string)
 export async function runProviderVerification(db: Db, env: Env, input: { applicationId: string; category: string; verificationType: string; payload?: Record<string, unknown>; actorId: string }) {
   await ensureVerificationMandateTables(db);
   const type = typeByCode(text(input.verificationType));
-  if (!type) throw new Error("Unknown verification type");
+  if (!type) refuse("Unknown verification type", 400);
   const applicationId = text(input.applicationId), category = text(input.category), now = Date.now();
-  if (!applicationId) throw new Error("applicationId is required");
+  if (!applicationId) refuse("An onboarding application ID is required", 400);
   const application = type.code === "vci_registration" ? await db.prepare("SELECT provider_id,vertical_key,vci_registration_number FROM provider_onboarding_applications WHERE id=?").bind(applicationId).first<Row>() : null;
   const vciNumber = type.code === "vci_registration" ? text(input.payload?.vci_registration_number) : "";
   if (type.code === "vci_registration") {
-    if (!application || verificationCategoryForVertical(text(application.vertical_key)) !== "veterinarian") throw new Error("VCI verification is only valid for Vet onboarding applications");
-    if (!vciNumber || vciNumber !== text(application.vci_registration_number)) throw new Error("VCI registration number must match the Vet onboarding application");
+    if (!application || verificationCategoryForVertical(text(application.vertical_key)) !== "veterinarian") refuse("VCI verification is only valid for Vet onboarding applications", 409);
+    if (!vciNumber || vciNumber !== text(application.vci_registration_number)) refuse("VCI registration number must match the Vet onboarding application", 409);
   }
   let status = "pending", automated = 0, providerRef: string | null = null, detail: Record<string, unknown> = {};
   if (type.automatable) {
@@ -342,8 +352,8 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
 export async function recordManualVerification(db: Db, input: { applicationId: string; verificationType: string; status: "verified" | "failed" | "manual_review"; note?: string; actorId: string }) {
   await ensureVerificationMandateTables(db);
   const type = typeByCode(text(input.verificationType));
-  if (!type) throw new Error("Unknown verification type");
-  if (type.automatable) throw new Error("This is an automatable check - run it through IDfy, don't record it manually");
+  if (!type) refuse("Unknown verification type", 400);
+  if (type.automatable) refuse("This is an automatable check - run it through IDfy, don't record it manually", 409);
   const now = Date.now();
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,verified_at,updated_by,created_at,updated_at) VALUES (?,?, '',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,detail_json=excluded.detail_json,verified_at=excluded.verified_at,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(uid("PVER"), text(input.applicationId), type.code, input.status, JSON.stringify({ manual: true, note: text(input.note) || null }), input.status === "verified" ? now : null, input.actorId, now, now).run();

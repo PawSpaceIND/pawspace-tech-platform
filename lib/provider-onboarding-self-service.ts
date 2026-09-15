@@ -1,11 +1,22 @@
 import{ensureProviderOnboardingTransactional,createProviderApplication,addProviderDocument,transitionProviderApplication,scoreQuiz}from"./provider-onboarding-transactional";
 import{ensureProviderOnboardingHumanActivation,acceptProviderSla,saveProviderProfile,addProviderProfileMedia,updateActivatedProviderProfile}from"./provider-onboarding-human-activation";
+import{GOVERNED_CLIENT_ERROR}from"./governed-http-error";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const parse=<T>(v:unknown,f:T):T=>{try{return JSON.parse(String(v??"")) as T}catch{return f}};
 
-export async function ensureProviderOwnsOnboardingApplication(db:D1Database,providerId:string,applicationId:string){await ensureProviderOnboardingTransactional(db);const row=await db.prepare("SELECT id,provider_id,quiz_version_ref FROM provider_onboarding_applications WHERE id=?").bind(applicationId).first<Row>();if(!row)throw new Error("Application not found");if(text(row.provider_id)!==text(providerId))throw new Response("Provider onboarding ownership denied",{status:403});return row;}
+/*
+ * A business rule is not a server fault. [W2-F] The applicant's own state - an application that is
+ * not theirs, a quiz version that is not the one frozen onto it - reached /partner/onboarding as an
+ * HTTP 500 because the route's failure() handler only knew how to keep the status of a thrown
+ * Response. The GOVERNED_CLIENT_ERROR brand carries the status AND the message, and unlike a bare
+ * Response it still satisfies assert.rejects(fn,/message/).
+ */
+function refuse(message:string,status:number):never{throw Object.assign(new Error(message),{statusCode:status,[GOVERNED_CLIENT_ERROR]:true});}
+
+
+export async function ensureProviderOwnsOnboardingApplication(db:D1Database,providerId:string,applicationId:string){await ensureProviderOnboardingTransactional(db);const row=await db.prepare("SELECT id,provider_id,quiz_version_ref FROM provider_onboarding_applications WHERE id=?").bind(applicationId).first<Row>();if(!row)refuse("Application not found",404);if(text(row.provider_id)!==text(providerId))refuse("Provider onboarding ownership denied",403);return row;}
 
 export async function createOwnedProviderApplication(db:D1Database,input:{providerId:string;actorId:string;payload:Record<string,unknown>}){const payload={...input.payload,providerId:input.providerId};return createProviderApplication(db,{actorEmail:input.actorId,payload});}
 
@@ -13,9 +24,9 @@ export async function addOwnedProviderDocument(db:D1Database,input:{providerId:s
 
 export async function submitOwnedProviderApplication(db:D1Database,input:{providerId:string;actorId:string;applicationId:string}){await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId);return transitionProviderApplication(db,{applicationId:input.applicationId,action:"submit",actorEmail:input.actorId});}
 
-export async function scoreOwnedProviderQuiz(db:D1Database,input:{providerId:string;applicationId:string;quizVersionId:string;answers:Record<string,string>}){const owned=await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId),frozenQuiz=text(owned.quiz_version_ref);if(!frozenQuiz||frozenQuiz!==text(input.quizVersionId))throw new Response("Quiz version does not match the application qualification policy",{status:409});return scoreQuiz(db,{applicationId:input.applicationId,quizVersionId:frozenQuiz,answers:input.answers});}
+export async function scoreOwnedProviderQuiz(db:D1Database,input:{providerId:string;applicationId:string;quizVersionId:string;answers:Record<string,string>}){const owned=await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId),frozenQuiz=text(owned.quiz_version_ref);if(!frozenQuiz||frozenQuiz!==text(input.quizVersionId))refuse(frozenQuiz?"Quiz version does not match the application qualification policy":"No approved qualification is attached to this application yet. Our team publishes one for your service and city before you can take it.",409);return scoreQuiz(db,{applicationId:input.applicationId,quizVersionId:frozenQuiz,answers:input.answers});}
 
-export async function acceptOwnedProviderSla(db:D1Database,input:{providerId:string;actorId:string;applicationId:string;agreementId:string}){await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId);const agreement=await db.prepare("SELECT application_id FROM provider_onboarding_agreements WHERE id=?").bind(input.agreementId).first<Row>();if(!agreement||text(agreement.application_id)!==input.applicationId)throw new Response("Provider agreement ownership denied",{status:403});return acceptProviderSla(db,{agreementId:input.agreementId,acceptedBy:input.providerId,actorEmail:input.actorId});}
+export async function acceptOwnedProviderSla(db:D1Database,input:{providerId:string;actorId:string;applicationId:string;agreementId:string}){await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId);const agreement=await db.prepare("SELECT application_id FROM provider_onboarding_agreements WHERE id=?").bind(input.agreementId).first<Row>();if(!agreement||text(agreement.application_id)!==input.applicationId)refuse("Provider agreement ownership denied",403);return acceptProviderSla(db,{agreementId:input.agreementId,acceptedBy:input.providerId,actorEmail:input.actorId});}
 
 export async function saveOwnedProviderProfile(db:D1Database,input:{providerId:string;actorId:string;applicationId:string;payload:Record<string,unknown>}){await ensureProviderOwnsOnboardingApplication(db,input.providerId,input.applicationId);return saveProviderProfile(db,{applicationId:input.applicationId,payload:input.payload,actorEmail:input.actorId});}
 

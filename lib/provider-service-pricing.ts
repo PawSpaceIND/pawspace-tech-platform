@@ -1,9 +1,19 @@
 import { resolveCommercialTerm } from "./provider-commercial-terms";
+import { GOVERNED_CLIENT_ERROR } from "./governed-http-error";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
+/*
+ * A business rule is not a server fault. [W2-F]
+ *
+ * /api/provider-service-rates catches through authError(), which trusts only a governed Response or
+ * the GOVERNED_CLIENT_ERROR brand - so /partner/rates answered every refusal here with HTTP 500
+ * "Unable to save provider service rate". The partner who typed a price under the floor was told the
+ * platform had broken, and the sentence that names the actual minimum was the one thrown away.
+ */
+function refuse(message:string,status:number):never{throw Object.assign(new Error(message),{statusCode:status,[GOVERNED_CLIENT_ERROR]:true});}
 
 export async function ensureProviderServicePricingTables(db:Db){
   await db.batch([
@@ -30,12 +40,12 @@ export async function resolveProviderServiceRate(db:Db,input:{providerId?:string
 export async function saveProviderServiceRate(db:Db,input:{providerId:string;serviceCode:string;packageCode:string;cityId:string;zoneId:string;rate:number;floorPrice:number;effectiveFrom?:string;actorId:string}){
   await ensureProviderServicePricingTables(db);
   const providerId=text(input.providerId),serviceCode=text(input.serviceCode),packageCode=text(input.packageCode),cityId=text(input.cityId).toLowerCase(),zoneId=text(input.zoneId).toLowerCase();
-  if(!providerId||!serviceCode||!packageCode||!cityId||!zoneId)throw new Error("Provider, service, package, city and zone are required");
-  if(!["boarding","pet_sitting"].includes(serviceCode))throw new Error("Self-pricing is enabled only for Boarding and Pet Sitting");
+  if(!providerId||!serviceCode||!packageCode||!cityId||!zoneId)refuse("Provider, service, package, city and zone are required",400);
+  if(!["boarding","pet_sitting"].includes(serviceCode))refuse("Self-pricing is enabled only for Boarding and Pet Sitting",409);
   const term=await resolveCommercialTerm(db,{serviceCode,providerId});
-  if(!term||text(term.engagement_model)!=="commission_standard")throw new Error("Only an active commission Boarding/Sitting partner can set a service rate");
+  if(!term||text(term.engagement_model)!=="commission_standard")refuse("Only an active commission Boarding/Sitting partner can set a service rate",409);
   const rate=money(input.rate),floor=money(input.floorPrice);
-  if(!(rate>0)||rate<floor)throw new Error(`Provider rate cannot be below the PawSpace minimum of ${floor}`);
+  if(!(rate>0)||rate<floor)refuse(`Provider rate cannot be below the PawSpace minimum of ${floor}`,409);
   const prior=await db.prepare("SELECT COALESCE(MAX(version),0) v FROM provider_service_rates WHERE provider_id=? AND service_code=? AND package_code=? AND city_id=? AND zone_id=?")
     .bind(providerId,serviceCode,packageCode,cityId,zoneId).first<Row>();
   const version=Number(prior?.v||0)+1,now=Date.now(),effectiveFrom=text(input.effectiveFrom)||new Date().toISOString().slice(0,10),id=`PSR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;

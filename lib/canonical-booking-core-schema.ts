@@ -23,6 +23,31 @@ export const CANONICAL_BOOKING_CORE_DDL = [
   "CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)",
 ] as const;
 
+/*
+ * canonical_customers is the fourth table a read-only booking surface reaches for, and it had the
+ * same hole: /api/training-ops joins it (and the three above) while ensuring only the training
+ * tables, so on a cold D1 the Training Ops console answered 500 "no such table: canonical_bookings",
+ * then "no such table: canonical_customers", with all four metric tiles at "-".
+ *
+ * Eleven modules carry their own copy of this CREATE. Ten are byte-identical to the statement below;
+ * three (lib/customer-account.ts, lib/inbound-ai-lead-capture.ts, app/api/admin/data-ingest/route.ts)
+ * differ ONLY in the DEFAULT on `source` ('customer_app' rather than 'uat_customer_app'). Every one
+ * of the ten INSERT sites in the repo names `source` explicitly, so that DEFAULT never fires and the
+ * two spellings are behaviourally identical - but the column set is what matters here, and on that
+ * all eleven agree. This copy tracks app/api/canonical-bookings/route.ts, the same writer the three
+ * statements above track, and tests/schema-read-coverage.test.mjs fails if it drifts.
+ */
+export const CANONICAL_CUSTOMER_DDL = "CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)" as const;
+
+const customerEnsured = new WeakSet<Db>();
+
+/** Create canonical_customers if it is missing. Cheap and idempotent once warm. */
+export async function ensureCanonicalCustomerTable(db: Db): Promise<void> {
+  if (customerEnsured.has(db)) return;
+  await db.prepare(CANONICAL_CUSTOMER_DDL).run();
+  customerEnsured.add(db);
+}
+
 const ensured = new WeakSet<Db>();
 
 /** Create the canonical booking core tables if they are missing. Cheap and idempotent once warm. */

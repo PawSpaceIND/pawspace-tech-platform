@@ -4,6 +4,23 @@ import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
 
 type Row=Record<string,unknown>;
+export type Readiness={providerId:string;services:string[];servicesResolved:boolean;modules:Array<{moduleId:string;title:string;serviceCode:string;version:number;required:boolean;passPct:number;state:string;completedAt:number|null;scorePct:number|null}>;requiredTotal:number;requiredComplete:number;trainingReady:boolean;readinessReason:string};
+
+/**
+ * Why a provider is not training-ready, in words. [W2C-LMS-READINESS]
+ *
+ * The fleet overview carries only `trainingReady` plus `requiredComplete/requiredTotal`, so a provider
+ * with no capacity profile rendered as "\u274c Name \u00b7 0/0 required modules" - a cross beside a
+ * complete-looking fraction, which reads as a contradiction and tells staff nothing to act on.
+ * lib/provider-lms.ts already computes the reason (that provider is `provider_services_unknown`, NOT
+ * "nothing outstanding") and GET /api/provider-lms?providerId= already returns it. No control asked.
+ */
+export function readinessExplanation(readiness:Readiness){
+ if(readiness.readinessReason==="provider_services_unknown")return "No service set is recorded for this provider, so no module can be required of them yet - 0 of 0 here means \u201cwe do not know what they do\u201d, not \u201cnothing to do\u201d. Resolve their capacity profile first.";
+ if(readiness.readinessReason==="required_modules_complete")return `Every required module is complete at its current version (${readiness.requiredComplete} of ${readiness.requiredTotal}).`;
+ return `${readiness.requiredTotal-readiness.requiredComplete} of ${readiness.requiredTotal} required module(s) outstanding for ${readiness.services.join(", ")||"the recorded services"}.`;
+}
+
 type Overview={modules:Array<Row&{id:string;title:string;service_code:string;status:string;version:number;pass_pct:number;required:number;quizQuestions:number;providersPassedCurrentVersion:number;totalAttempts:number}>;providers:Array<{providerId:string;name:string;trainingReady:boolean;requiredComplete:number;requiredTotal:number}>;metrics:{published:number;draft:number;providersNotReady:number}};
 
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());
@@ -37,15 +54,18 @@ export function missingModuleFields(draft:ModuleDraft){
  return missing;
 }
 
+async function loadReadiness(providerId:string):Promise<Readiness>{const response=await fetch(`/api/provider-lms?providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"});const body=await response.json();if(!response.ok)throw new Error(body.error||"Unable to load provider training readiness");return body.data as Readiness;}
 async function loadOverview():Promise<Overview>{const response=await fetch("/api/provider-lms",{cache:"no-store"});const body=await response.json();if(!response.ok)throw new Error(body.error||"Unable to load provider training");return body.data as Overview;}
 async function act(input:Record<string,unknown>){const response=await fetch("/api/provider-lms",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});const body=await response.json();if(!response.ok)throw new Error(body.error||"Provider training action failed");return body.data as Row;}
 
 export default function ProviderTrainingPage(){
  const[overview,setOverview]=useState<Overview|null>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
+ const[readiness,setReadiness]=useState<Record<string,Readiness>>({});
  const[title,setTitle]=useState(""),[serviceCode,setServiceCode]=useState("all"),[summary,setSummary]=useState(""),[sections,setSections]=useState(""),[question,setQuestion]=useState(""),[options,setOptions]=useState(""),[answerIndex,setAnswerIndex]=useState("0"),[passPct,setPassPct]=useState("80");
  function refresh(){loadOverview().then(data=>{setOverview(data);setError("");}).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load provider training"));}
  useEffect(()=>{loadOverview().then(setOverview).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load provider training"));},[]);
  async function run(input:Record<string,unknown>,done:string){setBusy(true);setError("");setMessage("");try{await act(input);setMessage(done);refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Provider training action failed");}finally{setBusy(false);}}
+ async function explain(providerId:string){setBusy(true);setError("");try{const data=await loadReadiness(providerId);setReadiness(current=>({...current,[providerId]:data}));}catch(problem){setError(problem instanceof Error?problem.message:"Unable to load provider training readiness");}finally{setBusy(false);}}
  const missing=missingModuleFields({title,summary,sections,question,options,answerIndex,passPct});
  function saveModule(){
   if(missing.length)return;
@@ -88,10 +108,17 @@ export default function ProviderTrainingPage(){
     </article>
     <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
      <h2>Provider compliance</h2>
-     {(overview?.providers??[]).map(provider=><p key={provider.providerId}>{provider.trainingReady?"✅":"❌"} <b>{provider.name}</b> · {provider.requiredComplete}/{provider.requiredTotal} required modules · <code>{provider.providerId}</code></p>)}
+     {(overview?.providers??[]).map(provider=><div key={provider.providerId} style={{borderBottom:"1px solid #eee",padding:"6px 0"}}>
+      {provider.trainingReady?"✅":"❌"} <b>{provider.name}</b> · {provider.requiredComplete}/{provider.requiredTotal} required modules · <code>{provider.providerId}</code>
+      {" "}<button disabled={busy} onClick={()=>void explain(provider.providerId)}>Why?</button>
+      {readiness[provider.providerId]?<div style={{fontSize:13,margin:"4px 0 0"}}>
+       <div>{readinessExplanation(readiness[provider.providerId])}</div>
+       {readiness[provider.providerId].modules.map(item=><div key={item.moduleId}>{label(item.state)} · {item.title} v{item.version}{item.required?" (required)":""}{item.scorePct==null?"":` · scored ${item.scorePct}%`}</div>)}
+      </div>:null}
+     </div>)}
     </article>
    </section>
   </section>
-  <footer><small>Completion rule: pass the current version&#39;s quiz at or above the module pass mark. Providers complete modules from their own workspace via /api/provider-lms (ownership enforced).</small></footer>
+  <footer><small>Completion rule: pass the current version&#39;s quiz at or above the module pass mark. Provider self-completion (complete_module) is enforced on /api/provider-lms by provider ownership, but no provider-facing screen in this repository posts it yet — so &ldquo;Providers not ready&rdquo; cannot fall through the product today, only through the API. Authoring, publishing, archiving and the readiness drill-down above are the staff-side controls.</small></footer>
  </main>;
 }

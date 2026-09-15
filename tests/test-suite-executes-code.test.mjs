@@ -50,7 +50,20 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
  * schema-column-reference-contract.test.mjs above — it reads source to find routes that SELECT from
  * a table nothing on their import path creates, which is precisely the defect that executing a
  * module cannot reveal, because the failing query only runs against a cold database. */
-const STATIC_FILE_BUDGET = 165;
+/* 165 -> 163: payroll-engine and incentive-engine converted. Both were pure source-scanners over the
+ * two modules that decide what people are PAID - every assertion was
+ * `assert.match(readFileSync("lib/<engine>.ts"), /some string/)`, so the whole of both files passed
+ * against an engine that pays on pipeline revenue, pays the same approved incentive twice, ignores a
+ * configured cap, or lets the person who created a payroll run approve it. They now run the real
+ * engines against a real SQLite-backed D1 and assert NUMBERS. Twelve sabotages were measured: each
+ * one turns the converted file RED while leaving every original regex satisfied. */
+/* 163 -> 162: people-attendance-leave converted. All eight of its tests were
+ * `assert.match(readFileSync("lib/attendance-leave.ts"), /some string/)`, so the file passed against an
+ * engine that returns the wrong leave balance, fabricates hours for a day with no check-out, writes
+ * straight through a locked payroll period, or has had its self-scope check deleted - every refusal
+ * STRING would still have been in the source. It now runs the real engine and the real route over a
+ * real SQLite-backed D1 and asserts the balances, the minutes and the status codes. */
+const STATIC_FILE_BUDGET = 162;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
@@ -129,11 +142,18 @@ const executes = (src) =>
  *                                       the only witness, and it fails - deleting the page again
  *                                       turns all three of its tests red.
  */
+// Tests whose subject IS the shape of the codebase: there is no lib/app function to execute,
+// because the property under test is a fact about the file tree itself. Exempt, not budgeted.
 const META_TESTS = new Set([
   "test-suite-executes-code.test.mjs",
   "schema-column-reference-contract.test.mjs",
   "customer-vertical-routes.test.mjs",
   "use-client-directive-placement.test.mjs",
+  // Same kind as customer-vertical-routes above: it asserts which page routes are linked from
+  // somewhere in app/lib/worker, which is a property of the tree, not of any function. The
+  // behaviour behind it IS executed - tests/w2d-hub-links-render.test.mjs renders every hub for
+  // real roles and asserts the links appear and disappear.
+  "w2d-route-reachability.test.mjs",
 ]);
 
 function staticTestFiles() {

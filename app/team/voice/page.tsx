@@ -3,6 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
 import { maskedNumber, operatorDialDecision, previewMatchesForm, type OperatorForm, type OperatorPreview } from "../../../lib/voice-operator-console";
+import StaffHubWorkspaceLinks, { type HubWorkspaceLink } from "../../components/hub-workspace-links";
+
+/**
+ * The AI voice self-test bench had no entry point: /team/voice/ai-test is where an operator makes
+ * the assistant call them (or their own browser mic) to hear what a recipient would hear, and the
+ * only way to reach it was to type the URL.
+ *
+ * settings.manage, not communications.call: /api/voice-outbound serves scope=ai_self_test and
+ * scope=ai_browser_test only after requirePermission(actor,"settings.manage"), on top of the
+ * customers.manage + communications.call this whole console already needs.
+ */
+export const voiceWorkspaceLinks: HubWorkspaceLink[] = [
+  { href: "/team/voice/ai-test", label: "AI voice self-test", detail: "Place a governed test call to yourself, or run the browser-mic bench, to hear the assistant before a customer does.", permission: "settings.manage" },
+];
 
 type UseCase = { code: string; label: string; purpose: string; requiresBooking: boolean; requiresSalesApproval: boolean; maxAttempts: number; availableNow: boolean };
 type Gate = { mode: string; enabled: boolean; blockedReason: string | null; uatApproved: boolean; liveApproved: boolean; telephonyCredentialsConfigured: boolean; statusCallbackConfigured: boolean; missingSecretNames: string[]; allowlistSize: number; recordingApproved: boolean; salesOutboundApproved: boolean; truth: Record<string, boolean> };
@@ -133,6 +147,8 @@ export default function VoiceOperatorPage() {
         <StatCard label="Production calls placed" value={readiness?.productionCallsPlaced ?? "…"} meta="from the ledger, not from configuration" />
         <StatCard label="Needs attention" value={`${readiness?.unappliedProviderEvents ?? 0} / ${readiness?.callsOpenOverAnHour ?? 0}`} meta="unapplied provider events / calls open over an hour" />
       </TeamStatGrid>
+
+      <StaffHubWorkspaceLinks heading="Voice workspaces" note="Only the workspaces your role can open are listed." links={voiceWorkspaceLinks} />
 
       <TeamSection title="Environment" note="Read-only. Secret NAMES are shown so a missing one can be identified; no value is ever returned to this page.">
         <TeamTable head={["Setting", "State", "Detail"]} rows={gate ? [

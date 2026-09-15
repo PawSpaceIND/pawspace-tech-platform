@@ -11,6 +11,10 @@ type DisputeDraft={resultId:string;reason:string};
 type ResolveDraft={disputeId:string;resolutionNote:string;release:boolean};
 type ReverseDraft={resultId:string;amount:string;reason:string};
 type AdjustDraft={resultId:string;amount:string;reason:string};
+type GuardrailDraft={metric:string;operator:string;threshold:string;action:string;multiplier:string};
+type SchemeDraft={schemeCode:string;roleCode:string;teamCode:string;effectiveFrom:string;effectiveUntil:string;metric:string;payoutType:string;target:string;payoutValue:string;cap:string;guardrails:GuardrailDraft[]};
+type ActivateDraft={schemeId:string;approvalReference:string};
+type CalculateDraft={schemeId:string;schemeCode:string;periodStart:string;periodEnd:string};
 async function loadPayload(){const r=await fetch("/api/incentives",{cache:"no-store"}),p=await r.json();if(!r.ok)throw new Error(p.error||"Incentive load failed");return p.data as Payload;}
 const day=(v:number)=>new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"});
 const rupees=(v:unknown)=>Number(v||0).toLocaleString("en-IN");
@@ -96,6 +100,109 @@ export function clawbackSummary(result:Result,reversals:Reversal[]|undefined){
   return{rows,approved,reversed,remaining,count,known:reversed>0||rows.length>0};
 }
 
+/**
+ * The scheme lifecycle, finally reachable from the screen that owns it.
+ *
+ * app/api/incentives/route.ts has always accepted `save_scheme`, `activate_scheme` and `calculate`,
+ * and NO .tsx in the product posted any of them. That is not a reporting gap: without a scheme there
+ * is no `incentive_scheme_versions` row, without an ACTIVE scheme `calculateIncentivePeriod` refuses
+ * with "Active incentive scheme is required", and with no period there is no result to approve,
+ * dispute, adjust or reverse - so every control this page already had was unreachable too. The whole
+ * engine was dark, and the previous copy on this screen said so out loud: "Use the incentives API
+ * directly with a reviewed scheme configuration."
+ *
+ * All three are HUMAN actions, not machine ones, and that is why they get controls rather than a
+ * scheduler: worker/index.ts's `scheduled()` handler calls none of them; `save_scheme` needs a
+ * target, a payout formula and guardrails that are a People Ops decision; `activate_scheme` needs an
+ * `approvalReference` that names a real approval; and `calculate` records `calculated_by`, which is
+ * the identity the engine then refuses to let approve its own result.
+ *
+ * NOTHING here invents a default. Every field starts empty and the draft is REFUSED until the
+ * operator supplies a real value - which was the original objection to putting a form here, and is
+ * answered by refusing rather than by pre-filling a number nobody approved.
+ */
+export const INCENTIVE_METRICS=["net_collected_revenue","collected_revenue","booking_conversions","first_response_rate","qualified_leads","meaningful_actions"] as const;
+export const INCENTIVE_PAYOUT_TYPES=["flat_on_target","amount_per_unit_above_target","percent_of_revenue_above_target"] as const;
+export const INCENTIVE_REVENUE_METRICS=["net_collected_revenue","collected_revenue"] as const;
+export const GUARDRAIL_METRICS=["refunds","cx_escalations","opt_out_or_consent_blocks","data_quality_blocks","first_response_breached"] as const;
+export const GUARDRAIL_OPERATORS=["gt","gte"] as const;
+export const GUARDRAIL_ACTIONS=["hold","zero","multiplier"] as const;
+
+export const EMPTY_GUARDRAIL_DRAFT:GuardrailDraft={metric:"",operator:"gt",threshold:"",action:"",multiplier:""};
+export const EMPTY_SCHEME_DRAFT:SchemeDraft={schemeCode:"",roleCode:"",teamCode:"",effectiveFrom:"",effectiveUntil:"",metric:"",payoutType:"",target:"",payoutValue:"",cap:"",guardrails:[]};
+
+/** A yyyy-mm-dd field as the epoch milliseconds the engine stores, or null when it is not a date. */
+export function dayValue(value:string){
+  const text=String(value??"").trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(text))return null;
+  const parsed=Date.parse(`${text}T00:00:00.000Z`);
+  return Number.isFinite(parsed)?parsed:null;
+}
+const numberValue=(value:string)=>{const text=String(value??"").trim();if(!text)return null;const parsed=Number(text);return Number.isFinite(parsed)?parsed:null;};
+
+type Built<T>={ok:true;body:T}|{ok:false;error:string};
+
+/** The body the Create-scheme form posts, or the reason it cannot be posted yet. */
+export function schemeDraftPayload(draft:SchemeDraft):Built<Record<string,unknown>>{
+  const schemeCode=draft.schemeCode.trim(),roleCode=draft.roleCode.trim(),teamCode=draft.teamCode.trim();
+  if(!schemeCode||!roleCode||!teamCode)return{ok:false,error:"Scheme code, role code and team code are required"};
+  const effectiveFrom=dayValue(draft.effectiveFrom);
+  if(effectiveFrom===null)return{ok:false,error:"An effective-from date is required"};
+  const effectiveUntil=draft.effectiveUntil.trim()?dayValue(draft.effectiveUntil):null;
+  if(draft.effectiveUntil.trim()&&effectiveUntil===null)return{ok:false,error:"The effective-until date is not a date"};
+  if(effectiveUntil!==null&&effectiveUntil<=effectiveFrom)return{ok:false,error:"Scheme end date must follow start date"};
+  if(!(INCENTIVE_METRICS as readonly string[]).includes(draft.metric))return{ok:false,error:"Choose the metric this scheme pays on"};
+  if(!(INCENTIVE_PAYOUT_TYPES as readonly string[]).includes(draft.payoutType))return{ok:false,error:"Choose how the payout is calculated"};
+  if(draft.payoutType==="percent_of_revenue_above_target"&&!(INCENTIVE_REVENUE_METRICS as readonly string[]).includes(draft.metric))
+    return{ok:false,error:"Revenue percentage formula requires a canonical revenue metric"};
+  const target=numberValue(draft.target),payoutValue=numberValue(draft.payoutValue);
+  if(target===null||target<0)return{ok:false,error:"An explicit non-negative target is required"};
+  if(payoutValue===null||payoutValue<0)return{ok:false,error:"An explicit non-negative payout value is required"};
+  const cap=draft.cap.trim()?numberValue(draft.cap):null;
+  if(draft.cap.trim()&&(cap===null||cap<0))return{ok:false,error:"A cap must be an explicit non-negative amount"};
+  const qualityRules:Record<string,unknown>[]=[];
+  for(const rule of draft.guardrails){
+    if(!(GUARDRAIL_METRICS as readonly string[]).includes(rule.metric))return{ok:false,error:"Choose a metric for every quality guardrail"};
+    if(!(GUARDRAIL_OPERATORS as readonly string[]).includes(rule.operator))return{ok:false,error:"Choose an operator for every quality guardrail"};
+    const threshold=numberValue(rule.threshold);
+    if(threshold===null||threshold<0)return{ok:false,error:"Every quality guardrail needs an explicit non-negative threshold"};
+    if(!(GUARDRAIL_ACTIONS as readonly string[]).includes(rule.action))return{ok:false,error:"Choose what every quality guardrail does when it trips"};
+    const multiplier=rule.action==="multiplier"?numberValue(rule.multiplier):null;
+    if(rule.action==="multiplier"&&(multiplier===null||multiplier<0||multiplier>1))return{ok:false,error:"Quality multiplier must be explicitly configured between 0 and 1"};
+    qualityRules.push({metric:rule.metric,operator:rule.operator,threshold,action:rule.action,...(rule.action==="multiplier"?{multiplier}:{})});
+  }
+  return{ok:true,body:{action:"save_scheme",schemeCode,roleCode,teamCode,effectiveFrom,effectiveUntil,
+    formula:{metric:draft.metric,target,payoutType:draft.payoutType,payoutValue,...(cap===null?{}:{cap})},qualityRules}};
+}
+
+/** Activation carries the approval that authorised the scheme; the engine refuses anything shorter. */
+export function activateSchemePayload(draft:ActivateDraft):Built<Record<string,unknown>>{
+  const approvalReference=draft.approvalReference.trim();
+  if(!draft.schemeId)return{ok:false,error:"A scheme is required"};
+  if(approvalReference.length<4)return{ok:false,error:"Incentive scheme approval reference is required"};
+  return{ok:true,body:{action:"activate_scheme",schemeId:draft.schemeId,approvalReference}};
+}
+
+/**
+ * The idempotency key is DERIVED, not typed.
+ *
+ * `employee_incentive_periods.idempotency_key` is UNIQUE and the engine returns the existing period
+ * for a repeat, so a key derived from the scheme and the period makes a double-clicked Calculate
+ * return the same period instead of a second one against the same money. A free-text key would let
+ * two clicks produce two periods, and both would then be approvable.
+ */
+export function incentivePeriodKey(schemeCode:string,periodStart:number,periodEnd:number){
+  return `${schemeCode}:${periodStart}:${periodEnd}`;
+}
+
+export function calculatePeriodPayload(draft:CalculateDraft):Built<Record<string,unknown>>{
+  if(!draft.schemeId)return{ok:false,error:"A scheme is required"};
+  const periodStart=dayValue(draft.periodStart),periodEnd=dayValue(draft.periodEnd);
+  if(periodStart===null||periodEnd===null)return{ok:false,error:"A period start and end date are required"};
+  if(periodEnd<=periodStart)return{ok:false,error:"The period end must follow the period start"};
+  return{ok:true,body:{action:"calculate",schemeId:draft.schemeId,periodStart,periodEnd,idempotencyKey:incentivePeriodKey(draft.schemeCode,periodStart,periodEnd)}};
+}
+
 export function IncentiveResultCard({result:r,dispute,busy,disputeDraft,setDisputeDraft,resolveDraft,setResolveDraft,reverseDraft,setReverseDraft,adjustDraft=null,setAdjustDraft,reversals,adjustments,onApprove,onSubmitDispute,onSubmitResolve,onSubmitReverse,onSubmitAdjust,onApproveAdjustment}:{
   result:Result;dispute:Dispute|undefined;busy:boolean;
   disputeDraft:DisputeDraft|null;setDisputeDraft:(value:DisputeDraft|null)=>void;
@@ -169,6 +276,9 @@ export default function IncentivesPage(){
   const[resolveDraft,setResolveDraft]=useState<ResolveDraft|null>(null);
   const[reverseDraft,setReverseDraft]=useState<ReverseDraft|null>(null);
   const[adjustDraft,setAdjustDraft]=useState<AdjustDraft|null>(null);
+  const[schemeDraft,setSchemeDraft]=useState<SchemeDraft|null>(null);
+  const[activateDraft,setActivateDraft]=useState<ActivateDraft|null>(null);
+  const[calculateDraft,setCalculateDraft]=useState<CalculateDraft|null>(null);
   const[actionError,setActionError]=useState("");
 
   const refresh=async()=>{try{setData(await loadPayload());setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}};
@@ -230,6 +340,38 @@ export default function IncentivesPage(){
     finally{setBusyId(null);}
   }
 
+  /* The three scheme-lifecycle controls. Each one builds its body with the exported helper above, so
+   * the payload a test proves against the real route is the payload the button actually posts, and
+   * each one surfaces the route's own refusal text rather than a screen-invented message. */
+  async function submitScheme(){
+    if(!schemeDraft)return;
+    const built=schemeDraftPayload(schemeDraft);
+    if(!built.ok){setActionError(built.error);return;}
+    setBusyId("scheme:new");setActionError("");
+    try{await post(built.body);setSchemeDraft(null);await refresh();}
+    catch(e){setActionError(e instanceof Error?e.message:String(e));}
+    finally{setBusyId(null);}
+  }
+  async function submitActivate(){
+    if(!activateDraft)return;
+    const built=activateSchemePayload(activateDraft);
+    if(!built.ok){setActionError(built.error);return;}
+    setBusyId(activateDraft.schemeId);setActionError("");
+    try{await post(built.body);setActivateDraft(null);await refresh();}
+    catch(e){setActionError(e instanceof Error?e.message:String(e));}
+    finally{setBusyId(null);}
+  }
+  async function submitCalculate(){
+    if(!calculateDraft)return;
+    const built=calculatePeriodPayload(calculateDraft);
+    if(!built.ok){setActionError(built.error);return;}
+    setBusyId(calculateDraft.schemeId);setActionError("");
+    try{await post(built.body);setCalculateDraft(null);await refresh();}
+    catch(e){setActionError(e instanceof Error?e.message:String(e));}
+    finally{setBusyId(null);}
+  }
+  const setGuardrail=(index:number,patch:Partial<GuardrailDraft>)=>setSchemeDraft(current=>current?{...current,guardrails:current.guardrails.map((rule,i)=>i===index?{...rule,...patch}:rule)}:current);
+
   const disputeFor=(resultId:string)=>data?.disputes.find(d=>d.result_id===resultId);
 
   return <main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"system-ui,sans-serif"}}>
@@ -247,8 +389,67 @@ export default function IncentivesPage(){
       <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Payroll bridge</small><strong style={{display:"block",fontSize:20}}>{data?.truth.payrollInclusionOneTime?"ONE-TIME LINKED":"NOT READY"}</strong></article>
     </section>
     <h2>Schemes</h2>
-    <p style={{color:"#666",fontSize:13}}>Creating or activating a scheme requires real formula, target and guardrail values from People Ops - not shown here to avoid fabricating defaults for a business decision. Use the incentives API directly with a reviewed scheme configuration.</p>
-    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=><article key={s.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}><b>{s.scheme_code} v{s.version} · {s.status}</b><div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div></article>)}</section>
+    <p style={{color:"#666",fontSize:13}}>A scheme version is the configuration the engine pays from: the metric, the target, the payout formula, an optional cap and the quality guardrails. Nothing is pre-filled - every value is a People Ops decision and the form refuses until you supply it. A new version is saved as a <b>draft</b>; activating it needs the approval reference that authorised it, and only an active version can be calculated.</p>
+    <div style={{margin:"8px 0"}}>
+      <button disabled={busyId!=null} onClick={()=>setSchemeDraft(schemeDraft?null:{...EMPTY_SCHEME_DRAFT})}>{schemeDraft?"Cancel new scheme":"New scheme version"}</button>
+    </div>
+    {schemeDraft&&<section style={{border:"1px solid #ccc",borderRadius:10,padding:14,display:"grid",gap:8,marginBottom:12}}>
+      <b>New incentive scheme version</b>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:8}}>
+        <label>Scheme code<input style={{display:"block",width:"100%",padding:8}} value={schemeDraft.schemeCode} onChange={e=>setSchemeDraft({...schemeDraft,schemeCode:e.target.value})}/></label>
+        <label>Role code<input style={{display:"block",width:"100%",padding:8}} value={schemeDraft.roleCode} onChange={e=>setSchemeDraft({...schemeDraft,roleCode:e.target.value})}/></label>
+        <label>Team code<input style={{display:"block",width:"100%",padding:8}} value={schemeDraft.teamCode} onChange={e=>setSchemeDraft({...schemeDraft,teamCode:e.target.value})}/></label>
+        <label>Effective from<input type="date" style={{display:"block",width:"100%",padding:8}} value={schemeDraft.effectiveFrom} onChange={e=>setSchemeDraft({...schemeDraft,effectiveFrom:e.target.value})}/></label>
+        <label>Effective until (optional)<input type="date" style={{display:"block",width:"100%",padding:8}} value={schemeDraft.effectiveUntil} onChange={e=>setSchemeDraft({...schemeDraft,effectiveUntil:e.target.value})}/></label>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:8}}>
+        <label>Metric<select style={{display:"block",width:"100%",padding:8}} value={schemeDraft.metric} onChange={e=>setSchemeDraft({...schemeDraft,metric:e.target.value})}>
+          <option value="">Choose a metric…</option>{INCENTIVE_METRICS.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
+        <label>Payout formula<select style={{display:"block",width:"100%",padding:8}} value={schemeDraft.payoutType} onChange={e=>setSchemeDraft({...schemeDraft,payoutType:e.target.value})}>
+          <option value="">Choose a formula…</option>{INCENTIVE_PAYOUT_TYPES.map(p=><option key={p} value={p}>{p}</option>)}</select></label>
+        <label>Target<input type="number" style={{display:"block",width:"100%",padding:8}} value={schemeDraft.target} onChange={e=>setSchemeDraft({...schemeDraft,target:e.target.value})}/></label>
+        <label>Payout value<input type="number" style={{display:"block",width:"100%",padding:8}} value={schemeDraft.payoutValue} onChange={e=>setSchemeDraft({...schemeDraft,payoutValue:e.target.value})}/></label>
+        <label>Cap (optional)<input type="number" style={{display:"block",width:"100%",padding:8}} value={schemeDraft.cap} onChange={e=>setSchemeDraft({...schemeDraft,cap:e.target.value})}/></label>
+      </div>
+      <div>
+        <b style={{fontSize:13}}>Quality guardrails</b>
+        <p style={{fontSize:12,color:"#666",margin:"2px 0"}}>Optional. A guardrail can hold the result for a human, zero it, or apply an explicitly configured multiplier between 0 and 1.</p>
+        {schemeDraft.guardrails.map((rule,index)=><div key={index} style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:6,marginBottom:6}}>
+          <select value={rule.metric} onChange={e=>setGuardrail(index,{metric:e.target.value})}><option value="">Guardrail metric…</option>{GUARDRAIL_METRICS.map(m=><option key={m} value={m}>{m}</option>)}</select>
+          <select value={rule.operator} onChange={e=>setGuardrail(index,{operator:e.target.value})}>{GUARDRAIL_OPERATORS.map(o=><option key={o} value={o}>{o}</option>)}</select>
+          <input type="number" placeholder="threshold" value={rule.threshold} onChange={e=>setGuardrail(index,{threshold:e.target.value})}/>
+          <select value={rule.action} onChange={e=>setGuardrail(index,{action:e.target.value})}><option value="">Action…</option>{GUARDRAIL_ACTIONS.map(a=><option key={a} value={a}>{a}</option>)}</select>
+          {rule.action==="multiplier"&&<input type="number" placeholder="multiplier 0-1" value={rule.multiplier} onChange={e=>setGuardrail(index,{multiplier:e.target.value})}/>}
+          <button onClick={()=>setSchemeDraft({...schemeDraft,guardrails:schemeDraft.guardrails.filter((_,i)=>i!==index)})}>Remove</button>
+        </div>)}
+        <button onClick={()=>setSchemeDraft({...schemeDraft,guardrails:[...schemeDraft.guardrails,{...EMPTY_GUARDRAIL_DRAFT}]})}>Add guardrail</button>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button disabled={busyId!=null} onClick={()=>void submitScheme()}>{busyId==="scheme:new"?"Saving…":"Save draft scheme"}</button>
+        <button disabled={busyId!=null} onClick={()=>setSchemeDraft(null)}>Cancel</button>
+      </div>
+    </section>}
+    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=>{
+      const busy=busyId===s.id;
+      return <article key={s.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}>
+        <b>{s.scheme_code} v{s.version} · {s.status}</b>
+        <div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div>
+        <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+          {s.status==="draft"&&<button disabled={busyId!=null} onClick={()=>setActivateDraft({schemeId:s.id,approvalReference:""})}>Activate</button>}
+          {s.status==="active_uat"&&<button disabled={busyId!=null} onClick={()=>setCalculateDraft({schemeId:s.id,schemeCode:s.scheme_code,periodStart:"",periodEnd:""})}>Run calculation</button>}
+        </div>
+        {activateDraft?.schemeId===s.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
+          <label>Approval reference (at least 4 characters)<input style={{display:"block",width:"100%",padding:8}} value={activateDraft.approvalReference} onChange={e=>setActivateDraft({...activateDraft,approvalReference:e.target.value})}/></label>
+          <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitActivate()}>{busy?"Working…":"Activate scheme"}</button><button disabled={busy} onClick={()=>setActivateDraft(null)}>Cancel</button></div>
+        </div>}
+        {calculateDraft?.schemeId===s.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
+          <p style={{fontSize:12,color:"#666",margin:0}}>The period must sit inside this scheme version&apos;s validity. Calculating the same period twice returns the same period - it never creates a second one against the same money.</p>
+          <label>Period start<input type="date" style={{display:"block",width:"100%",padding:8}} value={calculateDraft.periodStart} onChange={e=>setCalculateDraft({...calculateDraft,periodStart:e.target.value})}/></label>
+          <label>Period end<input type="date" style={{display:"block",width:"100%",padding:8}} value={calculateDraft.periodEnd} onChange={e=>setCalculateDraft({...calculateDraft,periodEnd:e.target.value})}/></label>
+          <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitCalculate()}>{busy?"Working…":"Calculate period"}</button><button disabled={busy} onClick={()=>setCalculateDraft(null)}>Cancel</button></div>
+        </div>}
+      </article>;
+    })}</section>
     <h2>Results</h2>
     <section style={{display:"grid",gap:8}}>{data?.results.map(r=>{
       const dispute=disputeFor(r.id);

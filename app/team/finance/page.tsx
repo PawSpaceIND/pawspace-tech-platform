@@ -3,6 +3,33 @@
 import Link from"next/link";
 import{readReportJson}from"../../../lib/read-report-json";
 import{useEffect,useState}from"react";
+import StaffHubWorkspaceLinks,{type HubWorkspaceLink}from"../../components/hub-workspace-links";
+
+/**
+ * Team Finance owns ten per-vertical finance screens and linked two of them (cash flow and
+ * training), so Food, Funeral & memorial, Provider settlement, Relocation, Sitting, Statutory, Taxi
+ * and Unit economics existed, rendered and reconciled real money that no operator could navigate to.
+ *
+ * Each `permission` is what the screen's own API demands to LOAD, not the domain it belongs to.
+ *
+ * Relocation and Funeral were the exception and are no longer: their screens read /api/relocation and
+ * /api/funeral-memorial, whose unscoped staff read is a booking/customer read the `finance` role does
+ * not hold, so they were honestly gated at bookings.view and honestly hidden from the only role whose
+ * job they are. Both now read at ?scope=finance - a separate finance.view read that returns the
+ * commercial fields and nothing that identifies the customer - so finance.view is what they demand to
+ * load, and it is what they carry here. A bookings.view role is not offered them any more, because
+ * the read those screens now perform would refuse one.
+ */
+export const financeWorkspaceLinks:HubWorkspaceLink[]=[
+ {href:"/team/finance/food",label:"Fresh Food finance",detail:"Order-level payment, refund and cancellation control for Fresh Food.",permission:"finance.view"},
+ {href:"/team/finance/sitting",label:"Pet Sitting finance",detail:"Booking payment state, cancellation and date-change finance decisions for Sitting.",permission:"finance.view"},
+ {href:"/team/finance/taxi",label:"Pet Taxi finance",detail:"Trip payment state, adjustments, cancellations and refunds for Pet Taxi.",permission:"finance.view"},
+ {href:"/team/finance/partners",label:"Provider compensation & payouts",detail:"Provider commission, settlement batches and the RazorpayX payout control (sandbox).",permission:"finance.view"},
+ {href:"/team/finance/statutory",label:"GST, accounting & statutory",detail:"GST registers, accounting export readiness and statutory filing controls.",permission:"finance.view"},
+ {href:"/team/finance/unit-economics",label:"Unit economics",detail:"Contribution per booking by service and city, computed from the canonical ledger.",permission:"reports.view"},
+ {href:"/team/finance/relocation",label:"Relocation finance",detail:"Quote, payment, vendor settlement and refund state for a relocation case.",permission:"finance.view"},
+ {href:"/team/finance/funeral-memorial",label:"Funeral & memorial finance",detail:"Service amount, payment, refund and vendor cost evidence for a funeral case.",permission:"finance.view"},
+];
 
 type LedgerItem=Record<string,unknown>;
 type LedgerResponse={source:string;summary:{bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};items:LedgerItem[];reconciliationExceptions?:LedgerItem[];error?:string};
@@ -22,6 +49,8 @@ export default function TeamFinance(){
         <div><small style={{fontWeight:800,letterSpacing:1.4,color:"#6c39a8"}}>PAWSPACE TEAM · FINANCE</small><h1 style={{fontSize:36,margin:"8px 0"}}>Service finance & reconciliation</h1><p style={{margin:0,color:"#6d6379"}}>Canonical service ledgers, reconciliation, invoices and settlement readiness from one Team Finance shell.</p></div>
         <div style={{display:"flex",flexWrap:"wrap",gap:10}}><button disabled={loading} onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700}}>Refresh</button><Link href="/team/finance/cash-flow" style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700,textDecoration:"none",color:"#4b168c"}}>Cash flow & earned revenue</Link><Link href="/team/finance/training" style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700,textDecoration:"none",color:"#4b168c"}}>Training finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"#4b168c",color:"white",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
       </header>
+
+      <StaffHubWorkspaceLinks heading="Service finance workspaces" note="Per-vertical ledgers, settlement and statutory control. Only the workspaces your role can open are listed." links={financeWorkspaceLinks} />
 
       {error&&<section style={{padding:18,borderRadius:12,background:"#fff1f1",border:"1px solid #efc2c2",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"white",borderRadius:14}}>Loading canonical Grooming ledger…</section>}

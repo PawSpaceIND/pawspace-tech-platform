@@ -12,6 +12,7 @@
  * Detectors (rule -> queue), each reading the owning surface's real columns:
  *   provider_unassigned          provider_work_orders awaiting_acceptance past grace  -> operations
  *   refund_requested             booking_refund_cases status='requested'              -> finance
+ *   refund_failed                payment_reconciliation_exceptions refund_failed open -> finance
  *   payment_exception            payment_reconciliation_exceptions status='open'      -> finance
  *   low_rating_callback          service_reviews stars<=2                             -> qc
  *   relocation_enquiry           relocation_enquiries status='new'                    -> sales_relocation
@@ -28,6 +29,27 @@ export type WorkQueueAction="claim"|"acknowledge"|"start"|"resolve"|"dismiss"|"a
 
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const OPEN_STATUSES=["open","acknowledged","in_progress"];
+/*
+ * The detector list these surfaces ADVERTISE, and the scheduler fact they state about themselves.
+ *
+ * Both were hardcoded in three places - this module's snapshot, the route's cold-database snapshot
+ * and the work-queue page's footer - and all three drifted away from the code beside them:
+ *
+ *   detectors   FIN-D5 split refund_failed out of payment_exception and gave it its own rule,
+ *               critical priority and a 60-minute SLA. Every advertised list still named seven
+ *               rules, and the missing eighth was the one about money a gateway refused to return.
+ *               An operator reading the footer was told that class of task is not detected.
+ *
+ *   scheduler   said cron wiring was pending. worker/index.ts scheduled() has called
+ *               runBackgroundScheduler on the five-minute cron declared in wrangler.toml
+ *               [triggers] since before this text was written, and that scheduler calls
+ *               sweepWorkQueue. The queue HAS been filling itself; the screen said it could not.
+ *
+ * One exported constant each, read by every surface, so a ninth detector cannot be added without
+ * the screens saying so.
+ */
+export const WORK_QUEUE_DETECTORS=["provider_unassigned","refund_requested","refund_failed","payment_exception","low_rating_callback","relocation_enquiry","food_renewal_payment_overdue","lead_response_overdue"] as const;
+export const WORK_QUEUE_SCHEDULER={configured:true,cron:"*/5 * * * *",runner:"worker.scheduled"} as const;
 export const UNASSIGNED_GRACE_MS=30*60_000;
 export const RENEWAL_OVERDUE_MS=24*3_600_000;
 
@@ -124,7 +146,7 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
   if(Number(flagged.meta?.changes||0)>0){escalatedCount++;await addTaskEvent(db,String(row.id),"escalated",input.actorId,`SLA breached in ${String(row.queue)} queue`);}
  }
  const totalCreated=Object.values(created).reduce((sum,n)=>sum+n,0);
- return{created,totalCreated,escalated:escalatedCount,sweptAt:now,backgroundSchedulerConfigured:false};
+ return{created,totalCreated,escalated:escalatedCount,sweptAt:now,backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER};
 }
 
 export async function mutateWorkQueueTask(db:Db,input:{taskId:string;action:WorkQueueAction;actorId:string;note?:string;owner?:string}){
@@ -200,7 +222,7 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
   generatedAt:now,
   metrics:{total:tasks.results.length,open:open.length,escalated:open.filter(row=>Number(row.escalated)===1).length,critical:open.filter(row=>String(row.priority)==="critical").length,resolvedToday:tasks.results.filter(row=>String(row.status)==="resolved"&&Number(row.resolved_at||0)>=new Date(today).getTime()).length},
   queues,commandCentre,
-  truth:{source:"canonical tables only",detectors:["provider_unassigned","refund_requested","payment_exception","low_rating_callback","relocation_enquiry","food_renewal_payment_overdue","lead_response_overdue"],backgroundSchedulerConfigured:false,productionReady:false},
+  truth:{source:"canonical tables only",detectors:[...WORK_QUEUE_DETECTORS],backgroundSchedulerConfigured:WORK_QUEUE_SCHEDULER.configured,backgroundScheduler:WORK_QUEUE_SCHEDULER,productionReady:false},
  };
 }
 

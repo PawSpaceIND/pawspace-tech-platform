@@ -1,6 +1,7 @@
 import{INVALID_VERIFICATION_STATUSES,ensureVerificationMandateTables}from"./provider-verification-mandate";
 import{resolveProviderVerificationPolicy,seedApprovedVerificationPolicies}from"./provider-verification-policy";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
+import{markGovernedHttpError}from"./governed-http-error";
 import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 
 type Db=D1Database;
@@ -94,9 +95,9 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
 export async function assertProviderAssignable(db:Db,providerId:string,at=Date.now()){
   const verdict=await providerAssignmentBlock(db,providerId,at);
   if(verdict.blocked){
-    throw Response.json({error:"This provider cannot take new work until their mandatory verification is current",
+    throw markGovernedHttpError(Response.json({error:"This provider cannot take new work until their mandatory verification is current",
       code:"provider_verification_not_current",providerId:verdict.providerId,reasons:verdict.reasons,
-      outstanding:verdict.outstanding,policyVersion:verdict.policyVersion},{status:409});
+      outstanding:verdict.outstanding,policyVersion:verdict.policyVersion},{status:409}));
   }
   return verdict;
 }
@@ -148,15 +149,15 @@ export async function revokeProviderVerification(db:Db,input:{providerId:string;
 export async function clearProviderVerificationHold(db:Db,input:{providerId:string;actorId:string;reason:string;now?:number}){
   await ensureProviderCapacityTables(db);
   const providerId=text(input.providerId),now=input.now??Date.now();
-  if(!text(input.reason)||text(input.reason).length<5)throw Response.json({error:"A clear reason is required to lift a verification hold"},{status:400});
+  if(!text(input.reason)||text(input.reason).length<5)throw markGovernedHttpError(Response.json({error:"A clear reason is required to lift a verification hold"},{status:400}));
   const verdict=await providerAssignmentBlock(db,providerId,now);
   if(verdict.blocked){
-    throw Response.json({error:"This provider's mandatory verification is still not current, so the hold cannot be lifted",
-      code:"provider_verification_not_current",providerId,reasons:verdict.reasons,outstanding:verdict.outstanding},{status:409});
+    throw markGovernedHttpError(Response.json({error:"This provider's mandatory verification is still not current, so the hold cannot be lifted",
+      code:"provider_verification_not_current",providerId,reasons:verdict.reasons,outstanding:verdict.outstanding},{status:409}));
   }
   const profile=await db.prepare("SELECT status FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
-  if(!profile)throw Response.json({error:"Provider capacity profile not found"},{status:404});
-  if(text(profile.status)!=="verification_hold")throw Response.json({error:`This provider is not on a verification hold (status ${text(profile.status)})`},{status:409});
+  if(!profile)throw markGovernedHttpError(Response.json({error:"Provider capacity profile not found"},{status:404}));
+  if(text(profile.status)!=="verification_hold")throw markGovernedHttpError(Response.json({error:`This provider is not on a verification hold (status ${text(profile.status)})`},{status:409}));
   await db.prepare("UPDATE provider_capacity_profiles SET status='uat_ready',version=version+1,updated_by=?,updated_at=? WHERE id=? AND status='verification_hold'")
     .bind(input.actorId,now,providerId).run();
   await db.prepare("UPDATE provider_recovery_cases SET status='resolved',resolved_at=?,updated_at=? WHERE failed_provider_id=? AND reason_code='provider_verification_revoked' AND status='open'")

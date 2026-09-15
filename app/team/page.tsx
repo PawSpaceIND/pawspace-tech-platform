@@ -4,6 +4,27 @@ import { useEffect, useState } from "react";
 import styles from "./team.module.css";
 import TestSyncPanel from "../components/test-sync-panel";
 import { hasPermission, type Permission } from "../../lib/platform-security";
+import { HubWorkspaceLinks, type HubWorkspaceLink } from "../components/hub-workspace-links";
+
+/**
+ * Platform configuration screens that belong to no single role workspace above. Every one of them
+ * was unreachable: nothing in app/, lib/ or worker/ contained its path, so the catalogue, the
+ * pricing rules, the manager alert centre, the translation console and both provider-onboarding
+ * surfaces could be opened only by typing the URL.
+ *
+ * The permission on each entry is the one its API enforces - /api/catalogue and /api/pricing-rules
+ * read at pricing.view, /api/staff-alerts at reports.view, /api/provider-verification at
+ * providers.manage, /api/provider-onboarding and /api/i18n at settings.manage. The actor's
+ * permissions are the ones already loaded for the workspace tiles, so this costs no extra request.
+ */
+export const configurationLinks: HubWorkspaceLink[] = [
+  { href: "/team/catalogue", label: "Packages & prices", detail: "Create and version service packages city- and zone-wise, with zone > city > global precedence.", permission: "pricing.view" },
+  { href: "/team/pricing-rules", label: "Rules & holiday surcharge", detail: "Weekend, time-band, weekday, season and date-range pricing rules per city and zone.", permission: "pricing.view" },
+  { href: "/team/alerts", label: "Manager alert centre", detail: "Leads and cases breaching an approved SLA, with the governed escalation queue behind them.", permission: "reports.view" },
+  { href: "/team/provider-verification", label: "Provider KYC & verification", detail: "The IDfy verification mandate, its evidence and the activation boundary it gates.", permission: "providers.manage" },
+  { href: "/team/provider-onboarding", label: "Provider onboarding control room", detail: "Applications, documents, training and the human activation decision for new providers.", permission: "settings.manage" },
+  { href: "/team/i18n", label: "Multi-language coverage", detail: "Translation coverage and drafts. AI translation is fail-closed and a human publishes.", permission: "settings.manage" },
+];
 
 type Overview = {
   actor: { name: string; email: string; roleCode: string; permissions: string[] };
@@ -99,6 +120,15 @@ export default function TeamHome() {
         {!data && !error && <p className={styles.hint ?? ""}>Loading your workspaces…</p>}
         <div className={styles.grid}>{visibleWorkspaces.map((workspace) => <Link href={workspace.href} className={`${styles.card} ${styles[workspace.tone]}`} key={workspace.group + workspace.title}><div><span>{workspace.group}</span><i aria-hidden="true">↗</i></div><h3>{workspace.title}</h3><p>{workspace.detail}</p><footer><b>{(data && workspace.live(data)) || workspace.metric}</b><span>Open workspace →</span></footer></Link>)}</div>
         {data && visibleWorkspaces.length === 0 && <p className={styles.hint ?? ""}>Your role has no team workspaces enabled. Contact an admin if you need access.</p>}
+      </section>
+      <section style={{ maxWidth: 1180, margin: "0 auto", padding: "0 16px" }}>
+        <HubWorkspaceLinks
+          heading="Platform configuration"
+          note="Catalogue, pricing rules, alerts, provider onboarding and language coverage. Only the screens your role can open are listed."
+          links={configurationLinks}
+          permissions={data?.actor.permissions ?? []}
+          loaded={Boolean(data)}
+        />
       </section>
       <footer className={styles.footer}><div><i></i><span>UAT workspace · sandbox payments and queued communications</span></div><Link href="/control">Founder &amp; system controls →</Link></footer>
     </main>

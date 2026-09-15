@@ -4,7 +4,7 @@ import{useEffect,useState}from"react";
 import{StatCard}from"../../../../components/ui";
 
 type Row=Record<string,unknown>;
-type Snapshot={asOfDate:string;suppliers:Row[];kitchens:Row[];purchaseOrders:Row[];batches:Row[];wastage:Row[];reorderSuggestions:Array<{sku:string;zoneId:string;available:number;minAvailableUnits:number;suggestedQuantity:number}>;expiry:{expiringWithin48h:Array<{batchId:string;sku:string;zoneId:string;expiryDate:string;remaining:number}>;pastExpiryAwaitingSweep:number};metrics:{openPurchaseOrders:number;availableBatchUnits:number;wastedUnits:number;skusBelowReorderLevel:number}};
+type Snapshot={asOfDate:string;suppliers:Row[];kitchens:Row[];purchaseOrders:Row[];batches:Row[];wastage:Row[];reorderPolicies:Row[];reorderSuggestions:Array<{sku:string;zoneId:string;available:number;minAvailableUnits:number;suggestedQuantity:number}>;expiry:{expiringWithin48h:Array<{batchId:string;sku:string;zoneId:string;expiryDate:string;remaining:number}>;pastExpiryAwaitingSweep:number};metrics:{openPurchaseOrders:number;availableBatchUnits:number;wastedUnits:number;skusBelowReorderLevel:number}};
 
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());
 
@@ -17,6 +17,8 @@ export default function FoodSupplyChainPage(){
  const[poSupplier,setPoSupplier]=useState(""),[poSku,setPoSku]=useState(""),[poZone,setPoZone]=useState("blr-east"),[poQty,setPoQty]=useState("10"),[poCost,setPoCost]=useState("100");
  const[receiveId,setReceiveId]=useState(""),[prepDate,setPrepDate]=useState(""),[expiryDate,setExpiryDate]=useState("");
  const[wasteBatch,setWasteBatch]=useState(""),[wasteQty,setWasteQty]=useState("1"),[wasteReason,setWasteReason]=useState("");
+ const[kitchenName,setKitchenName]=useState(""),[kitchenZone,setKitchenZone]=useState("blr-east"),[poKitchen,setPoKitchen]=useState("");
+ const[policySku,setPolicySku]=useState(""),[policyZone,setPolicyZone]=useState("blr-east"),[policyMin,setPolicyMin]=useState("10"),[policyQty,setPolicyQty]=useState("25");
  function refresh(){loadSnapshot().then(data=>{setSnapshot(data);setError("");}).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load the supply chain"));}
  useEffect(()=>{loadSnapshot().then(setSnapshot).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load the supply chain"));},[]);
  async function run(input:Record<string,unknown>,done:string){setBusy(true);setError("");setMessage("");try{await act(input);setMessage(done);refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Supply-chain action failed");}finally{setBusy(false);}}
@@ -49,7 +51,8 @@ export default function FoodSupplyChainPage(){
     <input placeholder="Zone" value={poZone} onChange={event=>setPoZone(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Quantity" value={poQty} onChange={event=>setPoQty(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Unit cost" value={poCost} onChange={event=>setPoCost(event.target.value)} style={{width:"100%",marginBottom:6}}/>
-    <button disabled={busy} onClick={()=>void run({action:"create_po",supplierId:poSupplier,sku:poSku,zoneId:poZone,quantity:Number(poQty),unitCost:Number(poCost),idempotencyKey:`po:${crypto.randomUUID()}`},"Purchase order created")}>Create PO</button>
+    <label style={{display:"block",marginBottom:6}}>Kitchen <select value={poKitchen} onChange={event=>setPoKitchen(event.target.value)}><option value="">No kitchen</option>{(snapshot?.kitchens??[]).map(kitchen=><option key={String(kitchen.id)} value={String(kitchen.id)}>{String(kitchen.name)} · {String(kitchen.zone_id)}</option>)}</select></label>
+    <button disabled={busy} onClick={()=>void run({action:"create_po",supplierId:poSupplier,sku:poSku,zoneId:poZone,quantity:Number(poQty),unitCost:Number(poCost),...(poKitchen?{kitchenId:poKitchen}:{}),idempotencyKey:`po:${crypto.randomUUID()}`},"Purchase order created")}>Create PO</button>
    </article>
    <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
     <h2>Receive → batch</h2>
@@ -57,6 +60,32 @@ export default function FoodSupplyChainPage(){
     <label>Preparation <input type="date" value={prepDate} onChange={event=>setPrepDate(event.target.value)}/></label>
     <label style={{marginLeft:8}}>Expiry <input type="date" value={expiryDate} onChange={event=>setExpiryDate(event.target.value)}/></label>
     <div style={{marginTop:6}}><button disabled={busy} onClick={()=>void run({action:"receive_po",purchaseOrderId:receiveId,preparationDate:prepDate,expiryDate},"Stock received into a dated batch")}>Receive</button></div>
+   </article>
+   {/* The API has always implemented save_kitchen, and nothing in the app posted it. Without a
+       kitchen no purchase order can name one, so food_kitchens stayed empty, createFoodPurchaseOrder's
+       active-kitchen check was unreachable, and the Kitchen column in the batch table below read "—"
+       on every row the platform could ever produce. */}
+   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+    <h2>Kitchen</h2>
+    <input placeholder="Kitchen name" value={kitchenName} onChange={event=>setKitchenName(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <input placeholder="Delivery zone" value={kitchenZone} onChange={event=>setKitchenZone(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <button disabled={busy} onClick={()=>void run({action:"save_kitchen",name:kitchenName,zoneId:kitchenZone},"Kitchen saved")}>Save kitchen</button>
+    <ul>{(snapshot?.kitchens??[]).map(kitchen=><li key={String(kitchen.id)}>{String(kitchen.name)} · {String(kitchen.zone_id)} · {label(kitchen.status)} · <code>{String(kitchen.id)}</code></li>)}</ul>
+   </article>
+   {/* "SKUs below reorder" and the whole "Reorder suggested" section are computed from
+       food_reorder_policies, which is written ONLY by set_reorder_policy - an action the API
+       implements and no control posted. With no policy row there is no threshold, so the metric was
+       pinned at 0 and the section could never render, whatever the stock did. This is the input the
+       screen was already reporting on. */}
+   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+    <h2>Reorder policy</h2>
+    <input placeholder="SKU" value={policySku} onChange={event=>setPolicySku(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <input placeholder="Zone" value={policyZone} onChange={event=>setPolicyZone(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <input placeholder="Minimum available units" value={policyMin} onChange={event=>setPolicyMin(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <input placeholder="Reorder quantity" value={policyQty} onChange={event=>setPolicyQty(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <button disabled={busy} onClick={()=>void run({action:"set_reorder_policy",sku:policySku,zoneId:policyZone,minAvailableUnits:Number(policyMin),reorderQuantity:Number(policyQty)},"Reorder policy saved")}>Save reorder policy</button>
+    <ul>{(snapshot?.reorderPolicies??[]).map(policy=><li key={`${String(policy.sku)}:${String(policy.zone_id)}`}>{String(policy.sku)} in {String(policy.zone_id)}: reorder {Number(policy.reorder_quantity)} when available &lt; {Number(policy.min_available_units)}</li>)}</ul>
+    {snapshot&&snapshot.reorderPolicies.length===0&&<p><small>No reorder thresholds are set, so “SKUs below reorder” counts nothing and no reorder can be suggested. It is a policy that has not been written, not a stock level that is healthy.</small></p>}
    </article>
    <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
     <h2>Wastage</h2>

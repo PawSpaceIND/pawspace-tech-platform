@@ -5,14 +5,15 @@ import{StatCard}from"../../../components/ui";
 
 type Row=Record<string,unknown>;
 type Task=Row&{id:string;rule:string;queue:string;priority:string;title:string;status:string;owner:string|null;due_at:number;escalated:number;booking_id:string|null;customer_id:string|null;provider_id:string|null};
-type Snapshot={generatedAt:number;metrics:{total:number;open:number;escalated:number;critical:number;resolvedToday:number};queues:Record<string,{open:number;escalated:number;tasks:Task[]}>;commandCentre:Record<string,unknown>&{available:boolean;byService?:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>}};
+type Truth={source:string;detectors:string[];backgroundSchedulerConfigured:boolean;backgroundScheduler?:{configured:boolean;cron:string;runner:string};productionReady:boolean};
+type Snapshot={generatedAt:number;metrics:{total:number;open:number;escalated:number;critical:number;resolvedToday:number};queues:Record<string,{open:number;escalated:number;tasks:Task[]}>;commandCentre:Record<string,unknown>&{available:boolean;byService?:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>};truth?:Truth};
 
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());
 const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(Number(value||0));
 const due=(at:number)=>{const minutes=Math.round((Number(at)-Date.now())/60_000);return minutes>=0?`due in ${minutes}m`:`overdue ${-minutes}m`};
 
 async function loadSnapshot():Promise<Snapshot>{const response=await fetch("/api/ops-work-queue",{cache:"no-store"});const body=await response.json();if(!response.ok)throw new Error(body.error||"Unable to load the work queue");return body.data as Snapshot;}
-async function act(input:{action:string;taskId:string;note?:string;owner?:string}){const response=await fetch("/api/ops-work-queue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});const body=await response.json();if(!response.ok)throw new Error(body.error||"Work queue action failed");return body.data as Row;}
+async function act(input:{action:string;taskId?:string;note?:string;owner?:string}){const response=await fetch("/api/ops-work-queue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});const body=await response.json();if(!response.ok)throw new Error(body.error||"Work queue action failed");return body.data as Row;}
 
 export default function OpsWorkQueuePage(){
  const[snapshot,setSnapshot]=useState<Snapshot|null>(null),[queueFilter,setQueueFilter]=useState("all"),[selectedId,setSelectedId]=useState(""),[note,setNote]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState("");
@@ -21,6 +22,12 @@ export default function OpsWorkQueuePage(){
  const tasks=useMemo(()=>{if(!snapshot)return [] as Task[];const all=Object.entries(snapshot.queues).flatMap(([queue,bucket])=>queueFilter==="all"||queueFilter===queue?bucket.tasks:[]);return all.filter(task=>["open","acknowledged","in_progress"].includes(String(task.status)));},[snapshot,queueFilter]);
  const selected=tasks.find(task=>task.id===selectedId)??tasks[0];
  async function run(action:string){if(!selected)return;setBusy(action);setError("");setMessage("");try{const result=await act({action,taskId:selected.id,note});setMessage(`${label(action)} · ${label(result.status??"done")}`);setNote("");refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Work queue action failed");}finally{setBusy("");}}
+ /* The detectors only become tasks when a sweep runs. The scheduled worker runs one every five
+  * minutes, which is the right default and the wrong latency for someone standing in front of the
+  * screen after fixing the condition - and it was the ONLY caller: the API has always implemented
+  * "sweep" and no control in the app posted it. Same permission as every other button here
+  * (bookings.manage), and the same idempotent sweep, so pressing it twice creates nothing twice. */
+ async function sweep(){setBusy("sweep");setError("");setMessage("");try{const result=await act({action:"sweep"})as{totalCreated?:number;escalated?:number};setMessage(`Sweep complete · ${Number(result.totalCreated||0)} new task(s) · ${Number(result.escalated||0)} newly escalated`);refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Work queue sweep failed");}finally{setBusy("");}}
  const centre=snapshot?.commandCentre;
  return <main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:16}}>
   <header><Link href="/team/operations">← Operations home</Link><p>TEAM OS · OPERATIONS · WORK QUEUE</p><h1>Exception work queue</h1><p>Real exceptions from canonical tables become owned, SLA-tracked tasks — no WhatsApp archaeology.</p></header>
@@ -35,6 +42,7 @@ export default function OpsWorkQueuePage(){
   <div>
    {["all","operations","finance","qc","sales_relocation","retention","crm_escalation"].map(item=><button key={item} disabled={queueFilter===item} onClick={()=>setQueueFilter(item)}>{label(item)}{item!=="all"&&snapshot?.queues[item]?` (${snapshot.queues[item].open})`:""}</button>)}
    <button onClick={refresh}>Refresh</button>
+   <button disabled={busy!==""} onClick={()=>void sweep()}>{busy==="sweep"?"Sweeping…":"Sweep now"}</button>
   </div>
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
   <section style={{display:"grid",gridTemplateColumns:"minmax(360px,.9fr) minmax(520px,1.1fr)",gap:16,alignItems:"start"}}>
@@ -69,6 +77,18 @@ export default function OpsWorkQueuePage(){
     </>}
    </section>
   </section>
-  <footer><small>Detectors: unassigned work orders · refund requests · payment reconciliation exceptions · low-rating QC callbacks · new relocation enquiries · overdue food renewals · overdue lead first-response. Idempotent sweep; cron wiring pending (backgroundSchedulerConfigured:false).</small></footer>
+  {/* This footer used to hardcode its own list of seven detectors and the sentence "cron wiring
+      pending (backgroundSchedulerConfigured:false)". Both were false: the eighth detector,
+      refund_failed - a refund the gateway REJECTED, critical, 60-minute SLA - was missing from the
+      list, and the scheduled worker has been sweeping this queue every five minutes for longer than
+      that sentence has been on the screen. It now prints the same truth block the API returns, so
+      it cannot describe a different platform from the one answering the request. */}
+  <footer><small>{snapshot?.truth
+   ?<>Detectors ({snapshot.truth.detectors.length}): {snapshot.truth.detectors.map(rule=>label(rule)).join(" · ")}. Idempotent sweep. {snapshot.truth.backgroundSchedulerConfigured&&snapshot.truth.backgroundScheduler
+    ?`Swept automatically by ${snapshot.truth.backgroundScheduler.runner} on ${snapshot.truth.backgroundScheduler.cron}, and on demand with Sweep now.`
+    :snapshot.truth.backgroundSchedulerConfigured
+     ?"Swept automatically by the scheduled worker, and on demand with Sweep now."
+     :"No background sweep is configured on this deployment, so tasks appear only when Sweep now is pressed."}</>
+   :"This build did not report which detectors run or whether anything sweeps them automatically, so nothing is claimed about either."}</small></footer>
  </main>;
 }

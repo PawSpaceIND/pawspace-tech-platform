@@ -24,9 +24,58 @@ type Snapshot = {
   productionReady?: boolean;
   marketplaceLive?: boolean;
   orderEligible?: boolean;
+  agreementAcceptance?: { mode?: string; action?: string; available?: boolean };
 };
 
+const MEDIA_TYPES = [
+  { value: "provider_photo", label: "A photo of you" },
+  { value: "home_photo", label: "Your home" },
+  { value: "facility_photo", label: "Your facility" },
+  { value: "business_photo", label: "Your business" },
+  { value: "reference", label: "A reference" },
+] as const;
+
+/** Read a picked file as the base64 the secure upload boundary expects. */
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("That file could not be read. Try choosing it again."));
+    reader.onload = () => resolve(String(reader.result || "").replace(/^data:[^;]+;base64,/, ""));
+    reader.readAsDataURL(file);
+  });
+}
+
 const text = (v: unknown) => String(v ?? "");
+
+/**
+ * Exactly which controls this screen offers for a given snapshot. [W2-F]
+ *
+ * Exported so a test can ask the SCREEN what an applicant can do at each point of the funnel, with a
+ * snapshot the real route produced, instead of re-deciding it. Every one of these was previously
+ * absent or wrong: there was no document control at all (so nobody could submit), no media control
+ * (so a policy that required a photo could never be satisfied), the agreement action was hard-coded to
+ * the UAT one (so a production applicant could not accept), and after activation the only control
+ * still posted `save_profile`, which records no reason and flags nothing for review.
+ */
+export function partnerOnboardingControls(data: Snapshot | null) {
+  const current = data?.applications?.[0];
+  const app = current?.application;
+  const status = text(app?.status);
+  const agreementAccepted = text(current?.agreement?.status) === "accepted";
+  const approvedAndAccepted = text(app?.human_decision) === "approved" && agreementAccepted;
+  return {
+    canStartApplication: !current,
+    canUploadDocument: Boolean(current) && status === "draft",
+    canSubmit: Boolean(current) && status === "draft",
+    canTakeQuiz: Array.isArray(current?.quiz?.questions) && (current?.quiz?.questions as unknown[]).length > 0,
+    canAcceptAgreement: text(current?.agreement?.status) === "awaiting_acceptance",
+    acceptAction: text(data?.agreementAcceptance?.action) || "accept_sla_uat",
+    acceptAvailable: data?.agreementAcceptance?.available !== false,
+    canSaveProfile: approvedAndAccepted,
+    canAddMedia: approvedAndAccepted,
+    canEditActivatedProfile: ["activated_uat", "post_activation_review"].includes(status),
+  };
+}
 const STEPS = ["Application", "Verification", "Qualification", "Interview", "Agreement", "Profile", "Activation"];
 
 export default function PartnerOnboardingUatPage() {
@@ -40,6 +89,43 @@ export default function PartnerOnboardingUatPage() {
   const [docType, setDocType] = useState("government_id");
   const [bioBusy, setBioBusy] = useState(false);
   const [bioError, setBioError] = useState("");
+  const [uploading, setUploading] = useState("");
+  const [uploadNotice, setUploadNotice] = useState("");
+  const [mediaType, setMediaType] = useState<string>("provider_photo");
+  const [editReason, setEditReason] = useState("");
+
+  /*
+   * Document upload, for real. [W2-F]
+   *
+   * This button was hard-disabled behind "Document upload isn't available yet - it needs dedicated
+   * secure file storage to be provisioned first". That was no longer true: `upload_document` on
+   * /api/provider-onboarding-self-service puts the bytes through storeProviderDocumentSecurely into
+   * the private PAWSPACE_MEDIA_BUCKET, which stage-config.mjs and prod-config.mjs both bind, and it
+   * verifies magic bytes, size and MIME before it writes anything. Meanwhile the active onboarding
+   * policy requires a government_id, and transitionProviderApplication("submit") refuses without one -
+   * so the disabled button was the first hard stop in the funnel: no applicant could submit at all.
+   */
+  async function uploadDocument(kind: "document" | "media", file: File | null | undefined) {
+    if (!file || !appId) return;
+    setUploading(kind);
+    setError("");
+    setUploadNotice("");
+    try {
+      const fileBase64 = await fileToBase64(file);
+      /* Both actions take the bytes; the server stores them and keeps the only file reference. */
+      const payload = kind === "document"
+        ? { action: "upload_document", applicationId: appId, documentType: docType, mimeType: file.type, fileBase64 }
+        : { action: "add_profile_media", applicationId: appId, mediaType, mimeType: file.type, fileBase64 };
+      const r = await fetch("/api/provider-onboarding-self-service", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(await apiErrorMessage(r));
+      setUploadNotice(kind === "document" ? "Uploaded. Our team will check it." : "Photo added to your profile.");
+      await refresh();
+    } catch (e) {
+      setError(String((e as Error)?.message || e));
+    } finally {
+      setUploading("");
+    }
+  }
 
   async function draftBioWithAi() {
     setBioBusy(true);
@@ -107,6 +193,9 @@ export default function PartnerOnboardingUatPage() {
   const questions = Array.isArray(current?.quiz?.questions) ? current?.quiz?.questions as Row[] : [];
   const agreementAccepted = text(current?.agreement?.status) === "accepted";
   const approvedAndAccepted = text(app?.human_decision) === "approved" && agreementAccepted;
+  const controls = partnerOnboardingControls(data);
+  const activated = controls.canEditActivatedProfile;
+  const acceptance = { action: controls.acceptAction, available: controls.acceptAvailable };
 
   let stepIndex = 0;
   if (current) stepIndex = 1;
@@ -165,7 +254,7 @@ export default function PartnerOnboardingUatPage() {
 
       {error ? <p className={styles.errorBox} role="alert">{error}</p> : null}
 
-      {!current ? (
+      {controls.canStartApplication ? (
         <div className={styles.card}>
           <h2>Start your application</h2>
           <p>Tell us where you&apos;d like to provide care. Your application is tied to your verified phone number, not this form.</p>
@@ -199,7 +288,7 @@ export default function PartnerOnboardingUatPage() {
               <span>Decision: <b>{text(app?.human_decision) || "Pending"}</b></span>
             </div>
             <p>Documents on file: {current?.documents?.length || 0}</p>
-            {text(app?.status) === "draft" ? (
+            {controls.canUploadDocument ? (
               <>
                 <label className={styles.field}><span>Document type</span>
                   <select value={docType} onChange={e => setDocType(e.target.value)}>
@@ -208,11 +297,14 @@ export default function PartnerOnboardingUatPage() {
                     <option value="provider_photo">Your photo</option>
                   </select>
                 </label>
-                <div className={styles.warnBox}>
-                  ⚠️ Document upload isn&apos;t available yet — it needs dedicated secure file storage to be provisioned first. Uploading a photo directly into the database would put sensitive ID documents somewhere they don&apos;t belong, so we&apos;re holding off until that&apos;s set up properly.
-                </div>
-                <button className={styles.btn} disabled title="Real document storage is not provisioned yet">Upload document (not yet available)</button>
-                <button className={styles.btnGhost} disabled={busy} onClick={() => void post({ action: "submit_application", applicationId: appId })}>Submit application</button>
+                <label className={styles.field}><span>Choose a file (PDF, JPG, PNG or WebP, up to 10 MB)</span>
+                  <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" disabled={busy || uploading === "document"} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void uploadDocument("document", file); }} />
+                </label>
+                <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>Your document goes straight into private storage that only our verification team can open. It is never shown on your public profile.</p>
+                {uploading === "document" ? <p role="status">Uploading…</p> : null}
+                {uploadNotice ? <p role="status" className={styles.statusRow}>{uploadNotice}</p> : null}
+                <button className={styles.btnGhost} disabled={busy || uploading !== ""} onClick={() => void post({ action: "submit_application", applicationId: appId })}>Submit application</button>
+                <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>Submitting checks that every document we ask for is on file and still current — if one is missing, we&apos;ll say which.</p>
               </>
             ) : null}
           </div>
@@ -223,7 +315,7 @@ export default function PartnerOnboardingUatPage() {
             <p>You can&apos;t mark yourself as verified — a real member of our team checks this personally.</p>
           </div>
 
-          {questions.length ? (
+          {controls.canTakeQuiz ? (
             <div className={styles.card}>
               <h2>20-question qualification</h2>
               <p>Answer all {questions.length} questions. This score is deterministic and never the final decision on its own.</p>
@@ -263,15 +355,17 @@ export default function PartnerOnboardingUatPage() {
               <h2>Service agreement</h2>
               <p>Version {text(current.agreement.agreement_version)} · {text(current.agreement.status)}</p>
               {current.agreementContent ? <div className={styles.agreementText}>{text(current.agreementContent.contentText)}</div> : null}
-              {text(current.agreement.status) === "awaiting_acceptance" ? (
-                <button className={styles.btn} disabled={busy} onClick={() => void post({ action: "accept_sla_uat", applicationId: appId, agreementId: text(current.agreement?.id) })}>
-                  Accept agreement
-                </button>
+              {controls.canAcceptAgreement ? (
+                acceptance.available ? (
+                  <button className={styles.btn} disabled={busy} onClick={() => void post({ action: acceptance.action, applicationId: appId, agreementId: text(current.agreement?.id) })}>
+                    Accept agreement
+                  </button>
+                ) : <p className={styles.errorBox} role="status">Agreement acceptance is switched off until our signing setup is completed. Nothing is wrong with your application — we&apos;ll come back to you.</p>
               ) : null}
             </div>
           ) : null}
 
-          {approvedAndAccepted ? (
+          {controls.canSaveProfile ? (
             <div className={styles.card}>
               <h2>Your profile</h2>
               <label className={styles.field}><span>Display name</span>
@@ -301,6 +395,47 @@ export default function PartnerOnboardingUatPage() {
                 Save profile
               </button>
               <p>Home or facility photos stay private by default. Saving your profile alone doesn&apos;t start bringing you bookings yet.</p>
+
+              <h3>Photos and references</h3>
+              <p>{current?.media?.length || 0} on file. Your onboarding policy may require some of these before our team can complete your activation.</p>
+              <label className={styles.field}><span>What is this?</span>
+                <select value={mediaType} onChange={e => setMediaType(e.target.value)}>
+                  {MEDIA_TYPES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </label>
+              <label className={styles.field}><span>Choose a photo</span>
+                <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || uploading === "media"} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void uploadDocument("media", file); }} />
+              </label>
+              {uploading === "media" ? <p role="status">Uploading…</p> : null}
+              <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>Home and facility photos are treated as sensitive location data and are not published without a separate approval.</p>
+            </div>
+          ) : null}
+
+          {activated ? (
+            /*
+             * After activation, "Save profile" was still the only control on this screen - and
+             * saveProviderProfile writes an audit row with review_required=0 and
+             * reverification_required=0, so a live provider could quietly change the services and
+             * service areas their matching scope is built from with nothing flagged for review.
+             * updateActivatedProviderProfile is the governed path: it demands a reason, refuses the
+             * protected identity and compliance fields outright, and flags a service-area change for
+             * re-verification. [W2-F]
+             */
+            <div className={styles.card}>
+              <h2>Update your live profile</h2>
+              <p>You&apos;re activated, so changes here are recorded with a reason and reviewed. Changing your services or service areas needs our team to re-check your verification.</p>
+              <label className={styles.field}><span>Display name</span>
+                <input value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} />
+              </label>
+              <label className={styles.field}><span>Your bio</span>
+                <textarea rows={4} style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid var(--ps-border)", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} />
+              </label>
+              <label className={styles.field}><span>Why are you changing this?</span>
+                <input value={editReason} onChange={e => setEditReason(e.target.value)} placeholder="e.g. corrected my business name" />
+              </label>
+              <button className={styles.btn} disabled={busy || editReason.trim().length < 5 || !form.displayName.trim()} onClick={() => void post({ action: "update_activated_profile", applicationId: appId, changes: { displayName: form.displayName, bio: form.bio }, reason: editReason })}>
+                Save change for review
+              </button>
             </div>
           ) : null}
 
