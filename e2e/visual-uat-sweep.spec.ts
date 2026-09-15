@@ -169,7 +169,7 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const jobs = [ ...(feed.data?.needsAction || []), ...(feed.data?.today || []), ...(feed.data?.upcoming || []), ...(feed.data?.completed || []) ];
     expect(jobs.some((job: { bookingId?: string }) => job.bookingId === bookingId), `PARTNER_DISCONNECTION: ${bookingId} missing from authenticated provider feed`).toBe(true);
     await partner.page.goto("/partner/jobs");
-    await expect(partner.page.getByTestId(`partner-workspace-${bookingId}`)).toBeVisible();
+    await expect(partner.page.getByTestId(`partner-job-${bookingId}`)).toBeVisible();
     await shot(partner.page, "03-partner-exact-job.png");
 
     await expect.poll(async () => {
