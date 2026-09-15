@@ -15,7 +15,27 @@ async function approvalQueue(db:D1Database){
     ["booking_refund","SELECT id,booking_id subject_id,status,updated_at FROM booking_refund_cases WHERE status='requested' AND approved_by IS NULL ORDER BY updated_at DESC LIMIT 100"],
     ["subscription_refund","SELECT id,contract_id subject_id,status,updated_at FROM subscription_refund_cases WHERE status='requested' AND approved_by IS NULL ORDER BY updated_at DESC LIMIT 100"]
   ] as const; const rows:Row[]=[];
-  for(const [kind,sql] of queries){const result=await db.prepare(sql).all<Row>().catch(()=>({results:[]}));for(const row of result.results)rows.push({kind,...row});}return rows.sort((a,b)=>Number(b.updated_at||0)-Number(a.updated_at||0));
+  /*
+   * Seven money queues, each owned by a different module, and every one of them used to be read as
+   * `.catch(() => ({ results: [] }))`. That is right for exactly ONE failure - a table no module has
+   * created yet, which cannot contain a pending approval because nothing has written one - and wrong
+   * for every other failure, where the founder is shown "nothing needs approval" about money that is
+   * in fact waiting and unreadable. Same shape as the refused-read-as-a-clean-zero defect this
+   * codebase has already had to fix once (R3-G / F6), on the one screen where it costs the most.
+   *
+   * So the cold-database case stays tolerated by NAME, and anything else propagates to the caller,
+   * which answers a governed error instead of a confident empty queue.
+   */
+  for(const [kind,sql] of queries){
+    let result;
+    try{result=await db.prepare(sql).all<Row>();}
+    catch(error){
+      if(!/no such table/i.test(String((error as {message?:unknown})?.message??error)))throw error;
+      continue;
+    }
+    for(const row of result.results)rows.push({kind,...row});
+  }
+  return rows.sort((a,b)=>Number(b.updated_at||0)-Number(a.updated_at||0));
 }
 async function snapshot(db:D1Database,runtime:Record<string,unknown>={}){await ensureExecutiveTables(db);const [targets,actions,runs]=await Promise.all([db.prepare("SELECT * FROM ai_sales_targets ORDER BY target_date DESC,target_type").all<Row>(),db.prepare("SELECT * FROM executive_agent_actions ORDER BY created_at DESC LIMIT 200").all<Row>(),db.prepare("SELECT * FROM executive_runs ORDER BY started_at DESC LIMIT 20").all<Row>()]);return{executiveActive:await executiveActive(db,runtime),targets:targets.results,actions:actions.results,runs:runs.results,approvals:await approvalQueue(db)};}
 export async function GET(request:Request){try{const db=await database(),actor=await resolveActor(request);if(!founder(actor))return json({error:"Founder role required"},403);const url=new URL(request.url),data=await snapshot(db);if(url.searchParams.get("stream")!=="1")return json(data);const encoder=new TextEncoder();let timer:ReturnType<typeof setInterval>|undefined;return new Response(new ReadableStream({start(controller){const push=async()=>{try{controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(await snapshot(db))}\n\n`));}catch{controller.error(new Error("Executive telemetry stream failed"));if(timer)clearInterval(timer);}};controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(data)}\n\n`));timer=setInterval(()=>void push(),5000);},cancel(){if(timer)clearInterval(timer);}}),{headers:{"content-type":"text/event-stream","cache-control":"no-cache, no-store","connection":"keep-alive","x-accel-buffering":"no"}});}catch(e){return authError(e,"Unable to load executive cockpit");}}

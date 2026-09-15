@@ -7,10 +7,17 @@
  *   forecastCashFlow - projects cash forward from the trailing monthly net cash movement, extending
  *     the cash-flow statement into a simple, explainable runway view.
  *
- * Read failures propagate: unavailable ledger data must never look like a clean report.
+ * Read failures propagate: unavailable ledger data must never look like a clean report. That rule is
+ * why both entry points below ensure their tables first rather than tolerating a missing one: on a
+ * database where no journal has ever been posted, `finance_journal_entries` does not exist, the read
+ * threw "no such table", and /api/finance-intelligence answered 500 "Unable to load finance
+ * intelligence" - a working module reading as an outage on every new environment. The tables are
+ * created by their OWNERS (lib/finance-accounts.ts for the journal, lib/gst-accounting.ts for vendor
+ * bills), not re-declared here, so there is still exactly one definition of each.
  */
 
-import { ACCT, journalGroupKey } from "./finance-accounts";
+import { ACCT, ensureFinanceJournalTable, journalGroupKey } from "./finance-accounts";
+import { ensureGstAccountingTables } from "./gst-accounting";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -21,6 +28,9 @@ const nextPeriod = (p: string) => { let [y, m] = p.split("-").map(Number); m++; 
 
 /** Detect ledger anomalies (unbalanced journals, duplicate bills, outlier bills). Advisory only. */
 export async function detectFinanceAnomalies(db: Db, input: { periodCode?: string } = {}) {
+  // Both, because this scan reads the journal AND finance_bills.
+  await ensureFinanceJournalTable(db);
+  await ensureGstAccountingTables(db);
   const period = String(input.periodCode || "").trim();
   const anomalies: Array<Record<string, unknown>> = [];
 
@@ -66,6 +76,7 @@ export async function detectFinanceAnomalies(db: Db, input: { periodCode?: strin
 
 /** Project cash forward from the trailing monthly net cash movement. Extends the cash-flow statement. */
 export async function forecastCashFlow(db: Db, input: { months?: number; trailingMonths?: number } = {}) {
+  await ensureFinanceJournalTable(db);
   const months = Math.max(1, Math.min(Number(input.months) || 3, 12));
   const trailingWindow = Math.max(1, Math.min(Number(input.trailingMonths) || 6, 24));
   const rows = await db.prepare("SELECT period_code period,ROUND(SUM(debit-credit),2) net FROM finance_journal_entries WHERE account_code IN (?,?) GROUP BY period_code ORDER BY period_code").bind(ACCT.CASH, ACCT.BANK).all<Row>();

@@ -1,4 +1,7 @@
 import{authError,authorize,database}from"../../../../lib/server-auth";
+// The stream read communication_threads and communication_messages without ensuring either, so on a
+// database where no message has been sent it answered 500 and the inbox never opened at all.
+import{ensureCommunicationTables}from"../../../../lib/communication-engine";
 
 type Row=Record<string,unknown>;
 const encoder=new TextEncoder();
@@ -18,6 +21,7 @@ export async function GET(request:Request){
 
 async function stream(request:Request){
  await authorize(request,"communications.manage");
+ await ensureCommunicationTables(await database());
  const db=await database();let closed=false,last=await version(db),timer:ReturnType<typeof setInterval>|undefined;
  const body=new ReadableStream<Uint8Array>({
   start(controller){

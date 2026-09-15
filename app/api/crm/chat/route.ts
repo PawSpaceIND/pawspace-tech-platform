@@ -1,6 +1,10 @@
 import { authError, authorize, database, securityAudit } from "../../../../lib/server-auth";
 import { actorCanAccessConversation } from "../../../../lib/conversation-access";
 import { maskName } from "../../../../lib/platform-security";
+// The thread list joins canonical_customers to put a name on each conversation. It belongs to the
+// shared core schema, not to this route, and on a database with no booking yet the join failed and
+// every thread rendered without the customer it is about.
+import { ensureCanonicalCustomerTable } from "../../../../lib/canonical-booking-core-schema";
 import { customerDataAccessResolver } from "../../../../lib/purpose-based-access";
 import {
   ensureWhatsAppUatTables,
@@ -40,6 +44,7 @@ export async function GET(request: Request) {
     const actor = await authorize(request, "communications.manage");
     const db = await database();
     await ensureWhatsAppUatTables(db);
+    await ensureCanonicalCustomerTable(db);
 
     const access = await customerDataAccessResolver(db);
     const convSubject = { email: actor.email, roleCode: actor.roleCode, permissions: actor.permissions };
@@ -152,6 +157,7 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "communications.manage");
     const db = await database();
     await ensureWhatsAppUatTables(db);
+    await ensureCanonicalCustomerTable(db);
     const body = (await request.json()) as ChatActionBody;
 
     if (!body.action) {

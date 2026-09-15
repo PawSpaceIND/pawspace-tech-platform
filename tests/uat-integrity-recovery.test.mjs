@@ -68,7 +68,16 @@ test('concurrent consumption cannot double charge a subscription',async t=>{
  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM subscription_wallet_events').get().n,1);
 });
 test('finance read failure is unavailable, never a clean report or stable forecast',async()=>{
- const statement={bind(){return this},async all(){throw new Error('database unavailable')}};const db={prepare(){return statement}};
+ /*
+  * A database that fails EVERY way a caller can touch it, not just .all(). The stub used to offer
+  * prepare/bind/all alone, so the moment either entry point ensured its tables first - which is what
+  * stops a cold database reading as a 500 - the failure became "db.batch is not a function" instead
+  * of the unavailability being asserted. The point of this test is that a real read failure
+  * propagates rather than becoming a clean empty report, and that is what it still proves.
+  */
+ const fail=async()=>{throw new Error('database unavailable')};
+ const statement={bind(){return this},all:fail,first:fail,run:fail};
+ const db={prepare(){return statement},batch:fail,exec:fail};
  await assert.rejects(detectFinanceAnomalies(db),/database unavailable/);await assert.rejects(forecastCashFlow(db),/database unavailable/);
 });
 test('D1 failed batch rolls back inside an outer transaction and concurrent batches stay isolated',async t=>{

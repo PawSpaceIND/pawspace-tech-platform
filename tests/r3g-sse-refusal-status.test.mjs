@@ -38,10 +38,18 @@ async function seed() {
     sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?)")
       .run(`U-SSE-${role}`, email, `R3G ${role}`, role, now, now);
   }
-  // The conversations stream reads these two on entry; a missing table would be a 500 for a reason
-  // that has nothing to do with authorization, and would hide the defect under test.
-  sqlite.exec("CREATE TABLE IF NOT EXISTS communication_threads (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT 0)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS communication_messages (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL DEFAULT 0)");
+  /*
+   * The conversations stream reads communication_threads and communication_messages on entry; a
+   * missing table would be a 500 for a reason that has nothing to do with authorization, and would
+   * hide the defect under test.
+   *
+   * This used to hand-roll a two-column stand-in for each. That was enough for the MAX(updated_at)
+   * probe and nothing else, and it silently diverged from the real schema: lib/communication-engine.ts
+   * indexes communication_threads(customer_id), a column the stand-in did not have. Seeding through
+   * the owner keeps the fixture honest and means a schema change cannot leave a fake behind.
+   */
+  const { ensureCommunicationTables } = await import("../lib/communication-engine.ts");
+  await ensureCommunicationTables(db);
   return { sqlite, db };
 }
 

@@ -1,10 +1,8 @@
 [
   "app/api/admin/executive-cockpit/route.ts",
-  "app/api/attendance-leave/route.ts",
   "app/api/booking-operations/route.ts",
   "app/api/canonical-bookings/route.ts",
   "app/api/conversation-media/route.ts",
-  "app/api/conversations/stream/route.ts",
   "app/api/crm/chat/route.ts",
   "app/api/crm/route.ts",
   "app/api/customer-checkout/route.ts",

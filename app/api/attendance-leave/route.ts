@@ -1,5 +1,6 @@
 import{authError,authorize,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{governedJsonError}from"../../../lib/governed-http-error";
+import{ensurePeopleTables}from"../../../lib/people-foundation";
 import{approveAdjustment,assignShift,attendanceLeaveDirectory,decideLeave,grantLeaveEntitlement,recordAttendance,requestAdjustment,requestLeave,saveLeavePolicy,saveShiftPolicy,setPeriodLock,type AttendanceScope}from"../../../lib/attendance-leave";
 type Row=Record<string,unknown>;const text=(v:unknown)=>String(v??"").trim();
 type Actor=Awaited<ReturnType<typeof resolveActor>>;
@@ -42,12 +43,23 @@ async function managerScope(db:D1Database,actor:Actor):Promise<AttendanceScope&{
  if(["people.manage","payroll.view","audit.view"].some(permission=>can(actor,permission))){const own=await ownEmployee(db,actor.email);return{employeeIds:null,reason:"global",ownEmployeeId:own?text(own.id):null};}
  const own=await ownEmployee(db,actor.email);
  if(!own)return{employeeIds:null,reason:"global_unlinked",ownEmployeeId:null};
- const directs=await db.prepare("SELECT e.id FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE e.employment_status='active' AND v.manager_employee_id=? ORDER BY e.id LIMIT 300").bind(text(own.id)).all<Row>().catch(()=>({results:[] as Row[]}));
+ const directs=await db.prepare("SELECT e.id FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE e.employment_status='active' AND v.manager_employee_id=? ORDER BY e.id LIMIT 300").bind(text(own.id)).all<Row>();
  if(!directs.results.length)return{employeeIds:null,reason:"global_no_direct_reports",ownEmployeeId:text(own.id)};
  return{employeeIds:[...new Set([text(own.id),...directs.results.map(r=>text(r.id))])],reason:"reporting_line",ownEmployeeId:text(own.id)};
 }
 export async function GET(request:Request){try{
  const actor=await authorize(request,"attendance.view"),db=await database();
+ /*
+  * `employees` belongs to lib/people-foundation.ts and this route reads it three times - ownEmployee,
+  * the direct-reports query and the roster. On a database where People has never been opened the table
+  * does not exist, ownEmployee threw, and the whole screen answered 500 "Unable to load attendance and
+  * leave": a working module reading as an outage on every new environment.
+  *
+  * Ensured through the OWNER rather than guarded with another .catch(). A catch that swallows a
+  * missing table swallows a real read failure too, and then renders it as an empty roster - the
+  * refused-read-as-a-clean-zero shape this codebase has already had to fix once.
+  */
+ await ensurePeopleTables(db);
  const attendanceManager=managesAttendance(actor),leaveManager=managesLeave(actor);
  if(attendanceManager||leaveManager){
   const scope=await managerScope(db,actor);
@@ -57,8 +69,8 @@ export async function GET(request:Request){try{
   // above, so the controls cannot name somebody the screen may not show. Guarded because `employees`
   // belongs to lib/people-foundation.ts, which this route does not own and cannot assume initialised.
   const roster=scope.employeeIds===null
-   ?await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]}))
-   :await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().catch(()=>({results:[] as Row[]})).then(rows=>({results:rows.results.filter(r=>scope.employeeIds?.includes(text(r.id)))}));
+   ?await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>()
+   :await db.prepare("SELECT id,employee_code,display_name FROM employees WHERE employment_status='active' ORDER BY display_name LIMIT 200").all<Row>().then(rows=>({results:rows.results.filter(r=>scope.employeeIds?.includes(text(r.id)))}));
   return Response.json({data:{...directory,employees:roster.results,scope:{mode:"manager",employeeId:scope.ownEmployeeId,organizationalScope:scope.reason,canManageAttendance:attendanceManager,canManageLeave:leaveManager}},productionReady:false});
  }
  const own=await ownEmployee(db,actor.email);
