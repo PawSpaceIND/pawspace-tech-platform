@@ -17,6 +17,30 @@ async function ensureAddressTables(db:Db){
 }
 function completeAddress(row:Row,pincode:string){return[String(row.line1||"").trim(),String(row.line2||"").trim(),String(row.area||"").trim(),String(row.city||"").trim(),pincode,"India"].filter(Boolean).join(", ");}
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
+function addressSegments(value:string){return String(value||"").split(",").map(part=>part.trim()).filter(Boolean);}
+function segmentKey(value:string){return value.toLowerCase().replace(/[^a-z0-9]+/g,"");}
+/** Segments a composed address repeats after line1: the row's own area/city/PIN, plus the country suffix. */
+function governedSegments(values:unknown[]){const keys=values.map(value=>segmentKey(String(value??""))).filter(Boolean);keys.push("india");return new Set(keys);}
+/** The customer-entered core of an address: trailing governed area/city/PIN/country segments removed.
+ * Clients send ONE string, and the saved-address screen composes it as line1+line2+area+city+PIN. Storing
+ * that composed string back into line1 is what made every visit append the same suffix again, so the core
+ * is what makes compose -> send -> store -> compose idempotent instead of growing without bound. */
+function addressCore(value:string,governed:Set<string>){const segments=addressSegments(value);while(segments.length>1&&governed.has(segmentKey(segments[segments.length-1])))segments.pop();return segments;}
+function addressCoreKey(value:string,governed:Set<string>){return addressCore(value,governed).map(segmentKey).join("|");}
+function savedAddressText(row:Row){return[row.line1,row.line2,row.area,row.city,row.postal_code].map(value=>String(value??"").trim()).filter(Boolean).join(", ");}
+/** A supplied address that is only a saved address re-composed by the client is NOT a new address: it is
+ * already governed, so it is matched back to its stored row instead of being stored again as a new line1. */
+async function matchSavedAddress(db:Db,customerId:string,supplied:string,pincode:string){
+  const saved=await db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC LIMIT 20").bind(customerId).all<Row>();
+  for(const row of saved.results??[]){
+    const rowPincode=String(row.postal_code??"").replace(/\D/g,"");if(rowPincode&&rowPincode!==pincode)continue;
+    const governed=governedSegments([row.area,row.city,row.postal_code,pincode]);
+    // A saved row that never carried a PIN still resolves against the PIN validated for this request,
+    // rather than being duplicated as a new address or refused for its own missing PIN.
+    if(addressCoreKey(supplied,governed)===addressCoreKey(savedAddressText(row),governed))return{...row,postal_code:rowPincode||pincode};
+  }
+  return null;
+}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
 async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
 function fixtureCoordinates(cityId:string){switch(cityId){case"maa":return{latitude:13.0827,longitude:80.2707};case"hyd":return{latitude:17.385,longitude:78.4867};case"bom":case"mum":return{latitude:19.076,longitude:72.8777};case"pnq":case"pune":return{latitude:18.5204,longitude:73.8567};default:return{latitude:12.9716,longitude:77.5946};}}
@@ -40,14 +64,15 @@ async function ensureTestProviderHomeBases(db:Db){
  * Legacy executable suites can opt into one explicit server-owned sandbox fixture with
  * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture is impossible to activate unless the runtime
  * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
-export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number}) : Promise<GovernedServiceAddress>{
+export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number;persist?:boolean}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
-  const suppliedAddress=String(input.serviceAddress||"").trim(),suppliedPincode=String(input.servicePincode||"").trim();
-  let row:Row|null=null;
+  const suppliedAddress=String(input.serviceAddress||"").trim(),suppliedPincode=String(input.servicePincode||"").trim(),persist=input.persist!==false;
+  let row:Row|null=null,newAddress=false;
   if(suppliedAddress||suppliedPincode){
     const pin=validateIndianPincode(suppliedPincode);if(!pin.ok)throw new Response("A valid 6-digit service PIN code is required",{status:400});
     if(suppliedAddress.length<8)throw new Response("A complete service address is required",{status:400});
-    row={id:addressId(input.customerId,pin.pincode,suppliedAddress),line1:suppliedAddress,line2:null,area:null,city:"",postal_code:pin.pincode};
+    row=await matchSavedAddress(db,input.customerId,suppliedAddress,pin.pincode);
+    if(!row){newAddress=true;row={id:addressId(input.customerId,pin.pincode,suppliedAddress),line1:suppliedAddress,line2:null,area:null,city:"",postal_code:pin.pincode};}
   }else{
     row=await db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC LIMIT 1").bind(input.customerId).first<Row>();
     if(!row&&fixture){const address="PawSpace sandbox service-discovery fixture, Indiranagar",pincode="560038";row={id:addressId(input.customerId,pincode,address),line1:address,line2:null,area:"Indiranagar",city:"Bengaluru",postal_code:pincode};}
@@ -57,7 +82,7 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const resolved=await resolveZoneByPincode(db,validated.pincode);if(!resolved||!resolved.zone.serviceAvailable)throw Response.json({error:"PawSpace is not currently serving this address",code:"service_zone_unavailable"},{status:409});
   const cityId=String(resolved.assignment.cityId||"").trim().toLowerCase();if(!cityId)throw new Response("The service address has no governed city",{status:409});
   const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw Response.json({error:"PawSpace is not currently serving this address",code:cityVerdict.reason,cityId:cityVerdict.cityCode},{status:409});
-  const address=suppliedAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
+  const address=newAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
@@ -65,12 +90,18 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
     const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     const now=Date.now(),id=String(row.id);
-    if(suppliedAddress){
-      await db.prepare("UPDATE customer_addresses SET is_default=0,updated_at=? WHERE customer_id=?").bind(now,input.customerId).run();
-      await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET line1=excluded.line1,city=excluded.city,postal_code=excluded.postal_code,is_default=1,updated_at=excluded.updated_at WHERE customer_addresses.customer_id=excluded.customer_id").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,now,now).run();
-    }
-    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
+    // A caller that may not save this address must not leave a geocode row behind for it either.
+    if(persist||!newAddress)await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
     geo={latitude:Number(resolvedGeo.latitude),longitude:Number(resolvedGeo.longitude),address_text:resolvedGeo.address||address};
+  }
+  /* A genuinely new address is saved once it is validated, covered and geocoded - but only for a caller that
+   * is allowed to write (persist:false is a read-only resolution such as a provider preview), and it is saved
+   * as its core line1, never as the composed display string that produced it. Kept outside the geocode-cache
+   * miss above so a preview that warmed the cache cannot swallow the booking's save. */
+  if(newAddress&&persist){
+    const now=Date.now(),governed=governedSegments([resolved.assignment.area,resolved.assignment.city,validated.pincode]),line1=addressCore(suppliedAddress,governed).join(", ")||suppliedAddress;
+    await db.prepare("UPDATE customer_addresses SET is_default=0,updated_at=? WHERE customer_id=?").bind(now,input.customerId).run();
+    await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET line1=excluded.line1,city=excluded.city,postal_code=excluded.postal_code,is_default=1,updated_at=excluded.updated_at WHERE customer_addresses.customer_id=excluded.customer_id").bind(String(row.id),input.customerId,"Service address",line1,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,now,now).run();
   }
   const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?SERVICE_DISCOVERY_RADIUS_KM:undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};

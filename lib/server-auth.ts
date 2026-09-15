@@ -4,7 +4,7 @@ import {resolvePlatformSession} from "./platform-session";
 import{ensureAdminMfaTables,hasValidPrivilegedSession,privilegedRole}from"./admin-mfa";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
-import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
+import {governedClientErrorResponse,governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 import {resolveTrustedWorkspaceIdentity} from "./trusted-workspace-identity";
 
 type Db = Awaited<ReturnType<typeof database>>;
@@ -171,6 +171,12 @@ export function authError(error:unknown,fallback="Request failed"){
       return Response.json({error:fallback},{status:error.status,headers:{"cache-control":"no-store"}});
     }
   }
+  /* A branded Fastify-convention client error (backend/src/*, which cannot import from lib/ and so
+   * signals through Symbol.for). Without this bridge every validation refusal raised inside
+   * backend/src/scheduling.ts reached the caller as a 500 with `fallback` as the body, hiding the
+   * actual reason from the customer AND reporting bad input as a server fault. [PTJA-AUTHERR-422] */
+  const governedClient=governedClientErrorResponse(error);
+  if(governedClient)return governedClient;
   console.error("[api] unexpected error",error);
   return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
 }

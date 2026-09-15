@@ -5,15 +5,83 @@ type Scheme={id:string;scheme_code:string;version:number;status:string;role_code
 type Result={id:string;employee_id:string;employee_email:string;metric_value:number;calculated_amount:number;approved_amount:number;status:string;scheme_code:string;version:number;period_start:number;period_end:number};
 type Dispute={id:string;result_id:string;status:string;reason:string;opened_by:string;opened_at:number};
 type Payload={schemes:Scheme[];results:Result[];disputes:Dispute[];truth:{formulaValuesConfiguredNotHardcoded:boolean;pipelineRevenueEligible:boolean;humanApprovalRequired:boolean;payrollInclusionOneTime:boolean;productionReady:boolean}};
+type DisputeDraft={resultId:string;reason:string};
+type ResolveDraft={disputeId:string;resolutionNote:string;release:boolean};
+type ReverseDraft={resultId:string;amount:string;reason:string};
 async function loadPayload(){const r=await fetch("/api/incentives",{cache:"no-store"}),p=await r.json();if(!r.ok)throw new Error(p.error||"Incentive load failed");return p.data as Payload;}
 const day=(v:number)=>new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"});
+
+/**
+ * Is a resolution draft genuinely open for THIS result's dispute?
+ *
+ * This gates a money control: the form it draws carries "Release for payment", which decides whether an
+ * incentive result flows into payroll or is held. It used to be written `resolveDraft?.disputeId===dispute?.id`,
+ * and on a result with NO dispute, with NO draft open, both sides optional-chained to `undefined` -
+ * `undefined===undefined` is true, so every result drew a resolution form and a Submit button that
+ * `submitResolve()` discarded at its own `if(!resolveDraft)return;`. Three results with zero disputes drew
+ * three release-for-payment checkboxes that did nothing, silently. Both operands must EXIST before their
+ * ids are compared; absence is never a match.
+ */
+export function resolveFormOpen(resolveDraft:{disputeId:string}|null|undefined,dispute:{id:string}|null|undefined){
+  return Boolean(resolveDraft&&dispute&&resolveDraft.disputeId===dispute.id);
+}
+
+/**
+ * Which result statuses may be offered a Reverse control.
+ *
+ * lib/incentive-engine.ts reverseIncentiveResult() reads `WHERE id=? AND status='approved'` and otherwise
+ * throws "Approved incentive result is required for reversal". That rule is the right one: a reversal claws
+ * money back out of an APPROVED amount (it is capped at `approved_amount` minus prior reversals, and it
+ * posts a payroll deduction), so there is nothing to reverse on a `calculated` result - the correct action
+ * there is dispute or adjust, both of which this screen already offers. The UI offered Reverse on
+ * `calculated` too, so that button could only ever return the engine's refusal. The UI is the side that was
+ * wrong, and it is the side narrowed here.
+ */
+export const REVERSIBLE_RESULT_STATUSES=["approved"];
+export function canReverseResult(status:string){return REVERSIBLE_RESULT_STATUSES.includes(status);}
+
+export function IncentiveResultCard({result:r,dispute,busy,disputeDraft,setDisputeDraft,resolveDraft,setResolveDraft,reverseDraft,setReverseDraft,onApprove,onSubmitDispute,onSubmitResolve,onSubmitReverse}:{
+  result:Result;dispute:Dispute|undefined;busy:boolean;
+  disputeDraft:DisputeDraft|null;setDisputeDraft:(value:DisputeDraft|null)=>void;
+  resolveDraft:ResolveDraft|null;setResolveDraft:(value:ResolveDraft|null|((current:ResolveDraft|null)=>ResolveDraft|null))=>void;
+  reverseDraft:ReverseDraft|null;setReverseDraft:(value:ReverseDraft|null)=>void;
+  onApprove:(resultId:string)=>void;onSubmitDispute:()=>void;onSubmitResolve:()=>void;onSubmitReverse:()=>void;
+}){
+  return <article style={{border:"1px solid #ddd",borderRadius:10,padding:12}}>
+    <b>{r.employee_email} · {r.status}</b>
+    <div>{r.scheme_code} v{r.version} · {day(r.period_start)} → {day(r.period_end)}</div>
+    <div>Metric: {r.metric_value} · Calculated: ₹{Number(r.calculated_amount||0).toLocaleString("en-IN")} · Approved: ₹{Number(r.approved_amount||0).toLocaleString("en-IN")}</div>
+    <code>{r.id}</code>
+    <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+      {r.status==="calculated"&&<button disabled={busy} onClick={()=>onApprove(r.id)}>{busy?"Working…":"Approve"}</button>}
+      {["calculated","held"].includes(r.status)&&<button disabled={busy} onClick={()=>setDisputeDraft({resultId:r.id,reason:""})}>Open dispute</button>}
+      {dispute&&<button disabled={busy} onClick={()=>setResolveDraft({disputeId:dispute.id,resolutionNote:"",release:false})}>Resolve dispute</button>}
+      {canReverseResult(r.status)&&<button disabled={busy} onClick={()=>setReverseDraft({resultId:r.id,amount:"",reason:""})}>Reverse</button>}
+    </div>
+    {dispute&&<p style={{fontSize:12,color:"#a35"}}>Open dispute: {dispute.reason}</p>}
+    {disputeDraft?.resultId===r.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
+      <label>Dispute reason<input style={{display:"block",width:"100%",padding:8}} value={disputeDraft.reason} onChange={e=>setDisputeDraft({...disputeDraft,reason:e.target.value})}/></label>
+      <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>onSubmitDispute()}>Submit dispute</button><button disabled={busy} onClick={()=>setDisputeDraft(null)}>Cancel</button></div>
+    </div>}
+    {resolveFormOpen(resolveDraft,dispute)&&<div style={{marginTop:8,display:"grid",gap:6}}>
+      <label>Resolution note<input style={{display:"block",width:"100%",padding:8}} value={resolveDraft?.resolutionNote??""} onChange={e=>setResolveDraft(current=>current?{...current,resolutionNote:e.target.value}:current)}/></label>
+      <label><input type="checkbox" checked={resolveDraft?.release??false} onChange={e=>setResolveDraft(current=>current?{...current,release:e.target.checked}:current)}/> Release for payment (unchecked holds the result)</label>
+      <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>onSubmitResolve()}>Submit resolution</button><button disabled={busy} onClick={()=>setResolveDraft(null)}>Cancel</button></div>
+    </div>}
+    {reverseDraft?.resultId===r.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
+      <label>Reversal amount (blank = full amount)<input style={{display:"block",width:"100%",padding:8}} type="number" value={reverseDraft.amount} onChange={e=>setReverseDraft({...reverseDraft,amount:e.target.value})}/></label>
+      <label>Reversal reason<input style={{display:"block",width:"100%",padding:8}} value={reverseDraft.reason} onChange={e=>setReverseDraft({...reverseDraft,reason:e.target.value})}/></label>
+      <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>onSubmitReverse()}>Submit reversal</button><button disabled={busy} onClick={()=>setReverseDraft(null)}>Cancel</button></div>
+    </div>}
+  </article>;
+}
 
 export default function IncentivesPage(){
   const[data,setData]=useState<Payload|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
   const[busyId,setBusyId]=useState<string|null>(null);
-  const[disputeDraft,setDisputeDraft]=useState<{resultId:string;reason:string}|null>(null);
-  const[resolveDraft,setResolveDraft]=useState<{disputeId:string;resolutionNote:string;release:boolean}|null>(null);
-  const[reverseDraft,setReverseDraft]=useState<{resultId:string;amount:string;reason:string}|null>(null);
+  const[disputeDraft,setDisputeDraft]=useState<DisputeDraft|null>(null);
+  const[resolveDraft,setResolveDraft]=useState<ResolveDraft|null>(null);
+  const[reverseDraft,setReverseDraft]=useState<ReverseDraft|null>(null);
   const[actionError,setActionError]=useState("");
 
   const refresh=async()=>{try{setData(await loadPayload());setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}};
@@ -77,33 +145,12 @@ export default function IncentivesPage(){
     <h2>Results</h2>
     <section style={{display:"grid",gap:8}}>{data?.results.map(r=>{
       const dispute=disputeFor(r.id),busy=busyId===r.id||busyId===dispute?.id;
-      return <article key={r.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}>
-        <b>{r.employee_email} · {r.status}</b>
-        <div>{r.scheme_code} v{r.version} · {day(r.period_start)} → {day(r.period_end)}</div>
-        <div>Metric: {r.metric_value} · Calculated: ₹{Number(r.calculated_amount||0).toLocaleString("en-IN")} · Approved: ₹{Number(r.approved_amount||0).toLocaleString("en-IN")}</div>
-        <code>{r.id}</code>
-        <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-          {r.status==="calculated"&&<button disabled={busy} onClick={()=>void approveResult(r.id)}>{busy?"Working…":"Approve"}</button>}
-          {["calculated","held"].includes(r.status)&&<button disabled={busy} onClick={()=>setDisputeDraft({resultId:r.id,reason:""})}>Open dispute</button>}
-          {dispute&&<button disabled={busy} onClick={()=>setResolveDraft({disputeId:dispute.id,resolutionNote:"",release:false})}>Resolve dispute</button>}
-          {["approved","calculated"].includes(r.status)&&<button disabled={busy} onClick={()=>setReverseDraft({resultId:r.id,amount:"",reason:""})}>Reverse</button>}
-        </div>
-        {dispute&&<p style={{fontSize:12,color:"#a35"}}>Open dispute: {dispute.reason}</p>}
-        {disputeDraft?.resultId===r.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
-          <label>Dispute reason<input style={{display:"block",width:"100%",padding:8}} value={disputeDraft.reason} onChange={e=>setDisputeDraft({...disputeDraft,reason:e.target.value})}/></label>
-          <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitDispute()}>Submit dispute</button><button disabled={busy} onClick={()=>setDisputeDraft(null)}>Cancel</button></div>
-        </div>}
-        {resolveDraft?.disputeId===dispute?.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
-          <label>Resolution note<input style={{display:"block",width:"100%",padding:8}} value={resolveDraft?.resolutionNote??""} onChange={e=>setResolveDraft(current=>current?{...current,resolutionNote:e.target.value}:current)}/></label>
-          <label><input type="checkbox" checked={resolveDraft?.release??false} onChange={e=>setResolveDraft(current=>current?{...current,release:e.target.checked}:current)}/> Release for payment (unchecked holds the result)</label>
-          <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitResolve()}>Submit resolution</button><button disabled={busy} onClick={()=>setResolveDraft(null)}>Cancel</button></div>
-        </div>}
-        {reverseDraft?.resultId===r.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
-          <label>Reversal amount (blank = full amount)<input style={{display:"block",width:"100%",padding:8}} type="number" value={reverseDraft.amount} onChange={e=>setReverseDraft({...reverseDraft,amount:e.target.value})}/></label>
-          <label>Reversal reason<input style={{display:"block",width:"100%",padding:8}} value={reverseDraft.reason} onChange={e=>setReverseDraft({...reverseDraft,reason:e.target.value})}/></label>
-          <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitReverse()}>Submit reversal</button><button disabled={busy} onClick={()=>setReverseDraft(null)}>Cancel</button></div>
-        </div>}
-      </article>;
+      return <IncentiveResultCard key={r.id} result={r} dispute={dispute} busy={busy}
+        disputeDraft={disputeDraft} setDisputeDraft={setDisputeDraft}
+        resolveDraft={resolveDraft} setResolveDraft={setResolveDraft}
+        reverseDraft={reverseDraft} setReverseDraft={setReverseDraft}
+        onApprove={resultId=>void approveResult(resultId)} onSubmitDispute={()=>void submitDispute()}
+        onSubmitResolve={()=>void submitResolve()} onSubmitReverse={()=>void submitReverse()}/>;
     })}</section>
     {loading?<p>Loading incentive governance…</p>:null}
     <footer style={{marginTop:24}}><b>Pipeline revenue eligible:</b> NO · <b>Automatic payroll inclusion before approval:</b> NO · <b>Production ready:</b> NO</footer>

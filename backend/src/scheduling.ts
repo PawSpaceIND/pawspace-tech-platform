@@ -42,9 +42,46 @@ export interface ScheduleDecision {
 
 type SchedulingRepository=PlatformRepository&{providerUnavailableForWindow?:(providerId:string,scheduledStart:string,scheduledEnd:string)=>Promise<boolean>};
 
+/**
+ * The per-service rule pack. [PTJA-SCHED-MAXOCC]
+ *
+ * `maxOccurrences` is a CATALOGUE ceiling, not a capacity one. Real capacity is proven per occurrence
+ * inside evaluateProvider (published roster coverage for every date touched, travel-buffer conflicts,
+ * the provider's maxDailyJobs, interval leave) and the booking horizon is enforced separately by
+ * lib/booking-time-policy.ts, which measures the LAST occurrence's start against the 180-day horizon.
+ * Each extra occurrence therefore makes a request HARDER to satisfy, never easier, so this number only
+ * has to be large enough to cover what the catalogue actually sells.
+ *
+ * dog_training is 16 because the largest programme the catalogue sells is the 16-session Pro Training
+ * Plan (TRAINING_PACKAGE_DEFAULTS in lib/training-commercial-governance.ts), and governTrainingBooking
+ * refuses a programme that is not reserved as EXACTLY `sessions` occurrences - so a ceiling of 12 made
+ * the 16-session plan structurally unsellable rather than merely capped. 16 weekly sessions span ~105
+ * days from session one, inside both the 180-day booking horizon and the 180-day scan window that the
+ * weekday branch of buildOccurrences uses.
+ *
+ * dog_walking stays 12 because the walking catalogue itself caps a recurring booking at 2-12 walks
+ * (createWalkingQuote in lib/walking-governance.ts); those two already agree.
+ *
+ * tests/training-catalogue-scheduler-sync.test.mjs fails if a catalogue plan ever outgrows this table.
+ */
+/**
+ * Client-fault helper. [PTJA-AUTHERR-422]
+ *
+ * `statusCode` alone is how Fastify (backend/src/app.ts's setErrorHandler) learns the status, and that
+ * still works unchanged. The registry-symbol brand is what lets lib/server-auth.ts's authError() show
+ * this message to a caller instead of collapsing it into a generic 500, when these same functions are
+ * reached from an app/api/* route. Symbol.for() is used rather than an import because backend/src is a
+ * standalone Fastify app that deliberately imports nothing from lib/.
+ *
+ * Only messages written FOR the caller belong here - never a raw upstream or SQLite message.
+ */
+function clientError(message:string,statusCode=422){
+  return Object.assign(new Error(message),{statusCode,[Symbol.for("pawspace.governed-client-error")]:true});
+}
+
 export const scheduleRules = {
   grooming: { label:"Grooming", durationMinutes:120, bufferMinutes:30, maxOccurrences:1, capacityMode:"appointment" },
-  dog_training: { label:"Training", durationMinutes:60, bufferMinutes:30, maxOccurrences:12, capacityMode:"appointment" },
+  dog_training: { label:"Training", durationMinutes:60, bufferMinutes:30, maxOccurrences:16, capacityMode:"appointment" },
   boarding: { label:"Boarding", durationMinutes:1440, bufferMinutes:0, maxOccurrences:1, capacityMode:"overnight" },
   pet_sitting: { label:"Pet Sitting", durationMinutes:60, bufferMinutes:30, maxOccurrences:1, capacityMode:"care_mode" },
   pet_taxi: { label:"Pet Taxi", durationMinutes:45, bufferMinutes:20, maxOccurrences:1, capacityMode:"appointment" },
@@ -66,7 +103,7 @@ export const SCHEDULING_CITY_UTC_OFFSETS:Readonly<Record<string,number>>=Object.
 export const cityOffsetMinutes=(cityId:string)=>{
   const normalized=String(cityId||"").trim().toLowerCase();
   const offset=SCHEDULING_CITY_UTC_OFFSETS[normalized];
-  if(offset===undefined)throw Object.assign(new Error(`Scheduling timezone is not configured for city ${normalized||"<empty>"}`),{statusCode:422});
+  if(offset===undefined)throw clientError(`Scheduling timezone is not configured for city ${normalized||"<empty>"}`);
   return offset;
 };
 const localDate=(value:string,cityId:string)=>new Date(new Date(value).getTime()+cityOffsetMinutes(cityId)*msMinute);
@@ -86,25 +123,25 @@ export function haversineDistanceKm(a:{latitude:number;longitude:number},b:{lati
 function validateManualOverride(input:ScheduleRequest){
   if(!input.manualProviderId)return;
   const reason=String(input.manualOverrideReason??"").trim();
-  if(reason.length<8)throw Object.assign(new Error("Manual provider override requires a clear reason of at least 8 characters"),{statusCode:422});
+  if(reason.length<8)throw clientError("Manual provider override requires a clear reason of at least 8 characters");
 }
 
 export function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
   const requested=recurring?(input.occurrences??1):1;
-  if(requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});
-  if(recurring&&(input.cadenceDays??7)<1)throw Object.assign(new Error("Recurring cadence must be at least one day"),{statusCode:422});
-  if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Recurring weekdays must use values 0–6"),{statusCode:422});
+  if(requested<1||requested>rule.maxOccurrences)throw clientError(`Occurrences must be between 1 and ${rule.maxOccurrences}`);
+  if(recurring&&(input.cadenceDays??7)<1)throw clientError("Recurring cadence must be at least one day");
+  if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw clientError("Recurring weekdays must use values 0–6");
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
-  if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw Object.assign(new Error("Scheduled end must be after start"),{statusCode:422});
+  if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw clientError("Scheduled end must be after start");
   const geofenceRequested=input.serviceRadiusKm!==undefined;
-  if(geofenceRequested){if(!Number.isFinite(input.latitude)||Number(input.latitude)<-90||Number(input.latitude)>90||!Number.isFinite(input.longitude)||Number(input.longitude)<-180||Number(input.longitude)>180||!Number.isFinite(input.serviceRadiusKm)||Number(input.serviceRadiusKm)<=0)throw Object.assign(new Error("Scheduling geofence requires valid latitude, longitude and a positive serviceRadiusKm"),{statusCode:422});}
+  if(geofenceRequested){if(!Number.isFinite(input.latitude)||Number(input.latitude)<-90||Number(input.latitude)>90||!Number.isFinite(input.longitude)||Number(input.longitude)<-180||Number(input.longitude)>180||!Number.isFinite(input.serviceRadiusKm)||Number(input.serviceRadiusKm)<=0)throw clientError("Scheduling geofence requires valid latitude, longitude and a positive serviceRadiusKm");}
   if(input.serviceCode!=="boarding"&&!(input.serviceCode==="pet_sitting"&&input.careMode==="overnight")){
     const duration=(endMs-startMs)/msMinute;
     const required=input.serviceCode==="grooming"?(input.petIds.length>=4?240:input.petIds.length===3?150:120):input.serviceCode==="dog_training"?Math.max(60,input.petIds.length*60):rule.durationMinutes;
-    if(duration<required)throw Object.assign(new Error(`${rule.label} requires at least ${required} minutes for ${input.petIds.length} pet${input.petIds.length===1?"":"s"}`),{statusCode:422});
+    if(duration<required)throw clientError(`${rule.label} requires at least ${required} minutes for ${input.petIds.length} pet${input.petIds.length===1?"":"s"}`);
   }
-  if(recurring&&input.weekdays?.length){const wanted=new Set(input.weekdays);const result:ScheduleOccurrence[]=[];let offset=0;while(result.length<requested&&offset<180){const candidate=addDays(input.scheduledStart,offset);if(wanted.has(localDate(candidate,input.cityId).getUTCDay()))result.push({start:candidate,end:addDays(input.scheduledEnd,offset),occurrenceNumber:result.length+1});offset++;}if(result.length!==requested)throw Object.assign(new Error("Unable to generate the requested recurring calendar"),{statusCode:422});return result;}
+  if(recurring&&input.weekdays?.length){const wanted=new Set(input.weekdays);const result:ScheduleOccurrence[]=[];let offset=0;while(result.length<requested&&offset<180){const candidate=addDays(input.scheduledStart,offset);if(wanted.has(localDate(candidate,input.cityId).getUTCDay()))result.push({start:candidate,end:addDays(input.scheduledEnd,offset),occurrenceNumber:result.length+1});offset++;}if(result.length!==requested)throw clientError("Unable to generate the requested recurring calendar");return result;}
   return Array.from({length:requested},(_,index)=>({start:addDays(input.scheduledStart,index*(input.cadenceDays??7)),end:addDays(input.scheduledEnd,index*(input.cadenceDays??7)),occurrenceNumber:index+1}));
 }
 

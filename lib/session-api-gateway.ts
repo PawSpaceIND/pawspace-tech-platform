@@ -4,7 +4,7 @@ import{resolvePlatformSession,type PlatformSessionActor}from"./platform-session"
 type SessionAccess={actor:{email:string;roleCode:string;permissions:string[];preview:boolean};permission:Permission};
 type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:string};
 
-async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
+export async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
   if(url.pathname==="/api/customer-checkout"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/provider-chat"&&method==="GET")return{permission:"communications.message",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
@@ -32,6 +32,21 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if((url.pathname==="/api/grooming-route"||url.pathname==="/api/partner-heartbeat")&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return{permission:"bookings.view",subjectType:"provider"};if(method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?undefined:{permission:"bookings.view",subjectType:"provider"};}}
   if(url.pathname==="/api/provider-assignment-recovery"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
+  /* These three are provider-facing routes that were never registered here, so every provider request
+   * fell through to the staff gateway, whose unenumerated catch-all resolves "dashboard.view" - a
+   * permission the service_provider role does not hold. The handlers were written for providers and
+   * do their own ownership checks; they were simply unreachable. Symptoms: /partner/rates could not
+   * load or save a provider's own pricing, the job list was empty on /partner-app, /partner-mobile
+   * and /groomer, and a partner could never request payment after a service.
+   *
+   * /api/partner-jobs re-exports its handler from /api/partner-grooming-jobs, which IS registered
+   * three lines below and works - the same code, reachable through one path and not the other. */
+  if(url.pathname==="/api/partner-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
+  if(url.pathname==="/api/provider-service-rates"&&["GET","POST"].includes(method))return{permission:"self_service.view",subjectType:"provider"};
+  /* Only the provider-initiated action is session-scoped. create_order, initiate_refund, link_order
+   * and simulate_event stay staff-only and keep falling through to the staff gateway's payments.manage. */
+  if(url.pathname==="/api/grooming-payment-sandbox"&&method==="GET")return{permission:"bookings.view",subjectType:"provider"};
+  if(url.pathname==="/api/grooming-payment-sandbox"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_after_service"?{permission:"bookings.view",subjectType:"provider"}:undefined;}
   return undefined;
 }
 

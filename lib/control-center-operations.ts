@@ -2,13 +2,28 @@ type Db=D1Database; type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"");
 async function exists(db:Db,table:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(table).first());}
 async function count(db:Db,table:string,where="",binds:unknown[]=[]){if(!await exists(db,table))return null;try{return Number((await db.prepare(`SELECT COUNT(*) count FROM ${table}${where?` WHERE ${where}`:""}`).bind(...binds).first<Row>())?.count||0)}catch(error){if(/no such column/i.test(error instanceof Error?error.message:String(error)))return null;throw error}}
-async function recent(db:Db,table:string,columns:string,order:string,limit=8){if(!await exists(db,table))return[];const sql="SELECT "+columns+" FROM "+table+" ORDER BY "+order+" DESC LIMIT ?";return(await db.prepare(sql).bind(limit).all<Row>()).results}
+/*
+ * Evidence rows degrade the same way counts do, and for the same reason: one mode must not be able
+ * to take down the whole endpoint. `count()` already swallowed `no such column` and returned null,
+ * so a drifted schema showed as "n/c"; `recent()` had no guard at all, so the identical drift on the
+ * identical table became a 500 and the Approvals tab rendered nothing - not even the four cards that
+ * were correct. The asymmetry, not the tolerance, was the defect.
+ *
+ * The tolerance is deliberately narrow and deliberately loud: only `no such column` is absorbed
+ * (a missing TABLE is already handled by exists(), and every other D1 failure still propagates),
+ * and the absorbed case is logged, because [] renders as "No recent records in this source" - a
+ * factual claim this function cannot make about a query that never ran. Catching alone would trade
+ * a visible 500 for a quiet lie, so the loss of signal is paid back by
+ * tests/control-center-approvals-and-onboarding-repair.test.mjs, which executes every mode against
+ * the canonical schema and fails in CI on a column that does not exist.
+ */
+async function recent(db:Db,table:string,columns:string,order:string,limit=8){if(!await exists(db,table))return[];const sql="SELECT "+columns+" FROM "+table+" ORDER BY "+order+" DESC LIMIT ?";try{return(await db.prepare(sql).bind(limit).all<Row>()).results}catch(error){const message=error instanceof Error?error.message:String(error);if(/no such column/i.test(message)){console.error("[control-center] evidence rows unavailable",{table,columns,message});return[] as Row[]}throw error}}
 const card=(label:string,value:number|null,detail:string,source:string)=>({label,value,detail,source,connected:value!==null});
 export type ControlOpsMode="approvals"|"master"|"inventory"|"quality"|"security"|"health"|"audit";
 export async function buildControlCenterOperations(db:Db,mode:ControlOpsMode){
  if(mode==="approvals"){
-  const board=await count(db,"board_approvals","status NOT IN ('approved','rejected','closed')"),payments=await count(db,"elite_payment_approval_queue","status NOT IN ('approved','rejected','completed')"),payouts=await count(db,"partner_payout_instruction_approvals","status NOT IN ('approved','rejected','completed')"),payroll=await count(db,"payroll_approval_events","outcome NOT IN ('approved','rejected','completed')"),providers=await count(db,"provider_onboarding_applications","human_decision IS NULL AND status NOT IN ('rejected','withdrawn')");
-  return{mode,title:"Approvals",cards:[card("Board",board,"Open board decisions","board_approvals"),card("Payments",payments,"Money actions awaiting decision","elite_payment_approval_queue"),card("Partner payouts",payouts,"Payout instructions awaiting approval","partner_payout_instruction_approvals"),card("Provider onboarding",providers,"Applications without a human decision","provider_onboarding_applications"),card("Payroll",payroll,"Unresolved payroll approval events","payroll_approval_events")],rows:await recent(db,"board_approvals","id,status,created_at","created_at")};
+  const board=await count(db,"board_approvals"),payments=await count(db,"elite_payment_approval_queue","status NOT IN ('approved','rejected','completed')"),payouts=await count(db,"partner_payout_instruction_approvals","status NOT IN ('approved','rejected','completed')"),payroll=await count(db,"payroll_approval_events","outcome NOT IN ('approved','rejected','completed')"),providers=await count(db,"provider_onboarding_applications","human_decision IS NULL AND status NOT IN ('rejected','withdrawn')");
+  return{mode,title:"Approvals",cards:[card("Board",board,"Board resolutions on record \u2014 this ledger stores approvals only, it has no pending state","board_approvals"),card("Payments",payments,"Money actions awaiting decision","elite_payment_approval_queue"),card("Partner payouts",payouts,"Payout instructions awaiting approval","partner_payout_instruction_approvals"),card("Provider onboarding",providers,"Applications without a human decision","provider_onboarding_applications"),card("Payroll",payroll,"Unresolved payroll approval events","payroll_approval_events")],rows:await recent(db,"board_approvals","id,period,resolution_type,approved_by,approver_role,approved_at,created_at","created_at")};
  }
  if(mode==="master"){
   const specs:[[string,string,string,string?],...Array<[string,string,string,string?]>]=[["Cities","city_launch_configs","City launch configurations"],["Services","service_controls","Service controls"],["Policies","service_policy_configs","Service policy versions"],["Packages","service_packages","Canonical service packages"],["Price rules","dynamic_pricing_rules","Dynamic pricing rules"],["Subscription plans","grooming_subscription_plans","Grooming subscription plans"]];

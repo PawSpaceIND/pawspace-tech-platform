@@ -1,4 +1,4 @@
-import{CANONICAL_PET_UPSERT}from"../../../lib/canonical-pet-upsert";
+import{CANONICAL_PET_UPSERT,resolveCanonicalPets}from"../../../lib/canonical-pet-upsert";
 import{database,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
 import{governSittingBooking}from"../../../lib/sitting-governance";
 import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"../../../lib/stay-split-payments";
@@ -18,7 +18,6 @@ type Input={
  payment:{method:string;mode:string;detail:string};
 };
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
 import{sameInstant}from"../../../lib/booking-window-instant";
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Sitting booking blocked",{status:403});}
 async function ensureTables(db:D1Database){await db.batch([
@@ -58,11 +57,16 @@ export async function POST(request:Request){try{
  if(String(reservation.city_id)!==input.cityId||String(reservation.zone_id)!==input.zoneId)return json({error:"The Sitting city/zone does not match the scheduling reservation"},409);
  if(!sameInstant(reservation.scheduled_start,input.scheduledStart)||!sameInstant(reservation.scheduled_end,input.scheduledEnd))return json({error:"Sitting booking window does not match the canonical reservation"},409);
  const governed=await governSittingBooking(db,{quoteId:input.sittingQuoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:"created",reservationCount:reservations.results.length});
- const now=Date.now(),bookingId=`PS-UAT-SIT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,ids=input.pets.map(pet=>petId(input.customer.id,pet.sourceId)),canonicalStart=String(reservation.scheduled_start),canonicalEnd=String(reservation.scheduled_end);
+ // Identity BEFORE minting: a pet the customer has already saved keeps its own row, so a Sitting
+ // booking can no longer fork the customer's one dog into two. Runs after the replay lookup and
+ // before the write batch, so nothing partial is left behind when it refuses.
+ const resolved=await resolveCanonicalPets(db,input.customer.id,input.pets);
+ if(!resolved.ok)return json({error:resolved.error},resolved.status);
+ const now=Date.now(),bookingId=`PS-UAT-SIT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,ids=resolved.pets.map(pet=>pet.id),canonicalStart=String(reservation.scheduled_start),canonicalEnd=String(reservation.scheduled_end);
  const pricingJson=JSON.stringify({sittingQuoteId:input.sittingQuoteId,catalogueVersion:governed.catalogueVersion,mode:governed.mode,billableUnits:governed.billableUnits,basePricePerPet:governed.basePricePerPet,extraPetPrice:governed.extraPetPrice,paymentPending:true,liveMoney:false});
  const statements=[
   db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
-  ...input.pets.map((pet,index)=>db.prepare(CANONICAL_PET_UPSERT).bind(ids[index],input.customer.id,pet.name,pet.species??"other",pet.breed??null,pet.vaccinationStatus??"not_provided",pet.sourceId,now,now)),
+  ...resolved.pets.map(pet=>db.prepare(CANONICAL_PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
   db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,"pet_sitting",governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,canonicalStart,canonicalEnd,"payment_pending","customer_app",governed.totalAmount,"INR",pricingJson,actor.email,now,now),
   db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,'payment_pending',?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,"pet_sitting",canonicalStart,canonicalEnd,JSON.stringify({source:"canonical_sitting_gate1",reservationId:reservation.id}),now,now),
   db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,'INR',?,?,'created','razorpay_sandbox',?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,input.payment.method,input.payment.mode,`sitting:${input.idempotencyKey}`,JSON.stringify({detail:input.payment.detail,confirmationRequiresVerifiedCapture:true,liveMoney:false}),now,now),

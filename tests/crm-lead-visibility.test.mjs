@@ -76,16 +76,18 @@ test("CRM-3: a partially scoped lead is not treated as unclaimed", () => {
     "a lead carrying another city is that city's, even with the other two columns blank");
 });
 
-test("CRM-4: search finds a lead across the table by everything the page's own filter matches", () => {
+test("CRM-4: search finds a lead across the table by every field staff type into the box", () => {
   const { add, visible } = crmTable();
   add("LEAD-OLD", { name: "Meera Iyer", phone: "9876500011", email: "meera@example.com", pets: "Simba", petSummary: "Labrador, 3 years", at: 1 });
   for (let i = 0; i < 150; i++) add(`LEAD-NOISE-${i}`, { name: "Someone Else", pets: "Other", at: 1000 + i });
-  /* pet name and summary are in this list because app/crm/page.tsx matches `name phone pets id`.
-   * Moving search to the server must not narrow it: without those columns a staff member typing a
-   * pet's name has the contact excluded before the page's own pet matching can see it. */
+  /* This list IS the search. The page used to re-filter the served rows and so had a say in what a
+   * staff member could find; it no longer does, because the rows it was matching arrive masked and
+   * that filter discarded every row the server had matched (tests/crm-search-and-segment-render).
+   * Pet name and pet summary therefore have to be searched here or a staff member typing a pet's
+   * name finds nothing at all - there is no second chance on the client. */
   for (const [label, term] of [["name", "meera"], ["phone", "9876500011"], ["email", "meera@example"],
                                ["pet name", "simba"], ["pet summary", "labrador"], ["id", "lead-old"]]) {
-    assert.ok(visible(term).includes("LEAD-OLD"), `search by ${label} did not find a lead outside the newest 100`);
+    assert.ok(visible(term).includes("LEAD-OLD"), `search by ${label} did not find a lead - and the page no longer searches, so this is the only search there is`);
   }
 });
 
@@ -93,7 +95,7 @@ test("CRM-5: the route runs this statement, and it admits unclaimed leads", () =
   assert.match(route, /db\.prepare\(CRM_CONTACT_LIST_SQL\)\.bind\(\.\.\.crmContactListBinds\(/,
     "the route must run the statement these tests exercise, not one of its own");
   assert.match(route, /searchParams\.get\("search"\)/,
-    "search must reach the database; filtering the fetched page cannot see past LIMIT 100");
+    "search must reach the database; filtering the fetched page cannot see past LIMIT 100 - and cannot see past the masking the route applies on the way out either");
   assert.match(CRM_CONTACT_LIST_SQL, /OR \(COALESCE\(TRIM\(city_id\),''\)=''/,
     "unclaimed leads must be admitted alongside the manager's own scope");
   assert.match(CRM_CONTACT_LIST_SQL, /ESCAPE/,

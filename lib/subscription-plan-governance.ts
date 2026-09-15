@@ -10,6 +10,7 @@
  */
 
 import { addCalendarMonthsClamped } from "./subscription-calendar";
+import { governedJsonError } from "./governed-http-error";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -39,17 +40,24 @@ const shape = (r: Row) => ({ id: String(r.id), serviceCode: String(r.service_cod
 
 export async function createSubscriptionPlan(db: Db, input: { serviceCode: string; planCode: string; cityId: string; zoneId?: string; name: string; price: number; currency?: string; sessionCount: number; validityValue: number; validityUnit: "days" | "months"; servicePackageCode: string; eligiblePetTypes?: string[]; maxPetsPerBooking?: number; creditsPerPet?: number; familyWallet?: boolean; pauseDays?: number; graceDays?: number; renewalWindowDays?: number; benefits?: unknown[]; terms?: Record<string, unknown>; effectiveFrom?: string; effectiveTo?: string; reason?: string; actorId: string }) {
   await ensureSubscriptionPlanTables(db);
-  const serviceCode = text(input.serviceCode), planCode = text(input.planCode), cityId = text(input.cityId), name = text(input.name);
-  if (!SERVICES.includes(serviceCode)) throw new Error(`Unsupported service (use one of: ${SERVICES.join(", ")})`);
-  if (!planCode || !cityId || !name || !text(input.servicePackageCode)) throw new Error("planCode, cityId, name and servicePackageCode are required");
-  if (!["days", "months"].includes(String(input.validityUnit))) throw new Error("validityUnit must be 'days' or 'months'");
-  if (!Number.isFinite(Number(input.price)) || Number(input.price) < 0) throw new Error("A valid price is required");
-  if (!(Number(input.sessionCount) >= 1) || !(Number(input.validityValue) >= 1)) throw new Error("sessionCount and validityValue must be at least 1");
+  const serviceCode = text(input.serviceCode), planCode = text(input.planCode), cityId = text(input.cityId), name = text(input.name), servicePackageCode = text(input.servicePackageCode);
+  // These are the admin's OWN input being refused, not an internal failure. A plain Error reaches
+  // authError() as a non-Response throw and becomes 500 + "Unable to create subscription plan", so the
+  // operator who typed a duplicate plan code, or a single space into a `required` input, was told the
+  // platform had broken rather than what to change. governedJsonError() is the only way a body survives
+  // authError(): it registers the Response in the governed WeakSet that isGovernedHttpError() checks, so
+  // the status and the real message are returned verbatim instead of being redacted to the fallback.
+  // Every field above is text()-trimmed first, so whitespace-only input is refused as missing, precisely.
+  if (!SERVICES.includes(serviceCode)) throw governedJsonError({ error: `Unsupported service (use one of: ${SERVICES.join(", ")})` }, 400);
+  if (!planCode || !cityId || !name || !servicePackageCode) throw governedJsonError({ error: "planCode, cityId, name and servicePackageCode are required" }, 400);
+  if (!["days", "months"].includes(String(input.validityUnit))) throw governedJsonError({ error: "validityUnit must be 'days' or 'months'" }, 400);
+  if (!Number.isFinite(Number(input.price)) || Number(input.price) < 0) throw governedJsonError({ error: "A valid price is required" }, 400);
+  if (!(Number(input.sessionCount) >= 1) || !(Number(input.validityValue) >= 1)) throw governedJsonError({ error: "sessionCount and validityValue must be at least 1" }, 400);
   const existing = await db.prepare("SELECT id FROM subscription_plans WHERE service_code=? AND plan_code=? AND city_id=?").bind(serviceCode, planCode, cityId).first<Row>().catch(() => null);
-  if (existing) throw new Error("A plan with this code already exists for this service/city (update it instead)");
+  if (existing) throw governedJsonError({ error: "A plan with this code already exists for this service/city (update it instead)" }, 409);
   const now = Date.now(), id = uid("SPLAN");
   await db.prepare("INSERT INTO subscription_plans (id,service_code,plan_code,city_id,zone_id,name,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,max_pets_per_booking,credits_per_pet,family_wallet,pause_days,grace_days,renewal_window_days,benefits_json,terms_json,active,version,effective_from,effective_to,created_by,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,?,?,?,?,?)")
-    .bind(id, serviceCode, planCode, cityId, text(input.zoneId) || null, name, Number(input.price), text(input.currency) || "INR", Math.floor(Number(input.sessionCount)), Math.floor(Number(input.validityValue)), String(input.validityUnit), JSON.stringify(input.eligiblePetTypes || ["dog", "cat"]), text(input.servicePackageCode), Number(input.maxPetsPerBooking) || 4, Number(input.creditsPerPet) || 1, input.familyWallet === false ? 0 : 1, Number(input.pauseDays) || 0, Number(input.graceDays) || 0, Number(input.renewalWindowDays) || 30, JSON.stringify(input.benefits || []), JSON.stringify(input.terms || {}), text(input.effectiveFrom) || new Date(now).toISOString().slice(0, 10), text(input.effectiveTo) || null, input.actorId, input.actorId, now).run();
+    .bind(id, serviceCode, planCode, cityId, text(input.zoneId) || null, name, Number(input.price), text(input.currency) || "INR", Math.floor(Number(input.sessionCount)), Math.floor(Number(input.validityValue)), String(input.validityUnit), JSON.stringify(input.eligiblePetTypes || ["dog", "cat"]), servicePackageCode, Number(input.maxPetsPerBooking) || 4, Number(input.creditsPerPet) || 1, input.familyWallet === false ? 0 : 1, Number(input.pauseDays) || 0, Number(input.graceDays) || 0, Number(input.renewalWindowDays) || 30, JSON.stringify(input.benefits || []), JSON.stringify(input.terms || {}), text(input.effectiveFrom) || new Date(now).toISOString().slice(0, 10), text(input.effectiveTo) || null, input.actorId, input.actorId, now).run();
   const row = await db.prepare("SELECT * FROM subscription_plans WHERE id=?").bind(id).first<Row>();
   await db.prepare("INSERT INTO subscription_plan_audit (id,plan_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,NULL,?,?,?,?)").bind(uid("SPAUD"), id, "created", JSON.stringify(shape(row!)), input.actorId, text(input.reason) || "New subscription plan", now).run();
   const s = shape(row!);

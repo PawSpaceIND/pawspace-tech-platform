@@ -29,20 +29,36 @@ export default function FinanceCompliancePage(){
   useEffect(()=>{load(period);},[period,load]);
   function changePeriod(next:string){setLoading(true);setPeriod(next);}
 
+  /**
+   * A refusal is an ALERT, never a notice. This screen closes a month and deposits statutory tax, so a
+   * failure shown in the white role="status" panel reads as confirmation: the only thing on screen
+   * after a rejected TDS filing used to be a polite "quarter (1-4) and form (24Q/26Q) are required".
+   * Failures go to `error` (red, role="alert") and successes to `notice`, exactly as every other
+   * finance console does. `period` is a default the caller may override with the obligation's own.
+   */
   async function act(body:Record<string,unknown>,message:string){
-    setBusy(true);setNotice("");
+    setBusy(true);setNotice("");setError("");
     try{
-      const response=await fetch("/api/statutory-compliance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...body,period})});
+      const response=await fetch("/api/statutory-compliance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({period,...body})});
       const payload=await response.json() as{error?:string};
       if(!response.ok)throw new Error(payload.error||"Action failed");
       setNotice(message);load(period);
-    }catch(problem){setNotice(problem instanceof Error?problem.message:"Action failed");}
+    }catch(problem){setError(problem instanceof Error?problem.message:"Action failed");}
     finally{setBusy(false);}
   }
 
-  function recordFiling(code:string){
-    const ack=window.prompt(`Government acknowledgement reference for ${code} (${period})?`);
-    if(ack)void act({action:code.startsWith("tds_return")?"file_tds_return":"record_filing",obligationCode:code,acknowledgementRef:ack},`${code} recorded as filed`);
+  /**
+   * The calendar records a government acknowledgement against an obligation — that, and only that, is
+   * what its "filed" badge is read back from (statutory_filings keyed by code + the obligation's OWN
+   * period). It used to route tds_return_* rows to file_tds_return instead, which needs fyLabel,
+   * quarter and form that this row never collects, so every such click was a 400; and it sent the month
+   * on screen as the period, so quarterly/annual rows (TDS returns, GSTR-9, ROC) were written under a
+   * key the calendar never reads and could not flip to filed. Recording the TRACES return itself stays
+   * where it works: prepare → "Mark filed" in Quarterly returns below.
+   */
+  function recordFiling(code:string,obligationPeriod:string){
+    const ack=window.prompt(`Government acknowledgement reference for ${code} (${obligationPeriod})?`);
+    if(ack)void act({action:"record_filing",obligationCode:code,acknowledgementRef:ack,period:obligationPeriod},`${code} recorded as filed`);
   }
 
   const close=data?.close;
@@ -81,7 +97,7 @@ export default function FinanceCompliancePage(){
           <span>due {item.dueDate}</span>
           <span><Badge tone={statusTone(item.status)}>{item.status.replaceAll("_"," ")}{item.status!=="filed"&&item.daysToDue>=0?` · T-${item.daysToDue}`:""}</Badge></span>
           <span>{item.acknowledgementRef?`ACK ${item.acknowledgementRef}`:"—"}</span>
-          <span>{item.status!=="filed"&&item.code!=="board_approval"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>recordFiling(item.code)}>Record filing</Button>}</span>
+          <span>{item.status!=="filed"&&item.code!=="board_approval"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>recordFiling(item.code,item.period)}>Record filing</Button>}</span>
         </article>)}
       </div>
       <p><Button size="sm" disabled={busy} onClick={()=>void act({action:"run_reminders"},"Reminder sweep completed — due obligations raised as finance alerts")}>Run reminder sweep now</Button> <small style={{color:"var(--ds-text-muted)"}}>Also runs automatically every scheduler cycle; T-7 and closer become finance staff alerts, overdue become critical.</small></p>

@@ -5,7 +5,15 @@ type Row=Record<string,unknown>;
 export type TrainingPaymentMode="prepaid"|"split";
 export type TrainingPaymentState="PARTIALLY_PAID"|"FULLY_PAID";
 export type TrainingCommercialQuote={quoteId:string;packageCode:string;packageName:string;packageVersion:number;sessions:number;validityDays:number;petCount:number;minutesPerSession:number;basePrice:number;discount:number;totalAmount:number;amountDueNow:number;paymentMode:TrainingPaymentMode;meetAndGreet:boolean;expiresAt:number};
-const defaults=[
+/**
+ * The seeded Training catalogue. Exported because the session count of the largest plan is a hard
+ * constraint on the scheduler: app/training/page.tsx reserves `occurrences: quote.sessions` and
+ * governTrainingBooking below refuses anything that is not EXACTLY `sessions` reservations, so
+ * scheduleRules.dog_training.maxOccurrences in backend/src/scheduling.ts must cover the biggest plan
+ * here or that plan cannot be booked at all. tests/training-catalogue-scheduler-sync.test.mjs reads
+ * this array (not the source text) and fails if the two ever drift apart again.
+ */
+export const TRAINING_PACKAGE_DEFAULTS=[
  {code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500,meet:1,maxPets:4,direct:30,coaching:15,split:0},
  {code:"training-2-starter",name:"Starter Plan",sessions:2,validityDays:31,price:3500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-4-puppy",name:"Puppy Training Plan",sessions:4,validityDays:31,price:6000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
@@ -15,6 +23,7 @@ const defaults=[
  {code:"training-12-advanced",name:"Advanced Obedience Plan",sessions:12,validityDays:93,price:16500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-16-pro",name:"Pro Training Plan",sessions:16,validityDays:93,price:20000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
 ] as const;
+const defaults=TRAINING_PACKAGE_DEFAULTS;
 
 export async function ensureTrainingCommercialTables(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS training_commercial_packages (package_code TEXT PRIMARY KEY,name TEXT NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,base_price REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',meet_and_greet INTEGER NOT NULL DEFAULT 0,max_pets INTEGER NOT NULL DEFAULT 4,direct_minutes_per_pet INTEGER NOT NULL DEFAULT 45,coaching_minutes_per_pet INTEGER NOT NULL DEFAULT 15,split_due_percent REAL NOT NULL DEFAULT 50,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),

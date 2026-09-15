@@ -10,8 +10,21 @@
  * CURRENT version.
  */
 
+import{governedJsonError}from"./governed-http-error";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
+
+/**
+ * Every validation refusal below is thrown as a Response so the route catch can hand it straight back.
+ * A plainly constructed Response is UNGOVERNED: authError() in lib/server-auth.ts passes a thrown 4xx
+ * through only when isGovernedHttpError() recognises the object by identity, and otherwise replaces the
+ * body with the caller fallback - so "Module title is required" reached the operator as "Unable to
+ * update provider training", which names no field. governedJsonError registers the response in that same
+ * identity WeakSet and emits a JSON {error} body, the shape /api/provider-lms clients already read, so
+ * the real reason survives redaction instead of being swallowed.
+ */
+const lmsError=(message:string,status:number)=>governedJsonError({error:message},status);
 
 export type LmsQuizQuestion={question:string;options:string[];answerIndex:number};
 export type LmsModuleInput={id?:string;title:string;serviceCode:string;summary:string;sections:string[];quiz:LmsQuizQuestion[];passPct?:number;required?:boolean;actorId:string};
@@ -28,15 +41,15 @@ export async function ensureLmsTables(db:Db){await db.batch([
 ]);}
 
 async function moduleEvent(db:Db,moduleId:string,eventType:string,actorId:string,detail:unknown={}){await db.prepare("INSERT INTO lms_module_events (id,module_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),moduleId,eventType,actorId,JSON.stringify(detail),Date.now()).run();}
-function requireText(value:unknown,name:string,min=3){const text=String(value||"").trim();if(text.length<min)throw new Response(`${name} is required`,{status:400});return text;}
+function requireText(value:unknown,name:string,min=3){const text=String(value||"").trim();if(text.length<min)throw lmsError(`${name} is required`,400);return text;}
 
 function validateQuiz(quiz:LmsQuizQuestion[]){
- if(!Array.isArray(quiz)||quiz.length<1)throw new Response("A module needs at least one quiz question",{status:400});
+ if(!Array.isArray(quiz)||quiz.length<1)throw lmsError("A module needs at least one quiz question",400);
  for(const item of quiz){
-  if(String(item?.question||"").trim().length<5)throw new Response("Each quiz question needs real text",{status:400});
-  if(!Array.isArray(item.options)||item.options.length<2||item.options.some(option=>String(option||"").trim().length<1))throw new Response("Each quiz question needs at least two answer options",{status:400});
+  if(String(item?.question||"").trim().length<5)throw lmsError("Each quiz question needs real text",400);
+  if(!Array.isArray(item.options)||item.options.length<2||item.options.some(option=>String(option||"").trim().length<1))throw lmsError("Each quiz question needs at least two answer options",400);
   const answer=Number(item.answerIndex);
-  if(!Number.isInteger(answer)||answer<0||answer>=item.options.length)throw new Response("Each quiz question needs a valid correct-answer index",{status:400});
+  if(!Number.isInteger(answer)||answer<0||answer>=item.options.length)throw lmsError("Each quiz question needs a valid correct-answer index",400);
  }
 }
 
@@ -45,17 +58,17 @@ function validateQuiz(quiz:LmsQuizQuestion[]){
 export async function saveLmsModule(db:Db,input:LmsModuleInput){
  await ensureLmsTables(db);
  const title=requireText(input.title,"Module title"),summary=requireText(input.summary,"Module summary",5),serviceCode=String(input.serviceCode||"").trim();
- if(!SERVICE_SCOPES.has(serviceCode))throw new Response("Module service scope must be 'all' or a real service code",{status:400});
+ if(!SERVICE_SCOPES.has(serviceCode))throw lmsError("Module service scope must be 'all' or a real service code",400);
  const sections=(input.sections||[]).map(section=>String(section||"").trim()).filter(section=>section.length>0);
- if(!sections.length)throw new Response("A module needs at least one content section",{status:400});
+ if(!sections.length)throw lmsError("A module needs at least one content section",400);
  validateQuiz(input.quiz);
  const passPct=input.passPct==null?80:Math.floor(Number(input.passPct));
- if(!Number.isInteger(passPct)||passPct<1||passPct>100)throw new Response("Pass mark must be 1-100",{status:400});
+ if(!Number.isInteger(passPct)||passPct<1||passPct>100)throw lmsError("Pass mark must be 1-100",400);
  const now=Date.now();
  if(input.id){
   const existing=await db.prepare("SELECT * FROM lms_modules WHERE id=?").bind(input.id).first<Row>();
-  if(!existing)throw new Response("Module not found",{status:404});
-  if(String(existing.status)==="archived")throw new Response("An archived module cannot be edited",{status:409});
+  if(!existing)throw lmsError("Module not found",404);
+  if(String(existing.status)==="archived")throw lmsError("An archived module cannot be edited",409);
   const nextVersion=String(existing.status)==="published"?Number(existing.version)+1:Number(existing.version);
   await db.prepare("UPDATE lms_modules SET title=?,service_code=?,summary=?,content_json=?,quiz_json=?,pass_pct=?,required=?,version=?,updated_by=?,updated_at=? WHERE id=?")
    .bind(title,serviceCode,summary,JSON.stringify(sections),JSON.stringify(input.quiz),passPct,input.required===false?0:1,nextVersion,input.actorId,now,input.id).run();
@@ -72,9 +85,9 @@ export async function saveLmsModule(db:Db,input:LmsModuleInput){
 export async function setLmsModuleStatus(db:Db,input:{moduleId:string;status:"published"|"archived";actorId:string}){
  await ensureLmsTables(db);
  const moduleRow=await db.prepare("SELECT id,status FROM lms_modules WHERE id=?").bind(String(input.moduleId||"")).first<Row>();
- if(!moduleRow)throw new Response("Module not found",{status:404});
+ if(!moduleRow)throw lmsError("Module not found",404);
  if(String(moduleRow.status)===input.status)return{moduleId:String(moduleRow.id),status:input.status,duplicatePrevented:true};
- if(input.status==="published"&&String(moduleRow.status)==="archived")throw new Response("An archived module cannot be republished; create a new module",{status:409});
+ if(input.status==="published"&&String(moduleRow.status)==="archived")throw lmsError("An archived module cannot be republished; create a new module",409);
  await db.prepare("UPDATE lms_modules SET status=?,updated_at=? WHERE id=?").bind(input.status,Date.now(),moduleRow.id).run();
  await moduleEvent(db,String(moduleRow.id),input.status,input.actorId);
  return{moduleId:String(moduleRow.id),status:input.status,duplicatePrevented:false};
@@ -89,10 +102,10 @@ export async function submitLmsCompletion(db:Db,input:{moduleId:string;providerI
  if(prior)return{attemptId:String(prior.id),scorePct:Number(prior.score_pct),passed:Number(prior.passed)===1,moduleVersion:Number(prior.module_version),duplicatePrevented:true};
  const providerId=requireText(input.providerId,"Provider");
  const moduleRow=await db.prepare("SELECT * FROM lms_modules WHERE id=?").bind(String(input.moduleId||"")).first<Row>();
- if(!moduleRow)throw new Response("Module not found",{status:404});
- if(String(moduleRow.status)!=="published")throw new Response("Only a published module can be completed",{status:409});
+ if(!moduleRow)throw lmsError("Module not found",404);
+ if(String(moduleRow.status)!=="published")throw lmsError("Only a published module can be completed",409);
  const quiz=parse<LmsQuizQuestion[]>(moduleRow.quiz_json,[]);
- if(!Array.isArray(input.answers)||input.answers.length!==quiz.length)throw new Response(`This module's quiz has ${quiz.length} question(s); answer all of them`,{status:400});
+ if(!Array.isArray(input.answers)||input.answers.length!==quiz.length)throw lmsError(`This module's quiz has ${quiz.length} question(s); answer all of them`,400);
  const correct=quiz.reduce((count,question,index)=>count+(Number(input.answers[index])===Number(question.answerIndex)?1:0),0);
  const scorePct=Math.round((correct/quiz.length)*100),passed=scorePct>=Number(moduleRow.pass_pct);
  const id=uid("LMA");
