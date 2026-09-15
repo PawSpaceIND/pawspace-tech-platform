@@ -4,7 +4,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 const ADDRESS = "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
 const PROVIDER_NAME = "PawSpace Grooming Team (UAT)";
-const PROVIDER_ID = "uatcap_groom_ft";
+const PREFERRED_PROVIDER_ID = "uatcap_groom_ft";
 const phone = `6${String(Date.now()).slice(-9)}`;
 const evidenceDir = process.env.PW_VISUAL_UAT_ARTIFACT_DIR || "visual-uat-evidence";
 mkdirSync(evidenceDir, { recursive: true });
@@ -99,6 +99,7 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
   }
   await page.getByRole("button", { name: "Review booking" }).click();
   await page.getByLabel("Alternative Phone Number").fill("9876543210");
+  return preferredVisible;
 }
 
 async function createPayAfter(page: Page) {
@@ -152,7 +153,7 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const before = await beforeResponse.json();
     const beforeCount = Number(before.data.metrics.bookingsToday);
 
-    await openGrooming(page, serviceDate);
+    const preferredProviderSelected = await openGrooming(page, serviceDate);
     const bookingId = await createPayAfter(page);
     await shot(page, "01-customer-pay-after-confirmed.png");
 
@@ -161,7 +162,19 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const canonical = await canonicalResponse.json();
     const canonicalBooking = (canonical.bookings || []).find((row: { id?: string }) => row.id === bookingId);
     expect(canonicalBooking, `ADMIN_DISCONNECTION: ${bookingId} missing from canonical lifecycle`).toBeTruthy();
-    expect(canonicalBooking.provider_id, `SCHEDULING_DISCONNECTION: ${bookingId} assigned to unexpected provider`).toBe(PROVIDER_ID);
+    const assignedProviderId = String(canonicalBooking.provider_id || "");
+    expect(assignedProviderId, `SCHEDULING_DISCONNECTION: ${bookingId} has no assigned provider`).toBeTruthy();
+    if (preferredProviderSelected) {
+      expect(assignedProviderId, `SCHEDULING_DISCONNECTION: preferred groomer was selected but ${bookingId} was assigned elsewhere`).toBe(PREFERRED_PROVIDER_ID);
+    }
+
+    const switched = await partner.page.request.post("/api/uat-provider-switch", { data: {
+      providerId: assignedProviderId,
+      code: process.env.PW_STAFF_UAT_ACCESS_CODE,
+    }});
+    expect(switched.status(), await switched.text()).toBe(200);
+    const switchedBody = await switched.json();
+    expect(switchedBody.data?.providerId).toBe(assignedProviderId);
 
     const feedResponse = await partner.page.request.get("/api/partner-job-feed");
     expect(feedResponse.status(), await feedResponse.text()).toBe(200);
