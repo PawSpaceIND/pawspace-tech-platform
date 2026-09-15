@@ -74,6 +74,7 @@ const businessHub = (await import("../app/business/page.tsx")).default;
 const alertsPage = (await import("../app/team/alerts/page.tsx")).default;
 const unitEconomics = (await import("../app/team/finance/unit-economics/page.tsx")).default;
 const assistedBooking = (await import("../app/assisted-booking/page.tsx")).default;
+const { StaffGatedLink } = await import("../app/components/hub-workspace-links.tsx");
 
 const permissionsOf = (code) => {
   const role = defaultRoles.find((item) => item.code === code);
@@ -254,4 +255,59 @@ test("NAV-OFFER-7: every TeamShell caller declares a permission on each staff na
   assert.deepEqual(missing, [],
     `these TeamShell nav entries point at a staff route with no permission, so they are offered to ` +
     `every role that can open the page:\n  ${missing.join("\n  ")}`);
+});
+
+/* -------------------------------------------------------------- the single-control gated link */
+
+test("NAV-OFFER-9: StaffGatedLink renders nothing when the actor cannot open the destination", async () => {
+  const props = { href: "/team/finance", permission: "finance.view", children: "Finance home" };
+
+  const finance = await render(StaffGatedLink, props, [permissionsOf("finance")], "StaffGatedLink as finance");
+  assert.ok(has(finance, "/team/finance"), "finance holds finance.view and must still get the link");
+
+  for (const code of ["manager", "auditor", "associate", "service_provider", "customer"]) {
+    const html = await render(StaffGatedLink, props, [permissionsOf(code)], `StaffGatedLink as ${code}`);
+    assert.ok(!has(html, "/team/finance"), `${code} does not hold finance.view and must be offered nothing`);
+    assert.equal(html.includes("Finance home"), false, "and not the label either - the whole control goes");
+  }
+
+  const signedOut = await render(StaffGatedLink, props, [[], { signedOut: true }], "StaffGatedLink signed out");
+  assert.ok(!has(signedOut, "/team/finance"), "no actor means no offer");
+});
+
+test("NAV-OFFER-10: the five remaining blocked links go through that gate", () => {
+  /*
+   * A WIRING pin, reading the sources on purpose. StaffGatedLink loads the actor in its OWN effect,
+   * and it is a CHILD of each of these pages; the render harness runs the ROOT component's effects
+   * only, so a page-level render reports the link absent for EVERY role - the negative half would
+   * pass for the wrong reason and the positive half could never pass at all. NAV-OFFER-9 proves the
+   * component; this proves these five call sites reach it.
+   *
+   * Each pair was measured role by role against lib/platform-security.ts before it was gated:
+   *
+   *   /team/catalogue and /team/pricing-rules load on pricing.view, which the CUSTOMER role holds,
+   *   and offered Team home (dashboard.view), which no customer holds.
+   *   /team/funeral-memorial and /team/relocation load on bookings.view, which service_provider
+   *   holds, and offered the same.
+   *   /team/ai/configuration loads on the gateway's dashboard.view default, which an associate
+   *   holds, and offered AI review (reports.view), which an associate does not.
+   */
+  const PAIRS = [
+    ["app/team/catalogue/page.tsx", "/team", "dashboard.view"],
+    ["app/team/pricing-rules/page.tsx", "/team", "dashboard.view"],
+    ["app/team/funeral-memorial/page.tsx", "/team", "dashboard.view"],
+    ["app/team/relocation/page.tsx", "/team", "dashboard.view"],
+    ["app/team/ai/configuration/page.tsx", "/team/ai", "reports.view"],
+  ];
+  const missing = [];
+  for (const [file, href, permission] of PAIRS) {
+    const source = readFileSync(path.join(ROOT, file), "utf8");
+    const gated = new RegExp(`StaffGatedLink[^>]*href="${href.replace(/\//g, "\\/")}"[^>]*permission="${permission.replace(".", "\\.")}"`);
+    if (!gated.test(source)) missing.push(`${file}: ${href} is not behind StaffGatedLink on ${permission}`);
+    // And that the ungated spelling is gone, so the gate was not simply added beside the old link.
+    if (new RegExp(`<Link href="${href.replace(/\//g, "\\/")}"`).test(source)) {
+      missing.push(`${file}: a plain <Link href="${href}"> is still there beside the gated one`);
+    }
+  }
+  assert.deepEqual(missing, []);
 });

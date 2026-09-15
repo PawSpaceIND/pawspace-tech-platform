@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { StaffGatedLink } from "../../components/hub-workspace-links";
 import { FormEvent, useEffect, useState } from "react";
 
 type Rule = { id: string; name: string; serviceCode: string; cityId: string; ruleType: string; adjustmentType: string; adjustmentValue: number; effectiveFrom: string; effectiveTo: string | null; status: string };
@@ -145,7 +145,7 @@ export default function PricingRulesPage() {
   return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
       <div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "#746b7d" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "#E6B34E", color: "#041517", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "#E6B34E", color: "#041517", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><StaffGatedLink href="/team" permission="dashboard.view" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</StaffGatedLink></div>
     </header>
     {error && <div role="alert" style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
     {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "#fffaf0" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #f0ebf4" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "#746b7d" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}

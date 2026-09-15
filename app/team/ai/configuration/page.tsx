@@ -1,5 +1,6 @@
 "use client";
 import Link from"next/link";
+import { StaffGatedLink } from "../../../components/hub-workspace-links";
 import{useCallback,useEffect,useState}from"react";
 import{ReadGate,ReadRefusedNotice}from"../../../components/refused-surface";
 
@@ -56,7 +57,7 @@ export default function AiConfigurationPage(){
       {/* R3-G / F7: the global AI kill switch rendered ABOVE "Permission denied" for an admin whose
           read had just been refused. A control that cannot be exercised must not be offered: the
           operator presses it, gets a second refusal, and learns nothing either time. */}
-      <div><ReadGate error={error}><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> </ReadGate><Link href="/team/ai" style={{marginLeft:10}}>AI review</Link> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
+      <div><ReadGate error={error}><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> </ReadGate><StaffGatedLink href="/team/ai" permission="reports.view" style={{marginLeft:10}}>AI review</StaffGatedLink> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
     </header>
     <ReadRefusedNotice error={error} what="AI configuration" />
     {notice&&<div role="status" style={{padding:12,background:"#eefaf1",borderRadius:10,marginBottom:12}}>{notice}</div>}
