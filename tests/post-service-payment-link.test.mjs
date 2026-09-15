@@ -128,7 +128,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
 test("Partner app polls canonical job and payment state and hides uncollectable checkout links", () => {
   const source = fs.readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
   assert.match(source, /setInterval\(\(\)=>setPaymentPollKey/);
-  assert.match(source, /\[identity\?\.subjectId, refreshKey, paymentPollKey\]/);
+  assert.match(source, /\[identity\?\.subjectId, refreshKey, paymentPollKey, requestedBookingId\]/);
   assert.match(source, /\[selected\?\.bookingId, refreshKey, paymentPollKey\]/);
   assert.match(source, /paymentRequest\.collectable \? <>/);
 });
