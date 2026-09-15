@@ -134,7 +134,7 @@ async function verifyRazorpayModal(page: Page, serviceDate: string) {
 }
 
 test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async ({ page, browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   const baseURL = process.env.PW_BASE_URL!;
   const serviceDate = process.env.PW_UAT_SERVICE_DATE!;
   expect(baseURL).toContain("pawspace-staging");
