@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
@@ -16,12 +17,14 @@ const when = (value: unknown) => { const date = new Date(typeof value === "numbe
 const initials = (name: unknown) => String(name || "PS").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
 
 export default function BookingCommandCenter() {
+  const searchParams = useSearchParams();
+  const deepLinkedBookingId = String(searchParams.get("bookingId") || "").trim();
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(deepLinkedBookingId);
+  const [query, setQuery] = useState(deepLinkedBookingId);
   // The server window is the newest 150 bookings. Three or more characters in the search box are sent
   // as ?q= so a booking outside that window is still found; the client filter then narrows the result.
-  const queryRef = useRef(""), searchedRef = useRef("");
+  const queryRef = useRef(deepLinkedBookingId), searchedRef = useRef("");
   const [filter, setFilter] = useState("All bookings");
   const [tab, setTab] = useState<Tab>("Overview");
   const [loading, setLoading] = useState(true);
@@ -49,7 +52,7 @@ export default function BookingCommandCenter() {
     if (serverQuery === searchedRef.current) return;
     const timer = window.setTimeout(() => { void load(true); }, 350);
     return () => window.clearTimeout(timer);
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query]);
   useEffect(() => {
     const events = new EventSource("/api/booking-command-center/stream");
     const refresh = () => { void load(true); };
