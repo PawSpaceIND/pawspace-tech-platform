@@ -1,7 +1,7 @@
 "use client";
 
 import Link from"next/link";
-import{useEffect,useMemo,useState}from"react";
+import{Suspense,useEffect,useMemo,useState}from"react";
 import {useSearchParams} from "next/navigation";
 import baseStyles from"./trainer.module.css";
 import extraStyles from"./trainer-extra.module.css";
@@ -19,7 +19,9 @@ const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",curr
 const editorFrom=(session:TrainerSession):EditorState=>{const progress=session.progress||{};return{attendanceMode:String(session.attendance?.mode||"parent") as "parent"|"trainer_led",parentConfirmed:session.attendance?.parentOrCaretakerConfirmed!==false,safeArea:session.attendance?.safeAreaConfirmed!==false,homework:String(session.homework?.text||""),scores:{focus:Number(progress.focus||7),recall:Number(progress.recall||7),impulse:Number(progress.impulse||7),parent:Number(progress.parent||7)},evidenceRefs:session.evidenceRefs||[]};};
 async function providerEarnings(providerId:string){const response=await fetch(`/api/training-provider-earnings?providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"}),body=await response.json() as {data?:EarningsData;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load Training earnings");return body.data;}
 
-export default function TrainerPage(){
+export default function TrainerPage(){return <Suspense fallback={null}><TrainerPageContent/></Suspense>;}
+
+function TrainerPageContent(){
  const searchParams=useSearchParams(),requestedBookingId=searchParams.get("bookingId")||"";
  const[tab,setTab]=useState<Tab>("today"),[providerId,setProviderId]=useState(""),[sessions,setSessions]=useState<TrainerSession[]>([]),[selectedId,setSelectedId]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[toast,setToast]=useState(""),[evidence,setEvidence]=useState<EvidenceAsset[]>([]),[earnings,setEarnings]=useState<EarningsData|null>(null),[attendanceMode,setAttendanceMode]=useState<"parent"|"trainer_led">("parent"),[parentConfirmed,setParentConfirmed]=useState(true),[safeArea,setSafeArea]=useState(true),[homework,setHomework]=useState(""),[scores,setScores]=useState<Record<string,number>>({focus:7,recall:7,impulse:7,parent:7}),[evidenceRefs,setEvidenceRefs]=useState<string[]>([]);
  const selected=useMemo(()=>sessions.find(item=>item.id===selectedId)||null,[sessions,selectedId]);

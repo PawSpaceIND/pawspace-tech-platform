@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import {useEffect,useMemo,useState,useSyncExternalStore} from "react";
+import {Suspense,useEffect,useMemo,useState,useSyncExternalStore} from "react";
 import {useSearchParams} from "next/navigation";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
 import {loadOwnBoardingStays,updateBoardingStay,type BoardingStay,type BoardingStayAction} from "../../lib/boarding-stay-client";
@@ -19,7 +19,9 @@ function initials(value:string){return value.split(/\s+/).filter(Boolean).slice(
 
 async function loadWorkspace():Promise<Workspace>{const scoped=await loadOwnBoardingStays();let profile:BoardingHost|null=null;if(scoped.providerId&&scoped.cityId&&scoped.zoneId){const commercial=await loadBoardingCommercial({cityId:scoped.cityId,zoneId:scoped.zoneId});profile=commercial.hosts.find(item=>item.providerId===scoped.providerId)??null;}return{...scoped,profile};}
 
-export default function HostPage(){
+export default function HostPage(){return <Suspense fallback={null}><HostPageContent/></Suspense>;}
+
+function HostPageContent(){
  const searchParams=useSearchParams(),requestedBookingId=searchParams.get("bookingId")||"";
  const[tab,setTab]=useState<Tab>("today"),[stays,setStays]=useState<BoardingStay[]>([]),[profile,setProfile]=useState<BoardingHost|null>(null),[providerId,setProviderId]=useState<string|null>(null),[selectedId,setSelectedId]=useState(""),[busy,setBusy]=useState(""),[toast,setToast]=useState(""),[error,setError]=useState(""),[loading,setLoading]=useState(true);
  // Localized date resolves on the client only: the server (UTC) and client (IST) render
