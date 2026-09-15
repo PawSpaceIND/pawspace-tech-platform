@@ -140,7 +140,8 @@ test("source contract: the Partner app confirms the upload it registers, and Ops
   ].map(path => readFile(new URL("../" + path, import.meta.url), "utf8")));
   assert.match(partner, /boundedFetch\("\/api\/service-media\/upload", \{ method: "PUT", headers: \{ "content-type": item\.mimeType, "x-pawspace-media-id": mediaId, "x-pawspace-upload-token": grant\.token \}, body: item\.file \}/, "the bytes themselves are carried to the server, which verifies them against the grant before confirming");
   assert.doesNotMatch(partner, /observedSha256: item\.sha256/, "the confirmation is never made from the uploader's own claim about bytes the server never saw");
-  assert.match(partner, /await discardProviderProof\(queued\.id\);\s*await flushProviderProofQueue/, "a directly registered item leaves the queue before the flush, or it is registered twice");
+  assert.match(partner, /await dispatchQueuedProof\(queued, registerQueuedProof\)/, "a directly registered item is dispatched under its in-flight lock, or a concurrent flush registers it twice");
+  assert.doesNotMatch(partner, /await registerQueuedProof\(queued\)/, "the page never bypasses the lock to register a queued item directly");
   assert.match(partner, /review_status === "rejected"/, "a rejected photo must be surfaced so it can be replaced");
   assert.match(review, /action: "record_scan", scanResult, reason/);
   assert.match(panel, /<ServiceProofReview bookingId=\{selected\.id\}/);

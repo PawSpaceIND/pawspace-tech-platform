@@ -231,6 +231,14 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
     refuse(`Media must be between ${config.minSizeBytes} byte and ${config.maxSizeBytes} bytes`,400,{code:"media_size_out_of_range"});
   const sha256=String(input.sha256||"").trim().toLowerCase();
   if(!SHA256.test(sha256))refuse("A valid SHA-256 checksum is required",400);
+  // The same bytes, already received for this booking, provider and purpose, are not registered twice. A
+  // queue row whose removal failed after a successful upload, a second tab that read the queue late, or a
+  // partner picking the same photo again would otherwise open a fresh registration whose upload becomes a
+  // second review-queue entry for one photo. The refusal is a permanent 4xx, so the Partner app's flush
+  // discards the row instead of retrying it. A rejected photo does not block: rejection asks for another.
+  const arrived=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=? LIMIT 1")
+    .bind(bookingId,providerId,category,sha256,input.supersedes??"").first<Row>();
+  if(arrived)refuse("This photo has already been uploaded for this booking and purpose; it is waiting for review",409,{code:"media_already_registered",mediaId:String(arrived.id)});
 
   const mediaId=`MEDIA-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
   const grantId=`MGRANT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
@@ -245,12 +253,48 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
     db.prepare("INSERT INTO media_upload_grants (id,media_id,booking_id,scope_type,scope_id,provider_id,service_code,city_id,category,object_key,mime_type,size_bytes,sha256,token_hash,status,expires_at,consumed_at,policy_version,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'issued',?,NULL,?,?,?)")
       .bind(grantId,mediaId,bookingId,input.scopeType,scopeId,providerId,serviceCode,String(input.cityId||POLICY_ANY).trim().toLowerCase()||POLICY_ANY,category,objectKey,mimeType,sizeBytes,sha256,tokenHash,expiresAt,policy.policyVersion,actorId,now),
   ]);
+  // Idempotent re-registration. The Partner app keys a queued photo by (booking, purpose, sha256). When the
+  // same bytes are registered again while an earlier registration never received them (a dropped upload,
+  // a reload, a flush racing the direct upload), that earlier asset would otherwise sit in the Ops review
+  // queue for ever as "upload incomplete". Retire it and link the new registration to it instead. This runs
+  // AFTER this registration exists and retires only rows inserted before it, so two registrations of the
+  // same bytes that overlap in flight settle on exactly one live row (the later one) whichever way their
+  // statements interleave, and a registration whose insert failed has retired nothing.
+  const supersedes=input.supersedes??await supersedeStalePendingRegistrations(db,{mediaId,bookingId,providerId,category,sha256,actorId});
+  if(supersedes&&input.supersedes===undefined)await db.prepare("UPDATE service_media_assets SET supersedes=? WHERE id=?").bind(supersedes,mediaId).run();
   await mediaEvent(db,mediaId,bookingId,"media_upload_grant_issued",actorId,{grantId,category,objectKey,mimeType,sizeBytes,expiresAt,scopeType:input.scopeType,scopeId,policyVersion:policy.policyVersion,adapterConnected:false});
 
   return{mediaId,mediaRef:`media://asset/${mediaId}`,grantId,token,objectKey,category,mimeType,sizeBytes,sha256,expiresAt,
     reviewStatus:"pending_review",proofReady:false,policyVersion:policy.policyVersion,
     upload:{mode:"private_object_put",adapterConnected:false,rawPublicUrl:false,singleUse:true},
-    ...(input.supersedes?{supersedes:input.supersedes}:{})};
+    ...(supersedes?{supersedes}:{})};
+}
+
+/**
+ * Retire every registration of the same bytes for the same booking, provider and purpose that was inserted
+ * before `mediaId` and is still waiting for its upload: its grant is voided (a late PUT with that token is
+ * refused as superseded, never as "used") and the asset leaves the active set, so the Ops queue never lists a
+ * duplicate that can only ever answer "upload incomplete". The rowid bound is what makes concurrent
+ * registrations converge: each retires only what came before it, so the newest survives and none retires its
+ * own successor. Returns the most recent retired asset id, or null.
+ */
+async function supersedeStalePendingRegistrations(db:Db,input:{mediaId:string;bookingId:string;providerId:string;category:string;sha256:string;actorId:string}):Promise<string|null>{
+  const stale=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND access_status='pending_upload' AND retention_status='active' AND id!=? AND rowid<(SELECT rowid FROM service_media_assets WHERE id=?) ORDER BY rowid")
+    .bind(input.bookingId,input.providerId,input.category,input.sha256,input.mediaId,input.mediaId).all<Row>();
+  let last:string|null=null;
+  const now=Date.now();
+  for(const row of stale.results){
+    const id=String(row.id);
+    const [retired]=await db.batch([
+      db.prepare("UPDATE service_media_assets SET retention_status='superseded',access_status='revoked',updated_at=? WHERE id=? AND access_status='pending_upload'").bind(now,id),
+      db.prepare("UPDATE media_upload_grants SET status='superseded' WHERE media_id=? AND status='issued'").bind(id),
+    ]);
+    // An overlapping registration may have retired this row first; it recorded that, so this one does not.
+    if(Number(retired?.meta?.changes??1)===0)continue;
+    await mediaEvent(db,id,input.bookingId,"media_registration_superseded",input.actorId,{reason:"the same bytes were registered again before this upload arrived",supersededBy:input.mediaId,sha256:input.sha256,category:input.category});
+    last=id;
+  }
+  return last;
 }
 
 /**
@@ -267,6 +311,7 @@ export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:
   const grant=await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
   if(!grant)refuse("Media upload grant not found",404);
   if(String(grant!.media_id)!==mediaId)refuse("This upload token belongs to another media asset",403,{code:"upload_token_mismatch"});
+  if(String(grant!.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
   if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
   if(Number(grant!.expires_at)<Date.now())refuse("This media upload token has expired",409,{code:"upload_token_expired"});
   if(String(grant!.token_hash)!==await digest(token))refuse("Media upload token is not valid for this grant",403,{code:"upload_token_mismatch"});
@@ -295,6 +340,7 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   const grantId=token.split(".")[0]||"";
   const grant=await db.prepare("SELECT * FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
   if(!grant)refuse("Media upload grant not found",404);
+  if(String(grant!.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
   if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
   const now=Date.now();
   if(Number(grant!.expires_at)<now)refuse("This media upload token has expired",409,{code:"upload_token_expired"});
