@@ -85,11 +85,13 @@ const { partnerJobWorkspaceHref } = await import("../lib/partner-job-workspace.t
 test("assigned job workspace links preserve the exact booking context only where the workspace accepts it", () => {
   const id = "B & 1";
   assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "grooming" }), "/partner-app?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "dog_training" }), "/trainer?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "boarding" }), "/host?bookingId=B%20%26%201");
   assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "dog_walking" }), "/walker?bookingId=B%20%26%201");
   assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_walking" }), "/walker?bookingId=B%20%26%201");
   assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_taxi" }), "/driver?bookingId=B%20%26%201");
   assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_sitting" }), "/sitter?bookingId=B%20%26%201");
-  for (const serviceCode of ["dog_training", "boarding", "pet_food"])
+  for (const serviceCode of ["pet_food"])
     assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode }), null);
   assert.equal(partnerJobWorkspaceHref({ bookingId: " ", serviceCode: "pet_taxi" }), null);
 });
