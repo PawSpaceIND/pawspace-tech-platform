@@ -21,6 +21,17 @@ export const marketingWorkspaceLinks:HubWorkspaceLink[]=[
  {href:"/team/whatsapp/analytics",label:"WhatsApp analytics",detail:"Delivery, response and AI-handling analytics for WhatsApp conversations.",permission:"reports.view"},
  {href:"/team/haptik",label:"Haptik campaign operations",detail:"Outbound Haptik voice and chat campaigns with their governed dispatch state.",permission:"marketing.view"},
  {href:"/team/lifecycle-reminders",label:"Lifecycle reminder engine",detail:"The rules that decide when a customer or a service becomes due for a reminder.",permission:"settings.manage"},
+ /*
+  * /landing-pages had no door. It is linked only from app/landing-pages/[slug]/page.tsx, and that
+  * child is linked only from the index - a closed loop with no entrance, so the review index and
+  * every campaign page under it could be opened by typing the URL and no other way. The flat
+  * reachability ratchet does not see this: something DOES link the route, it just cannot be reached.
+  *
+  * Unlike its siblings this destination has no API and no server-side gate: it is noindex marketing
+  * copy with no customer data, so marketing.view decides who is TOLD about it here, not who may open
+  * it. Paid-marketing review is Marketing's work, which is why the door is on this hub.
+  */
+ {href:"/landing-pages",label:"Campaign landing-page review",detail:"The paid-marketing landing-page concepts, noindex until approved, grouped by service.",permission:"marketing.view"},
 ];
 type Campaign=Record<string,unknown>&{id:string;name:string;objective:string;status:string;approval_status:string;budget_amount:number;holdout_percent:number};type Snapshot=Record<string,unknown>;
 const card={background:"white",border:"1px solid #e5dcef",borderRadius:14};

@@ -183,3 +183,119 @@ test("ROUTE-REACH-6: every route this change surfaced is linked from the hub tha
   }
   assert.deepEqual(misplaced, []);
 });
+
+/*
+ * ROUTE-REACH-1 asks "does ANYTHING link this route?". That is not the same question as "can a user
+ * get to it", and /landing-pages is how the difference showed: app/landing-pages/[slug]/page.tsx
+ * links the index, and the index is the only thing that links the slug page. A closed loop with no
+ * entrance reads as fully linked to a flat scan, and the marketing review index and every campaign
+ * page under it could in fact be opened only by typing the URL.
+ *
+ * So walk the graph instead. Start at "/", take the closure of each reachable page's own imports
+ * (its components come with it) plus every layout, and see which routes that walk can never name.
+ */
+const importGraph = new Map(sourceFiles.map((file) => [file, stripComments(readFileSync(path.join(ROOT, file), "utf8"))]));
+
+/** The app/ or lib/ files a component pulls in. This repo writes relative imports without an extension. */
+function importsOf(file) {
+  const found = [];
+  for (const match of (importGraph.get(file) ?? "").matchAll(/from\s*["']([^"']+)["']/g)) {
+    if (!match[1].startsWith(".")) continue;
+    const base = path.normalize(path.join(path.dirname(file), match[1]));
+    for (const candidate of [`${base}.tsx`, `${base}.ts`, `${base}/index.tsx`, `${base}/index.ts`]) {
+      if (importGraph.has(candidate)) { found.push(candidate); break; }
+    }
+  }
+  return found;
+}
+
+const closures = new Map();
+function closureOf(entry) {
+  if (closures.has(entry)) return closures.get(entry);
+  const seen = new Set();
+  const stack = [entry];
+  while (stack.length) {
+    const file = stack.pop();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    for (const dependency of importsOf(file)) stack.push(dependency);
+  }
+  closures.set(entry, seen);
+  return seen;
+}
+
+const pageFileOf = (route) => `app${route === "/" ? "" : route}/page.tsx`;
+const layouts = sourceFiles.filter((file) => /^app\/(.*\/)?layout\.tsx$/.test(file));
+
+function walkFromRoot() {
+  const reached = new Set(["/"]);
+  for (;;) {
+    const carriers = new Set(layouts);
+    for (const route of reached) for (const file of closureOf(pageFileOf(route))) carriers.add(file);
+    let grew = false;
+    for (const route of routes) {
+      if (reached.has(route)) continue;
+      for (const carrier of carriers) {
+        if (carrier === pageFileOf(route)) continue;
+        if (linksTo(importGraph.get(carrier) ?? "", route)) { reached.add(route); grew = true; break; }
+      }
+    }
+    if (!grew) return reached;
+  }
+}
+
+const reachedFromRoot = walkFromRoot();
+const unwalkable = routes.filter((route) => !reachedFromRoot.has(route));
+
+/*
+ * The routes no walk from "/" can name, each frozen with the reason it is not a defect. Like the
+ * baseline above this is a RATCHET: the set may only shrink.
+ *
+ *  /account, /ops                RETIRED redirect-only routes; tests/retired-routes.test.mjs forbids
+ *                                linking them at all.
+ *  /prelaunch/layer2-swarm       a destructive pre-launch lab that writes 60 bookings into the real
+ *                                database.
+ *  /chat, /relocation-enquiry    customer-facing front doors whose owning surfaces are outside this
+ *                                change - both are also in the flat baseline.
+ *  /food/subscription-payment    reached by the payment link the renewal cycle mints
+ *                                (lib/food-subscription-governance.ts writes payment_link_path) and
+ *                                re-offered on /food/subscriptions from that stored value. The link
+ *                                is a runtime string, so no static scan can see it; the route IS
+ *                                reachable in the product.
+ *  /staging-login                the UAT sign-in front door. It is typed, by design: the thing that
+ *                                names it is lib/uat-staging-auth.ts, in the 401 it returns to a
+ *                                caller whose staging session has expired.
+ */
+const UNWALKABLE_BASELINE = [
+  "/account", "/chat", "/food/subscription-payment", "/ops",
+  "/prelaunch/layer2-swarm", "/relocation-enquiry", "/staging-login",
+];
+
+test("ROUTE-REACH-7: no page is linked only from inside a loop a user cannot enter", () => {
+  const added = unwalkable.filter((route) => !UNWALKABLE_BASELINE.includes(route));
+  assert.deepEqual(added, [],
+    `Something links each of these, so ROUTE-REACH-1 is satisfied, but no path from "/" ever ` +
+    `reaches the page that does the linking - a user can only get there by typing the URL. Link ` +
+    `each one from the hub that owns it:\n  ${added.join("\n  ")}`);
+
+  const nowReachable = UNWALKABLE_BASELINE.filter((route) => !unwalkable.includes(route));
+  assert.deepEqual(nowReachable, [],
+    `These are now reachable by walking from "/". Delete them from UNWALKABLE_BASELINE so the ` +
+    `ratchet cannot slip back:\n  ${nowReachable.join("\n  ")}`);
+});
+
+test("ROUTE-REACH-8: the walk is not blind", () => {
+  // Same guard as ROUTE-REACH-4, for the same reason: every assertion above passes trivially if the
+  // walk reaches everything, and a walk that reaches nothing would make the whole route list read as
+  // a finding. Pin both ends, and pin that the import resolver behind the walk actually resolves.
+  assert.ok(reachedFromRoot.size > 130, `the walk from "/" reached only ${reachedFromRoot.size} routes - it has gone blind`);
+  assert.ok(unwalkable.length < 15, `${unwalkable.length} routes are unwalkable - the walk is not resolving imports`);
+  assert.ok(importsOf("app/team/marketing/page.tsx").includes("app/components/hub-workspace-links.tsx"),
+    "the extensionless relative import this repo writes everywhere must resolve, or every closure is just the page itself");
+
+  // A positive and a negative control against the real tree.
+  assert.equal(reachedFromRoot.has("/team/finance/statutory"), true,
+    "/team/finance/statutory is reachable: / -> ... -> /team -> /team/finance -> the statutory tile");
+  assert.equal(reachedFromRoot.has("/prelaunch/layer2-swarm"), false,
+    "the destructive pre-launch lab is deliberately unreachable - a walk that claims otherwise is matching anything");
+});

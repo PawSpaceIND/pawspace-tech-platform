@@ -138,7 +138,7 @@ export default function VoiceOperatorPage() {
       eyebrow="PAWSPACE TEAM · VOICE OPERATIONS"
       title="Automated outbound calling"
       description="Every call is gated by the environment, consent and opt-out records, quiet hours, the recipient allow-list and a per-recipient cap. This screen cannot enable voice; it reports and operates only what the server permits."
-      nav={[{ href: "/team/ai", label: "AI governance" }, { href: "/team/cases", label: "Cases" }, { href: "/team", label: "Team home", primary: true }]}
+      nav={[{ href: "/team/ai", label: "AI governance", permission: "reports.view" }, { href: "/team/cases", label: "Cases", permission: "bookings.manage" }, { href: "/team", label: "Team home", primary: true, permission: "dashboard.view" }]}
       status={<><TeamAlert tone="error">{error}</TeamAlert><TeamAlert tone="info">{notice}</TeamAlert></>}
     >
       <TeamStatGrid>

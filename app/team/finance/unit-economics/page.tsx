@@ -2,6 +2,8 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
+import{useStaffPermissions}from"../../../components/hub-workspace-links";
+import{hasPermission}from"../../../../lib/platform-security";
 
 type Ladder={gmv:number;orders:number;cancelled:number;discounts:number;providerPayout:number;refunds:number;contributionKnown:number;contributionPctOfGmv:number|null;avgOrderValue:number|null;reviews:number;csatAvgStars:number|null;csatPct:number|null;complaintsPer100:number|null;repeatRatePct:number|null;revenuePerProviderDay:number|null};
 type Report={from:string;to:string;services:Record<string,Ladder>;company:{gmv:number;orders:number;cancelled:number;discounts:number;providerPayout:number;refunds:number;contributionKnown:number;cancellationRatePct:number|null;activeCustomers:number;ltvPerActiveCustomer:number|null;utilisationPct:number|null;cac:{status:string;spend:number|null;newCustomers:number|null;cacPerNewCustomer:number|null}};dataCoverage:Record<string,string>};
@@ -13,12 +15,16 @@ const monthStart=()=>`${new Date().toISOString().slice(0,7)}-01`;
 const today=()=>new Date().toISOString().slice(0,10);
 
 export default function UnitEconomicsPage(){
+ /* /api/unit-economics is reports.view; manager and auditor hold it and neither holds finance.view,
+    so "Finance home" was the only way back off this page and it refused them. The way back is not
+    removed, it is retargeted at /team, which every staff role can open. */
+ const{permissions,loaded}=useStaffPermissions(),financeHome=loaded&&hasPermission(permissions,"finance.view");
  const[from,setFrom]=useState(monthStart()),[to,setTo]=useState(today()),[report,setReport]=useState<Report|null>(null),[error,setError]=useState("");
  function load(fromDate:string,toDate:string){fetch(`/api/unit-economics?from=${fromDate}&to=${toDate}`,{cache:"no-store"}).then(async response=>{const body=await response.json() as{data?:Report;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load unit economics");setReport(body.data);setError("");}).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load unit economics"));}
  useEffect(()=>{load(monthStart(),today());},[]);
  const company=report?.company;
  return <main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:16}}>
-  <header><Link href="/team/finance">← Finance home</Link><p>TEAM OS · FINANCE · UNIT ECONOMICS</p><h1>Unit economics</h1><p>GMV → discounts → payout → refunds → known contribution per service, with health monitors. Unconfigured cost lines (tax, gateway fees, COGS) are shown as pending — never silently zero.</p></header>
+  <header>{financeHome?<Link href="/team/finance">← Finance home</Link>:<Link href="/team">← Team home</Link>}<p>TEAM OS · FINANCE · UNIT ECONOMICS</p><h1>Unit economics</h1><p>GMV → discounts → payout → refunds → known contribution per service, with health monitors. Unconfigured cost lines (tax, gateway fees, COGS) are shown as pending — never silently zero.</p></header>
   <div style={{display:"flex",gap:8,alignItems:"center"}}>
    <label>From <input type="date" value={from} onChange={event=>setFrom(event.target.value)}/></label>
    <label>To <input type="date" value={to} onChange={event=>setTo(event.target.value)}/></label>

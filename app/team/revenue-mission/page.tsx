@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
+import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamStatGrid, TeamTable, type TeamNavLink } from "../../components/ui";
 
 /**
  * Revenue Mission Command Center.
@@ -27,10 +27,10 @@ const money = (value: unknown) => `₹${Number(value || 0).toLocaleString("en-IN
 const RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
 const TONE: Record<string, "danger" | "warning" | "info"> = { critical: "danger", warning: "warning", info: "info" };
 
-const NAV = [
-  { href: "/team/daily-revenue", label: "Daily revenue" },
-  { href: "/team/sales", label: "Sales & CRM" },
-  { href: "/team", label: "Team home", primary: true },
+const NAV: TeamNavLink[] = [
+  { href: "/team/daily-revenue", label: "Daily revenue", permission: "customers.view" },
+  { href: "/team/sales", label: "Sales & CRM", permission: "customers.view" },
+  { href: "/team", label: "Team home", primary: true, permission: "dashboard.view" },
 ];
 
 export default function RevenueMissionPage() {

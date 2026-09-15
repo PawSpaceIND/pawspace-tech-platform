@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../../components/ui";
+import { StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable, type TeamNavLink } from "../../../components/ui";
 
 /**
  * AI analytics.
@@ -31,11 +31,11 @@ const DASH = "—";
 const CHANNELS = [["", "All channels"], ["whatsapp", "WhatsApp"], ["chat", "Chat"], ["voice", "Voice"]] as const;
 const pretty = (value: string) => value.replaceAll("_", " ");
 const field = { padding: 9, borderRadius: 8, border: "1px solid #e5dcef", background: "white" } as const;
-const NAV = [
-  { href: "/team/ai", label: "AI home" },
-  { href: "/team/ai/handoff", label: "Handoff queue" },
-  { href: "/team/ai/configuration", label: "Configuration" },
-  { href: "/team", label: "Team home", primary: true },
+const NAV: TeamNavLink[] = [
+  { href: "/team/ai", label: "AI home", permission: "reports.view" },
+  { href: "/team/ai/handoff", label: "Handoff queue", permission: "communications.manage" },
+  { href: "/team/ai/configuration", label: "Configuration", permission: "dashboard.view" },
+  { href: "/team", label: "Team home", primary: true, permission: "dashboard.view" },
 ];
 
 export default function AiAnalyticsPage() {

@@ -85,6 +85,24 @@ export function trainingScheduleSpanDays(input:{weekdays:readonly number[];sessi
  return found<count?Number.POSITIVE_INFINITY:offset;
 }
 
+/**
+ * The same span, counted from the sessions that were ACTUALLY reserved.
+ *
+ * trainingScheduleSpanDays above predicts the span from a cadence the screen is about to reserve.
+ * This measures it from the reservations themselves, which is what the server has and what the
+ * customer is actually being sold: calendar days from the first reserved session to the last. Both
+ * return the same number for the same calendar, so a schedule the screen allows is a schedule the
+ * server allows - the point of this one is that no client has to be trusted to have run the other.
+ *
+ * Date parts only, so an evening session and a morning session on the same day are nought days apart
+ * rather than a fraction of one. Non-finite when a start is unparseable, which fails closed.
+ */
+export function trainingReservedSpanDays(startsIso:readonly string[]):number{
+ const days=startsIso.map(value=>Date.parse(`${String(value).slice(0,10)}T00:00:00Z`)).filter(value=>Number.isFinite(value));
+ if(days.length!==startsIso.length||!days.length)return Number.POSITIVE_INFINITY;
+ return Math.round((Math.max(...days)-Math.min(...days))/86_400_000);
+}
+
 export type TrainingValidityVerdict={ok:boolean;spanDays:number;validityDays:number;overrunDays:number};
 
 /** Whether a concrete chosen schedule finishes inside the package validity it was sold under. */

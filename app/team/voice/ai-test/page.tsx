@@ -416,9 +416,9 @@ export default function AiVoiceSelfTestPage() {
       title="Call me with the AI bot"
       description="UAT-only voice testing. Use the browser mic harness to certify Workers AI independently from Exotel, then use the allow-listed carrier test only after the AI pipeline is proven."
       nav={[
-        { href: "/team/voice", label: "Voice operations", primary: true },
-        { href: "/team/ai", label: "AI governance" },
-        { href: "/team", label: "Team home" },
+        { href: "/team/voice", label: "Voice operations", primary: true, permission: "customers.manage" },
+        { href: "/team/ai", label: "AI governance", permission: "reports.view" },
+        { href: "/team", label: "Team home", permission: "dashboard.view" },
       ]}
       status={
         <>

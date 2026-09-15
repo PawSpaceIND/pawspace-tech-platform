@@ -54,8 +54,12 @@ async function configure(gst, db, sqlite, entityId, components) {
     .run(`${entityId}-POL`, entityId, JSON.stringify({ regime: "gst_in", roundingMode: "line" }), NOW, NOW, NOW);
   sqlite.prepare("INSERT OR REPLACE INTO tax_classifications VALUES (?,?,'pet_grooming','SAC998729',?,'location_of_service','eligible',?)")
     .run(`${entityId}-CLS`, `${entityId}-POL`, JSON.stringify(components), NOW);
+  /* The prefix used to be `${entityId}/26-27/`, which for "E-GOOD" is thirteen characters and, with
+     six digits of padding, mints "E-GOOD/26-27/000001" - nineteen characters, where GST rule 46(b)
+     allows sixteen. lib/statutory-invoicing.ts has always refused that; lib/gst-accounting.ts now
+     does too, so the fixture uses a series that can actually mint a legal number. */
   sqlite.prepare("INSERT OR REPLACE INTO finance_document_series VALUES (?,?,'invoice',?,1,6,?,'active',?)")
-    .run(`${entityId}-SER`, entityId, `${entityId}/26-27/`, `${entityId}-POL`, NOW);
+    .run(`${entityId}-SER`, entityId, "PS/26-27/", `${entityId}-POL`, NOW);
 }
 
 const invoiceInput = (entityId, key) => ({

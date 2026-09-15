@@ -3,6 +3,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import styles from "./team-shell.module.css";
 import PageHeader from "./PageHeader";
+import { useStaffPermissions } from "../hub-workspace-links";
+import { hasPermission, type Permission } from "../../../lib/platform-security";
 
 /**
  * The shared frame for a Team workspace page.
@@ -14,9 +16,29 @@ import PageHeader from "./PageHeader";
  * section/table treatment as the rest of Team, so a new page cannot silently ship unstyled.
  */
 
-export interface TeamNavLink { href: string; label: string; primary?: boolean }
+/**
+ * `permission` is the permission the DESTINATION demands to load, read off that route's own API -
+ * the same rule app/components/hub-workspace-links.tsx states for a hub tile. An entry that names
+ * one is hidden from an actor who does not hold it, because offering a link whose screen answers
+ * "Permission denied" is worse than not offering it: the operator cannot tell a missing permission
+ * from a broken page. /team/revenue-mission, /team/voice/ai-test and /team/ai/analytics load on
+ * reports.view, settings.manage and dashboard.view respectively, and each offered a nav sibling
+ * behind a permission its own visitors need not hold - finance and auditor could open Revenue
+ * Mission Control and were then refused by both of the links it showed them.
+ *
+ * An entry with no `permission` is not gated at all, so a caller that has not opted in is unchanged.
+ */
+export interface TeamNavLink { href: string; label: string; primary?: boolean; permission?: Permission }
 
 export function TeamShell({ eyebrow, title, description, nav = [], status, children }: { eyebrow: ReactNode; title: ReactNode; description?: ReactNode; nav?: TeamNavLink[]; status?: ReactNode; children: ReactNode }) {
+  /*
+   * The gate lives here rather than in a nested nav component so that it is the SHELL's own effect:
+   * a child's effect is not what decides whether a link is offered, and a test that mounts the shell
+   * can then see the real answer instead of an empty nav. Until the actor has loaded, a gated entry
+   * is not offered - a link shown and then withdrawn reads as a permission just taken away.
+   */
+  const { permissions, loaded } = useStaffPermissions();
+  const visibleNav = nav.filter((link) => !link.permission || (loaded && hasPermission(permissions, link.permission)));
   return (
     <main className={styles.shell}>
       <div className={styles.inner}>
@@ -24,7 +46,7 @@ export function TeamShell({ eyebrow, title, description, nav = [], status, child
           eyebrow={eyebrow}
           title={title}
           description={description}
-          actions={nav.length > 0 ? <nav className={styles.nav}>{nav.map((link) => <Link key={link.href} href={link.href} className={link.primary ? styles.navPrimary : styles.navLink}>{link.label}</Link>)}</nav> : undefined}
+          actions={visibleNav.length > 0 ? <nav className={styles.nav}>{visibleNav.map((link) => <Link key={link.href} href={link.href} className={link.primary ? styles.navPrimary : styles.navLink}>{link.label}</Link>)}</nav> : undefined}
         />
         {status}
         {children}

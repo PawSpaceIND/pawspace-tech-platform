@@ -6,6 +6,15 @@ import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig,
 import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 import AssistedTaxiPanel from "./assisted-taxi-panel";
+import { useVisibleStaffLinks, type HubWorkspaceLink } from "../components/hub-workspace-links";
+
+/* Each carries the permission its destination's API demands to load: /api/crm GET is customers.view,
+   /api/operations-overview behind /team is dashboard.view, /api/control-tower is audit.view. */
+const OPS_RAIL: HubWorkspaceLink[] = [
+  { href: "/crm", label: "Customer 360", detail: "", permission: "customers.view" },
+  { href: "/team", label: "Finance & People", detail: "", permission: "dashboard.view" },
+  { href: "/control", label: "Platform control", detail: "", permission: "audit.view" },
+];
 
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
 const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
@@ -23,6 +32,7 @@ type CataloguePackage=AssistedOrderPackage&{offerType?:"regular"|"young"|"subscr
 const tierLabel=(item:CataloguePackage)=>item.tier||(item.offerType==="young"?"Puppy / kitten":item.offerType?"Adult":"");
 
 export default function AssistedBooking(){
+  const opsRail=useVisibleStaffLinks(OPS_RAIL);
   const requestedCustomerIdQuery=useQueryParameter("customerId");
   const [config,setConfig]=useState<AssistedOrderConfig|null>(null);
   const [selected,setSelected]=useState(0);
@@ -89,7 +99,7 @@ export default function AssistedBooking(){
   return <div className={styles.shell}>
     <aside>
       <Link href="/admin" className={styles.brand}><span>paw</span>space <small>OPS</small></Link>
-      <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted orders</Link><Link href="/team">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
+      <nav><Link href="/admin">Overview</Link>{opsRail.find(item=>item.href==="/crm")&&<Link href="/crm">Customer 360</Link>}<Link className={styles.active} href="/assisted-booking">Assisted orders</Link>{opsRail.find(item=>item.href==="/team")&&<Link href="/team">Finance &amp; People</Link>}{opsRail.find(item=>item.href==="/control")&&<Link href="/control">Platform control</Link>}<Link href="/partner-app">Partner app</Link></nav>
       <div className={styles.access}><b>UAT ONLY</b><small>Staff identity required</small><small>Canonical booking + scheduler</small><small>No live money</small></div>
     </aside>
     <main>

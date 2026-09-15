@@ -24,4 +24,11 @@ test("gateway has explicit authority for case alert and runner routes",()=>{cons
  // sharing the same ternary, so it would have passed however this line changed.
  assert.match(gateway,/staff-alerts"\)\{if\(method==="GET"\)return "reports\.view";.*body\.action==="sweep"\?"customers\.manage":"reports\.view"/s);assert.match(gateway,/return "settings\.manage"/);});
 
-test("manager alert UI exposes CRM and Case Center source drilldown without production claims",()=>{const page=read("app/team/alerts/page.tsx");assert.match(page,/href="\/team\/cases"/);assert.match(page,/href="\/crm"/);assert.match(page,/Acknowledge/);assert.match(page,/Resolve alert/);assert.match(page,/Production ready:<\/b> NO/);});
+/*
+ * The two drilldowns are still here; they moved out of literal hrefs and into HEADER_LINKS, each
+ * carrying the permission its own destination demands. This page loads on reports.view, which
+ * finance and auditor hold, and neither of them holds bookings.manage (Cases) or customers.view
+ * (CRM) - so both links refused them. They are now offered to the roles that can open them, and
+ * tests/nav-offers-only-what-the-role-can-open.test.mjs renders that outcome role by role.
+ */
+test("manager alert UI exposes CRM and Case Center source drilldown without production claims",()=>{const page=read("app/team/alerts/page.tsx");assert.match(page,/\{href:"\/team\/cases",label:"Cases",detail:"",permission:"bookings\.manage"\}/);assert.match(page,/\{href:"\/crm",label:"CRM",detail:"",permission:"customers\.view"\}/);assert.match(page,/useVisibleStaffLinks\(HEADER_LINKS\)/);assert.match(page,/Acknowledge/);assert.match(page,/Resolve alert/);assert.match(page,/Production ready:<\/b> NO/);});

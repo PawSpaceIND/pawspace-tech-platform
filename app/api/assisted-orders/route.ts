@@ -234,12 +234,18 @@ if(prior){
   stage="lead_closure";
   const leadClosure=await convertLeadOnAssistedOrder(db,{customerId:input.customer.id,bookingId,actorId:actor.email}).catch(error=>({leadId:null,converted:false,reason:error instanceof Error?error.message:"lead_closure_failed"}));
   /* created_by was the CUSTOMER id on every booking, including one a staff member created on a call:
-   * /api/canonical-bookings binds input.customer.id there for every caller. "Who created this booking"
+   * /api/canonical-bookings bound input.customer.id there for every caller. "Who created this booking"
    * is the whole point of channel='assisted_staff', and the two columns contradicted each other - the
    * ledger said the customer booked themselves. Corrected outside the batch and tolerantly, because a
    * confirmed booking must not be failed over an attribution column; whether it landed is recorded in
-   * the audit rather than assumed. [R3-C/F10] */
+   * the audit rather than assumed. [R3-C/F10]
+   *
+   * /api/canonical-bookings now derives both columns from the actor IT authenticated, and internalPost
+   * above forwards this staff member's identity headers, so on the real path this UPDATE rewrites the
+   * value that is already there. It stays as the second of two independent guarantees: this route is
+   * the one that knows for certain a staff member is placing the order. */
   const attributed=await db.prepare("UPDATE canonical_bookings SET created_by=?,updated_at=? WHERE id=?").bind(actor.email,now,bookingId).run().then(result=>Number(result.meta?.changes||0)>0).catch(()=>false);
-  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,createdBy:actor.email,createdByRecorded:attributed,customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false,leadId:leadClosure.leadId,leadConverted:leadClosure.converted,leadClosureReason:leadClosure.reason});
+  const stored=await db.prepare("SELECT channel FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>().catch(()=>null);
+  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,createdBy:actor.email,createdByRecorded:attributed,recordedChannel:String(stored?.channel||""),customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false,leadId:leadClosure.leadId,leadConverted:leadClosure.converted,leadClosureReason:leadClosure.reason});
   return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:total,amountDueNow:0,status:"confirmed",duplicatePrevented:false,lead:leadClosure,testOnly:true,liveMoney:false}},201);
 }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,`Unable to create Assisted Order UAT - the request failed at the ${stage} step`);}}

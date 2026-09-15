@@ -45,6 +45,26 @@ export function documentFinancialYear(date:string){
  return`${start}-${String((start+1)%100).padStart(2,"0")}`;
 }
 
+/**
+ * Rule 46(b) on the NUMBER, not on the series that mints it.
+ *
+ * validateDocumentSeries below bounds prefix+padding at issue-configuration time, and that is where
+ * a badly configured series is caught. It is not the whole rule: padStart only pads, so once the
+ * serial outgrows its padding the number grows with it - a 4-character prefix on a 12-wide series is
+ * legal on the day it is saved and mints a 17-character number on invoice 1,000,000,000,000. And a
+ * v2 series SEEDED from a legacy row (resolveDocumentSeries) inherits that row's prefix and padding
+ * without ever passing through validateDocumentSeries at all.
+ *
+ * lib/statutory-invoicing.ts already asserted this on the number it builds. lib/gst-accounting.ts,
+ * which is what lib/subscription-billing.ts invoices every renewal through, did not - so a
+ * subscription renewal could mint an invoice number GST would reject at filing, with the tax ledger
+ * already written against it. Same check, same message, now on the path both share.
+ */
+export function assertDocumentNumberWithinRule46b(number:string){
+ if(number.length>16)throw new Error("invoice_number_exceeds_16_characters");
+ return number;
+}
+
 /** Rule 46(b): at most 16 characters, alphanumerics / and - only. */
 export function validateDocumentSeries(prefix:string,padding:number){
  if(!/^[A-Za-z0-9/-]*$/.test(prefix))throw new Error("invoice_series_invalid_characters");
@@ -79,7 +99,8 @@ export async function resolveDocumentSeries(db:Db,input:{entityId:string;gstin:s
  */
 export async function allocateDocumentNumber(db:Db,series:Row):Promise<string|null>{
  const serial=num(series.next_number),padding=num(series.padding)||6,prefix=text(series.prefix);
- const number=`${prefix}${String(serial).padStart(padding,"0")}`;
+ // Before the counter moves, so a refused number costs no serial and leaves no gap in the series.
+ const number=assertDocumentNumberWithinRule46b(`${prefix}${String(serial).padStart(padding,"0")}`);
  const moved=await db.prepare("UPDATE finance_document_series_v2 SET next_number=next_number+1,updated_at=? WHERE id=? AND next_number=?").bind(Date.now(),text(series.id),serial).run();
  if(!moved?.meta||Number(moved.meta.changes)!==1)return null;
  return number;
