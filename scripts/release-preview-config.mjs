@@ -29,6 +29,13 @@
 //                                required for governed address verification in Boarding, Sitting and
 //                                Walking. It is installed as an encrypted Worker secret; Maps mode stays
 //                                sandbox and live Maps billing remains disabled.
+//   RAZORPAY_KEY_ID_SANDBOX / RAZORPAY_KEY_SECRET_SANDBOX / RAZORPAY_WEBHOOK_SECRET_SANDBOX
+//                                required for the same reason, and they were the gap this list existed
+//                                to close. The Maps key was added here and the payment trio was not, so
+//                                a preview deployed with checkout dead: lib/customer-checkout-server.ts
+//                                reads RAZORPAY_KEY_ID_SANDBOX, found an empty string, and no customer
+//                                could complete a payment on any preview URL. Nothing said so - the
+//                                deploy was green.
 import { readFileSync, writeFileSync } from "node:fs";
 
 // The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
@@ -59,6 +66,39 @@ export const CREDENTIAL_MIN_LENGTH = 32;
 const CREDENTIAL_SUFFIXES = ["UAT_ACCESS_CODE", "UAT_SIGNING_KEY", "IDENTITY_ASSERTION_SECRET_UAT"];
 export const UAT_CREDENTIALS = CREDENTIAL_SUFFIXES.map((suffix) => `PAWSPACE_${suffix}`);
 export const MAPS_CREDENTIAL = "GOOGLE_MAPS_SERVER_API_KEY_UAT";
+
+/**
+ * The sandbox payment trio, in the same order lib/checkout-sandbox-hosting.ts requires them.
+ *
+ * That module is the existing statement of what a sandbox checkout host needs, and this is the same
+ * set: the two that authenticate an order and the one that authenticates the webhook confirming it.
+ * All three, because two of three is a preview that takes a payment it can never confirm.
+ */
+export const PAYMENT_CREDENTIALS = [
+  "RAZORPAY_KEY_ID_SANDBOX",
+  "RAZORPAY_KEY_SECRET_SANDBOX",
+  "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
+];
+
+/**
+ * The key id must be a Razorpay TEST key, and the check is worth more than "is it set".
+ *
+ * Razorpay's own prefixes distinguish the two worlds - rzp_test_ and rzp_live_ - so this is the one
+ * place that can PROVE, before anything is deployed, that a preview cannot have been handed a live
+ * key. The vars below declare sandbox and every live-payment flag off; this makes the credential
+ * agree with the declaration instead of trusting it. Same rule as
+ * lib/checkout-sandbox-hosting.ts, including the placeholder reject: a dummy that parses is how this
+ * gap would come back, green, with checkout still dead.
+ */
+export function sandboxKeyIdProblem(name, value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null; // absence is reported by requiredIntegrationSecretProblem, once.
+  if (/placeholder/i.test(trimmed)) return `${name} is a placeholder. A preview configured with one deploys green and cannot take a payment.`;
+  if (!/^rzp_test_[a-zA-Z0-9]+$/.test(trimmed)) {
+    return `${name} is not a Razorpay TEST key id (rzp_test_...). A release preview declares sandbox payments and must never hold a live key.`;
+  }
+  return null;
+}
 
 export function requiredIntegrationSecretProblem(name, value) {
   const raw = String(value ?? "");
@@ -121,6 +161,12 @@ for (const name of UAT_CREDENTIALS) {
 }
 const mapsProblem = requiredIntegrationSecretProblem(MAPS_CREDENTIAL, process.env[MAPS_CREDENTIAL]);
 if (mapsProblem) problems.push(mapsProblem);
+for (const name of PAYMENT_CREDENTIALS) {
+  const problem = requiredIntegrationSecretProblem(name, process.env[name]);
+  if (problem) problems.push(problem);
+}
+const keyIdProblem = sandboxKeyIdProblem(PAYMENT_CREDENTIALS[0], process.env[PAYMENT_CREDENTIALS[0]]);
+if (keyIdProblem) problems.push(keyIdProblem);
 
 if (problems.length || !isolated) {
   console.error(`isolated=${environmentIsolated}`);
@@ -170,6 +216,7 @@ delete cfg.vars.PAWSPACE_UAT_ACCESS_CODE;
 delete cfg.vars.PAWSPACE_UAT_SIGNING_KEY;
 delete cfg.vars.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT;
 delete cfg.vars.GOOGLE_MAPS_SERVER_API_KEY_UAT;
+for (const name of PAYMENT_CREDENTIALS) delete cfg.vars[name];
 delete cfg.vars.CLOUDFLARE_API_TOKEN;
 writeFileSync(path, JSON.stringify(cfg));
 

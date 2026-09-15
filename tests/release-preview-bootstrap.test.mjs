@@ -72,6 +72,12 @@ const GOOD = {
   PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
   PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
   GOOGLE_MAPS_SERVER_API_KEY_UAT: "AIzaSyntheticReleasePreviewMapsKey123456789",
+  // The sandbox payment trio is part of a valid configuration for the same reason: the deploy installs
+  // it onto the preview Worker, so a preview that cannot take a payment must not be configurable. The
+  // key id is shaped like a Razorpay TEST key because the tool checks that specifically.
+  RAZORPAY_KEY_ID_SANDBOX: "rzp_test_NotARealPreviewKeyId00",
+  RAZORPAY_KEY_SECRET_SANDBOX: "not-a-real-razorpay-sandbox-key-secret",
+  RAZORPAY_WEBHOOK_SECRET_SANDBOX: "not-a-real-razorpay-sandbox-webhook-secret",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------
@@ -208,9 +214,18 @@ test("a credential inherited from the build artifact is stripped, never serializ
     PAWSPACE_UAT_SIGNING_KEY: "inherited-from-somewhere",
     PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "inherited-from-somewhere",
     CLOUDFLARE_API_TOKEN: "inherited-from-somewhere",
+    // The payment trio too. These are installed as encrypted Worker secrets like the rest, so an
+    // inherited cfg.vars entry would publish a live-money credential as plaintext in the artifact -
+    // the one failure mode that is worse than the preview not taking payments at all.
+    RAZORPAY_KEY_ID_SANDBOX: "inherited-from-somewhere",
+    RAZORPAY_KEY_SECRET_SANDBOX: "inherited-from-somewhere",
+    RAZORPAY_WEBHOOK_SECRET_SANDBOX: "inherited-from-somewhere",
   });
   const serialized = JSON.stringify(config);
   assert.ok(!serialized.includes("inherited-from-somewhere"), "no credential may survive into the deploy artifact");
+  for (const name of ["RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX"]) {
+    assert.ok(!(name in config.vars), `${name} must not remain a plaintext Worker var`);
+  }
 });
 
 // --- two checkouts, and the separation between tool and candidate ------------------------------
@@ -468,6 +483,7 @@ test("the gate script reports statuses and counts, never a credential or an id",
 // isolation reporting would be a poor trade.
 // ---------------------------------------------------------------------------
 const UAT_CREDENTIALS = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+const PAYMENT_CREDENTIALS = ["RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX"];
 
 test("E — a missing or whitespace-padded Maps UAT secret fails before preview configuration", () => {
   for (const value of [undefined, "", "   ", ` ${GOOD.GOOGLE_MAPS_SERVER_API_KEY_UAT}`]) {
@@ -479,6 +495,70 @@ test("E — a missing or whitespace-padded Maps UAT secret fails before preview 
     assert.match(result.stderr, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
     assert.equal(result.config.name, "unset", "no preview Worker configuration may be written");
     assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
+  }
+});
+
+/*
+ * The payment trio, which the Maps key's own arrival made conspicuous by its absence.
+ *
+ * GOOGLE_MAPS_SERVER_API_KEY_UAT was added to this tool and to both workflow steps; the three
+ * Razorpay sandbox secrets were not, although they sit in the same GitHub secrets list and the same
+ * lib/checkout-sandbox-hosting.ts requirement set. The preview therefore deployed GREEN with checkout
+ * dead - lib/customer-checkout-server.ts read RAZORPAY_KEY_ID_SANDBOX, got an empty string, and no
+ * customer could pay on any preview URL. Nothing anywhere said so.
+ */
+test("F — a missing payment credential fails the preview closed, like the Maps key does", () => {
+  for (const name of PAYMENT_CREDENTIALS) {
+    for (const value of [undefined, "", "   ", ` ${GOOD[name]}`]) {
+      const env = { ...GOOD };
+      if (value === undefined) delete env[name]; else env[name] = value;
+      const result = runConfig(env);
+      assert.notEqual(result.status, 0, `${name} (${JSON.stringify(value)}) must refuse the deploy`);
+      assert.match(result.stderr, new RegExp(name), "the refusal must name the variable");
+      assert.equal(result.config.name, "unset", "the build artifact must be left untouched");
+      assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
+    }
+  }
+  assert.equal(runConfig(GOOD).status, 0, "and a complete configuration is still accepted");
+});
+
+test("F — a preview can never be configured with a LIVE Razorpay key", () => {
+  /*
+   * The vars this tool writes DECLARE sandbox payments and every live-payment flag off. A declaration
+   * is not a proof: Razorpay's own prefixes are what tell the two worlds apart, so this is the one
+   * place that can establish the credential agrees with the declaration before anything deploys.
+   */
+  const live = runConfig({ ...GOOD, RAZORPAY_KEY_ID_SANDBOX: "rzp_live_NotARealLiveKeyId000" });
+  assert.notEqual(live.status, 0, "a live key id must refuse the preview deploy");
+  assert.match(live.stderr, /TEST key id/, "and say what was wrong with it");
+  assert.match(live.stderr, /^isolated=true$/m, "a credential problem is not an isolation problem");
+  assert.equal(live.config.name, "unset");
+
+  // A placeholder is the other way this comes back: it parses, it deploys, checkout is still dead.
+  const placeholder = runConfig({ ...GOOD, RAZORPAY_KEY_ID_SANDBOX: "rzp_test_placeholder000" });
+  assert.notEqual(placeholder.status, 0, "a placeholder must be refused");
+  assert.match(placeholder.stderr, /placeholder/i);
+
+  // Both halves: a genuinely test-shaped key is accepted, and the shape is not merely "starts with r".
+  assert.equal(runConfig(GOOD).status, 0);
+  assert.notEqual(runConfig({ ...GOOD, RAZORPAY_KEY_ID_SANDBOX: "rzp_test_has-a-hyphen" }).status, 0,
+    "the shape lib/checkout-sandbox-hosting.ts enforces is alphanumeric after the prefix");
+});
+
+test("F — the deploy installs the payment trio onto the Worker, not just validates it", () => {
+  /*
+   * The distinction this whole change turns on. The configure step VALIDATES; only the install step
+   * puts a value on the running Worker. The Maps key was in both. A credential validated and never
+   * installed reads as configured in CI and is absent at runtime, which is the failure that was live.
+   */
+  const configure = job.steps.find((step) => String(step.run || "").startsWith("node infra/scripts/release-preview-config"));
+  const install = job.steps.find((step) => String(step.name || "").includes("Install UAT credentials"));
+  assert.ok(configure && install, "both steps must exist");
+  for (const name of PAYMENT_CREDENTIALS) {
+    assert.equal(configure.env[name], `\${{ secrets.${name} }}`, `${name} must be validated before the deploy`);
+    assert.equal(install.env[name], `\${{ secrets.${name} }}`, `${name} must be handed to the install step`);
+    assert.match(String(install.run), new RegExp(`for name in [^\\n]*\\b${name}\\b`),
+      `${name} must be in the loop that actually runs wrangler secret put`);
   }
 });
 
@@ -538,7 +618,7 @@ test("E — no credential value reaches the log or the generated artifact", () =
   const result = runConfig(GOOD);
   assert.equal(result.status, 0, result.stderr);
   const printed = `${result.stdout}${result.stderr}`;
-  for (const name of [...UAT_CREDENTIALS, "GOOGLE_MAPS_SERVER_API_KEY_UAT"]) {
+  for (const name of [...UAT_CREDENTIALS, "GOOGLE_MAPS_SERVER_API_KEY_UAT", ...PAYMENT_CREDENTIALS]) {
     assert.ok(!printed.includes(GOOD[name]), `${name}'s value must not be logged`);
     assert.ok(!JSON.stringify(result.config).includes(GOOD[name]), `${name}'s value must not be serialized`);
     assert.ok(!(name in result.config.vars), `${name} must not become a plaintext Worker var`);

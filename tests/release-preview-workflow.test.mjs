@@ -82,7 +82,12 @@ test("release-preview installs the Maps UAT key only as an encrypted Worker secr
     "Verify the DEPLOYED sha is the candidate sha",
   );
   assert.match(install, /GOOGLE_MAPS_SERVER_API_KEY_UAT: \${{ secrets\.GOOGLE_MAPS_SERVER_API_KEY_UAT }}/);
-  assert.match(install, /for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT GOOGLE_MAPS_SERVER_API_KEY_UAT/);
+  // Anchored at the end of the line. Unanchored, this passed whether or not the payment trio was in
+  // the loop - which is exactly how the preview shipped with checkout dead while CI stayed green.
+  assert.match(install, /for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT GOOGLE_MAPS_SERVER_API_KEY_UAT RAZORPAY_KEY_ID_SANDBOX RAZORPAY_KEY_SECRET_SANDBOX RAZORPAY_WEBHOOK_SECRET_SANDBOX; do$/m);
+  for (const name of ["RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX"]) {
+    assert.match(install, new RegExp(`${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`), `${name} must reach the install step`);
+  }
   assert.match(install, /printf '%s' "\${!name}" \| npx wrangler secret put "\$name" --name "\$WORKER"/);
   assert.doesNotMatch(install, /wrangler secret put GOOGLE_MAPS_SERVER_API_KEY_UAT[^\n]*\$\{\{ secrets/);
 });
