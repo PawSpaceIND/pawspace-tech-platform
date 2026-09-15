@@ -4,7 +4,7 @@ import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability }
 import { buildOccurrences, cityOffsetMinutes, schedule, scheduleRules, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
 import {ensureProviderCapacityTables,getGovernedProvider,getProviderAcceptanceTimeout,loadGovernedProviders,providerUnavailableForWindow,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
-import{assertBookingWindow}from"../../../lib/booking-time-policy";
+import{APPROVED_BOOKING_TIME_DEFAULT,assertBookingWindow}from"../../../lib/booking-time-policy";
 import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 import {uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
@@ -16,9 +16,70 @@ import{resolveAssignmentPolicy}from"../../../lib/provider-assignment-policy";
 
 type RequestBody={expectedRevision?:string;action?:"preview"|"reserve"|"assign"|"cancel"|"reassign"|"manual";assignmentStrategy?:"auto"|"admin_choice";clientRequestId:string;groupId?:string;customerId:string;petIds:string[];serviceCode:SchedulingService;cityId?:string;zoneId?:string;serviceAddress?:string;servicePincode?:string;scheduledStart:string;scheduledEnd:string;latitude?:number;longitude?:number;serviceRadiusKm?:number;occurrences?:number;cadenceDays?:number;weekdays?:number[];careMode?:"visit"|"overnight";preferredProviderId?:string;providerId?:string;reason?:string;customRules?:CustomScheduleRule[]};
 const json=(data:unknown,status=200)=>Response.json(data,{status});
+/** The two services buildOccurrences treats as recurring, and so the two whose roster spans a calendar. */
+const RECURRING_ROSTER_SERVICES=new Set<SchedulingService>(["dog_training","dog_walking"]);
 async function database(){const {env}=await import("cloudflare:workers");return withRetryingD1Writes(env.DB);}
 async function tableExists(db:Awaited<ReturnType<typeof database>>,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Record<string,unknown>>());}
-const dateRange=(start:string,days=100)=>Array.from({length:days},(_,i)=>{const d=new Date(start);d.setUTCDate(d.getUTCDate()+i);return d.toISOString().slice(0,10);});
+const dateRange=(start:string,days:number)=>Array.from({length:Math.max(1,Math.floor(days))},(_,i)=>{const d=new Date(start);d.setUTCDate(d.getUTCDate()+i);return d.toISOString().slice(0,10);});
+/**
+ * How many calendar days of UAT roster one request can actually consume. [PTJA-SCHED-ROSTER-HORIZON]
+ *
+ * WHAT A HARDCODED 100 DID. seedUatRoster published a flat 100-day roster for the two recurring
+ * services. The Training catalogue's largest programme is 16 weekly sessions, which span 15 x 7 = 105
+ * days from session one - five days PAST the seeded horizon - so the sixteenth occurrence found no
+ * published availability and backend/src/scheduling.ts refused the WHOLE reservation with
+ * "No published availability on <date>". Measured on this branch before the fix: occurrences=12 -> 200
+ * with 12 reservation rows, occurrences=16 -> 409 with zero rows. Raising scheduleRules.dog_training
+ * .maxOccurrences from 12 to 16 made the request VALID without making it SATISFIABLE, because the
+ * occurrence validator and the roster horizon were two independent numbers that had to agree and did
+ * not. dog_walking had the same latent gap in a different place: 12 walks at a 14-day cadence span 154
+ * days, also past 100.
+ *
+ * THE DERIVATION, so there is no second magic number to leave behind:
+ *
+ *   stride  - days between consecutive sessions. A plain cadence request is exactly `cadenceDays`
+ *             apart (buildOccurrences: addDays(start, index * cadenceDays)). The weekday branch instead
+ *             walks forward one day at a time to the next requested weekday, so with a single weekday
+ *             consecutive sessions are at most 7 days apart - the worst case, and the one to seed for.
+ *   leadIn  - the weekday branch may also place the FIRST session up to 6 days after the requested
+ *             start; a cadence request always starts on day 0.
+ *   count   - the service's OWN scheduleRules[service].maxOccurrences, i.e. the largest programme the
+ *             catalogue can sell, not the number this particular request asked for. Seeding to the
+ *             ceiling is what keeps this horizon and the occurrence validator from drifting apart
+ *             again: whatever buildOccurrences will ACCEPT, the roster already covers.
+ *   + 1     - an occurrence whose window ends on the following calendar day (and the IST/UTC date
+ *             boundary, which datesTouched resolves in IST while these dates are UTC-derived).
+ *   + 1     - dateRange takes a LENGTH and the first date is index 0.
+ *
+ *   days = leadIn + (maxOccurrences - 1) * stride + 2
+ *
+ * For dog_training at the default weekly cadence that is 0 + 15*7 + 2 = 107 days, which covers the
+ * 105-day 16-session plan with the tail day to spare; in weekday mode it is 6 + 105 + 2 = 113. For
+ * dog_walking it is 0 + 11*7 + 2 = 79 at a weekly cadence and 156 at a fortnightly one - the 100 it
+ * replaces was too wide for the first and too narrow for the second.
+ *
+ * THE CEILING. lib/booking-time-policy.ts refuses any booking whose LAST occurrence starts more than
+ * `maximumHorizonDays` beyond SERVER NOW, and its own domain validator refuses a stored row above
+ * APPROVED_BOOKING_TIME_DEFAULT.maximumHorizonDays - so that constant is a true upper bound on every
+ * policy that can be in force, not a second copy of the number. The roster is seeded forward from
+ * scheduledStart, which itself must be >= now, so clamping the LENGTH to it puts the furthest seeded
+ * date at now+179 at the very worst: inside the horizon, never past it. A city that has narrowed its
+ * own horizon below the ceiling simply has some seeded dates nobody may book, which assertBookingWindow
+ * refuses anyway - under-seeding was the defect, over-seeding inside the ceiling is inert.
+ */
+function rosterHorizonDays(input:RequestBody){
+  const ceiling=Math.max(1,Math.floor(APPROVED_BOOKING_TIME_DEFAULT.maximumHorizonDays));
+  if(!RECURRING_ROSTER_SERVICES.has(input.serviceCode)){
+    const span=Math.ceil((new Date(input.scheduledEnd).getTime()-new Date(input.scheduledStart).getTime())/86_400_000)+2;
+    return Math.min(ceiling,Math.max(2,Number.isFinite(span)?span:2));
+  }
+  const maxOccurrences=Math.max(1,Number(scheduleRules[input.serviceCode]?.maxOccurrences??1));
+  const weekdayMode=Array.isArray(input.weekdays)&&input.weekdays.length>0;
+  const cadence=Number(input.cadenceDays??7);
+  const stride=weekdayMode?7:(Number.isFinite(cadence)&&cadence>=1?Math.ceil(cadence):7);
+  const leadIn=weekdayMode?6:0;
+  return Math.min(ceiling,leadIn+(maxOccurrences-1)*stride+2);
+}
 function cityIdFor(input:Pick<RequestBody,"cityId"|"zoneId">){const explicit=String(input.cityId||"").trim().toLowerCase();if(explicit)return explicit;const derived=String(input.zoneId||"").trim().split("-")[0]?.toLowerCase()||"";if(!/^[a-z0-9]{2,16}$/.test(derived))throw new Error("A valid governed cityId is required for scheduling");return derived;}
 function zoneIdFor(input:Pick<RequestBody,"zoneId">){const zone=String(input.zoneId||"").trim();if(!zone)throw new Error("A valid governed zoneId is required for scheduling");return zone;}
 const schemaDriftRepaired=new WeakSet<object>();
@@ -70,7 +131,7 @@ async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_attempt ON scheduling_reservations(attempt_id)"),
 ]);await ensureSchedulingReservationLeaseGovernance(db);}
 
-async function seedUatRoster(input:RequestBody,db:Awaited<ReturnType<typeof database>>){const {env}=await import("cloudflare:workers");if(!uatRosterSeedingEnabled(env))return;const cityId=cityIdFor(input),scheduledDate=new Date(input.scheduledStart).toISOString().slice(0,10),profileRows=await db.prepare("SELECT id,services_json,zones_json FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,scheduledDate,scheduledDate).all<Record<string,unknown>>(),matching=profileRows.results.filter(row=>{try{return (JSON.parse(String(row.services_json||"[]")) as string[]).includes(input.serviceCode)&&(JSON.parse(String(row.zones_json||"[]")) as string[]).includes(zoneIdFor(input));}catch{return false;}}).map(row=>({id:String(row.id)}));const recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking",dates=dateRange(input.scheduledStart,recurring?100:Math.max(2,Math.ceil((new Date(input.scheduledEnd).getTime()-new Date(input.scheduledStart).getTime())/86_400_000)+2));const window=input.serviceCode==="boarding"||input.careMode==="overnight"?"00:00-23:59":input.serviceCode==="pet_taxi"?"06:00-22:00":input.serviceCode==="dog_walking"?"06:00-21:00":"09:00-19:00";const sorted=[...dates].sort(),authoredRows=await db.prepare("SELECT provider_id,date FROM scheduling_availability WHERE date>=? AND date<=? AND source IN ('partner_app','operations','roster')").bind(sorted[0]??"",sorted[sorted.length-1]??"").all<Record<string,unknown>>();const authored=new Set(authoredRows.results.map(row=>`${String(row.provider_id)}|${String(row.date)}`));const statements=[];for(const provider of matching)for(const date of dates){if(authored.has(`${provider.id}|${date}`))continue;const zoneId=zoneIdFor(input),id=`uat_${provider.id}_${date}_${zoneId}`;statements.push(db.prepare("INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,provider.id,cityIdFor(input),zoneId,date,JSON.stringify([window]),"uat_roster",Date.now()));}for(let i=0;i<statements.length;i+=100)await db.batch(statements.slice(i,i+100));}
+async function seedUatRoster(input:RequestBody,db:Awaited<ReturnType<typeof database>>){const {env}=await import("cloudflare:workers");if(!uatRosterSeedingEnabled(env))return;const cityId=cityIdFor(input),scheduledDate=new Date(input.scheduledStart).toISOString().slice(0,10),profileRows=await db.prepare("SELECT id,services_json,zones_json FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,scheduledDate,scheduledDate).all<Record<string,unknown>>(),matching=profileRows.results.filter(row=>{try{return (JSON.parse(String(row.services_json||"[]")) as string[]).includes(input.serviceCode)&&(JSON.parse(String(row.zones_json||"[]")) as string[]).includes(zoneIdFor(input));}catch{return false;}}).map(row=>({id:String(row.id)}));const dates=dateRange(input.scheduledStart,rosterHorizonDays(input));const window=input.serviceCode==="boarding"||input.careMode==="overnight"?"00:00-23:59":input.serviceCode==="pet_taxi"?"06:00-22:00":input.serviceCode==="dog_walking"?"06:00-21:00":"09:00-19:00";const sorted=[...dates].sort(),authoredRows=await db.prepare("SELECT provider_id,date FROM scheduling_availability WHERE date>=? AND date<=? AND source IN ('partner_app','operations','roster')").bind(sorted[0]??"",sorted[sorted.length-1]??"").all<Record<string,unknown>>();const authored=new Set(authoredRows.results.map(row=>`${String(row.provider_id)}|${String(row.date)}`));const statements=[];for(const provider of matching)for(const date of dates){if(authored.has(`${provider.id}|${date}`))continue;const zoneId=zoneIdFor(input),id=`uat_${provider.id}_${date}_${zoneId}`;statements.push(db.prepare("INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,provider.id,cityIdFor(input),zoneId,date,JSON.stringify([window]),"uat_roster",Date.now()));}for(let i=0;i<statements.length;i+=100)await db.batch(statements.slice(i,i+100));}
 
 function repository(db:Awaited<ReturnType<typeof database>>,appointmentAt:Date):PlatformRepository{
   const bookingsByCity=new Map<string,Promise<Record<string,unknown>[]>>();
@@ -145,7 +206,33 @@ async function governedRefusal(error:unknown){if(error instanceof Response&&erro
 export async function executeGovernedSchedulingRequest(request:Request,actorOverride?:AuthenticatedActor){try{const db=await database();let input=await request.json() as RequestBody;const actor=actorOverride??await resolveActor(request);if(input.action&&input.action!=="reserve"&&input.action!=="preview"){requirePermission(actor,"scheduling.manage");await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);/* AWAITED: `try{return promise}` does not catch that promise's rejection, so every assign/reassign/
      * cancel failure escaped POST entirely - skipping the isSqliteConstraintError->409, isSqliteBusyError->503
      * and authError redaction below, and leaking raw SQLite messages to the caller. [AUDIT-H2] */
-    return await operateAssignment(db,input,actor);}requirePermission(actor,"scheduling.book");const staffBookingRoles=new Set(["founder","superuser","admin","manager","associate"]);if(!staffBookingRoles.has(actor.roleCode))await requireCustomerOwnership(db,actor,input.customerId);if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);// Every capacity hold and preview is scoped to saved pets owned by this customer.
+    return await operateAssignment(db,input,actor);}requirePermission(actor,"scheduling.book");const staffBookingRoles=new Set(["founder","superuser","admin","manager","associate"]);if(!staffBookingRoles.has(actor.roleCode))await requireCustomerOwnership(db,actor,input.customerId);if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);
+/*
+ * The window and the recurrence inputs are validated HERE, before anything consumes them. [PTJA-W3-SCHED-INPUT]
+ *
+ * scheduledEND was already guarded, because assertBookingWindow refuses a non-finite one with
+ * 400 invalid_window and governedRefusal hands that body back. scheduledSTART was not: the first thing
+ * to touch it is resolveAssignmentPolicy(...,new Date(input.scheduledStart)), several statements ABOVE
+ * assertBookingWindow, and resolveServicePolicy does `at.toISOString()` on it. An Invalid Date throws a
+ * RangeError there, lands in the outer catch, and authError reports bad client input as
+ * `500 {"error":"Scheduling failed"}`. Measured before this guard: scheduledStart "not-a-date" -> 500,
+ * "2026-13-45T10:00:00+05:30" -> 500, while "" -> 400 and a malformed scheduledEnd -> 400. The body and
+ * code below are assertBookingWindow's own, so the two halves of one window answer identically.
+ *
+ * The recurrence fields are the same defect one layer along: buildOccurrences compares them with < and >
+ * and then spreads them, so a NON-NUMBER passes every comparison silently. `occurrences:null` became 1
+ * via `input.occurrences??1` and booked a SINGLE session for a sixteen-session programme - 200 OK, the
+ * wrong booking, and governTrainingBooking then refuses the programme for not having `sessions`
+ * reservations. `occurrences:"many"` also returned 200, with Array.from({length:"many"}) producing zero
+ * occurrences. `cadenceDays:"x"` reached addDays and threw RangeError -> another 500. Range is still the
+ * scheduler's to enforce (buildOccurrences answers 422 "Occurrences must be between 1 and N"); what is
+ * checked here is only the SHAPE those comparisons assume.
+ */
+if(!Number.isFinite(new Date(String(input.scheduledStart)).getTime())||!Number.isFinite(new Date(String(input.scheduledEnd)).getTime())||new Date(String(input.scheduledEnd)).getTime()<=new Date(String(input.scheduledStart)).getTime())return json({error:"A valid scheduling window is required",code:"invalid_window"},400);
+if(input.occurrences!==undefined&&!Number.isInteger(input.occurrences))return json({error:"Occurrences must be a whole number of sessions",code:"invalid_occurrences"},400);
+if(input.cadenceDays!==undefined&&input.cadenceDays!==null&&!Number.isInteger(input.cadenceDays))return json({error:"Recurring cadence must be a whole number of days",code:"invalid_cadence"},400);
+if(input.weekdays!==undefined&&input.weekdays!==null&&(!Array.isArray(input.weekdays)||input.weekdays.some(day=>!Number.isInteger(day))))return json({error:"Recurring weekdays must be whole numbers from 0 to 6",code:"invalid_weekdays"},400);
+// Every capacity hold and preview is scoped to saved pets owned by this customer.
 // Validate before address writes, roster creation, replay reads or provider dispatch.
 if(!Array.isArray(input.petIds)||input.petIds.some(id=>typeof id!=="string"||!id.trim())||new Set(input.petIds).size!==input.petIds.length)return json({error:"Select valid, distinct saved pets before reserving a service."},400);
 if(input.serviceCode==="dog_walking"&&input.petIds.length!==1)return json({error:"Select one saved dog before reserving a walk."},400);

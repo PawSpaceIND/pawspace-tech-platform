@@ -1,5 +1,7 @@
 import{salesIncentivePeriodTruth}from"../../../lib/daily-incentive-accrual";
 import { authError, authorize, database } from "../../../lib/server-auth";
+import{maskName}from"../../../lib/platform-security";
+import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import { scheduleLeadCallback, completeLeadCallback, dueLeadCallbacks, ensureLeadCallbackTables } from "../../../lib/lead-callback-governance";
 import { checkRnrAutoReassignment } from "../../../lib/lead-assignment-governance";
 import { leadSlaPerformanceForOwner, rotateLeadAssignmentAndSla, runLeadSlaGovernance } from "../../../lib/lead-sla-governance";
@@ -121,10 +123,42 @@ async function seedUat(db:Db){
 
 export async function GET(request:Request){try{const actor=await authorize(request,"customers.view"),db=await database();await ensureTables(db);await ensureLeadCallbackTables(db);const canSeeAllCallbacks=["founder","superuser","admin","manager"].includes(actor.roleCode);const dueCallbacks=await dueLeadCallbacks(db,{ownerEmail:canSeeAllCallbacks?undefined:actor.email,lookAheadMinutes:120});const date=dayKey(),dailyTarget=await currentDailyRevenueTarget(db,date),[opportunities,leads,tickets,leaderboard,reopens,deliveries,reports,closure,ops]=await Promise.all([
   db.prepare("SELECT o.*,c.name customer_name,c.pet_names FROM revenue_opportunities o LEFT JOIN crm_contacts c ON c.id=o.customer_id WHERE o.opportunity_date=? ORDER BY o.rank LIMIT 100").bind(date).all(),
-  db.prepare("SELECT l.*,c.name customer_name,c.primary_phone,c.pet_names FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id ORDER BY CASE WHEN l.status='sla_breached' THEN 0 ELSE 1 END,l.manager_alert_at LIMIT 80").all(),
+  db.prepare("SELECT l.*,c.name customer_name,c.pet_names FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id ORDER BY CASE WHEN l.status='sla_breached' THEN 0 ELSE 1 END,l.manager_alert_at LIMIT 80").all(),
   db.prepare("SELECT t.*,c.name customer_name FROM customer_experience_tickets t LEFT JOIN crm_contacts c ON c.id=t.customer_id ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,t.sla_due_at LIMIT 80").all(),
   db.prepare("SELECT * FROM sales_performance_daily WHERE performance_date=? ORDER BY rank").bind(date).all(),db.prepare("SELECT * FROM lead_reopen_events ORDER BY reopened_at DESC LIMIT 30").all(),db.prepare("SELECT * FROM communication_delivery_events ORDER BY created_at DESC LIMIT 30").all(),db.prepare("SELECT * FROM command_report_runs ORDER BY generated_at DESC LIMIT 12").all(),db.prepare("SELECT * FROM finance_day_closures WHERE closure_date=?").bind(date).first<Row>(),db.prepare("SELECT * FROM ops_completion_controls ORDER BY escalation_level DESC,scheduled_end_at").all()]);
-  const opp=rows(opportunities),leadRows=rows(leads),ticketRows=rows(tickets),leaderRows=rows(leaderboard),opsRows=rows(ops),close=closure||{closure_date:date,status:"open",checklist_json:"{}",variance_amount:0,escalation_level:0};return Response.json({current:{name:actor.name,email:actor.email,role:actor.roleCode},sourceStatus:{records:"persistent UAT database",wati:"adapter ready · credentials locked",sms:"adapter ready · credentials locked",telephony:"adapter ready · credentials locked",automation:"active in UAT"},stats:{revenue100:opp.length,expectedRevenue:opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0),dailyTarget,targetProgressPercent:dailyTarget>0?Math.round((opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0)/dailyTarget)*100):0,slaBreaches:leadRows.filter(row=>row.status==="sla_breached").length,rnrComplete:leadRows.filter(row=>Number(row.call_attempts)>=4&&Number(row.whatsapp_attempts)>=4).length,openTickets:ticketRows.filter(row=>row.status!=="resolved").length,escalatedTickets:ticketRows.filter(row=>Number(row.escalation_level)>0&&row.status!=="resolved").length,reopened:rows(reopens).length,overdueCallbacks:dueCallbacks.filter(c=>c.overdue).length,teamRevenue:leaderRows.reduce((sum,row)=>sum+Number(row.eligible_revenue||0),0),teamIncentive:leaderRows.reduce((sum,row)=>sum+Number(row.incentive_amount||0),0),opsBlocked:opsRows.filter(row=>row.status!=="completed").length},opportunities:opp,leads:leadRows,tickets:ticketRows,leaderboard:leaderRows,reopens:rows(reopens),deliveries:rows(deliveries),reports:rows(reports),dueCallbacks,closure:{...close,checklist:JSON.parse(String(close.checklist_json||"{}"))},ops:opsRows});}catch(error){return authError(error,"Unable to load Revenue CRM engine")}}
+  const opp=rows(opportunities),leadRows=rows(leads),ticketRows=rows(tickets),leaderRows=rows(leaderboard),opsRows=rows(ops);
+  /*
+   * Customer identity is masked HERE, at the route, the way every sibling staff list already does it:
+   * app/api/crm/route.ts, app/api/crm/chat/route.ts, app/api/conversations/route.ts,
+   * app/api/subscription-customers/route.ts, app/api/training-ops/route.ts, app/api/partner-jobs/route.ts.
+   * This route was the one that never applied the convention. Its three list queries join crm_contacts
+   * for a name so a rep can recognise the record, and that name was published raw to every actor who
+   * could open the screen - including the founder and the admin, for whom the sibling /api/crm returned
+   * "A••••• L•" for the very same customer in the same second. It only ever showed on leads created
+   * THROUGH THE PRODUCT: the seeded lead_work_items rows point at customer ids with no crm_contacts row,
+   * so the LEFT JOIN returned NULL and the exposure stayed invisible to a seeded probe.
+   *
+   * The lead query also selected c.primary_phone, which app/crm/revenue-engine-panel.tsx never renders
+   * anywhere. That is a raw phone number shipped to a browser for nothing, so the column is no longer
+   * selected at all rather than masked - the cheapest fix for over-fetched PII is not to fetch it.
+   *
+   * A list read carries no reason and names no record, so under the approved rule it cannot be a reveal
+   * (lib/purpose-based-access.ts). The reveal stays where the platform puts it: app/api/customer-data-reveal,
+   * one record, one stated reason, one customer_data_reveals row. `revealed` travels with each row so the
+   * screen can tell a masked value from a real one, exactly as the conversations and CRM lists do.
+   */
+  const access=await customerDataAccessResolver(db);
+  const viewer={email:actor.email,roleCode:actor.roleCode,permissions:actor.permissions};
+  const maskCustomer=(row:Row,assignment:{type:"lead"|"booking";id:string;assignedTo?:string|null;status?:string|null})=>{
+    const view=access.view({actor:viewer,purpose:"sales",
+      subject:{customerId:String(row.customer_id||""),name:String(row.customer_name||""),phone:null,email:null},
+      assignment});
+    return{...row,customer_name:row.customer_name?maskName(String(row.customer_name)):row.customer_name,revealed:view.revealed};
+  };
+  const servedOpportunities=opp.map(row=>maskCustomer(row,{type:"lead",id:String(row.lead_id||row.id||""),assignedTo:row.owner?String(row.owner):null,status:String(row.status||"")}));
+  const servedLeads=leadRows.map(row=>maskCustomer(row,{type:"lead",id:String(row.id||""),assignedTo:row.owner?String(row.owner):null,status:String(row.status||"")}));
+  const servedTickets=ticketRows.map(row=>maskCustomer(row,{type:"booking",id:String(row.booking_id||row.id||""),assignedTo:row.owner?String(row.owner):null,status:String(row.status||"")}));
+  const close=closure||{closure_date:date,status:"open",checklist_json:"{}",variance_amount:0,escalation_level:0};return Response.json({current:{name:actor.name,email:actor.email,role:actor.roleCode},sourceStatus:{records:"persistent UAT database",wati:"adapter ready · credentials locked",sms:"adapter ready · credentials locked",telephony:"adapter ready · credentials locked",automation:"active in UAT"},stats:{revenue100:opp.length,expectedRevenue:opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0),dailyTarget,targetProgressPercent:dailyTarget>0?Math.round((opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0)/dailyTarget)*100):0,slaBreaches:leadRows.filter(row=>row.status==="sla_breached").length,rnrComplete:leadRows.filter(row=>Number(row.call_attempts)>=4&&Number(row.whatsapp_attempts)>=4).length,openTickets:ticketRows.filter(row=>row.status!=="resolved").length,escalatedTickets:ticketRows.filter(row=>Number(row.escalation_level)>0&&row.status!=="resolved").length,reopened:rows(reopens).length,overdueCallbacks:dueCallbacks.filter(c=>c.overdue).length,teamRevenue:leaderRows.reduce((sum,row)=>sum+Number(row.eligible_revenue||0),0),teamIncentive:leaderRows.reduce((sum,row)=>sum+Number(row.incentive_amount||0),0),opsBlocked:opsRows.filter(row=>row.status!=="completed").length},opportunities:servedOpportunities,leads:servedLeads,tickets:servedTickets,leaderboard:leaderRows,reopens:rows(reopens),deliveries:rows(deliveries),reports:rows(reports),dueCallbacks,closure:{...close,checklist:JSON.parse(String(close.checklist_json||"{}"))},ops:opsRows});}catch(error){return authError(error,"Unable to load Revenue CRM engine")}}
 
 export async function POST(request:Request){try{const actor=await authorize(request,"customers.manage"),db=await database();await ensureTables(db);const body=await request.json() as Row,action=String(body.action||""),now=Date.now();
   if(action==="seed_uat"){const{env}=await import("cloudflare:workers");const runtime=env as unknown as{PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};if(String(runtime.PAWSPACE_UAT_LOGIN||"")!=="on"||String(runtime.PAWSPACE_UAT_SIGNING_KEY||"").length<32)return Response.json({error:"UAT seed is unavailable"},{status:404});await seedUat(db);return Response.json({ok:true,seeded:true,uatOnly:true})}

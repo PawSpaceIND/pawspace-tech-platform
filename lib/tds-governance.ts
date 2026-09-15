@@ -10,6 +10,19 @@
 // (pan_status='pending_verification') rather than silently taxed at the s206AA penal 20% -
 // the close checklist blocks on unresolved PANs instead of guessing.
 
+import{governedJsonError}from"./governed-http-error";
+
+/* The refusals below are the operator's OWN input (a blank challan, a deposit that does not equal the
+ * computed liability, a malformed period or fyLabel, filing a quarter that was never prepared) and are
+ * raised with governedJsonError() so authError() returns them verbatim. A plain `new Response(...)` is
+ * NOT enough: isGovernedHttpError() trusts a thrown Response only by identity in the WeakSet that
+ * governedJsonError()/markGovernedHttpError() register it in, so an ungoverned one keeps its status and
+ * loses its body to the route's fallback - "Unable to complete the statutory compliance action" in place
+ * of "Deposit must equal the computed liability of 44070 for 2026-08".
+ *
+ * The two `new Error(...)` throws further down (the read-before-delete guards) are deliberately NOT
+ * converted: a source table that exists and fails to read is a platform fault, and a redacted 500 is
+ * the correct report for it. [AUDIT-C3] */
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -54,7 +67,7 @@ export async function ensureTdsTables(db:Db){
 
 function monthWindow(period:string):{startMs:number;endMs:number}{
  const[year,month]=period.split("-").map(Number);
- if(!Number.isInteger(year)||!Number.isInteger(month)||month<1||month>12)throw new Response("TDS period must be YYYY-MM",{status:400});
+ if(!Number.isInteger(year)||!Number.isInteger(month)||month<1||month>12)throw governedJsonError({error:"TDS period must be YYYY-MM"},400);
  const startMs=Date.UTC(year,month-1,1)-(330*60_000),endMs=Date.UTC(month===12?year+1:year,month===12?0:month,1)-(330*60_000);
  return{startMs,endMs};
 }
@@ -203,10 +216,10 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
 export async function recordTdsDeposit(db:Db,input:{period:string;challanReference:string;amount:number;actorId:string;asOf?:number}){
  await ensureTdsTables(db);
  const challan=String(input.challanReference||"").trim();
- if(!challan)throw new Response("Challan reference (ITNS-281) is required",{status:400});
+ if(!challan)throw governedJsonError({error:"Challan reference (ITNS-281) is required"},400);
  const computed=await db.prepare("SELECT COALESCE(SUM(tds_amount),0) total FROM tds_deductions WHERE period=?").bind(input.period).first<Row>();
  const liability=round2(Number(computed?.total||0));
- if(Math.abs(liability-round2(Number(input.amount)))>0.01)throw new Response(`Deposit must equal the computed liability of ${liability} for ${input.period}`,{status:409});
+ if(Math.abs(liability-round2(Number(input.amount)))>0.01)throw governedJsonError({error:`Deposit must equal the computed liability of ${liability} for ${input.period}`},409);
  monthWindow(input.period); // validates period format
  const[year,month]=input.period.split("-").map(Number);
  const dueDate=month===3?`${year}-04-30`:month===12?`${year+1}-01-07`:`${year}-${String(month+1).padStart(2,"0")}-07`;
@@ -222,7 +235,7 @@ export async function recordTdsDeposit(db:Db,input:{period:string;challanReferen
 export async function prepareTdsQuarterlyReturn(db:Db,input:{fyLabel:string;quarter:1|2|3|4;form:"24Q"|"26Q";actorId:string;asOf?:number}){
  await ensureTdsTables(db);
  const startYear=Number(input.fyLabel.replace(/^FY/,"").split("-")[0]);
- if(!Number.isInteger(startYear))throw new Response("fyLabel must look like FY2026-27",{status:400});
+ if(!Number.isInteger(startYear))throw governedJsonError({error:"fyLabel must look like FY2026-27"},400);
  const monthsByQuarter:Record<number,string[]>={1:["04","05","06"],2:["07","08","09"],3:["10","11","12"],4:["01","02","03"]};
  const year=input.quarter===4?startYear+1:startYear;
  const months=monthsByQuarter[input.quarter].map(month=>`${year}-${month}`);
@@ -239,11 +252,11 @@ export async function prepareTdsQuarterlyReturn(db:Db,input:{fyLabel:string;quar
 export async function markTdsReturnFiled(db:Db,input:{fyLabel:string;quarter:1|2|3|4;form:"24Q"|"26Q";acknowledgementRef:string;actorId:string;asOf?:number}){
  await ensureTdsTables(db);
  const ack=String(input.acknowledgementRef||"").trim();
- if(!ack)throw new Response("TRACES acknowledgement reference is required",{status:400});
+ if(!ack)throw governedJsonError({error:"TRACES acknowledgement reference is required"},400);
  const now=input.asOf??Date.now();
  const result=await db.prepare("UPDATE tds_quarterly_returns SET status='filed',acknowledgement_ref=?,filed_by=?,filed_at=? WHERE fy_label=? AND quarter=? AND form=? AND status='prepared'")
   .bind(ack,input.actorId,now,input.fyLabel,input.quarter,input.form).run();
- if(!Number(result.meta.changes))throw new Response("Prepare the quarterly return before marking it filed (or it is already filed)",{status:409});
+ if(!Number(result.meta.changes))throw governedJsonError({error:"Prepare the quarterly return before marking it filed (or it is already filed)"},409);
  return{fyLabel:input.fyLabel,quarter:input.quarter,form:input.form,status:"filed" as const,acknowledgementRef:ack};
 }
 

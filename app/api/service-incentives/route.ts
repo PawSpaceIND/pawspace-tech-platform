@@ -1,4 +1,5 @@
 import { authError, authorize, database } from "../../../lib/server-auth";
+import { governedJsonError } from "../../../lib/governed-http-error";
 import {
   saveGroomerBracket, currentGroomerBracket, recordHelperAttendance, saveGroomerMonthlyTarget,
   recordOfflineSubSale, saveGroomerGpayLedger, recordSpecialIncentive as recordGroomerSpecialIncentive,
@@ -30,12 +31,69 @@ async function ensureAll(db:Db){
   ]);
 }
 
+/**
+ * Every action on this route attaches a record - nearly always money - to ONE named person. A
+ * missing, empty or whitespace-only identity is not a value worth storing: the row belongs to
+ * nobody, no compute path can ever find it again, and the operator is told it was saved.
+ *
+ * The rule is the one lib/grooming-incentive-engine.ts already applies in saveGroomerBracket and
+ * recordSpecialIncentive - `String(v??"").trim()` must be non-empty - and it is applied here ONCE
+ * for every action instead of in two handlers out of twenty-two. saveGroomerMonthlyTarget and
+ * saveGroomerGpayLedger validate the month and the amounts but never the person, so a blank
+ * headGroomerId wrote groomer_monthly_targets / groomer_gpay_ledger rows and answered 200.
+ *
+ * The refusal is RAISED, not returned, so it travels the same path as an engine failure and lands in
+ * authError() below. It must therefore be a *governed* response: authError trusts a thrown Response
+ * only by object identity (lib/governed-http-error.ts keeps a WeakSet), so a bare
+ * `throw new Response(...)` keeps its status but has its body replaced by the generic fallback - the
+ * operator would read "Unable to update service incentive engine" instead of what is actually wrong.
+ */
+const identityText=(value:unknown)=>String(value??"").trim();
+
+/** action -> the body field naming the person the record belongs to. A Map, so no action name can
+ *  reach an inherited Object property and be mistaken for a rule. */
+const SUBJECT_OF_ACTION=new Map<string,{field:string;subject:string}>([
+  ["save_groomer_bracket",{field:"headGroomerId",subject:"Head groomer"}],
+  ["save_groomer_target",{field:"headGroomerId",subject:"Head groomer"}],
+  ["record_offline_sub_sale",{field:"headGroomerId",subject:"Head groomer"}],
+  ["save_gpay_ledger",{field:"headGroomerId",subject:"Head groomer"}],
+  ["record_groomer_special_incentive",{field:"headGroomerId",subject:"Head groomer"}],
+  ["save_groomer_incentive_draft",{field:"headGroomerId",subject:"Head groomer"}],
+  ["finalize_groomer_incentive",{field:"headGroomerId",subject:"Head groomer"}],
+  ["record_helper_attendance",{field:"helperId",subject:"Helper"}],
+  ["record_meet_greet_conversion",{field:"trainerId",subject:"Trainer"}],
+  ["save_sales_base",{field:"employeeId",subject:"Employee"}],
+  ["attribute_booking",{field:"employeeId",subject:"Employee"}],
+  ["compute_daily_sales",{field:"employeeId",subject:"Employee"}],
+  ["generate_sales_period",{field:"employeeId",subject:"Employee"}],
+  ["approve_sales_period",{field:"employeeId",subject:"Employee"}],
+  ["record_special_incentive",{field:"employeeId",subject:"Employee"}],
+  ["record_review_incentive",{field:"employeeId",subject:"Employee"}],
+  ["save_home_base",{field:"providerId",subject:"Provider"}],
+  ["home_base_history",{field:"providerId",subject:"Provider"}],
+  ["compute_daily_travel",{field:"providerId",subject:"Provider"}],
+  ["daily_travel_summary",{field:"providerId",subject:"Provider"}],
+]);
+
+/** Exported so a test can assert the table covers every action the switch below accepts. */
+export function identifiedSubjectActions(){return [...SUBJECT_OF_ACTION.keys()];}
+
+function requireIdentifiedSubject(action:string,body:Record<string,unknown>){
+  const rule=SUBJECT_OF_ACTION.get(action);
+  if(rule&&!identityText(body[rule.field]))throw governedJsonError({error:`${rule.subject} is required`,action,field:rule.field},400);
+  // rank_groomers carries a LIST of people; one blank entry ranks nobody against everybody else.
+  if(action==="rank_groomers"){
+    const ids=Array.isArray(body.headGroomerIds)?body.headGroomerIds:[];
+    if(ids.some(id=>!identityText(id)))throw governedJsonError({error:"Head groomer is required",action,field:"headGroomerIds"},400);
+  }
+}
+
 export async function GET(request:Request){
   try{
     const actor=await authorize(request,"people.view"),db=await database();
     await ensureAll(db);
-    const url=new URL(request.url),employeeId=url.searchParams.get("employeeId")||"",monthStart=url.searchParams.get("monthStart")||"",kind=url.searchParams.get("kind")||"";
-    if(!employeeId||!monthStart)return Response.json({error:"employeeId and monthStart are required"},{status:400});
+    const url=new URL(request.url),employeeId=identityText(url.searchParams.get("employeeId")),monthStart=identityText(url.searchParams.get("monthStart")),kind=identityText(url.searchParams.get("kind"));
+    if(!employeeId||!monthStart)return Response.json({error:"employeeId and monthStart are required"},{status:400,headers:{"cache-control":"no-store"}});
     if(kind==="groomer"){
       const bracket=await currentGroomerBracket(db,employeeId,monthStart);
       const result=await computeGroomerMonthlyIncentive(db,{headGroomerId:employeeId,monthStart,actorId:actor.email});
@@ -60,6 +118,7 @@ export async function POST(request:Request){
     const actor=await authorize(request,"people.manage"),db=await database();
     await ensureAll(db);
     const body=await request.json() as Record<string,unknown>,action=String(body.action||"");
+    requireIdentifiedSubject(action,body);
 
     switch(action){
       case "save_groomer_bracket":

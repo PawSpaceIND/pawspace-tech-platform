@@ -14,6 +14,18 @@
 // Filing itself stays manual (a human files on the govt portal and records the acknowledgement) -
 // this module makes the deadline impossible to miss and the numbers ready.
 
+import{governedJsonError}from"./governed-http-error";
+
+/* Caller-input refusals below are raised with governedJsonError(), NOT `new Response(...)`.
+ * authError() (lib/server-auth.ts) returns a thrown Response verbatim ONLY when
+ * isGovernedHttpError() recognises it - membership in the module-private WeakSet in
+ * lib/governed-http-error.ts, by object identity. An UNGOVERNED thrown Response keeps its status
+ * but has its body replaced by the route's generic fallback, so /team/finance-compliance showed
+ * "Unable to complete the statutory compliance action" for a blank acknowledgement reference and
+ * for a malformed board-approval period alike. The sole consumer, app/api/statutory-compliance,
+ * catches with authError() and never re-reads the body with error.text(), and the screen renders
+ * payload.error, so a JSON {error} body is exactly what it already expects. Status codes and
+ * message text are unchanged - only the redaction is. */
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -98,7 +110,7 @@ export async function statutoryCalendar(db:Db,period:string,asOf=Date.now()):Pro
 export async function recordStatutoryFiling(db:Db,input:{obligationCode:ObligationCode;period:string;acknowledgementRef:string;amount?:number;notes?:string;actorId:string;asOf?:number}){
  await ensureStatutoryTables(db);
  const ack=String(input.acknowledgementRef||"").trim();
- if(!ack)throw new Response("A government acknowledgement reference is required to record a filing",{status:400});
+ if(!ack)throw governedJsonError({error:"A government acknowledgement reference is required to record a filing"},400);
  const known=statutoryObligationsFor(/^\d{4}-\d{2}$/.test(input.period)?input.period:new Date().toISOString().slice(0,7));
  const match=known.find(o=>o.code===input.obligationCode&&o.period===input.period);
  const dueDate=match?.dueDate??null;
@@ -112,7 +124,7 @@ export async function recordStatutoryFiling(db:Db,input:{obligationCode:Obligati
 
 export async function recordBoardApproval(db:Db,input:{period:string;approvedBy:string;approverRole:string;minutesReference?:string;resolutionText?:string;asOf?:number}){
  await ensureStatutoryTables(db);
- if(!/^\d{4}-\d{2}$/.test(input.period))throw new Response("Board approval period must be YYYY-MM",{status:400});
+ if(!/^\d{4}-\d{2}$/.test(input.period))throw governedJsonError({error:"Board approval period must be YYYY-MM"},400);
  const now=input.asOf??Date.now();
  const existing=await db.prepare("SELECT id,approved_by,approved_at FROM board_approvals WHERE period=?").bind(input.period).first<Row>();
  if(existing)return{period:input.period,approvedBy:String(existing.approved_by),approvedAt:Number(existing.approved_at),duplicatePrevented:true};

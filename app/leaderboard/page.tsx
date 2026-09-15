@@ -5,7 +5,8 @@ import Link from"next/link";
 type Emp={rank:number;name:string;team:string;netCollectedRevenue:number;bookingConversions:number;qualifiedLeads:number;firstResponseRate:number|null};
 type Groom={rank:number;headGroomerId:string;bracket:string;monthTotal:number;targetAmount:number;achievementPercent:number;winnerHeadBonus:number};
 type Train={rank:number;trainerId:string;orderValue:number;meetGreetConversions:number;total:number};
-type Board={asOf:number;monthStart:string;metric:string;employees:Emp[];groomers:Groom[];trainers:Train[];counts:{employees:number;groomers:number;trainers:number}};
+type Scope={level:"full"|"self";linked:boolean;ofEmployees?:number;reason?:string};
+type Board={asOf:number;monthStart:string;metric:string;employees:Emp[];groomers:Groom[];trainers:Train[];counts:{employees:number;groomers:number;trainers:number};scope?:Scope};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E"};
@@ -29,6 +30,8 @@ export default function LeaderboardPage(){
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · LIVE LEADERBOARD</p>
       <h1 style={{margin:"6px 0",fontSize:30}}>Who&apos;s leading this month</h1>
       <p style={{color:C.dim,marginTop:0}}>Live peer ranking across the whole company — refreshes on load. Recognition only; it is not payroll or approval authority.</p>
+      {/* The API scopes a caller without performance.view to their own record. Say so, or an empty board reads as "no data yet". */}
+      {data?.scope?.level==="self"?<p style={{color:C.gold,marginTop:0,fontSize:13}}>{data.scope.linked?`Showing your own row only${data.scope.ofEmployees?` — your rank among ${data.scope.ofEmployees} ranked employees`:""}. The company-wide board is visible to performance reviewers.`:(data.scope.reason||"No employee record is linked to your identity yet, so there is no own rank to show.")}</p>:null}
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading the leaderboard…</p>:null}
 

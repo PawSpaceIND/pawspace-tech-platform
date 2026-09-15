@@ -10,7 +10,7 @@
  */
 
 import { addCalendarMonthsClamped } from "./subscription-calendar";
-import { governedJsonError } from "./governed-http-error";
+import { GOVERNED_CLIENT_ERROR, governedJsonError } from "./governed-http-error";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -64,19 +64,42 @@ export async function createSubscriptionPlan(db: Db, input: { serviceCode: strin
   return { ...s, sampleExpiryFromToday: computePlanExpiry(now, s.validityValue, s.validityUnit as "days" | "months") };
 }
 
+/**
+ * A caller-input refusal for the PATCH path, raised as a BRANDED Error rather than a governedJsonError
+ * Response — deliberately a different mechanism from createSubscriptionPlan above, for one reason.
+ *
+ * tests/subscription-plan-governance.test.mjs pins eighteen of these rejections (17 table rows plus one
+ * standalone case, across three call sites) with
+ * `assert.rejects(fn, /regex/)`, and node:assert matches a RegExp against `String(thrown)`. For an Error
+ * that is "Error: A valid numeric price is required"; for a Response it is the literal "[object
+ * Response]", which matches no message regex at all. Throwing governedJsonError() here would turn every
+ * one of those assertions red, so the refusal has to stay an Error object.
+ *
+ * lib/governed-http-error.ts already has the bridge for exactly this shape: an error carrying
+ * GOVERNED_CLIENT_ERROR===true plus a 4xx `statusCode` is converted by governedClientErrorResponse()
+ * inside authError() into the same governedJsonError({error:message},status) the create path throws
+ * directly. Same status, same JSON body, same WeakSet membership on the wire — the difference is only in
+ * what is thrown in-process. The brand is opt-in by symbol, so an incidental `statusCode` on a D1 or
+ * fetch internal error still cannot put a message in front of a caller: a genuine platform fault inside
+ * the UPDATE stays a redacted 500.
+ */
+function planInputRefusal(message: string, status: number) {
+  return Object.assign(new Error(message), { statusCode: status, [GOVERNED_CLIENT_ERROR]: true });
+}
+
 /** Update a plan without allowing PATCH input to bypass commercial or type invariants. */
 export async function updateSubscriptionPlan(db: Db, input: { id: string; changes: Record<string, unknown>; reason: string; actorId: string }) {
   await ensureSubscriptionPlanTables(db);
-  if (!text(input.reason) || text(input.reason).length < 5) throw new Error("A change reason (min 5 chars) is required");
+  if (!text(input.reason) || text(input.reason).length < 5) throw planInputRefusal("A change reason (min 5 chars) is required", 400);
   const before = await db.prepare("SELECT * FROM subscription_plans WHERE id=?").bind(input.id).first<Row>();
-  if (!before) throw new Error("Subscription plan not found");
+  if (!before) throw planInputRefusal("Subscription plan not found", 404);
   const entries = Object.entries(input.changes || {}).filter(([k]) => EDITABLE.includes(k));
-  if (!entries.length) throw new Error("No supported plan fields supplied");
+  if (!entries.length) throw planInputRefusal("No supported plan fields supplied", 400);
   const normalizedEntries = entries.map(([key, value]): [string, unknown] => {
-    if (key === "price") { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("A valid numeric price is required"); return [key, value]; }
-    if (key === "session_count" || key === "validity_value") { if (typeof value !== "number" || !Number.isFinite(value) || value < 1) throw new Error("session_count and validity_value must be numeric values of at least 1"); return [key, Math.floor(value)]; }
-    if (key === "validity_unit") { if (typeof value !== "string" || !["days", "months"].includes(value)) throw new Error("validity_unit must be 'days' or 'months'"); return [key, value]; }
-    if (key === "active" || key === "family_wallet") { if (typeof value !== "boolean") throw new Error(`${key} must be a boolean`); return [key, value ? 1 : 0]; }
+    if (key === "price") { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw planInputRefusal("A valid numeric price is required", 400); return [key, value]; }
+    if (key === "session_count" || key === "validity_value") { if (typeof value !== "number" || !Number.isFinite(value) || value < 1) throw planInputRefusal("session_count and validity_value must be numeric values of at least 1", 400); return [key, Math.floor(value)]; }
+    if (key === "validity_unit") { if (typeof value !== "string" || !["days", "months"].includes(value)) throw planInputRefusal("validity_unit must be 'days' or 'months'", 400); return [key, value]; }
+    if (key === "active" || key === "family_wallet") { if (typeof value !== "boolean") throw planInputRefusal(`${key} must be a boolean`, 400); return [key, value ? 1 : 0]; }
     return [key, value];
   });
   const now = Date.now(), set = normalizedEntries.map(([k]) => `${k}=?`).join(",");

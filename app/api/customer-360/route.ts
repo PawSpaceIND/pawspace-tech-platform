@@ -1,5 +1,6 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
+import{maskName}from"../../../lib/platform-security";
 import{buildCustomer360,ensureCustomer360Tables}from"../../../lib/customer-360";
 import{isDevelopmentPreviewRequest}from"../../../lib/development-preview";
 
@@ -25,6 +26,16 @@ function hasAuthenticationMaterial(request:Request){if(isDevelopmentPreviewReque
  * The reveal moves to app/api/customer-data-reveal: per record, with a reason, writing a
  * customer_data_reveals row. The area survives here so an associate arranging a home visit can still
  * recognise where they are going.
+ *
+ * THE NAME MASK CAME BACK. [leak fix] The header above records that the code this replaced "masked the
+ * NAME and the PHONE"; the refactor onto the resolver kept the phone, the email and the address
+ * precision and quietly dropped the name, because CustomerDataView has no name field to carry it. So
+ * this route served {"name":"Demo · Karthik Iyer (lapsed)","primaryPhone":"+91 ••••••0006"} - a masked
+ * number sitting next to the raw person it belongs to - on /team/sales, /team/sales/cross-sell and
+ * /assisted-booking. maskName at the route is what every sibling list does (app/api/crm/route.ts,
+ * app/api/conversations/route.ts, app/api/subscription-customers/route.ts), and for the same reason it
+ * is applied HERE and not inside buildCustomer360: the AI orchestrator, marketing and promotion
+ * governance call that builder and need the real name to address a customer.
  */
 export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const built=await buildCustomer360(db,id);
   const access=await customerDataAccessResolver(db);
@@ -34,7 +45,7 @@ export async function GET(request:Request){if(!hasAuthenticationMaterial(request
       subject:{customerId:record.customerId,name:record.name,phone:record.primaryPhone,email:record.email,
         address:primary?{line1:primary.line1,area:primary.area,city:primary.city,pincode:primary.postalCode}:null}});
     const full=view.address.precision==="full";
-    return{...record,primaryPhone:view.contact.phone,email:view.contact.email,
+    return{...record,name:maskName(record.name),primaryPhone:view.contact.phone,email:view.contact.email,
       // Only the precision the policy allows. `line1` and the postcode are the doorstep; the area is not.
       addresses:record.addresses.map(entry=>full?entry:{...entry,line1:"",line2:null,postalCode:null}),
       contactChannel:view.contact.channel,addressPrecision:view.address.precision,revealed:view.revealed};

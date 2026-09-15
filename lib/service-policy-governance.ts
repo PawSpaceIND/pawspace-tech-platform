@@ -35,6 +35,26 @@
  * into something weaker than the operator believed they had saved.
  */
 import type{Permission}from"./platform-security";
+/*
+ * Every refusal this module raises is a Response the CALLER is meant to read, and every one of them was
+ * being thrown ungoverned. [PTJA-W3-POLICY-409]
+ *
+ * lib/server-auth.ts authError() trusts a thrown Response only by object identity - isGovernedHttpError()
+ * tests the WeakSet that governedJsonError() registers into - and replaces the body of any other 4xx with
+ * the calling route's generic fallback. So the 409 below reached a customer booking Training with a start
+ * before the policy's effective_from as `409 {"error":"Scheduling failed"}`: the right STATUS with the
+ * reason deleted, which reads as "scheduling is broken" rather than "no assignment policy is configured
+ * for this service and city at that date".
+ *
+ * Marking at the THROW SITE rather than at one call site is what makes this a fix. resolveServicePolicy
+ * is reached from assertBookingWindow, resolveAssignmentPolicy, the refund/grooming/food policy readers
+ * and the Control Center route; app/api/uat-scheduling's own governedRefusal() helper wraps only the two
+ * assertBookingWindow calls, so wrapping resolveAssignmentPolicy there too would have left every other
+ * consumer of this module answering with its own fallback string. One mark here answers for all of them,
+ * and routes that already unwrap thrown Responses themselves (service-policy-control's failure()) are
+ * unaffected - a governed Response is still an ordinary 4xx Response to them.
+ */
+import{governedJsonError}from"./governed-http-error";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -179,10 +199,10 @@ export async function resolveServicePolicy<T extends Record<string,unknown>>(db:
        AND (service_code=? OR service_code='*') AND (city_id=? OR city_id='*')
      ORDER BY rank ASC, version DESC, updated_at DESC LIMIT 1`)
     .bind(serviceCode,cityId,serviceCode,cityId,domain,date,date,serviceCode,cityId).first<Row>();
-  if(!row)throw Response.json({error:`${spec.label} is not configured for this service and city`,code:"service_policy_configuration_required",domain,serviceCode,cityId},{status:409});
+  if(!row)throw governedJsonError({error:`${spec.label} is not configured for this service and city`,code:"service_policy_configuration_required",domain,serviceCode,cityId},409);
   const record=rowToRecord(spec,row);
   const problem=spec.problem(record.config as Record<string,unknown>);
-  if(problem)throw Response.json({error:`${spec.label} configuration is invalid: ${problem}`,code:"service_policy_configuration_invalid",domain,policyId:record.id},{status:409});
+  if(problem)throw governedJsonError({error:`${spec.label} configuration is invalid: ${problem}`,code:"service_policy_configuration_invalid",domain,policyId:record.id},409);
   const matchedBy=MATCHED_BY[Number(row.rank??3)]??"platform_default";
   return{...record,matchedBy,policyVersion:`${domain}:${record.serviceCode}:${record.cityId}:v${record.version}`};
 }
@@ -212,17 +232,17 @@ export type PolicyWriteInput={domain:string;serviceCode?:string|null;cityId?:str
  */
 export async function writeServicePolicy(db:Db,input:PolicyWriteInput,actorId:string,reason:string){
   const spec=registry.get(input.domain);
-  if(!spec)throw Response.json({error:`Unknown policy domain ${input.domain}`,code:"unknown_policy_domain"},{status:400});
+  if(!spec)throw governedJsonError({error:`Unknown policy domain ${input.domain}`,code:"unknown_policy_domain"},400);
   await ensureServicePolicyTables(db);
   await seedServicePolicyDefault(db,input.domain);
-  if(!reason||reason.trim().length<5)throw Response.json({error:"A clear change reason is required"},{status:400});
+  if(!reason||reason.trim().length<5)throw governedJsonError({error:"A clear change reason is required"},400);
   const serviceCode=normalise(input.serviceCode),cityId=normalise(input.cityId);
   // The merged config is what will be READ back, so it is what gets validated - not the patch fragment.
   const existing=await db.prepare("SELECT * FROM service_policy_configs WHERE policy_domain=? AND service_code=? AND city_id=? ORDER BY version DESC LIMIT 1").bind(input.domain,serviceCode,cityId).first<Row>();
   const previous=existing?parseJson<Record<string,unknown>>(existing.config_json,{}):{};
   const merged={...spec.defaults,...previous,...input.config};
   const problem=spec.problem(merged);
-  if(problem)throw Response.json({error:problem,code:"service_policy_invalid"},{status:400});
+  if(problem)throw governedJsonError({error:problem,code:"service_policy_invalid"},400);
   const now=Date.now(),effectiveFrom=String(input.effectiveFrom||new Date().toISOString().slice(0,10));
   const effectiveTo=input.effectiveTo?String(input.effectiveTo):null;
   const active=input.active===false?0:1;

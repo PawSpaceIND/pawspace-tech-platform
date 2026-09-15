@@ -39,7 +39,7 @@ test("Walking pricing parser tolerates null pricing", () => {
 
 test("Walking completion delegates the guarded durable transaction to the canonical lifecycle engine", () => {
   const start = walkingSource.indexOf('if(input.action==="complete_walk")');
-  const end = walkingSource.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"');
+  const end = walkingSource.indexOf('Unsupported Dog Walking lifecycle action')  /* delimiter only - match the message, not the throw expression, which is now governedJsonError */;
   const block = walkingSource.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.match(block, /acquireProviderLifecycleLease/);

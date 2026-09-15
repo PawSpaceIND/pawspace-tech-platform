@@ -110,8 +110,13 @@ test("MR03-x: the three routes without an explicit null-check are inert only bec
   // it - and the cases in this file are what will catch that, not code review.
   const { readFile } = await import("node:fs/promises");
   const loaders = [
-    ["lib/taxi-lifecycle.ts", /Canonical Pet Taxi booking not found",\{status:404\}/],
-    ["lib/food-fulfilment-governance.ts", /Canonical Food order not found",\{status:404\}/],
+    /* Shape-agnostic on purpose: the property is "throws a 404 carrying this message", not how the
+     * Response is constructed. These refusals moved from `new Response(msg,{status:404})` to
+     * `governedJsonError({error:msg},404)` so authError stops replacing the body with a generic
+     * fallback - same status, same sentence, different constructor. Pinning the constructor made
+     * this test fail on a change that strengthened the very behaviour it protects. */
+    ["lib/taxi-lifecycle.ts", /Canonical Pet Taxi booking not found"[,}][^)]*404/],
+    ["lib/food-fulfilment-governance.ts", /Canonical Food order not found"[,}][^)]*404/],
   ];
   for (const [file, pattern] of loaders) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), "utf8");

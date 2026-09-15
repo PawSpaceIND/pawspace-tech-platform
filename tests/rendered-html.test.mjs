@@ -236,7 +236,20 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due 24 hours before check-in/);
   assert.match(stays, /3-hour host-home trial · Included/);
-  assert.match(stays, /2-hour sitter Meet & Greet · ₹500/);
+  /* Was /2-hour sitter Meet & Greet · ₹500/. This flow never prices a meeting: it calls no
+   * meet-and-greet API and adds nothing to the quote, and the governed product (lib/meet-and-greet.ts
+   * meetGreetPrice) is ₹499 and WAIVED for stays of 5+ days - which is the only case this screen
+   * renders in. The literal asserted a fee that was the wrong number and was never charged. The copy
+   * now derives from the fee actually applied, so it cannot claim a charge the booking does not make. */
+  /* Pins the RULE, not a number. This flow never prices a meeting - it calls no meet-and-greet API
+   * and adds nothing to the quote - while the governed product (lib/meet-and-greet.ts meetGreetPrice)
+   * is Rs 499 and waived entirely for stays of 5+ days, which is the only case this screen renders in.
+   * The old assertion pinned the literal "· Rs 500": the wrong number for a fee that is never charged.
+   * These two assertions require the copy to DERIVE from the fee actually applied, and forbid any
+   * hardcoded rupee meeting amount coming back. */
+  assert.match(stays, /2-hour sitter Meet & Greet · \$\{meetFeeLabel\}/);
+  assert.doesNotMatch(stays, /Meet & Greet · ₹\d/,
+    "the meeting copy must never hardcode a rupee amount - derive it from the fee applied");
   assert.match(stays, /4 hours/);
   assert.match(stays, /12 hours/);
   assert.match(stays, /serviceAddress:serviceLocation.address/);

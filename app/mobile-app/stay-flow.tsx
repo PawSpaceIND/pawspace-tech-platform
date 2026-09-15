@@ -69,12 +69,24 @@ const careBenefits = [
   "Grooming add-on",
   "Training add-on",
 ];
-const money = (n: number) =>
-  new Intl.NumberFormat("en-IN", {
+// Whole paise, so rupee amounts are compared and subtracted as integers instead of floats.
+const paise = (value: number) => Math.round(value * 100);
+// Money is shown to the paisa whenever the amount is not a whole rupee, and in whole rupees
+// otherwise. The governed 50/50 split (lib/stay-split-payments.ts) legitimately produces
+// half-rupee instalments - Rs 4,893 splits into two Rs 2,446.50 halves - and rounding each half
+// to whole rupees for display made the two instalments sum to Rs 4,894 on a screen that also
+// printed "Booking total Rs 4,893", and made the pay button say Rs 2,447 while the gateway is
+// asked for rupeesToPaiseExact(2446.5) = 244650 paise. The ledger is right; the formatter lied.
+const money = (n: number) => {
+  const exact = paise(n);
+  const fractional = Number.isFinite(exact) && exact % 100 !== 0;
+  return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(n);
+    minimumFractionDigits: fractional ? 2 : 0,
+    maximumFractionDigits: fractional ? 2 : 0,
+  }).format(Number.isFinite(exact) ? exact / 100 : n);
+};
 const shortDate = (value: string) =>
   new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
     day: "numeric",
@@ -216,13 +228,19 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
   const extra = mode === "boarding" ? extraPets*boardingUnitPrice*boardingUnits : extraPets*(sittingQuote?.extraPetPrice??0)*(sittingQuote?.billableUnits??0);
   const protection = 0;
   const taxiFee = 0;
-  const meetFee = 0;
+  // This stay quote never prices a meeting. The governed meeting product is its own request
+  // lifecycle (lib/meet-and-greet.ts + /api/meet-and-greet, house visit Rs 499 and waived for
+  // stays of 5+ days) and this flow never calls it, so nothing is added to the booking total for
+  // the Meet & Greet toggle below. Every meeting amount and note on the money screen is derived
+  // from this single number, so the copy cannot claim a fee the booking does not charge.
+  const meetFee: number = 0;
+  const meetFeeLabel = meetFee > 0 ? money(meetFee) : "No charge";
   const total = mode === "boarding" ? boardingQuote?.totalAmount??0 : sittingQuote?.totalAmount??0;
   const splitEligible = careWindow === "24 hours" && nights > 4;
   const reserveAmount = mode === "boarding" ? boardingQuote?.amountDueNow??0 : sittingQuote?.amountDueNow??0;
-  const balanceAmount = mode === "boarding"
-    ? Math.max(0, (boardingQuote?.totalAmount??0) - (boardingQuote?.amountDueNow??0))
-    : Math.max(0,(sittingQuote?.totalAmount??0)-(sittingQuote?.amountDueNow??0));
+  // The balance is the server's own remainder (round2(total - dueNow)), taken in whole paise so
+  // the two instalments printed on this screen always add back up to the total printed above them.
+  const balanceAmount = Math.max(0, (paise(total) - paise(reserveAmount)) / 100);
   useEffect(()=>{if(mode!=="sitting"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setSittingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="24 hours"?"sitting-overnight":"sitting-visit-60",paymentMode=splitEligible&&splitPayment?"split_50_50":"prepaid";queueMicrotask(()=>{if(active){setSittingQuote(null);setSittingQuoteError("");}});void createSittingQuote({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode,providerId:selectedSitter?.providerId}).then(value=>{if(active)setSittingQuote(value);}).catch(problem=>{if(active)setSittingQuoteError(problem instanceof Error?problem.message:"Unable to create canonical Sitting quote");});return()=>{active=false;};},[mode,serviceLocation,datesValid,start,end,careWindow,startTime,endTime,selectedPets.length,splitEligible,splitPayment,selectedSitter?.providerId]);
   useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";queueMicrotask(()=>{if(active)setBoardingQuote(null);});void quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid",providerId:selectedBoardingHost?.providerId}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,serviceLocation,datesValid,careWindow,startTime,endTime,start,end,selectedPets.length,splitEligible,splitPayment,selectedBoardingHost?.providerId]);
   useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime);void loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),petCount:selectedPets.length,species:selectedSpeciesKey?selectedSpeciesKey.split(","):[]}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,serviceLocation,datesValid,careWindow,startTime,endTime,start,end,selectedPets.length,boardingHostQueryKey,selectedSpeciesKey,hostRetry]);
@@ -613,7 +631,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                 <b>
                   {mode === "boarding"
                     ? "3-hour host-home trial · Included"
-                    : "2-hour sitter Meet & Greet · ₹500"}
+                    : `2-hour sitter Meet & Greet · ${meetFeeLabel}`}
                 </b>
                 <small>
                   {mode === "boarding"
@@ -629,7 +647,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                   <small>Speak with the {mode === "boarding" ? "host" : "sitter"}, understand routines and ask questions before booking.</small>
                 </button>
                 <button className={meetFormat === "visit" ? styles.selected : ""} onClick={() => setMeetFormat("visit")}>
-                  <b>{mode === "boarding" ? "3-hour host-home trial · Included" : "2-hour home Meet & Greet · ₹500"}</b>
+                  <b>{mode === "boarding" ? "3-hour host-home trial · Included" : `2-hour home Meet & Greet · ${meetFeeLabel}`}</b>
                   <small>{mode === "boarding" ? "Visit the home with your pet and check comfort before the stay." : "Meet the sitter at home, explain access and walk through the care routine."}</small>
                 </button>
               </div>
@@ -695,7 +713,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                     ? "10-minute phone call · Included"
                     : mode === "boarding"
                       ? "3 hours · Included"
-                      : `2 hours · ${money(meetFee)}`
+                      : `2 hours · ${meetFeeLabel}`
                   : "Skipped"}
               </b>
             </span>
@@ -728,7 +746,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                   : mode === "boarding"
                     ? "3-hour host-home trial"
                     : "2-hour sitter Meet & Greet"}
-                <b>{meetFormat === "call" || mode === "boarding" ? "Included" : money(meetFee)}</b>
+                <b>{meetFormat === "call" || mode === "boarding" ? "Included" : meetFeeLabel}</b>
               </span>
             )}
             <strong>
@@ -769,8 +787,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
               </button>
               {meet && mode === "sitting" && meetFormat === "visit" && (
                 <p>
-                  The ₹500 meeting fee is collected now; only the stay value is
-                  split 50/50.
+                  {meetFee > 0
+                    ? `The ${money(meetFee)} Meet & Greet fee is billed separately from this stay; the ${money(total)} booking total above is what splits 50/50.`
+                    : `No Meet & Greet fee is charged on this booking, so the whole ${money(total)} booking total above is what splits 50/50.`}
                 </p>
               )}
             </section>

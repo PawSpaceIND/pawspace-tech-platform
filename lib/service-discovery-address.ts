@@ -21,11 +21,27 @@ function addressSegments(value:string){return String(value||"").split(",").map(p
 function segmentKey(value:string){return value.toLowerCase().replace(/[^a-z0-9]+/g,"");}
 /** Segments a composed address repeats after line1: the row's own area/city/PIN, plus the country suffix. */
 function governedSegments(values:unknown[]){const keys=values.map(value=>segmentKey(String(value??""))).filter(Boolean);keys.push("india");return new Set(keys);}
+/** True when a trailing segment carries NOTHING but governed parts, however the client spelled it.
+ * Google Places - and this repo's own autocomplete fixture, lib/address-autocomplete.ts - put city and PIN
+ * in ONE comma segment: "..., Hoysala Nagar, Indiranagar, Bengaluru 560038". An exact segment match sees
+ * "bengaluru560038", does not find it in the governed set, stops stripping there, and so fails to recognise
+ * the app's OWN spelling of an address the customer already saved. The segment key is therefore matched by
+ * decomposing it into governed keys rather than by equality, which also covers "Bengaluru - 560038",
+ * "560038 Bengaluru" and "Indiranagar Bengaluru 560038" without special-casing any of them.
+ * It deliberately does NOT match a segment that merely CONTAINS a governed part: "Koramangala 4th Block"
+ * leaves "4thblock" unaccounted for, so a real street inside a governed area stays part of the address core
+ * and two different addresses in one PIN are still two addresses. */
+function governedSegment(value:string,governed:Set<string>){
+  const key=segmentKey(value);if(!key)return false;if(governed.has(key))return true;
+  const reachable=new Array<boolean>(key.length+1).fill(false);reachable[0]=true;
+  for(let end=1;end<=key.length;end++)for(const part of governed){const start=end-part.length;if(start>=0&&reachable[start]&&key.startsWith(part,start)){reachable[end]=true;break;}}
+  return reachable[key.length];
+}
 /** The customer-entered core of an address: trailing governed area/city/PIN/country segments removed.
  * Clients send ONE string, and the saved-address screen composes it as line1+line2+area+city+PIN. Storing
  * that composed string back into line1 is what made every visit append the same suffix again, so the core
  * is what makes compose -> send -> store -> compose idempotent instead of growing without bound. */
-function addressCore(value:string,governed:Set<string>){const segments=addressSegments(value);while(segments.length>1&&governed.has(segmentKey(segments[segments.length-1])))segments.pop();return segments;}
+function addressCore(value:string,governed:Set<string>){const segments=addressSegments(value);while(segments.length>1&&governedSegment(segments[segments.length-1],governed))segments.pop();return segments;}
 function addressCoreKey(value:string,governed:Set<string>){return addressCore(value,governed).map(segmentKey).join("|");}
 function savedAddressText(row:Row){return[row.line1,row.line2,row.area,row.city,row.postal_code].map(value=>String(value??"").trim()).filter(Boolean).join(", ");}
 /** A supplied address that is only a saved address re-composed by the client is NOT a new address: it is
@@ -37,6 +53,10 @@ async function matchSavedAddress(db:Db,customerId:string,supplied:string,pincode
     const governed=governedSegments([row.area,row.city,row.postal_code,pincode]);
     // A saved row that never carried a PIN still resolves against the PIN validated for this request,
     // rather than being duplicated as a new address or refused for its own missing PIN.
+    // A matched row is returned as-is and is NEVER written back: booking to an address the customer already
+    // saved must not re-label it, re-time it, or move is_default. Which address is "default" is the
+    // customer's choice on the account screen, so a booking only ever promotes an address the customer
+    // typed for THIS booking (the newAddress branch below) - never one it merely recognised.
     if(addressCoreKey(supplied,governed)===addressCoreKey(savedAddressText(row),governed))return{...row,postal_code:rowPincode||pincode};
   }
   return null;

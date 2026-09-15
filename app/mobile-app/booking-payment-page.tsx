@@ -3,7 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { CustomerCheckoutController, type CheckoutState } from "../../lib/customer-checkout-client";
 import styles from "./booking-payment-page.module.css";
 
-const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(value);
+/* Shows paise whenever the amount is not a whole rupee, and whole rupees otherwise. The governed
+ * 50/50 split (lib/stay-split-payments.ts) legitimately produces half-rupee instalments - Rs 4,893
+ * splits into two Rs 2,446.50 halves - and rounding for display made this button read
+ * "Pay securely Rs 2,447" while the gateway is asked for rupeesToPaiseExact(2446.5) = 244650 paise.
+ * The customer must never be shown an amount that is not the amount charged. Mirrors the formatter
+ * in app/mobile-app/stay-flow.tsx, which hands off to this screen. */
+const money=(value:number)=>{const exact=Math.round(value*100),fractional=Number.isFinite(exact)&&exact%100!==0;return new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:fractional?2:0,maximumFractionDigits:fractional?2:0}).format(Number.isFinite(exact)?exact/100:value);};
 
 type Props={
  serviceName:string; totalAmount:number; amountDueNow:number; mode:"prepaid"|"split"|"split_50_50"|"pay_after_service";

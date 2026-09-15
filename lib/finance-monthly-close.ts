@@ -14,6 +14,14 @@
 import{computeMonthlyTds}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
 import{serviceVerticalOutputTax}from"./service-output-tax";
+import{governedJsonError}from"./governed-http-error";
+
+/* Every refusal below is the operator's own action being declined - a month that is already locked, a
+ * checklist that is not green, a malformed period - so each is raised with governedJsonError(). An
+ * ungoverned `new Response(...)` keeps its 409 but authError() replaces its body with the route's
+ * fallback, so "Close & lock month" reported "Unable to complete the statutory compliance action"
+ * whether the checklist was incomplete or the platform had actually broken. Statuses and message text
+ * are unchanged; the only difference is that the reason now survives the trip out. */
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -32,7 +40,7 @@ export async function ensureMonthlyCloseTables(db:Db){
 
 function monthWindow(period:string):{startMs:number;endMs:number;startDate:string;endDate:string}{
  const[year,month]=period.split("-").map(Number);
- if(!Number.isInteger(year)||!Number.isInteger(month)||month<1||month>12)throw new Response("Close period must be YYYY-MM",{status:400});
+ if(!Number.isInteger(year)||!Number.isInteger(month)||month<1||month>12)throw governedJsonError({error:"Close period must be YYYY-MM"},400);
  const next=month===12?{y:year+1,m:1}:{y:year,m:month+1};
  return{startMs:Date.UTC(year,month-1,1)-330*60_000,endMs:Date.UTC(next.y,next.m-1,1)-330*60_000,startDate:`${year}-${String(month).padStart(2,"0")}-01`,endDate:`${next.y}-${String(next.m).padStart(2,"0")}-01`};
 }
@@ -112,16 +120,16 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
 export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?:number}){
  await ensureMonthlyCloseTables(db);
  const existing=await db.prepare("SELECT status FROM finance_monthly_closes WHERE period=?").bind(input.period).first<Row>();
- if(existing&&String(existing.status)==="closed")throw new Response(`${input.period} is already closed and locked; post corrections in the next open period`,{status:409});
+ if(existing&&String(existing.status)==="closed")throw governedJsonError({error:`${input.period} is already closed and locked; post corrections in the next open period`},409);
  const view=await monthlyCloseView(db,input);
  if(view.status!=="ready"){
   const blocking=view.checklist.filter(item=>!item.ok).map(item=>item.key);
-  throw new Response(`Close blocked - unresolved checklist items: ${blocking.join(", ")}`,{status:409});
+  throw governedJsonError({error:`Close blocked - unresolved checklist items: ${blocking.join(", ")}`},409);
  }
  const now=input.asOf??Date.now();
  const result=await db.prepare("UPDATE finance_monthly_closes SET status='closed',closed_by=?,closed_at=?,snapshot_json=?,updated_at=? WHERE period=? AND status!='closed'")
   .bind(input.actorId,now,JSON.stringify({...view,status:"closed",closedBy:input.actorId,closedAt:now}),now,input.period).run();
- if(!Number(result.meta.changes))throw new Response(`${input.period} is already closed and locked`,{status:409});
+ if(!Number(result.meta.changes))throw governedJsonError({error:`${input.period} is already closed and locked`},409);
  await db.batch([
   db.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked',?,?,?,?) ON CONFLICT(period_code) DO UPDATE SET status='locked',checklist_json=excluded.checklist_json,locked_at=excluded.locked_at,locked_by=excluded.locked_by,updated_at=excluded.updated_at")
    .bind(input.period,JSON.stringify(view.checklist),now,input.actorId,now),
