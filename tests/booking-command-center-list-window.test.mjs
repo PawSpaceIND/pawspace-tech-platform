@@ -13,6 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__BOOKING_WINDOW_DB__", "__BOOKING_WINDOW_ENV__");
@@ -120,4 +121,13 @@ test("limit is honoured and capped", async () => {
   assert.equal(ids((await get("?limit=1000")).body).length, FIXTURES + 1, "a large limit returns everything up to the 500 cap");
   assert.equal(ids((await get("?limit=0")).body).length, 150, "a nonsense limit falls back to the default window");
   assert.equal(ids((await get("?limit=abc")).body).length, 150);
+});
+
+
+test("bookingId deep links seed the command center server-search path", () => {
+  const page = readFileSync(new URL("../app/booking-command-center/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /useSearchParams\(\)/);
+  assert.match(page, /searchParams\.get\("bookingId"\)/);
+  assert.match(page, /useState\(deepLinkedBookingId\)/);
+  assert.match(page, /useRef\(deepLinkedBookingId\)/);
 });
