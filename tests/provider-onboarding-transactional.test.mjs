@@ -1,6 +1,10 @@
 import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
 const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),lib=read("lib/provider-onboarding-transactional.ts"),route=read("app/api/provider-onboarding/route.ts");
 
+// The ops console moved from settings.manage (a CONFIGURATION permission that admin and manager
+// did not hold, so neither could even SEE the onboarding queue) to providers.manage, which is
+// what they do hold and what the role definitions describe. Publishing an onboarding POLICY is
+// still configuration and still lives on settings.manage in provider-onboarding-configuration.
 test("PO1 persists canonical application state and immutable event history",()=>{for(const token of["provider_onboarding_applications","provider_onboarding_events","application_created","from_status","to_status","actor_id","policy_ref"])assert.match(lib,new RegExp(token));assert.match(lib,/resolveProviderOnboardingPolicy/);assert.match(lib,/We are not accepting caregiver applications for this service and city just yet/);assert.match(lib,/application stays saved/);});
 
 test("PO1 enforces prerequisites instead of advancing a browser-owned state machine",()=>{assert.match(lib,/Only draft applications can be submitted/);assert.match(lib,/Application must be submitted before verification/);assert.match(lib,/Verification must be explicitly verified before quiz/);assert.match(lib,/Quiz must be completed before interview/);});
@@ -17,6 +21,6 @@ test("PO3 scoring is deterministic and never final provider acceptance",()=>{ass
 
 test("PO3 creates a fifteen minute interview guide but leaves decision with Ops",()=>{assert.match(lib,/buildInterviewGuide/);assert.match(lib,/durationMinutes:15/);assert.match(lib,/finalDecisionAuthority:\"human_ops\"/);});
 
-test("transactional API is staff governed same-origin and security audited",()=>{assert.match(route,/authorize\(request,\"settings\.manage\"\)/);assert.match(route,/sameOrigin\(request\)/);assert.match(route,/securityAudit/);for(const action of["create_application","add_document","create_verification","verification_result","create_quiz_draft","approve_quiz","score_quiz"])assert.match(route,new RegExp(action));});
+test("transactional API is staff governed same-origin and security audited",()=>{assert.match(route,/authorize\(request,\"providers\.manage\"\)/);assert.doesNotMatch(route,/authorize\(request,\"(dashboard|self_service)\.[a-z_]+\"\)/,"the ops console must stay behind a real staff permission");assert.match(route,/sameOrigin\(request\)/);assert.match(route,/securityAudit/);for(const action of["create_application","add_document","create_verification","verification_result","create_quiz_draft","approve_quiz","score_quiz"])assert.match(route,new RegExp(action));});
 
 test("PO1 to PO3 remain engineering UAT only",()=>{for(const token of["productionReady:false","externalKycConnected:false","externalAiQuizGenerationConnected:false","autonomousProviderApproval:false","defaultInterviewMinutes:15","defaultQuizQuestions:20"])assert.match(lib,new RegExp(token));});

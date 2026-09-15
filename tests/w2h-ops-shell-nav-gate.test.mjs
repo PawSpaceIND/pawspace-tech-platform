@@ -239,3 +239,18 @@ test("W2H-OPS-WIRED: the Operations hub really renders its catalogue through the
     assert.ok(link.permission, `${link.href} must carry the permission its API enforces`);
   }
 });
+
+test("W2H-RAIL-SELF: staff can reach their own workspace, and only if they hold self_service.view", async () => {
+  // R3-G/F10: /me holds an employee's own attendance, leave balance, leave requests, payslips and
+  // salary. Its only inbound links were /staging-login and a conditional one on /partner/workspace,
+  // so no staff console reached it - an employee could not find their own payslip from the product.
+  for (const role of ["admin", "manager", "associate"]) {
+    const rail = await railFor(role);
+    assert.ok(rail.hrefs.includes("/me"), `${role} holds self_service.view and must be offered their own workspace`);
+  }
+  for (const role of ["finance", "auditor"]) {
+    const rail = await railFor(role);
+    assert.ok(rail.hrefs.length > 0, `${role} rendered a rail, so the absence below is not vacuous`);
+    assert.ok(!rail.hrefs.includes("/me"), `${role} holds no self_service.view and must not be offered it`);
+  }
+});

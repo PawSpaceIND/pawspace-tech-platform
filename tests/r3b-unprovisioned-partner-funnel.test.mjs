@@ -412,7 +412,8 @@ test("R3B-4 an admin - not only the founder - can publish the onboarding policy 
   assert.equal((await staffGet("/provider-verification", MANAGER)).status, 200, "a manager must be able to work the KYC mandate");
   // A manager still cannot publish policy or work the control room - settings.manage is not theirs.
   assert.equal((await staffGet("/provider-onboarding-configuration", MANAGER)).status, 403, "publishing onboarding policy stays settings.manage");
-  assert.equal((await staffGet("/provider-onboarding", MANAGER)).status, 403);
+  assert.equal((await staffGet("/provider-onboarding", MANAGER)).status, 200,
+    "moving an applicant through onboarding is providers.manage work, not configuration");
 });
 
 // --------------------------------------------------------------------------------------------------

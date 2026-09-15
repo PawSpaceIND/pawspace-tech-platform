@@ -36,6 +36,29 @@ export const PET_VACCINATION_STATUSES=["not_provided","verified","pending","reco
  */
 export const CUSTOMER_DECLARABLE_VACCINATION_STATUSES=["not_provided","pending"] as const;
 const rows=<T=Row>(result:{results?:unknown[]})=>(result.results||[]) as T[];const safe=(value:unknown)=>String(value??"").trim();const token=(value:string)=>value.replace(/[^A-Za-z0-9]/g,"").toUpperCase();function stable(value:string){let hash=2166136261;for(let i=0;i<value.length;i++){hash^=value.charCodeAt(i);hash=Math.imul(hash,16777619);}return(hash>>>0).toString(36).toUpperCase();}export const canonicalPetId=(customerId:string,sourceId:string)=>`PET-${token(customerId)}-${token(sourceId)}`;
+/**
+ * Put back customer names that a masked display string was written over. [R3C-F10-MASK-REPAIR]
+ *
+ * /api/assisted-orders forwarded the CRM's MASKED customer object into canonical booking, and
+ * /api/canonical-bookings upserts `name=excluded.name` - so converting a lead overwrote the real name
+ * with its own mask. MEASURED on the audit database: canonical_customers held
+ * `{"name":"R•• C• C•","primary_phone":"9811100144"}` - the real name simply gone, the phone intact
+ * because the phone was already being resolved server-side.
+ *
+ * The write path is closed (assisted orders now resolve the name as well as the phone). This repairs
+ * rows already damaged. It is deliberately conservative: a name is only replaced when crm_contacts
+ * holds an UNMASKED name for the same customer. Where no source survives the row is left exactly as
+ * it is - a wrong name invented from a phone number would be worse than a visibly masked one.
+ * U+2022 cannot occur in a real name, so the predicate cannot match an undamaged row.
+ */
+async function repairMaskedCustomerNames(db:Db){
+ await db.prepare(
+  "UPDATE canonical_customers SET name=(SELECT c.name FROM crm_contacts c WHERE c.id=canonical_customers.id AND c.name NOT LIKE '%\u2022%' AND TRIM(COALESCE(c.name,''))<>'')"+
+  " WHERE name LIKE '%\u2022%'"+
+  " AND EXISTS (SELECT 1 FROM crm_contacts c WHERE c.id=canonical_customers.id AND c.name NOT LIKE '%\u2022%' AND TRIM(COALESCE(c.name,''))<>'')"
+ ).run().catch(()=>undefined);
+}
+
 export async function ensureCustomerAccountTables(db:Db){await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),db.prepare("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),db.prepare("CREATE INDEX IF NOT EXISTS canonical_pets_customer_idx ON canonical_pets(customer_id,created_at)"),db.prepare("CREATE TABLE IF NOT EXISTS customer_addresses (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,label TEXT NOT NULL,line1 TEXT NOT NULL,line2 TEXT,area TEXT,city TEXT NOT NULL,postal_code TEXT,is_default INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),db.prepare("CREATE INDEX IF NOT EXISTS customer_addresses_customer_idx ON customer_addresses(customer_id,is_default DESC,created_at)"),db.prepare("CREATE TABLE IF NOT EXISTS customer_account_mutations (idempotency_key TEXT PRIMARY KEY,customer_id TEXT NOT NULL,action TEXT NOT NULL,entity_id TEXT,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)")]);
 // Additive pet-profile columns (canonical_pets is also created by older route DDL without them,
 // so the owning lib migrates whichever copy exists - same PRAGMA/ALTER pattern as coupon-governance).
@@ -44,7 +67,7 @@ if(!petColumns.results.some(row=>String(row.name)==="age_years")){await addColum
 // Rich pet profile (gender, breed, age band, DOB, vaccination, temperament, weight band, photo) is
 // stored as one JSON column so the capture form can grow without a migration per field; the typed
 // age_years/weight_kg/vaccination_status columns above stay populated (derived) for existing readers.
-if(!petColumns.results.some(row=>String(row.name)==="profile_json")){await addColumnIfMissing(db,"ALTER TABLE canonical_pets ADD COLUMN profile_json TEXT");}}
+if(!petColumns.results.some(row=>String(row.name)==="profile_json")){await addColumnIfMissing(db,"ALTER TABLE canonical_pets ADD COLUMN profile_json TEXT");}await repairMaskedCustomerNames(db);}
 // Additive column migration that is safe under concurrent first-writes: the PRAGMA check avoids the ALTER
 // in the common case, and if two requests race past it, the loser's "duplicate column" error is benign.
 async function addColumnIfMissing(db:Db,ddl:string){try{await db.prepare(ddl).run();}catch(error){if(!/duplicate column/i.test(String((error as {message?:string})?.message??error)))throw error;}}

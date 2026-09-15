@@ -23,11 +23,26 @@ const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cac
  * it is the recorded state of the statement/commission/payout refusing the requested transition.
  */
 const PLATFORM_FAULT=/D1_ERROR|SQLITE|no such (table|column)|constraint failed|syntax error|too many SQL variables|is not a function|cannot read propert/i;
+const REFUSAL_SENTENCES:Record<string,string>={
+ escrow_custody_required:"Funds must be held in escrow custody before this release can be made.",
+ escrow_release_blocked_by_active_dispute:"This booking has an open dispute, so undisputed funds cannot be released yet.",
+ escrow_provider_required:"A provider must be attached to the escrow before funds can move.",
+ escrow_currency_mismatch:"The escrow currency does not match the amount being moved.",
+ escrow_reserve_amount_required:"An amount is required to reserve escrow custody.",
+ escrow_release_reason_required:"A written reason is required to release escrow funds.",
+ dispute_reason_required:"A written reason is required to freeze funds for a dispute.",
+ dispute_reference_required:"A dispute reference is required to freeze these funds.",
+ arbitration_reason_required:"A written reason is required to arbitrate this dispute.",
+ open_dispute_freeze_required:"The disputed funds must be frozen before arbitration can decide them.",
+ dispute_freeze_ledger_without_dispute:"There is no open dispute on this booking to freeze funds for.",
+ partial_split_must_allocate_full_custody_between_provider_and_customer:"A partial split must allocate the whole custody amount between the provider and the customer.",
+};
 function governedRefusal(error:unknown){
  if(!(error instanceof Error)||error.constructor!==Error)return null;
  const message=error.message.trim();
  if(!message||PLATFORM_FAULT.test(message))return null;
- return governedJsonError({error:message},409);
+ const sentence=REFUSAL_SENTENCES[message];
+ return sentence?governedJsonError({error:sentence,code:message},409):governedJsonError({error:message},409);
 }
 export async function GET(request:Request){try{await authorize(request,"finance.view");const db=await database();await ensurePartnerSettlementTables(db);const period=new URL(request.url).searchParams.get("period")||new Date().toISOString().slice(0,7);await refreshPartnerSettlementStatements(db,period);const [statements,payouts,commission,escrow]=await Promise.all([db.prepare("SELECT * FROM partner_settlement_statements WHERE period_code=? ORDER BY provider_id").bind(period).all(),db.prepare("SELECT * FROM partner_payout_instructions ORDER BY updated_at DESC LIMIT 100").all(),getProviderCommissionDashboard(db),escrowCustodySnapshot(db)]);return json({data:{period,statements:statements.results,payouts:payouts.results,commission,escrow,source:"canonical_partner_settlement",livePayouts:false,paymentEnvironment:"sandbox"}});}catch(error){return authError(error,"Unable to load partner finance");}}
 export async function POST(request:Request){try{sameOrigin(request);const actor=await authorize(request,"finance.manage"),body=await request.json() as Body,db=await database();await ensurePartnerSettlementTables(db);

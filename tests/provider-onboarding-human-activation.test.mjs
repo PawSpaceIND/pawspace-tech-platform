@@ -1,6 +1,10 @@
 import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
 const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),lib=read("lib/provider-onboarding-human-activation.ts"),route=read("app/api/provider-onboarding/route.ts");
 
+// The ops console moved from settings.manage (a CONFIGURATION permission that admin and manager
+// did not hold, so neither could even SEE the onboarding queue) to providers.manage, which is
+// what they do hold and what the role definitions describe. Publishing an onboarding POLICY is
+// still configuration and still lives on settings.manage in provider-onboarding-configuration.
 test("PO4 persists configurable Ops interview scheduling and prevents overlap",()=>{for(const token of["provider_onboarding_interviews","duration_minutes","interviewPolicy.durationMinutes","overlapping interview","ops_email","status='scheduled'"])assert.match(lib,new RegExp(token));assert.match(lib,/Math\.max\(5,Number\(policy\.interviewPolicy\.durationMinutes\?\?15\)\)/);});
 
 test("PO4 requires assigned human Ops to complete interview and record final decision",()=>{assert.match(lib,/Only the assigned Ops interviewer can complete this interview/);assert.match(lib,/Completed interview is required before a human decision/);for(const token of["approved","rejected","review","decision_actor","decision_at","decisionAuthority:\"human_ops\"","aiDecision:false"])assert.match(lib,new RegExp(token));});
@@ -17,6 +21,6 @@ test("PO5 UAT activation reuses provider capacity identity but never opens marke
 
 test("PO5 post-activation editing is allowlisted, audited and re-review sensitive",()=>{for(const token of["mutableProfileFields","provider_onboarding_profile_audit","post_activation_profile_edit","reviewRequired","reverificationRequired","uat_review"])assert.match(lib,new RegExp(token));assert.match(lib,/Identity, compliance and other protected onboarding fields cannot be edited through the profile endpoint/);assert.match(lib,/serviceAreas/);});
 
-test("PO4 PO5 API remains staff governed same-origin and security audited",()=>{assert.match(route,/authorize\(request,\"settings\.manage\"\)/);assert.match(route,/sameOrigin\(request\)/);assert.match(route,/securityAudit/);for(const action of["schedule_interview","complete_interview","save_interview_ai_summary_draft","record_human_decision","create_sla","accept_sla_uat","save_profile","add_profile_media","evaluate_activation","activate_provider_uat","update_activated_profile"])assert.match(route,new RegExp(action));});
+test("PO4 PO5 API remains staff governed same-origin and security audited",()=>{assert.match(route,/authorize\(request,\"providers\.manage\"\)/);assert.doesNotMatch(route,/authorize\(request,\"(dashboard|self_service)\.[a-z_]+\"\)/,"the ops console must stay behind a real staff permission");assert.match(route,/sameOrigin\(request\)/);assert.match(route,/securityAudit/);for(const action of["schedule_interview","complete_interview","save_interview_ai_summary_draft","record_human_decision","create_sla","accept_sla_uat","save_profile","add_profile_media","evaluate_activation","activate_provider_uat","update_activated_profile"])assert.match(route,new RegExp(action));});
 
 test("PO4 PO5 remain engineering UAT only",()=>{for(const token of["productionReady:false","externalEsignConnected:false","productionMarketplaceActivationEnabled:false","autonomousProviderDecision:false","defaultInterviewMinutes:15"])assert.match(lib,new RegExp(token));});

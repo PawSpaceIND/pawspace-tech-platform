@@ -80,6 +80,7 @@ const NAV: OpsNavItem[] = [
  */
 const FOOTER: { href: string; label: string; permission?: Permission }[] = [
   { href: "/team", label: "⌂ Team home", permission: "dashboard.view" },
+  { href: "/me", label: "◉ My workspace", permission: "self_service.view" },
   { href: "/team/operations/bookings", label: "▤ Booking Command Center", permission: "bookings.manage" },
   { href: "/control/integrations", label: "◎ System Integration Control", permission: "launch.view" },
   { href: "/mobile-app", label: "◉ Customer Mobile App" },

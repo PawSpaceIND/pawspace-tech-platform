@@ -71,3 +71,32 @@ test("VAX-SELF-4: an owner can still say no, and that is honoured", async () => 
   await upsert(db, { id: "PET-NO", name: "Nobody", species: "dog", vaccinationStatus: "not_provided" });
   assert.equal(await statusOf(db, "PET-NO"), "not_provided", "the clamp must not invent a claim nobody made");
 });
+
+test("VAX-SELF-5: a masked display string written over a real customer name is repaired on ensure", async () => {
+  // R3C-F10: converting a CRM lead forwarded the MASKED customer object into canonical booking, and
+  // /api/canonical-bookings upserts name=excluded.name - so the real name was overwritten by its own
+  // mask. MEASURED on the audit database: {"name":"R•• C• C•","primary_phone":"9811100144"}.
+  const harness = freshCountingD1();
+  globalThis.__VACCINATION_SELF_VERIFY_DB__ = harness.db;
+  const { ensureCustomerAccountTables } = await import("../lib/customer-account.ts");
+  await ensureCustomerAccountTables(harness.db);
+  const now = Date.now();
+  harness.sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY, name TEXT, primary_phone TEXT)");
+  const add = (id, name, phone) => harness.sqlite
+    .prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run(id, "blr", name, phone, "uat_customer_app", "{}", now, now);
+
+  add("CUS-DAMAGED", "R•• C• C•", "9811100144");
+  harness.sqlite.prepare("INSERT INTO crm_contacts VALUES (?,?,?)").run("CUS-DAMAGED", "Ravi Chandra Chowdhury", "9811100144");
+  add("CUS-NOSOURCE", "V•• L•", "9811100155");           // damaged, nothing to restore from
+  add("CUS-FINE", "Ananya Iyer", "9811100166");                          // undamaged, must not be touched
+  harness.sqlite.prepare("INSERT INTO crm_contacts VALUES (?,?,?)").run("CUS-FINE", "Somebody Else", "9811100166");
+
+  await ensureCustomerAccountTables(harness.db);
+
+  const nameOf = (id) => harness.sqlite.prepare("SELECT name FROM canonical_customers WHERE id=?").get(id).name;
+  assert.equal(nameOf("CUS-DAMAGED"), "Ravi Chandra Chowdhury", "the real name comes back from the CRM row");
+  assert.match(nameOf("CUS-NOSOURCE"), /•/,
+    "with no surviving source the row is LEFT alone - a name invented from a phone number would be worse");
+  assert.equal(nameOf("CUS-FINE"), "Ananya Iyer", "an undamaged row is never rewritten, even when the CRM disagrees");
+});
