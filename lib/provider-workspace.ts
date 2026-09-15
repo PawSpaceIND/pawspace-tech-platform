@@ -17,6 +17,9 @@ import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
 import{ensureProviderCommissionTables}from"./provider-commission-governance";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 import{PHOTO_PROOF_PURPOSE,MEDIA_REF_PREFIX}from"./care-proof-photo-claims";
+import{serviceProofRefusal}from"./service-media-security";
+import{GOVERNED_CLIENT_ERROR}from"./governed-http-error";
+import{chunkedIn}from"./d1-chunked-in";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -37,18 +40,48 @@ export const PROOF_REQUIREMENTS:Record<string,string[]>={
 
 
 /**
- * A proof may only claim media that is stored, scan-approved and genuinely this provider's, for this
- * booking. `synthetic` is checked too: a placeholder generated for a sandbox run is not evidence that
- * anybody looked after an animal.
+ * A caller-safe refusal. It stays an Error (this module signals with Errors throughout), and it is
+ * BRANDED so lib/server-auth's authError bridges it into a 4xx carrying this message instead of the
+ * blanket 500 "Provider workspace update failed" the partner used to get for a perfectly explicable
+ * refusal. See lib/governed-http-error.ts - the brand is a registry symbol nothing acquires by
+ * accident, so an incidental `statusCode` on some fetch/undici error still cannot reach a caller.
+ */
+function proofRefusal(message:string,status=409){
+ return Object.assign(new Error(message),{[GOVERNED_CLIENT_ERROR]:true,statusCode:status});
+}
+
+/**
+ * A proof may only claim media that is RELEASED and genuinely this provider's, for this booking.
+ *
+ * "Released" is not this module's opinion. It is lib/service-media-security's serviceProofRefusal -
+ * the same predicate assertServiceProofRef enforces on grooming add_proof/complete and the same one
+ * app/api/service-media/route.ts reports as proofReady. This function used to carry a PRIVATE COPY of
+ * it that still demanded scan_status='clean'. lib/media-upload-boundary's reviewMedia deliberately
+ * stopped writing 'clean' when a human approves (a person's approval is not a scan result); release
+ * is now recorded as review_status='approved' + access_status='ready' + a release_basis. So a fully
+ * approved, released asset read back as scan_status='pending' here and `submit_proof` refused every
+ * photo it was ever offered - for grooming before/after, boarding daily_photo and sitting
+ * visit_photo alike, since PHOTO_PROOF_PURPOSE covers all four. One authority, three readers; no
+ * fourth copy. [PTJA-W3-SC]
+ *
+ * The scanner floor still applies, because it is inside serviceProofRefusal: a file a scanner
+ * condemned cannot be proof even if something else marked it ready.
  *
  * Pass expectedPurpose to require a specific purpose; pass null to verify a reference that rode along
  * on a proof which makes no photo claim, where any stored purpose is acceptable.
  */
 async function requireStoredMedia(db:Db,input:{providerId:string;bookingId:string;objectId?:string|null},expectedPurpose:string|null,label:string){
  const ref=text(input.objectId),mediaId=ref.startsWith(MEDIA_REF_PREFIX)?ref.slice(MEDIA_REF_PREFIX.length):"";
- if(!mediaId)throw new Error(`${label} must use a registered private media reference`);
- const asset=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>().catch(()=>null);
- if(!asset||text(asset.booking_id)!==input.bookingId||text(asset.provider_id)!==input.providerId||(expectedPurpose!==null&&text(asset.purpose)!==expectedPurpose)||text(asset.scan_status)!=="clean"||text(asset.access_status)!=="ready"||text(asset.retention_status)!=="active"||num(asset.synthetic)!==0)throw new Error(`${label} is not storage-confirmed and scan-approved`);
+ if(!mediaId)throw proofRefusal(`${label} must use a registered private media reference`,400);
+ // SELECT * on purpose: the release columns are additive (see ensureServiceMediaTable), and a row
+ // read without them must reach the authority as "nothing recorded" - which it refuses - rather than
+ // as a query error this function would have to interpret for itself.
+ const asset=await db.prepare("SELECT * FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>().catch(()=>null);
+ if(!asset)throw proofRefusal(`${label} is not storage-confirmed and scan-approved: no such registered media asset`);
+ if(text(asset.booking_id)!==input.bookingId||text(asset.provider_id)!==input.providerId)throw proofRefusal(`${label} is not storage-confirmed and scan-approved: that asset belongs to another booking or provider`,403);
+ if(expectedPurpose!==null&&text(asset.purpose)!==expectedPurpose)throw proofRefusal(`${label} is not storage-confirmed and scan-approved: that asset was registered as '${text(asset.purpose)||"unknown"}', not '${expectedPurpose}'`);
+ const refusal=serviceProofRefusal(asset);
+ if(refusal)throw proofRefusal(`${label} is not storage-confirmed and scan-approved: ${refusal}`);
 }
 
 export async function ensureProviderWorkspaceTables(db:Db){await db.batch([
@@ -180,6 +213,54 @@ export async function respondToJobOffer(db:Db,input:{providerId:string;bookingId
  return{bookingId:input.bookingId,status:"declined"};
 }
 
+/**
+ * Where a vertical's OWN completion flow records the proof it collected, and which column answers
+ * which PROOF_REQUIREMENTS stage.
+ *
+ * Grooming is here because that is where the Partner app's real proof path writes: `add_proof` on
+ * /api/grooming-lifecycle stores the approved media refs in grooming_service_proof, gated by
+ * assertServiceProofRef, and `complete` refuses without both of them. provider_job_proofs is written
+ * only by submitJobProof (this module's /api/provider-workspace submit_proof). They are two stores
+ * for one fact and nothing reconciled them, so a grooming job completed the normal way - Ops-approved
+ * before and after photos, invoice issued - still reported "missing before photo, after photo" on
+ * BOTH partner earnings screens, under copy that tells the partner their settlement is held.
+ *
+ * Read, not written: nothing here moves proof between the stores. A stage counts as posted if EITHER
+ * store records it. [partner settlement proof reconciliation]
+ */
+const LIFECYCLE_PROOF_STORES:Record<string,{table:string;stages:Record<string,string>}>={
+ grooming:{table:"grooming_service_proof",stages:{before_photo:"before_photo_ref",after_photo:"after_photo_ref"}},
+};
+
+/**
+ * Proof stages a provider still owes on these jobs, reconciled across every store that records one.
+ * Cold-DB safe (a missing table reads as "nothing recorded there"), and two queries per store rather
+ * than one per booking, so it does not get more expensive as a partner's history grows.
+ */
+export async function outstandingProof(db:Db,jobs:Array<{bookingId:string;serviceCode:string}>){
+ const outstanding:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
+ const scored=jobs.filter(job=>(PROOF_REQUIREMENTS[text(job.serviceCode)]||[]).length>0);
+ if(!scored.length)return outstanding;
+ const posted=new Map<string,Set<string>>();
+ const remember=(bookingId:string,stage:string)=>{if(!bookingId||!stage)return;const seen=posted.get(bookingId)??new Set<string>();seen.add(stage);posted.set(bookingId,seen);};
+ // D1 refuses a statement carrying more than ~100 bound parameters. Both reads below go through the
+ // one shared chunker (lib/d1-chunked-in.ts) rather than a second hand-rolled pager, so there is a
+ // single place where the cap is defined. tests/d1-in-clause-fanout.test.mjs pins that.
+ const safeChunked=(ids:string[],sql:(placeholders:string)=>string)=>chunkedIn(ids,(chunk,placeholders)=>db.prepare(sql(placeholders)).bind(...chunk).all<Row>().then(result=>result.results).catch(()=>[] as Row[]));
+ for(const row of await safeChunked(scored.map(job=>job.bookingId),placeholders=>`SELECT booking_id,proof_type FROM provider_job_proofs WHERE booking_id IN (${placeholders})`))remember(text(row.booking_id),text(row.proof_type));
+ for(const[serviceCode,store]of Object.entries(LIFECYCLE_PROOF_STORES)){
+  const stages=Object.entries(store.stages);
+  const rows=await safeChunked(scored.filter(job=>text(job.serviceCode)===serviceCode).map(job=>job.bookingId),placeholders=>`SELECT booking_id,${stages.map(([,column])=>column).join(",")} FROM ${store.table} WHERE booking_id IN (${placeholders})`);
+  for(const row of rows)for(const[stage,column]of stages)if(text(row[column]))remember(text(row.booking_id),stage);
+ }
+ for(const job of scored){
+  const seen=posted.get(job.bookingId)??new Set<string>();
+  const missing=(PROOF_REQUIREMENTS[text(job.serviceCode)]||[]).filter(stage=>!seen.has(stage));
+  if(missing.length)outstanding.push({bookingId:job.bookingId,serviceCode:job.serviceCode,missing});
+ }
+ return outstanding;
+}
+
 async function bookingsForProvider(db:Db,providerId:string){
  const rows=await db.prepare("SELECT b.id,b.customer_id,b.service_code,b.package_name,b.scheduled_start,b.scheduled_end,b.status,b.total_amount,p.status pay_status,p.amount_due_now,p.method pay_method FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.provider_id=? ORDER BY b.scheduled_start DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
  const nowIso=new Date().toISOString();
@@ -208,8 +289,7 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
   db.prepare("SELECT id,booking_id,amount,status,due_at,provider_reference,created_at,updated_at FROM provider_order_payouts WHERE provider_id=? ORDER BY created_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT id,period_code,earned_amount,adjustment_amount,payable_amount,status,policy_status,source_json,updated_at FROM partner_settlement_statements WHERE provider_id=? ORDER BY period_code DESC LIMIT 24").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
- const pendingProof:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
- for(const b of bookings.past.slice(0,40)){const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));const have=new Set(done.results.map(r=>text(r.proof_type))),missing=required.filter(r=>!have.has(r));if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});}
+ const pendingProof=await outstandingProof(db,bookings.past.slice(0,40));
  const contractEarnings={netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),statements:partnerStatements.results,note:"Contract earnings are governed provider earnings, not employee salary payroll. Attendance and leave live in the People view."};
  const commissionRows=commissionOrders.results.map(row=>({bookingId:text(row.booking_id),serviceCode:text(row.service_code),orderAmount:money(row.order_amount),commissionMode:text(row.commission_mode),commissionValue:num(row.commission_value),commissionAmount:money(row.commission_amount),source:text(row.commission_source),status:text(row.status),completedAt:num(row.completed_at),dueAt:num(row.due_at)}));
  const commissionEarnings={visible:true,netPayout:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length,grossOrderValue:money(commissionRows.reduce((sum,row)=>sum+row.orderAmount,0)),computed:{commissionAmount:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length},commissionOrders:commissionRows,payouts:commissionPayouts.results.map(row=>({id:text(row.id),bookingId:text(row.booking_id),amount:money(row.amount),status:text(row.status),dueAt:num(row.due_at),providerReference:row.provider_reference?text(row.provider_reference):null,updatedAt:num(row.updated_at)})),statements:partnerStatements.results,note:"Commission statement is visible to the provider from governed order commissions and payout state; approval and live payout remain Finance-controlled."};

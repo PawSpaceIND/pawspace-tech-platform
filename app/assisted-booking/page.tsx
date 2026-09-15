@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderCustomer, type AssistedOrderPet, type AssistedOrderResult } from "../../lib/assisted-orders-client";
+import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderCustomer, type AssistedOrderPackage, type AssistedOrderPet, type AssistedOrderResult } from "../../lib/assisted-orders-client";
 import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 import AssistedTaxiPanel from "./assisted-taxi-panel";
@@ -10,8 +10,15 @@ import AssistedTaxiPanel from "./assisted-taxi-panel";
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
 const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
 const species=(value:unknown):AssistedOrderPet["species"]=>value==="dog"||value==="cat"||value==="other"?value:"other";
-type Customer360Record={customerId:string;name:string;primaryPhone:string;email?:string|null;pets?:Array<{id?:string;sourceId?:string|null;name?:string;species?:string;breed?:string|null;vaccinationStatus?:string}>};
+type Customer360Record={customerId:string;name:string;primaryPhone:string;revealed?:boolean;email?:string|null;pets?:Array<{id?:string;sourceId?:string|null;name?:string;species?:string;breed?:string|null;vaccinationStatus?:string}>};
 type CrmRow={id?:string;pet_names?:string};
+/* Two catalogue rows share a NAME and differ only by tier: "Bath & Basic" is dog-basic at ₹1,899 and
+ * young-basic at ₹999; "Complete Makeover" is dog-makeover at ₹2,399 and young-makeover at ₹1,399.
+ * young-* is eligible for dog AND cat, so for a dog both rows render, with the same name, ₹900 apart.
+ * /api/assisted-orders now publishes the catalogue's own offerType and its tier label, so the card says
+ * which one it is instead of leaving a staff member on a call to guess. */
+type CataloguePackage=AssistedOrderPackage&{offerType?:"regular"|"young"|"subscription";tier?:string};
+const tierLabel=(item:CataloguePackage)=>item.tier||(item.offerType==="young"?"Puppy / kitten":item.offerType?"Adult":"");
 
 export default function AssistedBooking(){
   const requestedCustomerIdQuery=useQueryParameter("customerId");
@@ -29,6 +36,7 @@ export default function AssistedBooking(){
   const [result,setResult]=useState<AssistedOrderResult|null>(null);
   const [requestedCustomerId,setRequestedCustomerId]=useState("");
   const [crmCustomer,setCrmCustomer]=useState<AssistedOrderCustomer|null>(null);
+  const [crmDisplayPhone,setCrmDisplayPhone]=useState("");
   const [crmPendingPetName,setCrmPendingPetName]=useState("");
   const [crmSpecies,setCrmSpecies]=useState<""|AssistedOrderPet["species"]>("");
   const [crmLoading,setCrmLoading]=useState(false);
@@ -50,14 +58,22 @@ export default function AssistedBooking(){
         const crmRow=(crmBody.contacts||[]).find(row=>String(row.id||"")===requested);pendingPetName=String(crmRow?.pet_names||"").trim();
         if(!pendingPetName)throw new Error("Add the pet name in CRM before creating this booking");
       }
-      if(!active)return;setCrmCustomer({id:record.customerId,name:record.name,primaryPhone:record.primaryPhone,email:record.email||undefined,pets:canonicalPets});setCrmPendingPetName(pendingPetName);
+      /* /api/customer-360 serves the phone MASKED unless the actor has an audited reveal, and it says
+       * which it gave us with `revealed`. The masked form ("+91 ••••••5678") is a display string: keeping it in
+       * the customer object submitted it as the customer's phone number, and canonical booking upserts
+       * primary_phone=excluded.primary_phone, so a successful order would have written bullets over the
+       * real number. The masked value stays on the screen and out of the payload; the server resolves the
+       * real number from the customer id. */
+      const servedPhone=String(record.primaryPhone||"").trim();
+      const realPhone=record.revealed===true&&!/[\u2022*]/.test(servedPhone)?servedPhone:"";
+      if(!active)return;setCrmCustomer({id:record.customerId,name:record.name,primaryPhone:realPhone,email:record.email||undefined,pets:canonicalPets});setCrmDisplayPhone(servedPhone);setCrmPendingPetName(pendingPetName);
     }catch(err){if(active)setError(err instanceof Error?err.message:"Unable to load selected CRM customer");}finally{if(active)setCrmLoading(false)}})();}
     return()=>{active=false};
   },[requestedCustomerIdQuery]);
 
   const effectiveCrmCustomer=useMemo<AssistedOrderCustomer|null>(()=>{if(!crmCustomer)return null;if(crmCustomer.pets.length||!crmPendingPetName||!crmSpecies)return crmCustomer;return{...crmCustomer,pets:[{sourceId:crmPendingPetName,name:crmPendingPetName,species:crmSpecies}]};},[crmCustomer,crmPendingPetName,crmSpecies]);
   const customer=requestedCustomerId?effectiveCrmCustomer:(config?.customers[selected]??null);
-  const eligiblePackages=useMemo(()=>{const selectedSpecies=customer?.pets[0]?.species;return config?.packages.filter(item=>!selectedSpecies||item.eligiblePetTypes.includes(selectedSpecies))??[];},[config,customer]);
+  const eligiblePackages=useMemo<CataloguePackage[]>(()=>{const selectedSpecies=customer?.pets[0]?.species;return (config?.packages as CataloguePackage[]|undefined)?.filter(item=>!selectedSpecies||item.eligiblePetTypes.includes(selectedSpecies))??[];},[config,customer]);
   const selectedPackage=eligiblePackages.find(item=>item.code===packageCode)??eligiblePackages[0];
   const effectivePackageCode=selectedPackage?.code??"";
   const crmNeedsSpecies=Boolean(requestedCustomerId&&crmCustomer&&crmCustomer.pets.length===0&&crmPendingPetName);
@@ -82,16 +98,16 @@ export default function AssistedBooking(){
         <section className={styles.customerPanel}>
           <div className={styles.panelHead}><div><small>STEP 1</small><h2>{requestedCustomerId?"Selected CRM customer":"Select UAT customer"}</h2></div></div>
           <div className={styles.security}>{requestedCustomerId?"CRM identity is locked to this booking. The canonical record will keep the same customer ID.":"Synthetic test identities only. Production customer migration is not part of this gate."}</div>
-          {requestedCustomerId?<div className={styles.customerList}>{crmLoading?<p style={{padding:14}}>Loading selected CRM customer…</p>:customer?<button type="button" className={styles.selected}><span>{customer.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{customer.name}</b><small>{customer.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {customer.pets.length?customer.pets.map(p=>p.name).join(", "):crmPendingPetName}</small><em className={styles.repeat}>CRM selected</em></div><strong>{customer.id}</strong></button>:<p style={{padding:14}}>CRM customer unavailable.</p>}</div>:<div className={styles.customerList}>{config?.customers.map((item,index)=><button key={item.id} className={selected===index?styles.selected:""} onClick={()=>{setSelected(index);setPackageCode("");setResult(null)}}><span>{item.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{item.name}</b><small>{item.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {item.pets.map(p=>p.name).join(", ")}</small><em className={styles.repeat}>UAT fixture</em></div><strong>{item.id}</strong></button>)}</div>}
+          {requestedCustomerId?<div className={styles.customerList}>{crmLoading?<p style={{padding:14}}>Loading selected CRM customer…</p>:customer?<button type="button" className={styles.selected}><span>{customer.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{customer.name}</b><small>{crmDisplayPhone||"Number hidden by policy"} · {customer.pets.length?customer.pets.map(p=>p.name).join(", "):crmPendingPetName}</small><em className={styles.repeat}>CRM selected</em></div><strong>{customer.id}</strong></button>:<p style={{padding:14}}>CRM customer unavailable.</p>}</div>:<div className={styles.customerList}>{config?.customers.map((item,index)=><button key={item.id} className={selected===index?styles.selected:""} onClick={()=>{setSelected(index);setPackageCode("");setResult(null)}}><span>{item.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{item.name}</b><small>{item.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {item.pets.map(p=>p.name).join(", ")}</small><em className={styles.repeat}>UAT fixture</em></div><strong>{item.id}</strong></button>)}</div>}
         </section>
         <section className={styles.workspace}>
           <div className={styles.customerHead}><div className={styles.avatar}>{customer?.name.split(" ").map(part=>part[0]).join("")||"UAT"}</div><div><small>{requestedCustomerId?"CRM → CANONICAL ASSISTED ORDER · GROOMING":"CANONICAL ASSISTED ORDER · GROOMING ONLY"}</small><h2>{customer?.name??(crmLoading?"Loading CRM customer…":"Loading test customer…")}</h2><p>{customer?.pets.length?customer.pets.map(p=>`${p.name} · ${p.species}`).join(" · "):crmPendingPetName?`${crmPendingPetName} · species confirmation required`:"Pet profile unavailable"}</p></div><span className={styles.health}>Test only</span></div>
           <form className={styles.builder} onSubmit={submit}>
             {crmNeedsSpecies&&<div className={styles.stage}><small>CRM PET PROFILE</small><h3>Confirm the missing pet species</h3><div className={styles.two}><label>Pet<input value={crmPendingPetName} disabled/></label><label>Species<select value={crmSpecies} onChange={e=>{setCrmSpecies(e.target.value as typeof crmSpecies);setPackageCode("");setResult(null)}} required><option value="">Select species</option><option value="dog">Dog</option><option value="cat">Cat</option><option value="other">Other</option></select></label></div><div className={styles.info}>CRM captured the pet name but not species. Staff must confirm it; PawSpace will not invent pet identity data.</div></div>}
-            <div className={styles.stage}><small>SERVER-GOVERNED PACKAGE</small><h3>Choose the Grooming service to test</h3><div className={styles.serviceGrid}>{eligiblePackages.map(item=><button type="button" className={effectivePackageCode===item.code?styles.chosen:""} key={item.code} onClick={()=>setPackageCode(item.code)}><span>✂</span><b>{item.name}</b><small>{money(item.singlePrice)} single · {money(item.multiPetPrice)} multi-pet</small></button>)}</div><div className={styles.info}>Displayed catalogue values come from the server. The server recomputes the final governed amount when the assisted order is created.</div></div>
+            <div className={styles.stage}><small>SERVER-GOVERNED PACKAGE</small><h3>Choose the Grooming service to test</h3><div className={styles.serviceGrid}>{eligiblePackages.map(item=><button type="button" className={effectivePackageCode===item.code?styles.chosen:""} key={item.code} onClick={()=>setPackageCode(item.code)}><span>✂</span><b>{item.name}</b><em className={styles.repeat}>{tierLabel(item)||item.code}</em><small>{money(item.singlePrice)} single · {money(item.multiPetPrice)} multi-pet</small></button>)}</div><div className={styles.info}>Displayed catalogue values come from the server. The server recomputes the final governed amount when the assisted order is created.</div></div>
             <div className={styles.stage}><small>CANONICAL SCHEDULE</small><h3>Choose the UAT service window</h3><div className={styles.two}><label>Start<input type="datetime-local" value={scheduledStart} onChange={e=>setScheduledStart(e.target.value)} required/></label><label>End<input type="datetime-local" value={scheduledEnd} onChange={e=>setScheduledEnd(e.target.value)} required/></label></div><div className={styles.assignment}><div><b>Assignment rule</b><p>The staff member does not choose or fabricate a provider. The existing canonical UAT scheduler selects and reserves the eligible provider.</p></div><span>Auto</span></div></div>
             <div className={styles.stage}><small>CUSTOMER AUTHORITY</small><h3>Capture consent evidence</h3><div className={styles.two}><label>Consent method<select value={consentMethod} onChange={e=>setConsentMethod(e.target.value as typeof consentMethod)}><option value="recorded_call">Recorded call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option></select></label><label>Evidence reference<input value={consentReference} onChange={e=>setConsentReference(e.target.value)} required minLength={5}/></label></div><label className={styles.consent}><input type="checkbox" checked={consentCaptured} onChange={e=>setConsentCaptured(e.target.checked)}/> Customer explicitly authorized PawSpace staff to create this test booking.</label></div>
-            <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured||(crmNeedsSpecies&&!crmSpecies)}>{busy?"Creating canonical test order…":requestedCustomerId?"Create CRM-assisted UAT order":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
+            <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?`${selectedPackage.name}${tierLabel(selectedPackage)?` (${tierLabel(selectedPackage)})`:""}`:"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured||(crmNeedsSpecies&&!crmSpecies)}>{busy?"Creating canonical test order…":requestedCustomerId?"Create CRM-assisted UAT order":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
           </form>
           <AssistedTaxiPanel customer={customer} consentCaptured={consentCaptured} consentMethod={consentMethod} consentReference={consentReference} />
           {result&&<div className={styles.stage}><small>CANONICAL RESULT</small><h3>{result.bookingId}</h3><div className={styles.review}><div><small>Assisted order</small><b>{result.assistedOrderId}</b></div><div><small>Provider</small><b>{result.provider.name}</b></div><div><small>Governed total</small><b>{money(result.totalAmount)}</b></div><div><small>Due now</small><b>{money(result.amountDueNow)}</b></div><div><small>Duplicate safe</small><b>{result.duplicatePrevented?"Existing order reused":"New order"}</b></div><div><small>Live money</small><b>{result.liveMoney?"Unexpected":"No"}</b></div></div></div>}

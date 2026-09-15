@@ -77,6 +77,38 @@ function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_
   if (latest.access_status === "pending_upload") return { state: "unconfirmed", text: "registered but never confirmed · choose the file again" };
   return { state: "pending", text: `${label(latest.access_status)} · ${label(latest.review_status || latest.scan_status)}` };
 }
+/**
+ * Accept or decline a commission work order.
+ *
+ * The button and the endpoint did not agree on what makes a job acceptable. "Accept job" is offered
+ * whenever the booking reads `confirmed` or `awaiting_acceptance`; /api/provider-assignment-recovery
+ * accepts only while a PENDING, UNEXPIRED row exists in provider_assignment_offers. In real dispatch
+ * an offer accompanies awaiting_acceptance, so the two usually coincide - but when they do not (no
+ * offer was ever written, or it aged out, or recovery already consumed it) the endpoint answers 409
+ * and the screen had nothing else to try. Measured on an e2e work order sitting at
+ * awaiting_acceptance with an empty offers table: 409 "No pending provider offer is available", while
+ * the canonical work-order accept on /api/grooming-lifecycle took the same booking confirmed ->
+ * assigned. A dead end with a working path right next to it.
+ *
+ * So the offer response stays the FIRST choice - it is the one that closes the offer, scores
+ * acceptance telemetry and resolves the recovery case - and a 409 from it (its precondition, not the
+ * partner's fault) falls through to the work-order accept that the button's own precondition
+ * describes. The fallback is not a bypass: /api/grooming-lifecycle re-checks provider ownership and
+ * refuses any status its transition table does not allow, so a job that genuinely cannot be accepted
+ * is still refused - with both reasons, rather than one opaque one. Decline has no work-order
+ * equivalent and is deliberately left on the offer path alone.
+ */
+export async function respondToCommissionAssignment(input:{bookingId:string;providerId:string;action:"accept"|"decline";reason?:string}){
+  const offerResponse = await fetch("/api/provider-assignment-recovery", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: input.bookingId, providerId: input.providerId, action: input.action, reason: input.reason ?? (input.action === "accept" ? "Accepted in mobile Partner app" : "Declined in mobile Partner app") }) });
+  const offerBody = await offerResponse.json().catch(() => ({})) as { error?: string };
+  if (offerResponse.ok) return { path: "assignment_offer" as const };
+  const offerError = offerBody.error || "Unable to respond to assignment";
+  if (input.action !== "accept" || offerResponse.status !== 409) throw new Error(offerError);
+  const workOrderResponse = await fetch("/api/grooming-lifecycle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: input.bookingId, action: "accept", actorId: input.providerId }) });
+  const workOrderBody = await workOrderResponse.json().catch(() => ({})) as { error?: string };
+  if (workOrderResponse.ok) return { path: "work_order" as const, offerRefusal: offerError };
+  throw new Error(`${offerError}. Accepting the work order directly was also refused: ${workOrderBody.error || "Unable to update job"}`);
+}
 /** A 4xx (other than timeout/rate-limit) will never succeed on retry; the offline queue drops it instead of re-registering for ever. */
 const proofFailure = (status: number, message: string) => Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && status !== 408 && status !== 429 });
 type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; providerReference: string; collectable: boolean; expiresAt: number; sandboxOnly: boolean; liveCapture: boolean };
@@ -402,9 +434,7 @@ export default function PartnerMobileApp() {
         const body = await response.json() as { error?: string };
         if (!response.ok) throw new Error(body.error || "Unable to update Training session");
       } else if ((action === "accept" || action === "decline") && selected.providerModel === "commission") {
-        const response = await fetch("/api/provider-assignment-recovery", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, providerId: selected.providerId, action, reason: action === "accept" ? "Accepted in mobile Partner app" : "Declined in mobile Partner app" }) });
-        const body = await response.json() as { error?: string };
-        if (!response.ok) throw new Error(body.error || "Unable to respond to assignment");
+        await respondToCommissionAssignment({ bookingId: selected.bookingId, providerId: selected.providerId, action });
       } else {
         if (action === "decline") throw new Error("Only commission-provider offers can be declined");
         const input: Record<string, unknown> = { bookingId: selected.bookingId, action, actorId: selected.providerId };

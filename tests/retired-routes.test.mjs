@@ -116,7 +116,10 @@ test("the real groomer-facing surfaces stay wired to canonical APIs", () => {
 test("/account and /ops retired: no fabricated dashboards remain reachable", () => {
   for (const [route, target] of [["/account", "/mobile-app"], ["/ops", "/team"]]) {
     const page = read(`app${route}/page.tsx`);
-    assert.match(page, new RegExp(`redirect\\("${target}"\\)`), `${route} must redirect to ${target}`);
+    /* The route is the contract; a query string on it is not. /account redirects to
+     * /mobile-app?tab=account so an "account" link lands on the Account tab instead of discovery
+     * home - pinning the exact character sequence failed that while the route was unchanged. */
+    assert.match(page, new RegExp(`redirect\\("${target}(\\?[^"]*)?"\\)`), `${route} must redirect to ${target}`);
     assert.doesNotMatch(page, /^"use client"/m, `${route} must redirect server-side`);
   }
   // the fabricated figures are gone with their pages and panels

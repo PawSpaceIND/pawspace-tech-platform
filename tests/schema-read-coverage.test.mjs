@@ -45,7 +45,12 @@ for (const file of sourceFiles) {
   creates.set(file, new Set([...src.matchAll(CREATE)].map((m) => m[1])));
   reads.set(file, new Set([...src.matchAll(READ)].map((m) => m[1])));
   const resolved = new Set();
-  for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
+  // The repo writes relative imports in BOTH spellings - `from "./x"` (643 sites) and the minified
+  // `from"./x"` (1296 sites). A `\s+` here saw only the spaced third, so a route that imported its
+  // provisioner in the minified style read as importing nothing: app/api/funeral-memorial/route.ts
+  // was reported for provider_identity_links, which lib/server-auth.ts (which it imports) creates.
+  // 32 of the 69 baseline entries were the same false positive. SCHEMA-READ-5 guards the fix.
+  for (const m of src.matchAll(/from\s*"([^"]+)"/g)) {
     if (!m[1].startsWith(".")) continue;
     const base = path.normalize(path.join(path.dirname(file), m[1]));
     for (const candidate of [`${base}.ts`, `${base}/index.ts`]) if (sourceFiles.includes(candidate)) resolved.add(candidate);
@@ -92,6 +97,25 @@ test("SCHEMA-READ-3: the scanner is not blind", () => {
   assert.ok(totalCreates > 400, `only ${totalCreates} CREATE TABLE statements seen - the scanner has gone blind`);
   assert.ok(totalReads > 400, `only ${totalReads} table reads seen - the scanner has gone blind`);
   assert.ok(sourceFiles.length > 300, `only ${sourceFiles.length} source files scanned`);
+});
+
+test("SCHEMA-READ-5: the import resolver is not blind", () => {
+  // The companion to SCHEMA-READ-3. That one guards the SQL scan; this guards the import graph,
+  // which is the other way these tests can pass by seeing nothing: if `provisionable` resolves no
+  // edges, every route looks fully provisioned and SCHEMA-READ-1 can never fail. Both relative
+  // import spellings the repo uses must resolve.
+  const edges = [...imports.values()].reduce((sum, set) => sum + set.size, 0);
+  assert.ok(edges > 1500, `only ${edges} relative import edges resolved - the import resolver has gone blind`);
+  const spacedImporter = sourceFiles.find((file) => /from\s+"\.[^"]+"/.test(readFileSync(path.join(ROOT, file), "utf8")));
+  const minifiedImporter = sourceFiles.find((file) => /from"\.[^"]+"/.test(readFileSync(path.join(ROOT, file), "utf8")));
+  for (const [style, file] of [["spaced", spacedImporter], ["minified", minifiedImporter]]) {
+    assert.ok(file, `no ${style} relative importer found to sample`);
+    assert.ok((imports.get(file) || new Set()).size > 0, `${style} relative imports in ${file} resolved to nothing`);
+  }
+  // The concrete regression: this route reads provider_identity_links and reaches its creator
+  // (lib/server-auth.ts) only through a minified import.
+  assert.ok(provisionable("app/api/funeral-memorial/route.ts").has("provider_identity_links"),
+    "app/api/funeral-memorial/route.ts must resolve provider_identity_links through lib/server-auth");
 });
 
 test("SCHEMA-READ-4: the shared booking DDL has not drifted from the writer's copy", () => {

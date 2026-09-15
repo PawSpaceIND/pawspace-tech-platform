@@ -15,7 +15,49 @@ const enc=new TextEncoder();
 export const UAT_SIGNING_KEY_MIN_LENGTH=32;
 export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=UAT_SIGNING_KEY_MIN_LENGTH;}
 
-export function signInRequiredResponse(env:UatEnv){
+/**
+ * Customer-app API surfaces, listed one path at a time on purpose.
+ *
+ * A customer authenticates by phone OTP and holds a platform session cookie. They never hold - and
+ * can never obtain - the staging STAFF cookie /staging-login issues, so "Your staging sign-in has
+ * expired. Open /staging-login to sign in again." was an instruction they could not act on, and
+ * /staging-login is the staff UAT switch: it names the internal staff identities it accepts
+ * (Founder / Finance / Manager / Employee addresses). Sending an expired customer there was both a
+ * dead end and an internal-identity disclosure on a customer-facing error path.
+ *
+ * Every entry below resolves a CUSTOMER identity server-side (requireCustomerOwnership and/or a
+ * customer platform session). Staff CRM surfaces that merely have "customer" in the name -
+ * /api/customer-360, /api/customer-contact, /api/customer-data-reveal, /api/customer-targeting,
+ * /api/customer-business-view - are deliberately NOT here: a staff tester on those routes still
+ * needs the staging remedy. A path is never matched by prefix, for the same reason
+ * PROVIDER_SCOPED_API_PATHS in lib/server-auth.ts is not: a route's name does not say who it serves.
+ */
+export const CUSTOMER_SCOPED_API_PATHS=new Set(["/api/customer-account","/api/customer-billing","/api/customer-checkout","/api/customer-grooming-summary","/api/customer-notifications","/api/customer-offers","/api/customer-profile","/api/customer-reminders","/api/customer-support-case"]);
+
+export function customerScopedRequest(request:Request|null|undefined){
+ if(!request)return false;
+ let pathname:string;
+ try{pathname=new URL(request.url).pathname;}catch{return false;}
+ const path=pathname.length>1&&pathname.endsWith("/")?pathname.slice(0,-1):pathname;
+ return CUSTOMER_SCOPED_API_PATHS.has(path);
+}
+
+/**
+ * The remedy an OTP customer can actually act on. It never names /staging-login, never leaks a staff
+ * identity, and does NOT vary with the staging flag: a customer has no staging sign-in to expire in
+ * either environment, so the same sentence is correct in production and on staging.
+ */
+export function customerSignInRequiredResponse(){
+ return Response.json({error:"Your PawSpace sign-in has expired. Open the PawSpace app and verify your phone number again to continue.",code:"customer_sign_in_required",signInUrl:"/mobile-app"},{status:401,headers:{"cache-control":"no-store"}});
+}
+
+/**
+ * `request` is optional so every existing caller keeps its exact behaviour; pass it wherever the
+ * refusal can reach a customer (lib/server-auth.ts resolvePrimaryActor) and a customer-scoped path
+ * gets the customer remedy instead of the staff one.
+ */
+export function signInRequiredResponse(env:UatEnv,request?:Request|null){
+ if(customerScopedRequest(request))return customerSignInRequiredResponse();
  if(!uatLoginEnabled(env))return Response.json({error:"Authentication required"},{status:401});
  return Response.json({error:"Your staging sign-in has expired. Open /staging-login to sign in again.",code:"sign_in_required",signInUrl:"/staging-login"},{status:401,headers:{"cache-control":"no-store"}});
 }

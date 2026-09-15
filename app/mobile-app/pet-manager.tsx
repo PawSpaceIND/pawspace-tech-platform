@@ -25,6 +25,42 @@ type PetForm = {
 const emptyForm: PetForm = { name: "", species: "dog", gender: "", breed: "", ageBand: "", dateOfBirth: "", vaccinated: "", vaccinationDose: "", aggression: "", weightBand: "", photo: "" };
 const speciesIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
 
+/* The STORED vaccination vocabulary is wider than lib/customer-account.ts declares.
+ *
+ * That module declares ["not_provided","verified","pending"], but the platform's own writer -
+ * lib/pet-vaccination-governance.ts, recordVaccination() - stamps canonical_pets.vaccination_status
+ * with 'recorded' when a customer records a real vaccination, and imported/seeded rows carry
+ * 'vaccinated'. Reading anything outside verified/pending as "not provided" therefore told the owner
+ * of a genuinely vaccinated pet that their pet had no vaccination on file, and the same two-value
+ * test in the edit pre-fill left the Vaccinated? field blank, so a customer could not change a pet's
+ * NAME without re-asserting its vaccination. Vaccination is a booking gate for boarding and sitting,
+ * so this read blocked real bookings.
+ *
+ * Reading is widened here; WRITING is untouched. A save still sends only "verified"/"not_provided"
+ * (see `candidate` in save() below), so lib/customer-account.ts's PET_VACCINATION_STATUSES allow-list
+ * and the shared petProfileIssues validator reject exactly what they rejected before. */
+const VACCINATED_STATUSES = new Set(["verified", "recorded", "vaccinated"]);
+const vaccinationStatusCode = (status: string | null | undefined) => String(status ?? "").trim().toLowerCase();
+const isVaccinatedStatus = (status: string | null | undefined) => VACCINATED_STATUSES.has(vaccinationStatusCode(status));
+
+/* Map a STORED breed onto the catalogue entry the shared validator accepts.
+ *
+ * The stored value and the catalogue disagree in two ways that are not the customer's fault: case
+ * (a row holds 'indie'), and the catalogue's parenthetical qualifier ("Indie (Indian Pariah)"). An
+ * exact, case-SENSITIVE includes() matched neither, so editing a pet with a perfectly good breed
+ * opened an EMPTY breed field and Save refused with "Select the pet's breed".
+ *
+ * This only ever resolves to a value that is already IN the catalogue, so the validator
+ * (lib/pet-profile-options.ts validatePetProfile, itself case-insensitive) is not weakened: a breed
+ * that matches nothing still pre-fills empty and still has to be picked. */
+const canonicalBreed = (species: string, stored: string | null | undefined) => {
+  const wanted = String(stored ?? "").trim().toLowerCase();
+  if (!wanted || (species !== "dog" && species !== "cat")) return "";
+  const catalogue = breedsFor(species as PetSpecies) as readonly string[];
+  const bare = (breed: string) => breed.replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+  return catalogue.find((breed) => breed.toLowerCase() === wanted) ?? catalogue.find((breed) => bare(breed) === wanted) ?? "";
+};
+
 /** Resize any picked image down to a small square-ish JPEG data-URL so we can persist it inline in D1
  *  for UAT (no object storage yet). Keeps profiles light — ~220px, quality 0.6. */
 async function compressImage(file: File): Promise<string> {
@@ -104,16 +140,23 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
     const species = pet.species || "dog";
     // Pre-fill everything we can derive from a legacy pet (captured before this profile existed) so editing
     // it doesn't force re-entering data we already have — only genuinely-new fields (temperament) need a pick.
-    const legacyBreed = pet.breed && species !== "other" && (breedsFor(species as PetSpecies) as readonly string[]).includes(pet.breed) ? pet.breed : "";
+    // The stored breed is matched case-insensitively and through the catalogue's parenthetical qualifier,
+    // so a row holding 'indie' pre-fills as "Indie (Indian Pariah)" instead of as an empty, blocking field.
+    const storedBreed = profile?.breed ?? pet.breed;
+    const knownBreed = canonicalBreed(species, storedBreed);
     setForm({
       id: pet.id,
       name: pet.name,
       species,
       gender: profile?.gender ?? "",
-      breed: profile?.breed ?? legacyBreed,
+      // A rich profile's own off-catalogue breed is still shown verbatim (the customer can see and
+      // correct what is stored); a legacy row that matches nothing still pre-fills empty, exactly as before.
+      breed: knownBreed || profile?.breed || "",
       ageBand: profile?.ageBand ?? ageBandFromYears(pet.ageYears),
       dateOfBirth: profile?.dateOfBirth ?? "",
-      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : pet.vaccinationStatus === "verified" ? "yes" : pet.vaccinationStatus === "not_provided" ? "no" : "",
+      // 'pending' stays unanswered on purpose: it means a claim is awaiting verification, and
+      // pre-filling "yes" would silently promote it to verified on the next save.
+      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : isVaccinatedStatus(pet.vaccinationStatus) ? "yes" : vaccinationStatusCode(pet.vaccinationStatus) === "not_provided" ? "no" : "",
       vaccinationDose: profile?.vaccinationDose ?? "",
       aggression: profile?.aggression ?? "",
       weightBand: profile?.weightBand ?? weightBandFromKg(pet.weightKg),
@@ -329,7 +372,11 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
   };
   const vaccinationTag = (pet: CustomerPet) => {
     if (pet.profile) return pet.profile.vaccinated ? `Vaccinated${pet.profile.vaccinationDose ? ` · ${pet.profile.vaccinationDose}` : ""}` : "Not vaccinated";
-    return pet.vaccinationStatus === "verified" ? "Vaccination verified" : pet.vaccinationStatus === "pending" ? "Vaccination pending" : "Vaccination not provided";
+    const status = vaccinationStatusCode(pet.vaccinationStatus);
+    if (status === "verified") return "Vaccination verified";
+    if (isVaccinatedStatus(status)) return "Vaccinated"; // recorded by the customer, not staff-verified — say so, don't overclaim
+    if (status === "pending") return "Vaccination pending";
+    return "Vaccination not provided";
   };
 
   return (

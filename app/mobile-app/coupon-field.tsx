@@ -160,14 +160,20 @@ export default function CouponField(props: {
           <button type="button" className={styles.offersToggle} onClick={() => setShowOffers(value => !value)}>
             {showOffers ? "Hide available codes" : `View ${offers.length} available code${offers.length === 1 ? "" : "s"} ›`}
           </button>
+          {/* role="listitem" used to sit ON the button below, which OVERRIDES the implicit button
+            * role: assistive technology announced an activatable control as a list item, and
+            * getByRole("button") could not find it at all. The list semantics are worth keeping, so
+            * each item is now its own listitem WRAPPER around a real, untouched button. */}
           {showOffers && (
             <div className={styles.offersList} role="list">
               {offers.map(offer => (
-                <button type="button" key={offer.code} role="listitem" className={applied === offer.code ? styles.offerApplied : ""} onClick={() => { setCode(offer.code); void apply(offer.code); setShowOffers(false); }}>
-                  <b>{offer.code}</b>
-                  <span>{offer.description}</span>
-                  {offer.autoApply && <em>For you</em>}
-                </button>
+                <div key={offer.code} role="listitem">
+                  <button type="button" className={applied === offer.code ? styles.offerApplied : ""} onClick={() => { setCode(offer.code); void apply(offer.code); setShowOffers(false); }}>
+                    <b>{offer.code}</b>
+                    <span>{offer.description}</span>
+                    {offer.autoApply && <em>For you</em>}
+                  </button>
+                </div>
               ))}
             </div>
           )}

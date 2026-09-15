@@ -30,12 +30,16 @@ async function bookingFixture(serviceCode) {
   const { db, sqlite } = freshCountingD1();
   await ensureProviderWorkspaceTables(db);
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,provider_id TEXT,service_code TEXT)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,purpose TEXT,scan_status TEXT,access_status TEXT,retention_status TEXT,synthetic INTEGER DEFAULT 0)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,purpose TEXT,scan_status TEXT,access_status TEXT,retention_status TEXT,synthetic INTEGER DEFAULT 0,review_status TEXT,release_basis TEXT)");
   sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?,?,?)").run("BK-1", CUSTOMER, PROVIDER, serviceCode);
   const storeAsset = (id, overrides = {}) => {
-    const a = { booking_id: "BK-1", provider_id: PROVIDER, purpose: "stay_update", scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, ...overrides };
-    sqlite.prepare("INSERT INTO service_media_assets VALUES (?,?,?,?,?,?,?,?)")
-      .run(id, a.booking_id, a.provider_id, a.purpose, a.scan_status, a.access_status, a.retention_status, a.synthetic);
+    /* The release boundary records a decision, not a scan verdict: lib/media-upload-boundary.ts stopped
+     * writing scan_status='clean' on a human approve and now writes review_status/release_basis, which
+     * lib/service-media-security.ts treats as the single release authority. A fixture with a clean scan
+     * and no review is a shape the platform never produces. */
+    const a = { booking_id: "BK-1", provider_id: PROVIDER, purpose: "stay_update", scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, review_status: "approved", release_basis: "scanner_clean", ...overrides };
+    sqlite.prepare("INSERT INTO service_media_assets VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(id, a.booking_id, a.provider_id, a.purpose, a.scan_status, a.access_status, a.retention_status, a.synthetic, a.review_status, a.release_basis);
     return `media://asset/${id}`;
   };
   const customerUpdates = () => sqlite.prepare("SELECT update_type,message FROM customer_job_updates WHERE booking_id='BK-1'").all();
@@ -79,7 +83,7 @@ test("PROOF-5: media belonging to another booking, another provider, unscanned o
     ["another booking", { booking_id: "BK-OTHER" }],
     ["another provider", { provider_id: "PRV-2" }],
     ["the wrong purpose", { purpose: "boarding_incident" }],
-    ["an unscanned object", { scan_status: "pending" }],
+    ["an object the release boundary never released", { scan_status: "pending", review_status: null, release_basis: null }],
     ["a revoked object", { access_status: "revoked" }],
     ["a synthetic placeholder", { synthetic: 1 }],
   ]) {

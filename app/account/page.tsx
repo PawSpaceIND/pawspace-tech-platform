@@ -12,5 +12,5 @@ import { redirect } from "next/navigation";
  * people there instead of to a mock.
  */
 export default function RetiredAccountPage() {
-  redirect("/mobile-app");
+  redirect("/mobile-app?tab=account");
 }

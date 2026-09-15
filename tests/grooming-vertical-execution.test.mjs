@@ -411,10 +411,14 @@ test("GRM-11 proof: before/after grooming photos are accepted only from a scan-a
   await media.ensureServiceMediaTable(db);
 
   const asset = (id, over = {}) => {
+    /* lib/media-upload-boundary.ts stopped writing scan_status='clean' on a human approve; release is
+     * recorded as review_status + release_basis, which lib/service-media-security.ts treats as the
+     * single authority. A clean scan with no review is a shape the platform never produces. */
     const row = { id, booking_id: BOOKING, provider_id: PROVIDER, purpose: "before_service",
-      scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, ...over };
-    sqlite.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,'k','image/jpeg',1024,'sha',?,?,?,?,'test',?,?)")
-      .run(row.id, row.booking_id, row.provider_id, row.purpose, row.scan_status, row.access_status, row.retention_status, row.synthetic, NOW, NOW);
+      scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0,
+      review_status: "approved", release_basis: "scanner_clean", ...over };
+    sqlite.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,'k','image/jpeg',1024,'sha',?,?,?,?,'test',?,?,?,?)")
+      .run(row.id, row.booking_id, row.provider_id, row.purpose, row.scan_status, row.access_status, row.retention_status, row.synthetic, NOW, NOW, row.review_status, row.release_basis);
     return `media://asset/${id}`;
   };
   const submit = (objectId) => attempt(() => ws.submitJobProof(db, {
@@ -428,7 +432,7 @@ test("GRM-11 proof: before/after grooming photos are accepted only from a scan-a
 
   // Registered but still being scanned, quarantined, expired, or synthetic - each must be refused.
   for (const [label, over] of [
-    ["still scanning", { scan_status: "pending" }],
+    ["never released by the boundary", { scan_status: "pending", review_status: null, release_basis: null }],
     ["infected", { scan_status: "infected" }],
     ["not yet uploaded", { access_status: "pending_upload" }],
     ["retention-expired", { retention_status: "expired" }],

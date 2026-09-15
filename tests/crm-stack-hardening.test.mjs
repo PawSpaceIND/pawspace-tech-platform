@@ -40,6 +40,7 @@ const DDL_SOURCES = [
   read("lib/lead-callback-governance.ts"),
   read("lib/daily-revenue-opportunity-governance.ts"),
   read("lib/grooming-payment-reconciliation.ts"), // payment_reconciliation_records (leaderboard collections/refunds)
+  read("lib/lead-sla-governance.ts"), // lead_sla_clocks (canonical lead SLA breach state)
 ];
 
 // crm_contacts is extended after its legacy CREATE TABLE statement. Keep this SQLite fixture in

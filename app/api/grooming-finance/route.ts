@@ -20,8 +20,33 @@ async function ensureTablesUncached(db:Db){if(await groomingFinanceSchemaReady(d
 async function ensureTables(db:Db){if(groomingFinanceTablesReady.has(db))return;const running=groomingFinanceTablesEnsuring.get(db);if(running)return running;const pending=ensureTablesUncached(db).then(()=>{groomingFinanceTablesReady.add(db);});groomingFinanceTablesEnsuring.set(db,pending);try{await pending;}finally{if(groomingFinanceTablesEnsuring.get(db)===pending)groomingFinanceTablesEnsuring.delete(db);}}
 
 
-type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};
-type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[]};
+/* Captured and Receivable are payment-ledger facts; the reconciliation figures are reported BESIDE
+ * them, never in place of them. [FIN-W1-D4]
+ *
+ * `captured` was read from payment_reconciliation_records.captured_amount through a LEFT JOIN and
+ * `receivable` was payment_amount minus that. payment_reconciliation_records is empty on this
+ * deployment - it is written by the gateway webhook receiver, which nothing has exercised - so every
+ * captured payment counted as Rs 0 collected and 100% receivable. The screen read
+ * "Invoiced Rs 0 · Captured Rs 0 · Refunded Rs 0 · Receivable Rs 9,594" over rows whose own Payment
+ * column said `captured`, against booking_payments holding nine captured rows totalling Rs 20,793.
+ *
+ * The defect was never "the table is empty". It was that a figure meaning "captured AND confirmed
+ * against the gateway statement" was labelled plain *Captured*, and *Receivable* was labelled as
+ * money owed by customers when it was really money not yet reconciled. An operator reading it
+ * believed Rs 9,594 was uncollected.
+ *
+ * So: `collected`/`receivable`/`captured_amount` now come from booking_payments - the same source and
+ * the same status vocabulary lib/accounts-business-view.ts uses for the company-level receivable
+ * (['captured','paid'], widened here by the two refund states, because a refunded payment was
+ * captured first). The reconciliation figures keep their own names -
+ * capturedPerReconciliation / reconciled_captured_amount / capturedAwaitingReconciliation - so
+ * assurance coverage is still visible and still zero when it is zero. Every money figure names its
+ * source in `basis`, and every row carries `captured_basis`; nothing was switched quietly. */
+const CAPTURED_PAYMENT_STATUSES=new Set(["captured","paid","refunded","partially_refunded"]);
+const REFUNDED_PAYMENT_STATUSES=new Set(["refunded","partially_refunded"]);
+const round2=(value:number)=>Math.round(value*100)/100;
+type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number;capturedPerPaymentLedger:number;capturedPerReconciliation:number;capturedAwaitingReconciliation:number;refundsPendingReconciliation:number;paymentsWithReconciliationRecord:number};
+type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[];basis:Record<string,string>};
 // Finance GET is actor-independent after finance.view authorization. Coalesce only requests that overlap
 // in time on the same D1 binding; the promise is removed immediately after settlement, so this is NOT a
 // TTL/stale-data cache and the next read always observes subsequent finance writes.
@@ -47,13 +72,38 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
   const[ledgerResult,exceptionsResult]=await db.batch([ledgerStatement,exceptionsStatement]);
   const rows=(ledgerResult?.results??[]) as Row[],recentExceptions=(exceptionsResult?.results??[]) as Row[];
   const items=rows.map((row):Record<string,unknown>=>{
-    const amount=Number(row.payment_amount||0),captured=Number(row.captured_amount||0),refunded=Number(row.refunded_amount||0),reconciliationStatus=String(row.reconciliation_status||"not_started");
-    return{...row,receivable:Math.max(0,amount-captured),net_collected:Math.max(0,captured-refunded),reconciled:reconciliationStatus==="matched"&&Number(row.open_reconciliation_exceptions||0)===0,invoiced:Boolean(row.invoice_id)};
+    const amount=Number(row.payment_amount||0),paymentStatus=String(row.payment_status||"");
+    // What the payment ledger says was collected - the same fact the row's own Payment column shows.
+    const ledgerCaptured=CAPTURED_PAYMENT_STATUSES.has(paymentStatus)?amount:0;
+    // What reconciliation has CONFIRMED against the gateway. null = no reconciliation record exists.
+    const hasReconciliationRecord=row.reconciliation_status!=null||row.captured_amount!=null;
+    const reconciledCaptured=hasReconciliationRecord?Number(row.captured_amount||0):null;
+    const refunded=Number(row.refunded_amount||0),reconciliationStatus=String(row.reconciliation_status||"not_started");
+    const reconciled=reconciliationStatus==="matched"&&Number(row.open_reconciliation_exceptions||0)===0;
+    return{...row,
+      captured_amount:round2(ledgerCaptured),captured_basis:"booking_payments.status+amount",
+      reconciled_captured_amount:reconciledCaptured,reconciled_captured_basis:"payment_reconciliation_records.captured_amount",
+      captured_awaiting_reconciliation:round2(reconciled?0:ledgerCaptured),
+      refunded_amount:round2(refunded),refunded_basis:"payment_reconciliation_records.refunded_amount",
+      refund_amount_unknown:REFUNDED_PAYMENT_STATUSES.has(paymentStatus)&&!hasReconciliationRecord,
+      receivable:round2(Math.max(0,amount-ledgerCaptured)),net_collected:round2(Math.max(0,ledgerCaptured-refunded)),
+      reconciled,invoiced:Boolean(row.invoice_id)};
   });
   const summary=items.reduce((acc:FinanceSummary,item)=>{
-    acc.bookings+=1;if(item.invoiced)acc.invoiced+=Number(item.net_amount||0);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;return acc;
-  },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0});
-  return{source:"canonical Grooming booking/payment/invoice/reconciliation ledger",summary,items,reconciliationExceptions:recentExceptions};
+    acc.bookings+=1;if(item.invoiced)acc.invoiced+=Number(item.net_amount||0);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;
+    acc.capturedPerPaymentLedger+=Number(item.captured_amount||0);acc.capturedPerReconciliation+=Number(item.reconciled_captured_amount||0);acc.capturedAwaitingReconciliation+=Number(item.captured_awaiting_reconciliation||0);
+    if(item.reconciled_captured_amount!=null)acc.paymentsWithReconciliationRecord+=1;if(item.refund_amount_unknown)acc.refundsPendingReconciliation+=1;return acc;
+  },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0,capturedPerPaymentLedger:0,capturedPerReconciliation:0,capturedAwaitingReconciliation:0,refundsPendingReconciliation:0,paymentsWithReconciliationRecord:0});
+  for(const key of ["invoiced","collected","refunded","receivable","capturedPerPaymentLedger","capturedPerReconciliation","capturedAwaitingReconciliation"] as const)summary[key]=round2(summary[key]);
+  return{source:"canonical Grooming booking/payment/invoice ledger · Captured and Receivable from booking_payments; reconciliation reported separately",summary,items,reconciliationExceptions:recentExceptions,
+    basis:{
+      invoiced:"booking_invoices.net_amount where an invoice has been issued",
+      collected:"booking_payments.amount where status is captured/paid/refunded/partially_refunded - the money the payment ledger says reached PawSpace",
+      receivable:"booking_payments.amount not in a captured status - money still owed, NOT money awaiting reconciliation",
+      refunded:"payment_reconciliation_records.refunded_amount; refundsPendingReconciliation counts refunded payments whose amount no reconciliation record states",
+      capturedPerReconciliation:"payment_reconciliation_records.captured_amount - gateway-confirmed only; 0 while nothing has been reconciled",
+      capturedAwaitingReconciliation:"captured per the payment ledger but not yet matched against the gateway statement - the assurance gap, not a receivable",
+    }};
  })().finally(()=>{if(financeReads.get(db)===pending)financeReads.delete(db);});
  financeReads.set(db,pending);return pending;
 }

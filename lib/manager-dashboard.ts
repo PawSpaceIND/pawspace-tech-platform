@@ -31,13 +31,44 @@ async function resolveDashboardScope(db:Db,input:{actorEmail:string;permissions:
   return{mode:"manager",managerEmployeeId:managerId,employeeIds:direct.results.map(r=>text(r.id)),employeeEmails:direct.results.map(r=>text(r.user_email||r.work_email).toLowerCase()).filter(Boolean)};
 }
 
+/**
+ * Who is in the dashboard's scope - and why this is a LEFT JOIN.
+ *
+ * It was an INNER JOIN on an OPEN employment version, which silently deleted every active employee
+ * who has no open version row. Measured on the real database: 44 active employees, 4 with an open
+ * employment version, so a founder opening "Scope: Everyone" was shown "Employees in view 4" beside
+ * the claim of "a real, complete company view ... everyone across every vertical", while
+ * /team/people/reports read "Active headcount 44" for the same persona at the same moment.
+ *
+ * The 44 is right and the 4 was wrong. `employees.employment_status='active'` is the canonical
+ * in-scope predicate everywhere else that pays or counts these people:
+ *   lib/payroll-engine.ts calculatePayroll  - SELECT ... FROM employees WHERE employment_status='active'
+ *                                             (a real run produced 44 results; all 44 got paid)
+ *   lib/people-reports.ts                   - LEFT JOIN employee_employment_versions
+ *   lib/people-foundation.ts peopleDirectory- LEFT JOIN employee_employment_versions
+ * An employment version is a versioned ATTRIBUTE record (title, team, manager, cost centre), not an
+ * existence gate: employment_status lives on `employees`, and nothing about being paid depends on
+ * holding an open version row. Requiring one made the dashboard the only People surface that
+ * disagreed with payroll about who works here, and it disagreed silently.
+ *
+ * The MANAGER branch keeps its meaning. `resolveDashboardScope` resolves direct reports through
+ * `v.manager_employee_id` on an open version, so that relationship genuinely requires one and that
+ * join stays an inner join (exactly as lib/people-reports.ts resolves the same scope). The join
+ * below is relaxed only so the second read cannot drop a report the first read already admitted.
+ *
+ * The 40 missing versions are ALSO a real data problem, and silence about it is what turned this
+ * into a wrong number rather than a visible gap: with no open version an employee has no title and
+ * no team_code, so classifyEmployee cannot place them in a vertical and they land in "other". The
+ * dashboard therefore counts them AND names the gap (employmentVersionGap below) instead of
+ * choosing between an honest short count and a dishonest complete one.
+ */
 async function employeesInScope(db:Db,scope:Scope){
   if(scope.mode==="all"){
-    const rows=await db.prepare("SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE e.employment_status='active' ORDER BY e.display_name").all<Row>();
+    const rows=await db.prepare("SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e LEFT JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE e.employment_status='active' ORDER BY e.display_name").all<Row>();
     return rows.results;
   }
   if(!scope.employeeEmails.length)return[];
-  return chunkedIn(scope.employeeEmails,async(chunk,placeholders)=>(await db.prepare(`SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE lower(COALESCE(e.user_email,e.work_email)) IN (${placeholders}) ORDER BY e.display_name`).bind(...chunk).all<Row>()).results);
+  return chunkedIn(scope.employeeEmails,async(chunk,placeholders)=>(await db.prepare(`SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e LEFT JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE lower(COALESCE(e.user_email,e.work_email)) IN (${placeholders}) ORDER BY e.display_name`).bind(...chunk).all<Row>()).results);
 
 }
 
@@ -136,10 +167,25 @@ export async function buildManagerDashboard(db:Db,input:{actorEmail:string;permi
     else other.push({employeeEmail:email,name,title:text(employee.title)});
   }
   const operations=await managerOperationsSnapshot(db,scope,asOf);
+  /* The scope is now every active employee (see employeesInScope). The ones with no OPEN employment
+   * version carry no title and no team_code, so they cannot be classified into a vertical and land
+   * in "other" - that is a real gap in the employment record, and it is named here rather than
+   * hidden by dropping those people from the count the way the inner join used to. */
+  const missingEmploymentVersion=employees.filter(row=>!text(row.team_code)&&!text(row.title));
+  const employmentVersionGap={
+    employeesWithoutOpenEmploymentVersion:missingEmploymentVersion.length,
+    employeeIds:missingEmploymentVersion.map(row=>text(row.id)).filter(Boolean),
+    effect:missingEmploymentVersion.length?"These active employees have no open employee_employment_versions row, so they have no title, team or manager on record. They are counted in scope and payroll pays them, but they cannot be classified into a vertical and appear under 'other' until their employment version is recorded.":"Every employee in scope has an open employment version.",
+  };
   return{
     asOf,today,scope:scope.mode,employeeCount:employees.length,operations,
     verticals:{sales,groomers,trainers,other},
-    classificationBasis,
-    note:"Sales and Groomer classification comes from a real governed registry (their configured base vertical / bracket). Trainer classification falls back to matching 'trainer' in their real job title or team code, since no dedicated trainer registry exists yet - flagged in classificationBasis as title_heuristic rather than presented with equal confidence.",
+    classificationBasis,employmentVersionGap,
+    /* app/team/people/manager-dashboard/page.tsx renders `note` verbatim under the header that
+     * claims "a real, complete company view". The employment-version gap therefore has to reach
+     * that sentence, not only the structured field above, or the screen would still be silent
+     * about the people whose vertical it cannot determine. */
+    note:`Sales and Groomer classification comes from a real governed registry (their configured base vertical / bracket). Trainer classification falls back to matching 'trainer' in their real job title or team code, since no dedicated trainer registry exists yet - flagged in classificationBasis as title_heuristic rather than presented with equal confidence.${missingEmploymentVersion.length?` Scope is every active employee: ${missingEmploymentVersion.length} of the ${employees.length} shown have no open employment version, so they carry no title or team and cannot be classified into a vertical - they are listed under 'other' until their employment record is completed.`:""}`,
+    scopeNote:"Scope is every ACTIVE employee, the same population lib/payroll-engine.ts pays and lib/people-reports.ts counts as active headcount. An open employment version is a versioned attribute record (title/team/manager), not a condition of being in scope; employees missing one are counted here and reported in employmentVersionGap.",
   };
 }

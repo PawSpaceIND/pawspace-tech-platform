@@ -1,6 +1,6 @@
 import{authError,authorize,securityAudit}from"../../../lib/server-auth";
 import{statutoryCalendar,recordStatutoryFiling,recordBoardApproval,runStatutoryReminderSweep,type ObligationCode}from"../../../lib/statutory-compliance";
-import{computeMonthlyTds,recordTdsDeposit,prepareTdsQuarterlyReturn,markTdsReturnFiled,tdsDashboard}from"../../../lib/tds-governance";
+import{computeMonthlyTds,recordTdsDeposit,recordTdsPanVerification,prepareTdsQuarterlyReturn,markTdsReturnFiled,tdsDashboard}from"../../../lib/tds-governance";
 import{computeMonthlyTcsStatutory,recordTcsDeposit,prepareGstr8Statutory,tcsDashboard,saveProviderTaxProfile}from"../../../lib/statutory-tcs";
 import{reconcilePartnerPayoutTax}from"../../../lib/tds-tcs-reconciliation";
 import{monthlyCloseView,closeMonth}from"../../../lib/finance-monthly-close";
@@ -15,7 +15,10 @@ export async function GET(request:Request){try{
  const db=await database();
  const[calendar,close,tds,tcs,reconciliation]=await Promise.all([
   statutoryCalendar(db,period),
-  monthlyCloseView(db,{period,actorId:actor.email}),
+  // persist:false is the point of this call, not a default worth leaving implicit: a GET of the
+  // compliance dashboard used to upsert the close snapshot and rewrite the period's tds_deductions
+  // on every page load. Persisting is now the explicit POST actions' job. [FIN-W1-D2]
+  monthlyCloseView(db,{period,actorId:actor.email,persist:false}),
   tdsDashboard(db,period),
   tcsDashboard(db,period),
   reconcilePartnerPayoutTax(db,{period}),
@@ -23,7 +26,7 @@ export async function GET(request:Request){try{
  return json({data:{period,calendar,close,tds,tcs,reconciliation,filingMode:"manual_with_reminders",statutoryBasis:"India - GST monthly filer, TDS FY2025-26 rates/thresholds, s52 GST TCS, Karnataka PT",productionReady:false}});
 }catch(error){return authError(error,"Unable to load the statutory compliance dashboard");}}
 
-type Body={action?:string;period?:string;obligationCode?:string;acknowledgementRef?:string;amount?:number;notes?:string;minutesReference?:string;resolutionText?:string;challanReference?:string;fyLabel?:string;quarter?:number;form?:string;providerId?:string;gstin?:string};
+type Body={action?:string;period?:string;obligationCode?:string;acknowledgementRef?:string;amount?:number;notes?:string;minutesReference?:string;resolutionText?:string;challanReference?:string;fyLabel?:string;quarter?:number;form?:string;providerId?:string;gstin?:string;deducteeId?:string;pan?:string};
 
 export async function POST(request:Request){try{
  const actor=await authorize(request,"finance.manage");
@@ -38,6 +41,14 @@ export async function POST(request:Request){try{
   const result=await computeMonthlyTds(db,{period,actorId:actor.email});
   await securityAudit(db,actor,"statutory.compute_tds","tds_period",period,"completed",{totalTds:result.totalTds});
   return json({data:result});
+ }
+ if(action==="verify_tds_pan"){
+  // The explicit operator action that clears the s206AA warning and the tds_pans_verified checklist
+  // item. Before it existed nothing anywhere could set pan_status='verified'. [FIN-W1-D3]
+  const result=await recordTdsPanVerification(db,{deducteeId:String(body.deducteeId||""),pan:String(body.pan||""),actorId:actor.email});
+  // The PAN itself is never audited or returned - only the masked reference that was stored.
+  await securityAudit(db,actor,"statutory.verify_tds_pan","tds_deductee",result.deducteeId,"completed",{panReference:result.panReference,deductionRowsUpdated:result.deductionRowsUpdated});
+  return json({data:result},201);
  }
  if(action==="record_tds_deposit"){
   const result=await recordTdsDeposit(db,{period,challanReference:String(body.challanReference||""),amount:Number(body.amount),actorId:actor.email});

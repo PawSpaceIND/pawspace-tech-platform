@@ -47,6 +47,13 @@ export async function sessionScope(request:Request):Promise<Scope|undefined>{con
    * and simulate_event stay staff-only and keep falling through to the staff gateway's payments.manage. */
   if(url.pathname==="/api/grooming-payment-sandbox"&&method==="GET")return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/grooming-payment-sandbox"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_after_service"?{permission:"bookings.view",subjectType:"provider"}:undefined;}
+ /* Funeral coordination is provider-facing: app/partner/funeral reads its own queue and completes
+  * milestones. Without these the STAFF gateway answers first and maps the coordinator actions to
+  * bookings.manage, which service_provider does not hold - a silent 403 on the partner's own screen.
+  * The route still binds the subject itself (requireFuneralCoordinator + requireProviderOwnership), so
+  * this only stops the staff gateway from refusing before the route is reached. [PTJA-FUNERAL-SCOPE] */
+ if(url.pathname==="/api/funeral-memorial"&&method==="GET"&&url.searchParams.get("scope")==="provider")return{permission:"bookings.view",subjectType:"provider"};
+ if(url.pathname==="/api/funeral-memorial"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["coordinate_pickup","complete_milestone","register_media","update_ash_collection","close_case"].includes(String(body.action||""))?{permission:"bookings.view",subjectType:"provider"}:undefined;}
   return undefined;
 }
 

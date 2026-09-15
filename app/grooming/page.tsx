@@ -17,9 +17,19 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import GroomingFlow from "../mobile-app/grooming-flow";
 import type { LoggedInCustomer } from "../mobile-app/customer-login";
+import { SELECTED_SERVICE_ADDRESS_KEY, type ZoneResult } from "../mobile-app/address-picker";
+import { loadCustomerAccount } from "../../lib/customer-account-client";
+import { defaultStayAddress, validateSavedStayAddress } from "../../lib/stay-saved-address";
 import styles from "../mobile-app/mobile.module.css";
 
 const SESSION_PROBE_TIMEOUT_MS = 8000;
+const SAVED_ADDRESS_TIMEOUT_MS = 15000;
+/* The coordinates a TYPED address carries. AddressPicker.applyCoverage() uses exactly these when an
+ * address is verified by PIN/area rather than picked off a Google suggestion, and a saved address has
+ * no coordinates of its own, so a saved address is offered on precisely the terms a re-typed one
+ * would be. They are a hint only: /api/grooming-service-location geocodes server-side and treats
+ * browser coordinates as a fallback, never as location authority. */
+const TYPED_LATITUDE = 12.925, TYPED_LONGITUDE = 77.5938;
 
 export default function GroomingPage() {
   const [customer, setCustomer] = useState<LoggedInCustomer | null>(null);
@@ -64,6 +74,68 @@ export default function GroomingPage() {
     })();
     return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, []);
+  /*
+   * Offer the saved default SERVICE ADDRESS, the way /boarding and /sitting do.
+   *
+   * Boarding and Sitting mount StayAddress (app/mobile-app/stay-address.tsx), which reads the
+   * customer's default address from /api/customer-account, checks its PIN against the live service
+   * zone and opens with "Your location <address> / Change Address". Grooming's step 3 mounts a bare
+   * AddressPicker instead, so a customer with a perfectly good saved default had to RETYPE it for
+   * every grooming booking - and retyping is exactly what defeats address dedupe and mints duplicate
+   * rows.
+   *
+   * The same two helpers do the work here: defaultStayAddress() picks the default (or the only)
+   * saved address, and validateSavedStayAddress() resolves it through the SAME /api/service-zone
+   * coverage check the picker itself performs - so an address outside the service area is never
+   * offered, which is also why an unserviceable or PIN-less address simply leaves step 3 as it is.
+   *
+   * The resolved address is handed to AddressPicker through its OWN restore channel
+   * (SELECTED_SERVICE_ADDRESS_KEY), the session-scoped slot it already reads on mount, so step 3
+   * opens with the address filled in and verified and no new address UI is invented for grooming
+   * alone. An address the customer verified earlier in this tab is left alone - it is a more recent
+   * statement of where they want the groomer than a saved default is.
+   */
+  const savedAddressCustomerId = customer?.customerId;
+  useEffect(() => {
+    if (!savedAddressCustomerId) return;
+    let active = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SAVED_ADDRESS_TIMEOUT_MS);
+    void (async () => {
+      try {
+        if (window.sessionStorage.getItem(SELECTED_SERVICE_ADDRESS_KEY)) return;
+        const account = await loadCustomerAccount(savedAddressCustomerId, { signal: controller.signal });
+        if (!active || account.customerId !== savedAddressCustomerId) return;
+        const saved = defaultStayAddress(account.addresses);
+        if (!saved) return;
+        const resolved = await validateSavedStayAddress(saved, controller.signal);
+        if (!active || !resolved.zone.serviceAvailable) return;
+        // Shaped exactly as a typed verification is: line 1 carries the full doorstep line, line 2
+        // keeps the landmark on its own, so editing either one stays coherent inside the picker.
+        const addressLine1 = [saved.line1, saved.area, saved.city, saved.postalCode].filter(Boolean).join(", ");
+        const addressLine2 = saved.line2?.trim() ?? "";
+        const offered: ZoneResult = {
+          zone: resolved.zone,
+          assignment: resolved.assignment,
+          address: [addressLine1, addressLine2].filter(Boolean).join(", "),
+          addressLine1,
+          addressLine2,
+          latitude: TYPED_LATITUDE,
+          longitude: TYPED_LONGITUDE,
+          placeId: `typed:${resolved.assignment.pincode}`,
+          verification: "typed",
+        };
+        if (!active || window.sessionStorage.getItem(SELECTED_SERVICE_ADDRESS_KEY)) return;
+        window.sessionStorage.setItem(SELECTED_SERVICE_ADDRESS_KEY, JSON.stringify(offered));
+      } catch {
+        /* No saved address on offer, then - step 3 asks for one exactly as it does today. Never a
+         * blocking error: the customer can always type an address. */
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+    return () => { active = false; clearTimeout(timer); controller.abort(); };
+  }, [savedAddressCustomerId]);
   const onVerified = (identity: LoggedInCustomer) => {
     setCustomer(identity);
     try { window.localStorage.setItem("pawspace_customer", JSON.stringify(identity)); } catch { /* Session still holds for this visit. */ }
