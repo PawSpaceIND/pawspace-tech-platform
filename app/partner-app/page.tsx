@@ -2,7 +2,7 @@
 import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
 import {useDutyTracking} from "./use-duty-tracking";
@@ -129,6 +129,10 @@ const SETTLED_PAYMENT_STATUSES = ["captured", "refunded", "partially_refunded"];
 const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
 export default function PartnerMobileApp() {
+  return <Suspense fallback={null}><PartnerMobileAppContent /></Suspense>;
+}
+
+function PartnerMobileAppContent() {
   const searchParams = useSearchParams();
   const requestedBookingId = searchParams.get("bookingId") || "";
   const [tab, setTab] = useState<Tab>("home");
