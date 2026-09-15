@@ -90,7 +90,11 @@ jobs:
       - name: Install Playwright Chromium for visual sweep
         run: npx playwright install --with-deps chromium
       - name: Choose governed future service date
-        run: node -e "const d=new Date(Date.now()+5*86400000);console.log('PW_UAT_SERVICE_DATE='+new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(d))" >> "$GITHUB_ENV"
+        # The visual journey verifies a specific authenticated groomer. A fixed date/time
+        # makes a later certification collide with the earlier UAT booking's travel buffer,
+        # which correctly causes the scheduler to select another available groomer. Keep the
+        # probe inside the seeded 5–14 day UAT window, but spread workflow runs across it.
+        run: node -e "const id=Number(process.env.GITHUB_RUN_ID||0),offset=5+(id%10),d=new Date(Date.now()+offset*86400000);console.log('PW_UAT_SERVICE_DATE='+new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(d))" >> "$GITHUB_ENV"
       - name: Run live visual UAT sweep
         timeout-minutes: 8
         env:
