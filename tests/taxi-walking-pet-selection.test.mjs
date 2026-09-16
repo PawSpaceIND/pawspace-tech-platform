@@ -247,7 +247,7 @@ test("P1-T01 /taxi gives a two-pet household the choice, and books the pet that 
     await page.screen.flush();
     assert.equal(petSelect(page.screen).props.value, AUDITCAT.id, "the choice sticks");
 
-    const book = clickable(page.screen, /Create canonical UAT trip/);
+    const book = clickable(page.screen, /Confirm trip/);
     assert.ok(book, "the trip can be created");
     assert.equal(book.props.disabled, false, "and is not blocked once a pet is chosen");
     book.props.onClick();
@@ -274,7 +274,7 @@ test("P1-T02 the pet in the request is the one chosen, not a fixed position in t
   try {
     petSelect(page.screen).props.onChange({ target: { value: BRUNO.id } });
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT trip/).props.onClick();
+    clickable(page.screen, /Confirm trip/).props.onClick();
     await page.screen.flush();
     assert.deepEqual(bodyOf(page.record, "/api/taxi-bookings")[0].pets.map((entry) => entry.sourceId), [BRUNO.id]);
     assert.match(page.screen.text(), /Travelling pet · Bruno/);
@@ -291,13 +291,13 @@ test("P1-T03 two pets on one quote are two different bookings, not a replayed on
   try {
     petSelect(page.screen).props.onChange({ target: { value: BRUNO.id } });
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT trip/).props.onClick();
+    clickable(page.screen, /Confirm trip/).props.onClick();
     await page.screen.flush();
     clickable(page.screen, /Back to Taxi/).props.onClick();
     await page.screen.flush();
     petSelect(page.screen).props.onChange({ target: { value: AUDITCAT.id } });
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT trip/).props.onClick();
+    clickable(page.screen, /Confirm trip/).props.onClick();
     await page.screen.flush();
 
     const sent = bodyOf(page.record, "/api/taxi-bookings");
@@ -319,7 +319,7 @@ test("P1-T04 a one-pet account is not made to confirm a choice it does not have"
     const text = page.screen.text();
     assert.doesNotMatch(text, /Choose the pet travelling on this trip/, "so there is no nag");
     assert.doesNotMatch(text, /Add a pet to your PawSpace account/);
-    assert.equal(clickable(page.screen, /Create canonical UAT trip/).props.disabled, false, "and the trip can be booked straight away");
+    assert.equal(clickable(page.screen, /Confirm trip/).props.disabled, false, "and the trip can be booked straight away");
   } finally { page.close(); }
 });
 
@@ -327,7 +327,7 @@ test("P1-T05 an account with no pet is still told to add one", async () => {
   const page = await openPage("../app/taxi/canonical-taxi-page.tsx", []);
   try {
     assert.match(page.screen.text(), /Add a pet to your PawSpace account before booking a Pet Taxi trip/);
-    assert.equal(clickable(page.screen, /Create canonical UAT trip/).props.disabled, true);
+    assert.equal(clickable(page.screen, /Confirm trip/).props.disabled, true);
   } finally { page.close(); }
 });
 
@@ -377,7 +377,7 @@ test("P2-W04 two dogs are still an explicit choice, and the chosen one is what i
 
     petSelect(page.screen).props.onChange({ target: { value: RUSTY.id } });
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT schedule/).props.onClick();
+    clickable(page.screen, /Confirm walk schedule/).props.onClick();
     await page.screen.flush();
 
     assert.deepEqual(bodyOf(page.record, "/api/walking-bookings")[0].pets.map((entry) => entry.sourceId), [RUSTY.id]);
@@ -399,7 +399,7 @@ test("P2-Z01 the /taxi confirmation shows the pickup in IST, whatever clock the 
   try {
     petSelect(page.screen).props.onChange({ target: { value: BRUNO.id } }); // explicit, so this test pins the clock alone
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT trip/).props.onClick();
+    clickable(page.screen, /Confirm trip/).props.onClick();
     await page.screen.flush();
     const text = page.screen.text();
     assert.match(text, /17\/9\/2026, 11:00:00 am IST/, "11:00 IST is shown as 11:00 IST and labelled");
@@ -412,7 +412,7 @@ test("P2-Z02 the /walking confirmation shows the reserved walk in IST", async ()
   try {
     petSelect(page.screen).props.onChange({ target: { value: BRUNO.id } }); // explicit, so this test pins the clock alone
     await page.screen.flush();
-    clickable(page.screen, /Create canonical UAT schedule/).props.onClick();
+    clickable(page.screen, /Confirm walk schedule/).props.onClick();
     await page.screen.flush();
     const text = page.screen.text();
     assert.match(text, /22\/9\/2026, 7:00:00 am IST/, "the 7:00 AM slot is shown as 7:00 AM IST");

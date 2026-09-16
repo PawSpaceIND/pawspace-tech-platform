@@ -20,6 +20,19 @@ export const pawspaceServices=[
   launchState:{enabled:false,reason:"Doorstep Vet has not launched: no veterinary provider is onboarded yet."}},
 ] as const;
 export type PawSpaceServiceCode=(typeof pawspaceServices)[number]["code"];
+
+/**
+ * The services that have NOT launched, as one fact rather than two opinions.
+ *
+ * The seed below uses this to decide what a new database offers, and the marketing service grid in
+ * app/components/marketing/premium-marketing.tsx uses the same list to decide what it advertises.
+ * They had drifted in BOTH directions: /services offered Doorstep Vet, which no provider anywhere can
+ * take, and omitted Funeral & Memorial, which is live and bookable. A customer could therefore reach
+ * a dead end from the picker and could not reach a real service from it at all.
+ */
+export const unlaunchedServiceCodes: readonly PawSpaceServiceCode[] =
+  pawspaceServices.filter((service)=>"launchState" in service&&service.launchState?.enabled===false)
+    .map((service)=>service.code);
 export type ServiceControl={code:PawSpaceServiceCode;name:string;group:string;enabled:boolean;disabledReason:string|null;updatedBy:string;updatedAt:number};
 type Stored={service_code:string;service_name:string;service_group:string;enabled:number;disabled_reason:string|null;updated_by:string;updated_at:number};
 const schedulingMap:Record<string,PawSpaceServiceCode>={grooming:"grooming",dog_training:"dog_training",boarding:"boarding",pet_sitting:"pet_sitting",pet_taxi:"pet_taxi",dog_walking:"dog_walking",vet_consult:"vet_consult"};

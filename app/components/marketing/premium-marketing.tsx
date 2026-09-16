@@ -1,24 +1,36 @@
 /* eslint-disable @next/next/no-img-element */
 import type{CSSProperties}from"react";import Link from"next/link";import styles from"./premium-marketing.module.css";
-export type ServiceCard={title:string;description:string;href:string;image?:string;eyebrow?:string};
+import{unlaunchedServiceCodes,type PawSpaceServiceCode}from"../../../lib/service-control";
+export type ServiceCard={title:string;description:string;href:string;image?:string;eyebrow?:string;serviceCode?:PawSpaceServiceCode};
 export type ProofItem={value:string;label:string};
 export type PackageCard={name:string;price?:string;description?:string;items:string[];featured?:boolean;badge?:string;href?:string};
 export type Faq={q:string;a:string};
 export function StaticImage({src,alt,style,priority}:{src:string;alt:string;fill?:boolean;sizes?:string;priority?:boolean;style?:CSSProperties}){return <img src={src} alt={alt} loading={priority?"eager":"lazy"} decoding="async" style={{position:"absolute",inset:0,width:"100%",height:"100%",...style}}/>}
 const Image=StaticImage;
 export const verifiedProof:ProofItem[]=[{value:"At-home care",label:"Comfortable, familiar surroundings for your pet"},{value:"Verified people",label:"Every caregiver identity-checked before their first visit"},{value:"Real updates",label:"Photos and progress, not just a chat message"},{value:"PawSpace support",label:"One connected customer and care record"}];
-export const services:ServiceCard[]=[
- {title:"Pet Grooming",description:"Doorstep dog and cat grooming with clear packages and care instructions.",href:"/services/grooming",image:"/assets/banners/grooming-groomer-action.jpg"},
+/*
+ * Every card names the catalogue service it sells, so "is this live" is answered by
+ * lib/service-control.ts and not by whoever last edited this array. `services` below is the list
+ * after the unlaunched ones are removed; `allServiceCards` keeps the full set for a page that needs
+ * to describe a service without offering it.
+ */
+export const allServiceCards:ServiceCard[]=[
+ {serviceCode:"grooming",title:"Pet Grooming",description:"Doorstep dog and cat grooming with clear packages and care instructions.",href:"/services/grooming",image:"/assets/banners/grooming-groomer-action.jpg"},
  {title:"Cat Grooming",description:"Gentle, cat-specific grooming packages designed around feline handling.",href:"/services/cat-grooming",image:"/assets/banners/grooming-bag-shihtzu.jpg"},
- {title:"Dog Training",description:"Structured at-home programmes with trainer-led goals and progress.",href:"/services/training",image:"/assets/banners/training-handshake.jpg"},
- {title:"Pet Boarding",description:"Home-style stays with host details, routines and care updates.",href:"/services/boarding",image:"/assets/stays/indiranagar-home.webp"},
- {title:"Pet Sitting",description:"Care at home for visits, day sitting and overnight needs.",href:"/services/sitting",image:"/assets/stays/sitter-care-update.webp"},
- {title:"Dog Walking",description:"Scheduled walks with care notes and GPS-supported operations.",href:"/services/walking",image:"/assets/banners/walking-leash-city.jpg"},
- {title:"Fresh Food",description:"Fresh-food planning and delivery journeys for eligible customers.",href:"/services/fresh-food",image:"/assets/banners/food-prep-pouring.jpg"},
- {title:"Pet Relocation",description:"Guided domestic and international relocation support.",href:"/services/relocation"},
- {title:"Pet Taxi",description:"Tracked pickup and drop, currently available by request as we expand this service.",href:"/services/taxi",image:"/assets/banners/taxi-car-window.jpg"},
- {title:"Doorstep Vet",description:"Veterinary care enquiries and coordination - diagnosis always stays with a qualified vet.",href:"/services/vet"},
+ {serviceCode:"dog_training",title:"Dog Training",description:"Structured at-home programmes with trainer-led goals and progress.",href:"/services/training",image:"/assets/banners/training-handshake.jpg"},
+ {serviceCode:"boarding",title:"Pet Boarding",description:"Home-style stays with host details, routines and care updates.",href:"/services/boarding",image:"/assets/stays/indiranagar-home.webp"},
+ {serviceCode:"pet_sitting",title:"Pet Sitting",description:"Care at home for visits, day sitting and overnight needs.",href:"/services/sitting",image:"/assets/stays/sitter-care-update.webp"},
+ {serviceCode:"dog_walking",title:"Dog Walking",description:"Scheduled walks with care notes and GPS-supported operations.",href:"/services/walking",image:"/assets/banners/walking-leash-city.jpg"},
+ {serviceCode:"food",title:"Fresh Food",description:"Fresh-food planning and delivery journeys for eligible customers.",href:"/services/fresh-food",image:"/assets/banners/food-prep-pouring.jpg"},
+ {serviceCode:"relocation",title:"Pet Relocation",description:"Guided domestic and international relocation support.",href:"/services/relocation"},
+ {serviceCode:"pet_taxi",title:"Pet Taxi",description:"Tracked pickup and drop, currently available by request as we expand this service.",href:"/services/taxi",image:"/assets/banners/taxi-car-window.jpg"},
+ {serviceCode:"vet_consult",title:"Doorstep Vet",description:"Veterinary care enquiries and coordination - diagnosis always stays with a qualified vet.",href:"/services/vet"},
+ /* Live, bookable and previously absent from this grid entirely. It points at the customer screen
+    rather than a /services/ marketing slug, because that slug does not exist and the screen does. */
+ {serviceCode:"funeral_memorial",title:"Funeral & Memorial",description:"Respectful farewell planning and memorial support, arranged with you by a PawSpace coordinator.",href:"/funeral-memorial"},
 ];
+/** What a customer may actually be offered: everything except the services that have not launched. */
+export const services:ServiceCard[]=allServiceCards.filter((card)=>!card.serviceCode||!unlaunchedServiceCodes.includes(card.serviceCode));
 export function MarketingShell({children}:{children:React.ReactNode}){return <main className={styles.page}><div className={styles.utility}>Pet care built around trust, visible service quality and connected customer support.</div><header className={styles.header}><div className={styles.headerInner}><Link className={styles.brand} href="/discover"><span className={styles.brandMark}>🐾</span>PawSpace</Link><nav className={styles.nav}><Link href="/discover">Home</Link><Link href="/services">Services</Link><Link href="/about">About</Link><Link href="/dog-breeds/beagle">Pet guides</Link><Link href="/contact">Contact</Link><Link href="/careers">Become a caregiver</Link><Link className={styles.headerCta} href="/mobile-app">Book care</Link></nav><Link className={`${styles.primary} ${styles.mobileOnly}`} href="/mobile-app">Book</Link></div></header>{children}<SiteCta/><Footer/></main>}
 export function Breadcrumbs({items}:{items:{label:string;href?:string}[]}){return <div className={styles.breadcrumbs}>{items.map((item,i)=><span key={`${item.label}-${i}`}>{i?" › ":""}{item.href?<Link href={item.href}>{item.label}</Link>:item.label}</span>)}</div>}
 export function Hero({eyebrow,title,accent,description,image,imageAlt,badgeTitle,badgeText,primaryLabel="Book care",primaryHref="/mobile-app",secondaryLabel="Explore services",secondaryHref="/services",locationSearch=false}:{eyebrow:string;title:string;accent:string;description:string;image?:string;imageAlt?:string;badgeTitle?:string;badgeText?:string;primaryLabel?:string;primaryHref?:string;secondaryLabel?:string;secondaryHref?:string;locationSearch?:boolean}){return <section className={styles.hero}><div><span className={styles.eyebrow}>🐾 {eyebrow}</span><h1>{title} <em>{accent}</em></h1><p>{description}</p>{locationSearch?<form className={styles.locationBox} action="/mobile-app"><input aria-label="Your area in Bengaluru" name="area" placeholder="Enter your area in Bengaluru"/><button>Find care</button></form>:<div className={styles.actions}><Link className={styles.primary} href={primaryHref}>{primaryLabel}</Link><Link className={styles.secondary} href={secondaryHref}>{secondaryLabel}</Link></div>}</div><div className={styles.heroVisual}>{image?<Image src={image} alt={imageAlt||badgeTitle||"PawSpace pet care"} fill sizes="(max-width: 900px) 100vw, 50vw" style={{objectFit:"cover"}} priority/>:null}{badgeTitle?<div className={styles.heroBadge}><b>{badgeTitle}</b><span>{badgeText}</span></div>:null}</div></section>}
