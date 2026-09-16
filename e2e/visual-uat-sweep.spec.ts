@@ -90,11 +90,16 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
   const preferredRegion = page.getByRole("region", { name: "Preferred groomer" });
   await expect(preferredRegion).toBeVisible();
   const preferredProvider = preferredRegion.getByRole("button", { name: new RegExp(PROVIDER_NAME) });
-  const preferredVisible = await expect(preferredProvider).toBeVisible({ timeout: 10_000 }).then(() => true).catch(() => false);
+  const availabilityAlert = preferredRegion.getByRole("alert");
+  await expect.poll(
+    async () => (await preferredProvider.isVisible()) || (await availabilityAlert.isVisible()),
+    { timeout: 20_000, message: "preferred groomer preview should resolve to availability or a governed timeout" },
+  ).toBe(true);
+  const preferredVisible = await preferredProvider.isVisible();
   if (preferredVisible) {
     await preferredProvider.click();
   } else {
-    await expect(preferredRegion.getByRole("alert")).toContainText("Availability search timed out");
+    await expect(availabilityAlert).toContainText("Availability search timed out");
     await preferredRegion.getByRole("button", { name: "No preference" }).click();
   }
   await page.getByRole("button", { name: "Review booking" }).click();
