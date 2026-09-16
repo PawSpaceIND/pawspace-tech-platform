@@ -24,10 +24,10 @@ import type { ResolvedServiceCoverage } from "../../../lib/service-zone-client";
 import type { ProviderPreview } from "../../../lib/uat-scheduling-client";
 import {
   createV2GroomingBooking,
-  createV2GroomingCheckoutController,
-  type CheckoutState,
   type V2GroomingBooking,
 } from "../../../lib/v2/grooming-checkout-client";
+import { useQueryParameter } from "../../../lib/use-query-parameter";
+import V2GroomingPaymentPanel from "./payment-panel";
 import styles from "./grooming.module.css";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
@@ -42,6 +42,7 @@ function petAudience(pet: CustomerAccountRecord["pets"][number]): V2GroomingPack
 }
 
 export default function V2GroomingPage() {
+  const recoveryBookingId = useQueryParameter("bookingId");
   const [account, setAccount] = useState<CustomerAccountRecord | null>(null);
   const [catalogue, setCatalogue] = useState<V2GroomingCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,10 +64,11 @@ export default function V2GroomingPage() {
   const [providerError, setProviderError] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [booking, setBooking] = useState<V2GroomingBooking | null>(null);
-  const [checkoutState, setCheckoutState] = useState<CheckoutState>({ phase: "ready", message: "Ready for secure checkout.", canCheck: false });
   const [checkoutError, setCheckoutError] = useState("");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
-  const checkoutController = useRef<ReturnType<typeof createV2GroomingCheckoutController> | null>(null);
+  const checkoutLock = useRef(false), mounted = useRef(true);
+  const coverageVersion = useRef(0), careVersion = useRef(0);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const bootstrap = useCallback(async () => {
     setLoading(true);
@@ -93,7 +95,7 @@ export default function V2GroomingPage() {
     }
   }, []);
 
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+  useEffect(() => { if (!recoveryBookingId) void bootstrap(); }, [bootstrap, recoveryBookingId]);
 
   const selectedPets = useMemo(
     () => (account?.pets || []).filter(pet => selectedPetIds.includes(pet.id)),
@@ -113,14 +115,22 @@ export default function V2GroomingPage() {
     if (selectedPackage && selectedPackage.code !== selectedPackageCode) setSelectedPackageCode(selectedPackage.code);
   }, [selectedPackage, selectedPackageCode]);
 
-  useEffect(() => {
+  const invalidateCare = () => {
+    careVersion.current++;
+    setProviderBusy(false);
+    setScheduledStart(""); setScheduledEnd("");
     setQuote(null);
     setProviders(null);
     setSelectedProviderId("");
     setProviderError("");
-  }, [selectedPetIds, selectedPackageCode, coverage?.zoneId, date, slotIndex]);
+  };
+  useEffect(() => { invalidateCare(); }, [selectedPetIds, selectedPackageCode, coverage?.zoneId, date, slotIndex]);
+  const invalidateDoorstep = () => {
+    coverageVersion.current++; setCoverageBusy(false); setCoverage(null); invalidateCare();
+  };
 
   const togglePet = (id: string) => {
+    invalidateCare();
     setSelectedPetIds(current => {
       if (current.includes(id)) return current.length === 1 ? current : current.filter(item => item !== id);
       if (current.length >= 4) return current;
@@ -129,57 +139,48 @@ export default function V2GroomingPage() {
   };
 
   const verifyCoverage = async () => {
+    const version = ++coverageVersion.current;
+    invalidateCare();
     setCoverageBusy(true);
     setCoverageError("");
     setCoverage(null);
     try {
       if (address.trim().length < 8) throw new Error("Add your house, street and area before verifying serviceability.");
       const result = await resolveV2GroomingCoverage(pincode);
-      setCoverage(result);
+      if (mounted.current && version === coverageVersion.current) setCoverage(result);
     } catch (problem) {
-      setCoverageError(problem instanceof Error ? problem.message : "We could not verify this service address.");
+      if (mounted.current && version === coverageVersion.current) setCoverageError(problem instanceof Error ? problem.message : "We could not verify this service address.");
     } finally {
-      setCoverageBusy(false);
+      if (mounted.current && version === coverageVersion.current) setCoverageBusy(false);
     }
   };
 
   const beginSecureCheckout = async () => {
+    if (checkoutLock.current || providerBusy || mixedAudience) return;
     const provider = providers?.providers.find(item => item.id === selectedProviderId);
     if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
-    setCheckoutBusy(true);
-    setCheckoutError("");
+    checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
     try {
-      let currentBooking = booking;
-      if (!currentBooking) {
-        currentBooking = await createV2GroomingBooking({
-          account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
-          address, pincode: coverage.pincode, cityId: coverage.cityId, zoneId: coverage.zoneId,
-          scheduledStart, scheduledEnd,
-        });
-        setBooking(currentBooking);
-      }
-      if (!checkoutController.current) {
-        checkoutController.current = createV2GroomingCheckoutController(currentBooking.bookingId, setCheckoutState);
-      }
-      await checkoutController.current.start();
+      await createV2GroomingBooking({
+        account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
+        address, pincode: coverage.pincode, cityId: coverage.cityId, zoneId: coverage.zoneId,
+        scheduledStart, scheduledEnd,
+      }, current => {
+        if (!mounted.current) return;
+        setBooking(current);
+        const url = new URL(window.location.href);
+        url.searchParams.set("bookingId", current.bookingId);
+        window.history.replaceState(window.history.state, "", url.pathname + url.search);
+      });
     } catch (problem) {
-      setCheckoutError(problem instanceof Error ? problem.message : "We could not begin secure checkout.");
-    } finally {
-      setCheckoutBusy(false);
-    }
-  };
-
-  const checkPaymentStatus = async () => {
-    if (!checkoutController.current) return;
-    setCheckoutBusy(true);
-    setCheckoutError("");
-    try { await checkoutController.current.resume(); }
-    catch (problem) { setCheckoutError(problem instanceof Error ? problem.message : "We could not refresh payment status."); }
-    finally { setCheckoutBusy(false); }
+      if (mounted.current) setCheckoutError(problem instanceof Error ? problem.message : "We could not prepare checkout.");
+    } finally { checkoutLock.current = false; if (mounted.current) setCheckoutBusy(false); }
   };
 
   const checkLiveCare = async () => {
     if (!account || !bundle || !coverage || !date || mixedAudience) return;
+    const version = ++careVersion.current;
+    setQuote(null);
     setProviderBusy(true);
     setProviderError("");
     setProviders(null);
@@ -187,27 +188,34 @@ export default function V2GroomingPage() {
     try {
       if (!groomingSlotAvailable(date, slotIndex, bundle.slotMinutes)) throw new Error("That grooming slot can no longer be booked. Pick another time.");
       const priced = await quoteV2Grooming({ bundle, isoDate: date, slotIndex, cityId: coverage.cityId, zoneId: coverage.zoneId });
-      setQuote(priced.quote);
-      setScheduledStart(priced.scheduledStart);
-      setScheduledEnd(priced.scheduledEnd);
+      if (!mounted.current || version !== careVersion.current) return;
       const preview = await previewV2Groomers({
         customerId: account.customerId,
+        serviceAddress: address,
+        servicePincode: coverage.pincode,
         petIds: selectedPets.map(pet => pet.id),
         cityId: coverage.cityId,
         zoneId: coverage.zoneId,
         scheduledStart: priced.scheduledStart,
         scheduledEnd: priced.scheduledEnd,
       });
+      if (!mounted.current || version !== careVersion.current) return;
+      setQuote(priced.quote); setScheduledStart(priced.scheduledStart); setScheduledEnd(priced.scheduledEnd);
       setProviders(preview);
       if (preview.providers.length === 1) setSelectedProviderId(preview.providers[0].id);
       if (!preview.providers.length) setProviderError("No groomer is available for this exact slot. Try another time.");
     } catch (problem) {
+      if (!mounted.current || version !== careVersion.current) return;
       setQuote(null);
       setProviderError(problem instanceof Error ? problem.message : "We could not check this slot.");
     } finally {
-      setProviderBusy(false);
+      if (mounted.current && version === careVersion.current) setProviderBusy(false);
     }
   };
+
+  if (booking || recoveryBookingId) return <V2GroomingPaymentPanel
+    key={booking?.bookingId || recoveryBookingId} bookingId={booking?.bookingId || recoveryBookingId}
+    initialAddress={address} initialPincode={pincode} preparing={checkoutBusy} />;
 
   if (loading) return <main className={styles.loading}><span className={styles.loader}>✦</span><b>Preparing a beautiful grooming experience…</b></main>;
 
@@ -221,38 +229,14 @@ export default function V2GroomingPage() {
     </main>
   );
 
-  if (booking) {
-    const confirmed = checkoutState.phase === "captured" && checkoutState.confirmation;
-    return <main className={styles.checkoutPage}>
-      <section className={styles.checkoutCard}>
-        <Link href="/v2" className={styles.checkoutBrand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /></Link>
-        <span className={styles.eyebrow}>{confirmed ? "BOOKING CONFIRMED" : "SECURE CHECKOUT"}</span>
-        <h1>{confirmed ? "Your grooming visit is confirmed." : "Your groomer is reserved while payment is verified."}</h1>
-        <p>{checkoutState.message}</p>
-        <div className={styles.checkoutFacts}>
-          <div><span>Booking</span><b>{booking.bookingId}</b></div>
-          <div><span>Groomer</span><b>{confirmed ? checkoutState.confirmation?.providerName || booking.providerName : booking.providerName}</b></div>
-          <div><span>Payment</span><b>{confirmed ? "Verified by PawSpace" : checkoutState.phase.replaceAll("_", " ")}</b></div>
-          <div><span>Amount</span><b>{money(quote?.price || 0)}</b></div>
-        </div>
-        {confirmed ? <div className={styles.confirmedBox}><span>✓</span><div><b>Canonical confirmation received</b><small>{checkoutState.confirmation?.packageName} · {checkoutState.confirmation?.scheduledStart ? new Date(checkoutState.confirmation.scheduledStart).toLocaleString("en-IN") : ""}</small></div></div> : <div className={styles.safe}><span>◆</span><p><b>Verify-first payment.</b> Razorpay success in the browser is only a receipt; PawSpace confirms this booking only from server-verified gateway evidence.</p></div>}
-        {checkoutError && <p className={styles.inlineError}>{checkoutError}</p>}
-        {!confirmed && <div className={styles.checkoutActions}>
-          <button className={styles.continue} disabled={checkoutBusy} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Checking…" : checkoutState.phase === "error" ? "Retry secure checkout" : "Open secure Razorpay checkout"}</button>
-          {checkoutState.canCheck && <button className={styles.statusButton} disabled={checkoutBusy} onClick={() => void checkPaymentStatus()}>Check verified status</button>}
-        </div>}
-        {confirmed && <Link href="/v2" className={styles.doneLink}>Back to PawSpace V2</Link>}
-      </section>
-    </main>;
-  }
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} aria-busy={checkoutBusy}>
       <div className={styles.ambient} />
       <header className={styles.nav}>
         <Link href="/v2" className={styles.brand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /></Link>
         <div className={styles.progress}><i className={styles.active} /><i /><i /><i /><span>Doorstep grooming</span></div>
-        <Link href="/v2" className={styles.close}>×</Link>
+        <Link href="/v2" className={styles.close} aria-label="Close grooming booking">×</Link>
       </header>
 
       <section className={styles.hero}>
@@ -268,7 +252,7 @@ export default function V2GroomingPage() {
       </section>
 
       <div className={styles.layout}>
-        <div className={styles.journey}>
+        <fieldset className={styles.journey} disabled={checkoutBusy}>
           <section className={styles.step}>
             <div className={styles.stepHead}><span>01</span><div><small>YOUR FAMILY</small><h2>Who’s getting pampered?</h2></div></div>
             <div className={styles.petGrid}>
@@ -291,7 +275,7 @@ export default function V2GroomingPage() {
               {packages.map(pkg => {
                 const option = groomingBundleForCount(pkg, selectedPets.length);
                 const selected = selectedPackage?.code === pkg.code;
-                return <button key={pkg.code} className={`${styles.packageCard} ${selected ? styles.selectedPackage : ""}`} onClick={() => setSelectedPackageCode(pkg.code)} disabled={mixedAudience || !option}>
+                return <button key={pkg.code} className={`${styles.packageCard} ${selected ? styles.selectedPackage : ""}`} onClick={() => { invalidateCare(); setSelectedPackageCode(pkg.code); }} disabled={mixedAudience || !option}>
                   <div className={styles.packageTop}><span>{AUDIENCE_LABEL[pkg.audience]}</span>{selected && <strong>Selected</strong>}</div>
                   <h3>{pkg.name}</h3>
                   <p>{pkg.description}</p>
@@ -304,8 +288,8 @@ export default function V2GroomingPage() {
           <section className={styles.step}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2>Where should we come?</h2></div></div>
             <div className={styles.addressBox}>
-              <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); setCoverage(null); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
-              <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); }} placeholder="560102" /></label>
+              <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
+              <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); invalidateDoorstep(); }} placeholder="560102" /></label>
               <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Verify doorstep"}</button>
             </div>
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>LIVE</strong></div>}
@@ -314,10 +298,10 @@ export default function V2GroomingPage() {
 
           <section className={styles.step}>
             <div className={styles.stepHead}><span>04</span><div><small>LIVE AVAILABILITY</small><h2>Pick a beautiful time</h2></div></div>
-            <div className={styles.dateStrip}>{dates.slice(0, 7).map(item => <button key={item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => setDate(item.isoDate)}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
+            <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
             <div className={styles.slotGrid}>{SLOT_LABELS.map((label, index) => {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
-              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => setSlotIndex(index)}><span>{label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
+              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
             <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
@@ -331,10 +315,10 @@ export default function V2GroomingPage() {
               <strong>{selectedProviderId === provider.id ? "✓" : "Choose"}</strong>
             </button>)}</div>
           </section>}
-        </div>
+        </fieldset>
 
         <aside className={styles.summary}>
-          <div className={styles.summaryTop}><span>YOUR CARE PLAN</span><b>Live, not estimated</b></div>
+          <div className={styles.summaryTop}><span>YOUR CARE PLAN</span><b>{quote ? "Live price checked" : "Your selected care"}</b></div>
           <div className={styles.summaryPet}><img src="/assets/pawspace-grooming-cartoon.webp" alt="" /><div><b>{selectedPets.map(pet => pet.name).join(" + ") || "Choose your pet"}</b><small>{selectedPets.length ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "No pet selected"}</small></div></div>
           <div className={styles.summaryRows}>
             <div><span>Package</span><b>{selectedPackage?.name || "—"}</b></div>
@@ -342,9 +326,10 @@ export default function V2GroomingPage() {
             <div><span>When</span><b>{date ? `${date} · ${SLOT_LABELS[slotIndex]}` : "—"}</b></div>
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
-          <div className={styles.priceBlock}><span>Live price</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
-          <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> PR-2 only previews live truth. Payment and canonical confirmation are intentionally deferred to PR-3.</p></div>
-          <button className={styles.continue} disabled={!quote || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & pay securely"} <span>→</span></button>
+          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
+          <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
+          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
       </div>
