@@ -1,0 +1,13 @@
+{
+  "name": "@saas-core/platform",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Multi-tenant operating system for appointment-based businesses.",
+  "engines": { "node": ">=22.15.0" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs",
+    "test:isolation": "node --experimental-strip-types --test tests/tenant-isolation.test.mjs tests/sql-boundary-guard.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}
