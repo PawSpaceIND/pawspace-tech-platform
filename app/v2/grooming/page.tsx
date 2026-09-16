@@ -96,7 +96,7 @@ export default function V2GroomingPage() {
   );
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
   const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
-  const dates = useMemo(() => groomingBookingDates(Date.now(), 14), []);
+  const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
   useEffect(() => {
     if (selectedPackage && selectedPackage.code !== selectedPackageCode) setSelectedPackageCode(selectedPackage.code);
