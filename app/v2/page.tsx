@@ -29,7 +29,7 @@ type ServiceCard = {
 };
 
 const SERVICES: ServiceCard[] = [
-  { code: "grooming", name: "Grooming", eyebrow: "Doorstep spa", note: "Salon-quality care, at home.", href: "/grooming", image: "/assets/pawspace-grooming-cartoon.webp", accent: "#f0ad36", wash: "#fff0c9", size: "hero" },
+  { code: "grooming", name: "Grooming", eyebrow: "Doorstep spa", note: "Salon-quality care, at home.", href: "/v2/grooming", image: "/assets/pawspace-grooming-cartoon.webp", accent: "#f0ad36", wash: "#fff0c9", size: "hero" },
   { code: "boarding", name: "Boarding", eyebrow: "Trusted stays", note: "A second home when you travel.", href: "/boarding", image: "/assets/pawspace-boarding-cartoon.webp", accent: "#cf7c67", wash: "#ffe4db" },
   { code: "dog_training", name: "Training", eyebrow: "Better habits", note: "Kind coaching for calmer days.", href: "/training", image: "/assets/pawspace-training-cartoon.webp", accent: "#6b7ed7", wash: "#e7eaff" },
   { code: "pet_sitting", name: "Pet Sitting", eyebrow: "Care at home", note: "Familiar spaces, loving company.", href: "/sitting", image: "/assets/pawspace-sitting-cartoon.webp", accent: "#c56b9c", wash: "#fde6f2" },
