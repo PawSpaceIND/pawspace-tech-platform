@@ -1,6 +1,7 @@
 import type { CustomerAccountRecord } from "../customer-account";
 import { stableBookingInputKey } from "../booking-input-fingerprint";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
+import { apiSend } from "../api-fetch";
 import { CustomerCheckoutController, type CheckoutState } from "../customer-checkout-client";
 import { reserveUatSchedule, type ProviderPreview } from "../uat-scheduling-client";
 import type { V2GroomingBundle, V2GroomingPackage, V2GroomingQuote } from "./grooming-client";
@@ -98,6 +99,20 @@ export async function createV2GroomingBooking(input: V2GroomingCheckoutInput): P
     pricing: { discount: 0 },
   });
   if (canonical.status !== "payment_pending") throw new Error("The booking did not enter the required payment-pending state.");
+  await apiSend<{ bookingId: string; addressSaved: boolean; coordinatesSaved: boolean }>(
+    "/api/grooming-service-location",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bookingId: canonical.bookingId,
+        customerId: input.account.customerId,
+        address: input.address.trim(),
+        pincode: input.pincode,
+      }),
+    },
+    `Booking ${canonical.bookingId} was created, but the verified doorstep could not be saved. Retry secure checkout; PawSpace will reuse the same booking.`,
+  );
   return { ...canonical, idempotencyKey, providerName: decision.provider.name };
 }
 

@@ -10,6 +10,7 @@ test("V2 grooming checkout composes existing governed booking and payment author
   assert.match(client, /reserveUatSchedule/);
   assert.match(client, /createCanonicalLifecycle/);
   assert.match(client, /CustomerCheckoutController/);
+  assert.match(client, /\/api\/grooming-service-location/);
   assert.doesNotMatch(client, /fetch\([^\n]*razorpay/i);
 });
 
@@ -17,7 +18,9 @@ test("V2 grooming creates a payment-pending canonical booking before checkout", 
   const client = await read("lib/v2/grooming-checkout-client.ts");
   const reserve = client.indexOf("await reserveUatSchedule");
   const canonical = client.indexOf("await createCanonicalLifecycle");
+  const location = client.indexOf("/api/grooming-service-location");
   assert.ok(reserve >= 0 && canonical > reserve, "schedule reservation must precede canonical booking creation");
+  assert.ok(location > canonical, "governed service location must be persisted after the canonical booking exists");
   assert.match(client, /mode:\s*"prepaid"/);
   assert.match(client, /status:\s*"created"/);
   assert.match(client, /canonical\.status !== "payment_pending"/);
