@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
 import { groomingBookingDates, groomingSlotAvailable } from "../../../lib/grooming-booking-calendar";
 import {
@@ -22,6 +22,12 @@ import {
 } from "../../../lib/v2/grooming-client";
 import type { ResolvedServiceCoverage } from "../../../lib/service-zone-client";
 import type { ProviderPreview } from "../../../lib/uat-scheduling-client";
+import {
+  createV2GroomingBooking,
+  createV2GroomingCheckoutController,
+  type CheckoutState,
+  type V2GroomingBooking,
+} from "../../../lib/v2/grooming-checkout-client";
 import styles from "./grooming.module.css";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
@@ -56,6 +62,11 @@ export default function V2GroomingPage() {
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerError, setProviderError] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [booking, setBooking] = useState<V2GroomingBooking | null>(null);
+  const [checkoutState, setCheckoutState] = useState<CheckoutState>({ phase: "ready", message: "Ready for secure checkout.", canCheck: false });
+  const [checkoutError, setCheckoutError] = useState("");
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const checkoutController = useRef<ReturnType<typeof createV2GroomingCheckoutController> | null>(null);
 
   const bootstrap = useCallback(async () => {
     setLoading(true);
@@ -132,6 +143,41 @@ export default function V2GroomingPage() {
     }
   };
 
+  const beginSecureCheckout = async () => {
+    const provider = providers?.providers.find(item => item.id === selectedProviderId);
+    if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
+    setCheckoutBusy(true);
+    setCheckoutError("");
+    try {
+      let currentBooking = booking;
+      if (!currentBooking) {
+        currentBooking = await createV2GroomingBooking({
+          account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
+          address, pincode: coverage.pincode, cityId: coverage.cityId, zoneId: coverage.zoneId,
+          scheduledStart, scheduledEnd,
+        });
+        setBooking(currentBooking);
+      }
+      if (!checkoutController.current) {
+        checkoutController.current = createV2GroomingCheckoutController(currentBooking.bookingId, setCheckoutState);
+      }
+      await checkoutController.current.start();
+    } catch (problem) {
+      setCheckoutError(problem instanceof Error ? problem.message : "We could not begin secure checkout.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  };
+
+  const checkPaymentStatus = async () => {
+    if (!checkoutController.current) return;
+    setCheckoutBusy(true);
+    setCheckoutError("");
+    try { await checkoutController.current.resume(); }
+    catch (problem) { setCheckoutError(problem instanceof Error ? problem.message : "We could not refresh payment status."); }
+    finally { setCheckoutBusy(false); }
+  };
+
   const checkLiveCare = async () => {
     if (!account || !bundle || !coverage || !date || mixedAudience) return;
     setProviderBusy(true);
@@ -174,6 +220,31 @@ export default function V2GroomingPage() {
       <div><Link href="/v2">Back to PawSpace V2</Link><button onClick={() => void bootstrap()}>Try again</button></div>
     </main>
   );
+
+  if (booking) {
+    const confirmed = checkoutState.phase === "captured" && checkoutState.confirmation;
+    return <main className={styles.checkoutPage}>
+      <section className={styles.checkoutCard}>
+        <Link href="/v2" className={styles.checkoutBrand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /></Link>
+        <span className={styles.eyebrow}>{confirmed ? "BOOKING CONFIRMED" : "SECURE CHECKOUT"}</span>
+        <h1>{confirmed ? "Your grooming visit is confirmed." : "Your groomer is reserved while payment is verified."}</h1>
+        <p>{checkoutState.message}</p>
+        <div className={styles.checkoutFacts}>
+          <div><span>Booking</span><b>{booking.bookingId}</b></div>
+          <div><span>Groomer</span><b>{confirmed ? checkoutState.confirmation?.providerName || booking.providerName : booking.providerName}</b></div>
+          <div><span>Payment</span><b>{confirmed ? "Verified by PawSpace" : checkoutState.phase.replaceAll("_", " ")}</b></div>
+          <div><span>Amount</span><b>{money(quote?.price || 0)}</b></div>
+        </div>
+        {confirmed ? <div className={styles.confirmedBox}><span>✓</span><div><b>Canonical confirmation received</b><small>{checkoutState.confirmation?.packageName} · {checkoutState.confirmation?.scheduledStart ? new Date(checkoutState.confirmation.scheduledStart).toLocaleString("en-IN") : ""}</small></div></div> : <div className={styles.safe}><span>◆</span><p><b>Verify-first payment.</b> Razorpay success in the browser is only a receipt; PawSpace confirms this booking only from server-verified gateway evidence.</p></div>}
+        {checkoutError && <p className={styles.inlineError}>{checkoutError}</p>}
+        {!confirmed && <div className={styles.checkoutActions}>
+          <button className={styles.continue} disabled={checkoutBusy} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Checking…" : checkoutState.phase === "error" ? "Retry secure checkout" : "Open secure Razorpay checkout"}</button>
+          {checkoutState.canCheck && <button className={styles.statusButton} disabled={checkoutBusy} onClick={() => void checkPaymentStatus()}>Check verified status</button>}
+        </div>}
+        {confirmed && <Link href="/v2" className={styles.doneLink}>Back to PawSpace V2</Link>}
+      </section>
+    </main>;
+  }
 
   return (
     <main className={styles.page}>
@@ -273,8 +344,8 @@ export default function V2GroomingPage() {
           </div>
           <div className={styles.priceBlock}><span>Live price</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> PR-2 only previews live truth. Payment and canonical confirmation are intentionally deferred to PR-3.</p></div>
-          <button className={styles.continue} disabled={!quote || !selectedProviderId || !scheduledStart || !scheduledEnd}>Review booking <span>→</span></button>
-          <small className={styles.footnote}>No booking ID, payment or provider reservation is created on this screen.</small>
+          <button className={styles.continue} disabled={!quote || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & pay securely"} <span>→</span></button>
+          <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
       </div>
     </main>
