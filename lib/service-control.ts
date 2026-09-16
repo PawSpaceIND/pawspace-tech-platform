@@ -8,7 +8,16 @@ export const pawspaceServices=[
  {code:"food",name:"Pet Food",group:"Commerce"},
  {code:"relocation",name:"Pet Relocation",group:"Special services"},
  {code:"funeral_memorial",name:"Funeral & Memorial",group:"Special services"},
- {code:"vet_consult",name:"Doorstep Vet Consultation",group:"Healthcare"},
+ /*
+  * NOT LIVE, and said so rather than implied. No provider record anywhere in this repository offers
+  * vet_consult, lib/marketing-landing-content.ts marks both Doorstep Vet landing pages paused:true,
+  * and reserving a vet slot answers NO_SCHEDULE_AVAILABLE with an empty evaluation list - there is
+  * nobody to evaluate. It was nevertheless published to customers as enabled, because the seed below
+  * enabled EVERY service, so the service picker offered a vertical that cannot be booked and the
+  * dead end read as a temporary capacity problem instead of a service that has not launched.
+  */
+ {code:"vet_consult",name:"Doorstep Vet Consultation",group:"Healthcare",
+  launchState:{enabled:false,reason:"Doorstep Vet has not launched: no veterinary provider is onboarded yet."}},
 ] as const;
 export type PawSpaceServiceCode=(typeof pawspaceServices)[number]["code"];
 export type ServiceControl={code:PawSpaceServiceCode;name:string;group:string;enabled:boolean;disabledReason:string|null;updatedBy:string;updatedAt:number};
@@ -19,7 +28,14 @@ export function isPawSpaceServiceCode(value:string):value is PawSpaceServiceCode
 export async function ensureServiceControlTables(db:D1Database){const now=Date.now();await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS service_controls (service_code TEXT PRIMARY KEY,service_name TEXT NOT NULL,service_group TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,disabled_reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS service_control_audit_events (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,from_enabled INTEGER NOT NULL,to_enabled INTEGER NOT NULL,reason TEXT NOT NULL,actor_email TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-]);await db.batch(pawspaceServices.map(service=>db.prepare("INSERT OR IGNORE INTO service_controls (service_code,service_name,service_group,enabled,disabled_reason,updated_by,updated_at) VALUES (?,?,?,1,NULL,'system',?)").bind(service.code,service.name,service.group,now)))}
+]);await db.batch(pawspaceServices.map(service=>{
+  /* A service's SEEDED state, used only when this database has never seen it (INSERT OR IGNORE). A
+     service that has not launched seeds disabled with the reason, so a new environment tells a
+     customer the truth; anywhere staff have already made a decision, theirs stands. */
+  const launch=("launchState" in service?service.launchState:undefined) as {enabled:boolean;reason:string}|undefined;
+  return db.prepare("INSERT OR IGNORE INTO service_controls (service_code,service_name,service_group,enabled,disabled_reason,updated_by,updated_at) VALUES (?,?,?,?,?,'system',?)")
+    .bind(service.code,service.name,service.group,launch&&!launch.enabled?0:1,launch&&!launch.enabled?launch.reason:null,now);
+}))}
 export async function listServiceControls(db:D1Database):Promise<ServiceControl[]>{await ensureServiceControlTables(db);const rows=await db.prepare("SELECT service_code,service_name,service_group,enabled,disabled_reason,updated_by,updated_at FROM service_controls").all<Stored>(),byCode=new Map(rows.results.map(row=>[row.service_code,row]));return pawspaceServices.map(service=>{const row=byCode.get(service.code);return{code:service.code,name:service.name,group:service.group,enabled:row?Boolean(row.enabled):true,disabledReason:row?.disabled_reason??null,updatedBy:row?.updated_by??"system",updatedAt:Number(row?.updated_at||0)}})}
 export async function setServiceEnabled(db:D1Database,input:{serviceCode:PawSpaceServiceCode;enabled:boolean;reason:string;actorEmail:string}){await ensureServiceControlTables(db);const definition=pawspaceServices.find(service=>service.code===input.serviceCode);if(!definition)throw new Error("Unknown PawSpace service");const reason=input.reason.trim(),now=Date.now(),current=await db.prepare("SELECT enabled FROM service_controls WHERE service_code=?").bind(input.serviceCode).first<{enabled:number}>(),fromEnabled=current?Boolean(current.enabled):true;if(!input.enabled&&reason.length<8)throw new Error("A clear reason of at least 8 characters is required before disabling a service");const auditReason=reason||(input.enabled?"Re-enabled from Platform Control":"Service disabled from Platform Control");await db.batch([
  db.prepare("UPDATE service_controls SET enabled=?,disabled_reason=?,updated_by=?,updated_at=? WHERE service_code=?").bind(input.enabled?1:0,input.enabled?null:auditReason,input.actorEmail,now,input.serviceCode),
