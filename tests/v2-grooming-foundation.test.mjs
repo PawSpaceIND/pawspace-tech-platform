@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { importLibModule } from "./helpers/ts-module-loader.mjs";
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+const { groomingSlotWindow } = await importLibModule("grooming-booking-calendar");
 
 test("V2 home keeps Grooming inside the V2 journey", async () => {
   const home = await read("app/v2/page.tsx");
@@ -38,4 +40,12 @@ test("V2 grooming client keeps pricing and scheduling behind governed APIs", asy
   assert.match(client, /previewUatProviders/);
   assert.doesNotMatch(client, /canonical-bookings/);
   assert.doesNotMatch(client, /razorpay/i);
+});
+
+
+test("V2 grooming executes the canonical IST slot-window calculation it wires into quotes", () => {
+  const { start, end } = groomingSlotWindow("2026-09-17", 1, 90);
+  assert.equal(start.toISOString(), "2026-09-17T05:30:00.000Z");
+  assert.equal(end.toISOString(), "2026-09-17T07:00:00.000Z");
+  assert.throws(() => groomingSlotWindow("2026-09-17", 4, 180), /service hours/);
 });
