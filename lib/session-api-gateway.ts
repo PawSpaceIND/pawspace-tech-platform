@@ -30,6 +30,7 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   // cloned browser request body here: on streamed browser POSTs this can stall the downstream body
   // reader before the route can answer. Session auth still requires a customer with scheduling.book.
   if(url.pathname==="/api/grooming-booking-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/partner-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/partner-grooming-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/grooming-route"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if((url.pathname==="/api/grooming-route"||url.pathname==="/api/partner-heartbeat")&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
