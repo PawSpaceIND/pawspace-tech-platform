@@ -601,7 +601,7 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
 });
 
 test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, start service, upload photos", async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(600_000);
   section("3. Partner persona (/partner-app)");
   expect(bookingId, "a booking must exist from the customer step").not.toEqual("");
   providerPhone = PROVIDER_PHONES[assignedProviderId] || "9000000904";
@@ -644,13 +644,18 @@ async function partnerLifecycle(page: Page) {
   })((route.body as { data?: unknown })?.data ?? route.body);
   const target = found ? { latitude: found.lat, longitude: found.lng } : DOORSTEP;
   log(`${found ? "✅" : "ℹ️"} Doorstep coordinates ${found ? "from the route API" : "not exposed by the route API; using the mocked doorstep"}: ${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}.`);
+  // The current Partner app uses managed duty tracking (watchPosition), not the retired manual
+  // "Update once" control. Move the mocked device to the canonical doorstep, let the 15 s
+  // telemetry throttle elapse, then nudge it to force a fresh browser geolocation event.
   await page.context().setGeolocation({ ...target, accuracy: 8 });
-  await page.locator("nav").getByRole("button", { name: /gps/i }).last().click();
+  await page.waitForTimeout(16_000);
   const gpsPost = page.waitForResponse(r => r.url().includes("/api/grooming-route") && r.request().method() === "POST", { timeout: 30_000 });
-  await page.getByRole("button", { name: /Update once/ }).click();
+  await page.context().setGeolocation({ latitude: target.latitude + 0.000001, longitude: target.longitude + 0.000001, accuracy: 8 });
   const gpsRes = await gpsPost;
   const gpsBody = await gpsRes.json().catch(() => ({})) as { error?: string };
-  log(`${gpsRes.ok() ? "✅" : "❌"} GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
+  log(`${gpsRes.ok() ? "✅" : "❌"} Managed GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
+  await page.locator("nav").getByRole("button", { name: /gps/i }).last().click();
+  await expect(page.getByText(/Latest trusted GPS/i), "managed duty tracking must surface a trusted GPS fix").toBeVisible({ timeout: 20_000 });
   await shot(page, "partner-gps");
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
   expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
