@@ -498,8 +498,12 @@ async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
   // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
   const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
-  await button.click();
+  // The lifecycle POST can succeed immediately while Chromium keeps the click promise open waiting
+  // on navigation/actionability bookkeeping. Do not let that browser wait consume the persona budget:
+  // the HTTP response is the authoritative completion signal for this action.
+  const click = button.click({ noWaitAfter: true, timeout: 15_000 });
   const res = await lifecycle;
+  await click.catch((error) => log(`ℹ️ ${String(label)} click settled after the lifecycle response: ${errText(error)}`));
   const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
   log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
   if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
