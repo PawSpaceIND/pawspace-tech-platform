@@ -694,6 +694,21 @@ async function partnerLifecycle(page: Page) {
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
   expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
   await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
+
+  // The Partner app intentionally blocks service start until the groomer acknowledges every
+  // before-service safety check. Exercise those real UI controls rather than bypassing the gate.
+  const beforeServiceChecklist = page.getByRole("group", { name: /Before-service checklist/i });
+  await expect(beforeServiceChecklist, "before-service checklist after arrival").toBeVisible({ timeout: 30_000 });
+  const checklistItems = beforeServiceChecklist.getByRole("checkbox");
+  await expect(checklistItems, "three required before-service checks").toHaveCount(3);
+  for (let i = 0; i < 3; i += 1) {
+    await checklistItems.nth(i).check();
+    await expect(checklistItems.nth(i), `before-service check ${i + 1}`).toBeChecked();
+  }
+  const startService = page.getByRole("button", { name: /^Start service$/ }).first();
+  await expect(startService, "Start service must unlock only after all safety checks").toBeEnabled({ timeout: 15_000 });
+  log("✅ Before-service checklist completed; Start service enabled through the real Partner UI.");
+
   await partnerAct(page, /^Start service$/, /in service/i); log("✅ Start service → in service.");
   await shot(page, "partner-in-service");
 
