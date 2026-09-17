@@ -491,34 +491,59 @@ async function awaitPartnerAction(page: Page, label: RegExp, timeoutMs: number):
   return false;
 }
 
+type PartnerLifecycleProjection = {
+  data?: {
+    booking?: { status?: string; workOrderStatus?: string; work_order_status?: string };
+    events?: Array<{ eventType?: string }>;
+  };
+};
+
+async function readPartnerLifecycle(page: Page): Promise<PartnerLifecycleProjection | null> {
+  const res = await page.context().request.get(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(bookingId)}`, {
+    headers: { "cache-control": "no-store" },
+  }).catch(() => null);
+  if (!res?.ok()) return null;
+  return res.json().catch(() => null) as Promise<PartnerLifecycleProjection | null>;
+}
+
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const button = page.getByRole("button", { name: label }).first();
   await awaitPartnerAction(page, label, 30_000);
   await expect(button, `partner action ${label}`).toBeVisible({ timeout: 5_000 });
-  // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
-  // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
-  const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
-  // The lifecycle POST can succeed immediately while Chromium keeps the click promise open waiting
-  // on navigation/actionability bookkeeping. Do not let that browser wait consume the persona budget:
-  // the HTTP response is the authoritative completion signal for this action.
+
+  // On deployed Chromium, waitForResponse can remain unresolved for minutes even after the lifecycle
+  // POST has returned 200 and D1/UI have moved forward. Use the authenticated canonical projection as
+  // the completion authority instead. This also keeps a real postcondition for add_proof, whose status
+  // intentionally remains in_service: require a new service_proof_updated lifecycle event.
+  const before = await readPartnerLifecycle(page);
+  const proofEventsBefore = before?.data?.events?.filter(e => e.eventType === "service_proof_updated").length ?? 0;
   void button.click({ noWaitAfter: true, timeout: 15_000 }).catch((error) =>
     log(`ℹ️ ${String(label)} click did not settle within the bounded browser wait: ${errText(error)}`),
   );
-  const res = await lifecycle;
-  const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
-  log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
-  if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
-  // Re-read the canonical projection after a successful lifecycle write. On deployed staging the
-  // POST can commit before the current React tree has consumed the next /api/partner-jobs response.
-  // Force one explicit refresh/reselection before asserting, so this checks server truth instead of
-  // spending the persona-wide timeout on a stale DOM snapshot.
-  let shown = page.getByText(expectStatus).first();
-  if (!(await shown.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false))) {
-    await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
-    await page.waitForTimeout(2_000);
-    await reselectJobCard(page);
-    shown = page.getByText(expectStatus).first();
+
+  let canonicalStatus = "";
+  const committed = await expect.poll(async () => {
+    const projection = await readPartnerLifecycle(page);
+    const booking = projection?.data?.booking;
+    canonicalStatus = String(booking?.workOrderStatus || booking?.work_order_status || booking?.status || "").replaceAll("_", " ");
+    if (/Add service proof/i.test(String(label))) {
+      const proofEvents = projection?.data?.events?.filter(e => e.eventType === "service_proof_updated").length ?? 0;
+      return proofEvents > proofEventsBefore;
+    }
+    return expectStatus.test(canonicalStatus);
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000, 3_000] }).toBe(true).then(() => true, () => false);
+
+  if (!committed) {
+    await frameOutline(page, `Partner job after ${String(label)} did not reach canonical ${String(expectStatus)}`, 2_500);
+    throw new Error(`${String(label)} did not commit within 60 s (last canonical status: "${canonicalStatus || "unknown"}")`);
   }
+  log(`✅ ${String(label)} committed in canonical lifecycle${canonicalStatus ? ` (status: ${canonicalStatus})` : ""}.`);
+
+  // Refresh/reselect once so the visual assertion proves the Partner UI consumed the committed truth.
+  await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
+  await page.waitForTimeout(2_000);
+  await reselectJobCard(page);
+  const shown = page.getByText(expectStatus).first();
   if (!(await shown.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) await frameOutline(page, `Partner job after ${String(label)} (expected ${String(expectStatus)})`, 2_500);
   await expect(shown, `status after ${String(label)}`).toBeVisible();
 }
