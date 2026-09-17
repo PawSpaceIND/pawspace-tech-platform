@@ -585,6 +585,10 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
 
     section("2. Razorpay sandbox payment");
     try {
+      const paySecurely = page.getByRole("button", { name: /^Pay securely\b/i });
+      await expect(paySecurely, "prepaid checkout must expose the real Pay securely button").toBeVisible({ timeout: 30_000 });
+      await paySecurely.click();
+      log("✅ Pay securely pressed through the real Customer UI; waiting for Razorpay sandbox checkout.");
       await completeRazorpayTestPayment(page);
       const verified = page.getByText(/Payment verified by PawSpace/i).first();
       const reserved = page.getByText("Your groomer is reserved.", { exact: true });
@@ -599,6 +603,7 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
     log(paymentCaptured
       ? `✅ Server checkout status for ${bookingId}: "captured" (signed receipt verified by PawSpace). Post-payment saga engaged.`
       : `❌ Server checkout status for ${bookingId}: HTTP ${status.http}, ${JSON.stringify(status.body)}. The sandbox capture did not complete under automation; see the checkout outlines above and the screenshots.`);
+    expect(paymentCaptured, "online UAT must prove the Razorpay sandbox payment captured; pay-after fallback cannot make this gate green").toBe(true);
     await frameOutline(page, "Customer payment page after the checkout attempt", 2_000);
     if (paymentCaptured) {
       if (await page.getByText("Your groomer is reserved.", { exact: true }).isVisible({ timeout: 20_000 }).catch(() => false)) log("✅ Confirmation screen: \"Your groomer is reserved.\"");
