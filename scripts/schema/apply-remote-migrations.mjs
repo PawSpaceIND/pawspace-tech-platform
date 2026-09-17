@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { normalizeReplaySafeDdl } from "./apply-idempotent-drizzle.mjs";
+import { classifyRemoteD1Retry } from "./remote-d1-retry.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -56,9 +57,9 @@ function wranglerWithResetRetry(sqlArgs, label, attempts = 3) {
       return wrangler(sqlArgs);
     } catch (error) {
       const detail = `${error?.message ?? ""}\n${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
-      const reset = detail.includes("D1_RESET_DO");
-      if (!reset || attempt === attempts) throw error;
-      console.warn(`[schema] ${label} hit D1_RESET_DO; retrying ${attempt}/${attempts - 1}`);
+      const retry = classifyRemoteD1Retry(detail);
+      if (!retry.retryable || attempt === attempts) throw error;
+      console.warn(`[schema] ${label} hit ${retry.reason}; retrying ${attempt}/${attempts - 1}`);
       execFileSync("sleep", [String(attempt * 2)], { stdio: "ignore" });
     }
   }
