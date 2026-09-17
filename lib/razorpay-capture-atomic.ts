@@ -10,6 +10,11 @@ import { resolveTaxiCompletionFinance } from "./taxi-completion-finance";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
+type PrimaryReadDb = Pick<Db, "prepare">;
+
+function firstPrimaryRead(db: Db): PrimaryReadDb {
+  return (db as Db & { withSession?: (constraint: "first-primary") => PrimaryReadDb }).withSession?.("first-primary") ?? db;
+}
 
 export type AtomicRazorpayCaptureInput = {
   /** Signed webhook is default; provider_api is authenticated server-to-server reconciliation. */
@@ -248,6 +253,10 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
 
 export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId: string; workerId: string; leaseMs?: number }) {
   await ensureFinancialRuntimeTables(db);
+  // This worker immediately reads facts committed by commitRazorpayCaptureAtomic. D1 read replicas can
+  // lag those writes for seconds or longer, which can make a verified capture look absent and defer the
+  // booking confirmation until the scheduled outbox retry. Pin post-write authority reads to primary.
+  const readDb = firstPrimaryRead(db);
   const now = Date.now();
   const leaseMs = Math.max(5_000, Math.min(input.leaseMs || 30_000, 120_000));
   await db.prepare("UPDATE financial_outbox SET status='RETRY',lease_owner=NULL,lease_expires_at=NULL,last_error=COALESCE(last_error,'stale_capture_effects_lease'),next_attempt_at=?,updated_at=? WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?")
@@ -255,11 +264,11 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
   const claim = await db.prepare("UPDATE financial_outbox SET status='PROCESSING',lease_owner=?,lease_expires_at=?,attempts=attempts+1,updated_at=? WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT' AND status IN ('PENDING','RETRY') AND next_attempt_at<=?")
     .bind(input.workerId, now + leaseMs, now, input.outboxId, now).run();
   if (Number(claim.meta?.changes || 0) !== 1) {
-    const current = await db.prepare("SELECT status,last_error,payload_json FROM financial_outbox WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT'").bind(input.outboxId).first<Row>();
+    const current = await readDb.prepare("SELECT status,last_error,payload_json FROM financial_outbox WHERE id=? AND event_type='RAZORPAY_CAPTURE_POST_COMMIT'").bind(input.outboxId).first<Row>();
     if (text(current?.status) === "SUCCEEDED") {
       try {
         const prior = JSON.parse(text(current?.payload_json) || "{}") as Row;
-        const source = await db.prepare(`SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND ${trustedCaptureSql()} AND processing_status='processed'`)
+        const source = await readDb.prepare(`SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND ${trustedCaptureSql()} AND processing_status='processed'`)
           .bind(text(prior.eventId), text(prior.paymentId)).first<Row>();
         if (!source) throw new Error("Verified capture timeline source is missing");
         await ensureCaptureTimeline(db);
@@ -271,15 +280,15 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     }
     return { claimed: false as const, completed: text(current?.status) === "SUCCEEDED", status: text(current?.status), reason: text(current?.last_error) || undefined };
   }
-  const work = await db.prepare("SELECT * FROM financial_outbox WHERE id=? AND lease_owner=?").bind(input.outboxId, input.workerId).first<Row>();
+  const work = await readDb.prepare("SELECT * FROM financial_outbox WHERE id=? AND lease_owner=?").bind(input.outboxId, input.workerId).first<Row>();
   if (!work) throw new Error("Capture post-commit outbox claim disappeared");
   const payload = JSON.parse(text(work.payload_json) || "{}") as Record<string, unknown>;
   try {
     const bookingId = text(payload.bookingId), paymentId = text(payload.paymentId), eventId = text(payload.eventId), captureReference = text(payload.gatewayPaymentId) || text(payload.gatewayOrderId) || text(payload.captureKey) || eventId;
     const sourceActor=text(payload.captureAuthority)==="provider_api"?"razorpay_provider_api":"razorpay_webhook";
-    const payment = await db.prepare("SELECT * FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
+    const payment = await readDb.prepare("SELECT * FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
     if (!payment) throw new Error("Capture post-commit payment is missing");
-    const booking = await db.prepare("SELECT city_id,service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
+    const booking = await readDb.prepare("SELECT city_id,service_code,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
     await postCollectionEvent(db, {
       event: "online_payment_captured",
       bookingId,
@@ -297,7 +306,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     await assertCaptureCollectionJournal(db, paymentId, captureReference, Number(payload.amountPaise || 0) / 100);
     // The notification sweep and booking/admin history consume this canonical event.
     // Timeline truth must come from persisted verified provider evidence; recovery uses the same key.
-    const source = await db.prepare(`SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND ${trustedCaptureSql()} AND processing_status='processed'`)
+    const source = await readDb.prepare(`SELECT environment FROM payment_gateway_events WHERE provider='razorpay' AND event_id=? AND payment_id=? AND ${trustedCaptureSql()} AND processing_status='processed'`)
       .bind(eventId, paymentId).first<Row>();
     if (!source) throw new Error("Verified capture timeline source is missing");
     await ensureCaptureTimeline(db);
@@ -305,10 +314,10 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       gatewayPaymentId: text(payload.gatewayPaymentId), gatewayOrderId: text(payload.gatewayOrderId), eventId }).run();
     const confirmationServices=new Set(["grooming","dog_training","boarding","pet_sitting"]);
     if(confirmationServices.has(text(booking?.service_code))&&text(booking?.status)==="payment_pending") {
-      const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
+      const recon=await readDb.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
       const captured=Number(recon?.captured_amount||0),dueNow=Number(payment.amount_due_now||0);
       if(dueNow>0&&captured+0.009>=dueNow) {
-        const work=await db.prepare("SELECT provider_model FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+        const work=await readDb.prepare("SELECT provider_model FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
         const nextWork=text(work?.provider_model)==="commission"?"awaiting_acceptance":"assigned";
         const changed=await db.prepare("UPDATE canonical_bookings SET status='confirmed',updated_at=? WHERE id=? AND status='payment_pending'").bind(now,bookingId).run();
         if(Number(changed.meta?.changes||0)===1){
@@ -318,8 +327,8 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       }
     }
     if(text(booking?.service_code)==="pet_taxi") {
-      const taxiSchedule=await db.prepare("SELECT booking_fee_amount,balance_amount,status,booking_fee_paid_at FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
-      const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
+      const taxiSchedule=await readDb.prepare("SELECT booking_fee_amount,balance_amount,status,booking_fee_paid_at FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+      const recon=await readDb.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
       const captured=Number(recon?.captured_amount||0),bookingFee=Number(taxiSchedule?.booking_fee_amount||0);
       if(taxiSchedule&&bookingFee>0&&captured+0.009>=bookingFee&&text(booking?.status)==="payment_pending") {
         const changed=await db.prepare("UPDATE canonical_bookings SET status='confirmed',updated_at=? WHERE id=? AND service_code='pet_taxi' AND status='payment_pending'").bind(now,bookingId).run();
@@ -330,7 +339,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       }
       if(payload.collectedInFull===true){
         await db.prepare("UPDATE taxi_trip_payment_events SET status='gateway_paid',reference=COALESCE(reference,?),updated_at=? WHERE booking_id=? AND status='due'").bind(captureReference,now,bookingId).run().catch(()=>null);
-        const completedTrip=await db.prepare("SELECT updated_at FROM taxi_trips WHERE booking_id=? AND status='completed'").bind(bookingId).first<Row>().catch(()=>null);
+        const completedTrip=await readDb.prepare("SELECT updated_at FROM taxi_trips WHERE booking_id=? AND status='completed'").bind(bookingId).first<Row>().catch(()=>null);
         if(completedTrip){await resolveTaxiCompletionFinance(db,{bookingId,actorId:"razorpay_capture_saga",completedAt:Number(completedTrip.updated_at||now)});}
       }
     }
