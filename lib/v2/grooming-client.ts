@@ -1,5 +1,5 @@
 import { apiSend } from "../api-fetch";
-import { groomingSlotWindow } from "../grooming-booking-calendar";
+import { groomingSlotWindow, groomingSlotAvailable } from "../grooming-booking-calendar";
 import { previewUatProviders, type ProviderPreview } from "../uat-scheduling-client";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../service-zone-client";
 
@@ -55,6 +55,12 @@ export async function quoteV2Grooming(input: {
   cityId: string;
   zoneId: string;
 }): Promise<{ quote: V2GroomingQuote; scheduledStart: string; scheduledEnd: string }> {
+  if (!groomingSlotAvailable(input.isoDate, input.slotIndex, input.bundle.slotMinutes)) {
+    throw new Error("Choose a future grooming slot within service hours.");
+  }
+  if (input.bundle.effectiveFrom > input.isoDate || (input.bundle.effectiveTo && input.bundle.effectiveTo < input.isoDate)) {
+    throw new Error("This package is not published for the selected date. Refresh the care packages.");
+  }
   const { start, end } = groomingSlotWindow(input.isoDate, input.slotIndex, input.bundle.slotMinutes);
   const quote = await apiSend<V2GroomingQuote>(
     "/api/live-price-quote",
@@ -71,6 +77,9 @@ export async function quoteV2Grooming(input: {
     },
     "We could not confirm the live grooming price.",
   );
+  if (quote.source !== "pricing_control" || !Number.isFinite(quote.price) || quote.price <= 0) {
+    throw new Error("A published live grooming price could not be verified. Refresh packages before continuing.");
+  }
   return { quote, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString() };
 }
 
@@ -82,8 +91,13 @@ export async function previewV2Groomers(input: {
   scheduledStart: string;
   scheduledEnd: string;
   preferredProviderId?: string;
+  serviceAddress: string;
+  servicePincode: string;
 }): Promise<ProviderPreview> {
-  return previewUatProviders({
+  if (input.serviceAddress.trim().length < 8 || !/^[1-9][0-9]{5}$/.test(input.servicePincode)) {
+    throw new Error("Verify the complete doorstep and PIN before checking groomers.");
+  }
+  const preview = await previewUatProviders({
     clientRequestId: `v2-grooming-preview:${crypto.randomUUID()}`,
     customerId: input.customerId,
     petIds: input.petIds,
@@ -93,5 +107,13 @@ export async function previewV2Groomers(input: {
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
     preferredProviderId: input.preferredProviderId,
+    serviceAddress: input.serviceAddress.trim(),
+    servicePincode: input.servicePincode,
   });
+  if (preview.availabilityChecked !== true || preview.reserved !== false ||
+      preview.cityId !== input.cityId || preview.zoneId !== input.zoneId ||
+      preview.scheduledStart !== input.scheduledStart || preview.scheduledEnd !== input.scheduledEnd) {
+    throw new Error("Groomer availability does not match this doorstep and time. Check availability again.");
+  }
+  return preview;
 }
