@@ -107,3 +107,69 @@ with zero warnings. This does not replace the new exact-head hosted scan
 (which uses its own pinned Gitleaks version) or the full CI merge gate. The corrected commit
 must pass every engineering gate before merge; deployment and authentic-provider acceptance
 remain separate requirements.
+
+## Deployed gateway acceptance: 17 September 2026
+
+PR #882 was merged as `c22cfe83c8240d098dfa354fe017a6a38a7bd8f5` after 15 pre-merge
+workflows passed on `ad5ebe2650408809263dd4aa2aca5b3e8a0f9b83`. The merge tree equals
+that tested head. Exact-head local regression completed with 6,163 passes and no failures/skips.
+
+Staging deployment run `35175793613` completed successfully with 28/28 certificate checks,
+30/30 service-zone roster pairs and six authenticated personas. This certificate is deployment
+and general platform evidence; it is not a certificate for every newly added V2 route.
+
+A subsequent no-mocks browser probe successfully signed in through the V2 sandbox OTP UI
+and persisted one synthetic customer pet. It then reproduced an authenticated 403 on both
+`GET /api/v2/grooming-catalogue` and `GET /api/v2/grooming-checkout`. The deployed Worker
+had no permission entries for the new routes, so they fell back to staff `dashboard.view`.
+No booking or payment was created by that probe. Published catalogue contents and payment
+readiness were not inferred from the authorization failure.
+
+The follow-up fix maps only those exact GET routes to `scheduling.book` and the customer
+platform-session scope; checkout record ownership remains mandatory inside its handler.
+Only GET/POST on the exact stateless V2 checkout-return adapter is public, as Razorpay's
+cross-site form carries no customer cookie. Receipt shape is not trusted capture evidence.
+Unknown V2 paths, mutation methods, provider access and spoofed workspace headers remain denied.
+
+The new regression suite executes the Worker's trusted-ingress, subject-session and fallback-RBAC
+functions before invoking the actual route, with genuine issued customer/provider sessions and
+local SQL. Before the fix, 9 of its first 21 cases failed; direct-handler and mocked-API tests
+had missed these failures. The V2 workflow now includes this suite and triggers on shared
+Worker/gateway changes as well as V2 files.
+
+Testing the whole authorization composition also exposed an oversized-callback hang: the shared
+receipt parser awaited cancellation of a stream whose edge inspection clone was retained.
+Cancellation is now requested without awaiting the unused tee branch. The byte limit, receipt
+validation, redirect destinations and payment authority are unchanged. Timeout-bounded V1 and
+V2 regression cases prove oversized requests return without financial writes.
+
+A new exact-head CI pass and pinned staging redeployment are still required before claiming the
+deployed gateway issue closed. Authentic Razorpay test capture, same-booking Partner/Ops
+acceptance and physical-device/human design sign-off remain separate open release gates.
+
+### Built-worker and regression follow-up
+
+The first gateway-fix candidate exposed four failures in the legacy webhook reachability
+inventory: it treated every path before the first textual `return null` as public. A new
+method-specific V2 return changed that text ordering without changing the existing webhook
+permissions. The inventory now executes anonymous GET/POST authorization and separately tests
+that conditional public surfaces still deny administrative methods. Its assertions were not
+removed, and no external-caller authentication was loosened.
+
+The hardened built-worker suite now performs real sandbox OTP, V2 catalogue/recovery reads,
+foreign/missing-booking and unknown-path refusals, and oversized cross-site return requests.
+These tests use the actual compiled Worker with preview superuser disabled, not route mocks.
+They also caught the shared response wrapper overwriting the return route's `no-referrer`
+policy. The wrapper now preserves that stricter policy and retains `same-origin` for other
+responses; no-store and nosniff are unchanged.
+
+Before this follow-up commit, the full local regression passed 6,189 tests with zero failures
+or skips. The complete hardened browser runner passed its desktop/mobile journeys, including
+four new V2 built-worker executions; its existing mobile-only skip for the redundant server
+auth precondition remains explicit. The separate CX visibility fixture also passed. Typecheck,
+application build, artifact validation, and focused lint passed. These local results still
+require exact-head hosted CI and a newly certified staging deployment.
+
+Read-only staging configuration inspection found no active Grooming packages. That is a
+separate operator-publication prerequisite, not permission to use fallback pricing or claim
+the booking/payment journey passed. No commercial package was published by these checks.
