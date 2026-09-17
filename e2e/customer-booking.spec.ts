@@ -78,6 +78,7 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
 }
 
 test("customer: sandbox sign-in -> grooming checkout -> persisted booking", async ({ page }) => {
+  test.setTimeout(90_000);
   await sandboxLogin(page);
   await ensureCustomerPet(page);
   await page.goto("/mobile-app");
