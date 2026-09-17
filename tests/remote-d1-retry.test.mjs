@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyRemoteD1Retry } from "../scripts/schema/remote-d1-retry.mjs";
+import { classifyRemoteD1Retry } from "../lib/remote-d1-retry.mjs";
 
 test("remote D1 reset remains retryable", () => {
   assert.deepEqual(classifyRemoteD1Retry("error: D1_RESET_DO"), { retryable: true, reason: "D1_RESET_DO" });

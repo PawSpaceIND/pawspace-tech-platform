@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { normalizeReplaySafeDdl } from "./apply-idempotent-drizzle.mjs";
-import { classifyRemoteD1Retry } from "./remote-d1-retry.mjs";
+import { classifyRemoteD1Retry } from "../../lib/remote-d1-retry.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name, fallback = null) => {
