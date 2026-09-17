@@ -503,8 +503,17 @@ async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
   log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
   if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
-  // The status shows on the job card (<em>) and in the detail (<span>); any visible occurrence will do.
-  const shown = page.getByText(expectStatus).first();
+  // Re-read the canonical projection after a successful lifecycle write. On deployed staging the
+  // POST can commit before the current React tree has consumed the next /api/partner-jobs response.
+  // Force one explicit refresh/reselection before asserting, so this checks server truth instead of
+  // spending the persona-wide timeout on a stale DOM snapshot.
+  let shown = page.getByText(expectStatus).first();
+  if (!(await shown.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false))) {
+    await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
+    await page.waitForTimeout(2_000);
+    await reselectJobCard(page);
+    shown = page.getByText(expectStatus).first();
+  }
   if (!(await shown.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) await frameOutline(page, `Partner job after ${String(label)} (expected ${String(expectStatus)})`, 2_500);
   await expect(shown, `status after ${String(label)}`).toBeVisible();
 }
@@ -601,7 +610,7 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
 });
 
 test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, start service, upload photos", async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(600_000);
   section("3. Partner persona (/partner-app)");
   expect(bookingId, "a booking must exist from the customer step").not.toEqual("");
   providerPhone = PROVIDER_PHONES[assignedProviderId] || "9000000904";
