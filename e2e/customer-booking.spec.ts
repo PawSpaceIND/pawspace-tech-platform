@@ -78,6 +78,7 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
 }
 
 test("customer: sandbox sign-in -> grooming checkout -> persisted booking", async ({ page }) => {
+  test.setTimeout(90_000);
   await sandboxLogin(page);
   await ensureCustomerPet(page);
   await page.goto("/mobile-app");
@@ -417,7 +418,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
 
 });
 
-test("grooming truth test mounts Razorpay iframe from payment_pending",async({page})=>{
+test("grooming truth test exposes Pay securely before mounting Razorpay from payment_pending",async({page})=>{
  test.setTimeout(90_000);
  await page.addInitScript(()=>{class R{options:Record<string,unknown>;constructor(options:Record<string,unknown>){this.options=options}on(){}open(){const f=document.createElement("iframe");f.className="razorpay-checkout-frame";f.title="Razorpay Checkout";document.body.appendChild(f)}close(){}};(window as Window&{Razorpay?:typeof R}).Razorpay=R});
  await sandboxLogin(page,"9000000915");await ensureCustomerPet(page);await page.goto("/mobile-app");
@@ -430,7 +431,7 @@ test("grooming truth test mounts Razorpay iframe from payment_pending",async({pa
  await page.getByLabel("Customer Name",{exact:true}).fill("Razorpay Browser Customer");await page.getByLabel("Customer Phone Number",{exact:true}).fill("9000000915");/* The alternative phone is optional (founder decision, 2026-09-13): with name and phone filled, Confirm is already enabled while it is blank. */await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeEnabled();await page.getByLabel("Alternative Phone Number",{exact:true}).fill("9000000916");await page.getByLabel("Special instructions to groomer",{exact:true}).fill("Please ring the bell once.");await page.getByRole("button",{name:/^Pay online/}).click();
  const sandboxKey=["rzp","test","frontendsync913"].join("_");
  await page.route("**/api/customer-checkout",async route=>{const body=route.request().postDataJSON();if(body?.action!=="start")return route.continue();return route.fulfill({status:201,json:{data:{connected:true,environment:"sandbox",bookingId:body.bookingId,orderId:"order_frontendsync913",keyId:sandboxKey,razorpay_order_id:"order_frontendsync913",RAZORPAY_KEY_ID:sandboxKey,amountPaise:134900,currency:"INR",locks:{PAWSPACE_PAYMENT_ENV:"sandbox",FORBID_PRODUCTION:"true",PAWSPACE_PAYMENT_LIVE_APPROVED:"false"}}}})});
- const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST");await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirm booking",exact:true}).click();const response=await created;expect(response.status(),await response.text()).toBe(201);const payload=await response.json();expect(payload.data.status).toBe("payment_pending");await expect(page.locator(".razorpay-checkout-frame")).toBeAttached();
+ const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST");await expect(page.getByRole("button",{name:"Confirm booking",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Confirm booking",exact:true}).click();const response=await created;expect(response.status(),await response.text()).toBe(201);const payload=await response.json();expect(payload.data.status).toBe("payment_pending");const paySecurely=page.getByRole("button",{name:/^Pay securely\b/i});await expect(paySecurely).toBeVisible();await expect(paySecurely).toBeEnabled();await expect(page.locator(".razorpay-checkout-frame")).toHaveCount(0);await paySecurely.click();await expect(page.locator(".razorpay-checkout-frame")).toBeAttached();
 });
 
 
