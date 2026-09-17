@@ -80,3 +80,30 @@ an operator-published package and real available provider are used, an authentic
 transaction reaches its verified canonical receipt, the same booking is visible to Partner/Ops,
 and physical-device plus founder/customer UAT sign-off is recorded. No live-money activation belongs
 to this PR. No next service implementation should conceal an unresolved Grooming acceptance gate.
+
+## Security-gate correction (2026-09-17)
+
+Security Supply Chain run `35136810715` detected one payment-key-shaped **synthetic browser
+fixture identifier** at `e2e/v2-grooming.spec.ts:78` in commit
+`4c972f139990ce084a64955a3fa75d0b85560a16`. That fixture intercepts the API and replaces the
+Razorpay SDK; it does not configure a provider account or send a payment. The fixture now uses
+a deliberately short non-credential test ID.
+
+The sole new `.gitleaksignore` entry is that exact historical commit/file/rule/line fingerprint,
+needed because the PR security workflow scans commit history. No directory, file pattern,
+credential pattern, or scanner rule is allowlisted or disabled. `.gitleaks.toml` is unchanged.
+
+Executed local scanner checks (Gitleaks 8.30.1):
+
+- Original fixture without the historical exception: blocked by the payment-key rule.
+- Revised fixture: clean.
+- A generated payment-key-shaped canary in the same file: still blocked.
+- The failed CI's original commit range with the exact historical exception: clean.
+
+The combined focused contracts, real-handler integration and static-test ratchet were rerun:
+**56 passed, zero failures or skips**. Desktop/mobile browser contracts were rerun as well:
+**14 passed (seven scenarios on each viewport)**, and the changed browser file passes ESLint
+with zero warnings. This does not replace the new exact-head hosted scan
+(which uses its own pinned Gitleaks version) or the full CI merge gate. The corrected commit
+must pass every engineering gate before merge; deployment and authentic-provider acceptance
+remain separate requirements.

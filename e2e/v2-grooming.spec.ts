@@ -75,7 +75,8 @@ async function fixture(page: Page) {
       if (body.action === "start") {
         state.orderWrites++;
         return reply({ connected: true, status: "awaiting_payment", environment: "sandbox", bookingId: "B1", orderId: "order_v2_fixture",
-          keyId: "rzp_test_fixtureOnly", amountPaise: 189900, currency: "INR",
+          // Deliberately short synthetic ID; this API response and the SDK are both test doubles.
+          keyId: "rzp_test_v2", amountPaise: 189900, currency: "INR",
           locks: { PAWSPACE_PAYMENT_ENV: "sandbox", FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false" } });
       }
       if (body.action === "confirm") {
