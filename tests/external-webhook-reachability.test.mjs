@@ -1,22 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { d1 } from "./helpers/execution-harness.mjs";
+
+installWorkersHooks("__WEBHOOK_REACHABILITY_DB__", "__WEBHOOK_REACHABILITY_ENV__");
+const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
+const sqlite = new DatabaseSync(":memory:");
+const env = { DB: d1(sqlite), PAWSPACE_UAT_LOGIN: "off" };
+test.after(() => sqlite.close());
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const gateway = read("lib/api-gateway.ts");
-
-const exemptPaths = new Set([...gateway.matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)]
-  .map(match => match[1])
-  .filter(path => {
-    const index = gateway.indexOf(`url.pathname==="${path}"`);
-    const firstReturnNull = gateway.indexOf("return null;");
-    return index < firstReturnNull;
-  }));
 
 const routeFiles = fs.readdirSync(new URL("../app/api", import.meta.url), { withFileTypes: true })
   .filter(entry => entry.isDirectory())
   .map(entry => entry.name)
   .filter(name => fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url)));
+
+// Execute anonymous authorization instead of assuming the first textual `return null`
+// contains every public path. Method-specific V2 exceptions invalidated that source heuristic.
+const exemptPaths = new Set();
+for (const name of routeFiles) {
+  for (const method of ["GET", "POST"]) {
+    const request = new Request(`https://webhook-policy.pawspace.test/api/${name}`, {
+      method, headers: { origin: "https://webhook-policy.pawspace.test", "content-type": "application/json" },
+      ...(method === "POST" ? { body: "{}" } : {}),
+    });
+    const result = await authorizeApiRequest(request, env);
+    if (!(result instanceof Response) && result.permission === null) exemptPaths.add(`/api/${name}`);
+  }
+}
 
 const libSource = new Map();
 function readLib(name) {
@@ -108,6 +123,9 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     // Razorpay's redirect-mode callback_url: a stateless 303 adapter to the booking confirmation page.
     // The cross-site form POST carries no session; the receipt is verified by /api/customer-checkout.
     "/api/razorpay-checkout-return",
+    // These conditional public surfaces were previously missed by the first-return source heuristic.
+    // Content GET is public; enquiry POSTs have route-owned validation and abuse controls.
+    "/api/content-controls", "/api/meet-and-greet", "/api/relocation-enquiry",
   ]);
   // Customer inboxes authenticate inside the route; executed ownership/rejection tests
   // live in the connected notification suites. They are not public webhook surfaces.
@@ -116,6 +134,18 @@ test("no gateway-exempt route is left without any caller authentication", () => 
   for (const path of exemptPaths) {
     if (knownPublicSurfaces.has(path)) continue;
     const name = path.replace("/api/", "");
+    if (path === "/api/location-recovery") {
+      const route = read(`app/api/${name}/route.ts`);
+      assert.match(route, /await resolveActor\(request\)/);
+      assert.match(route, /await requireProviderOwnership\(/);
+      continue;
+    }
+    if (path === "/api/uat-provider-switch") {
+      const route = read(`app/api/${name}/route.ts`);
+      assert.match(route, /if\(!uatLoginEnabled/);
+      assert.match(route, /if\(!uatAccessCodeValid/);
+      continue;
+    }
     if (customerSessionSurfaces.has(path)) {
       const route = read(`app/api/${name}/route.ts`);
       assert.match(route, /await\s+resolveActor\(request\)/);
@@ -157,4 +187,16 @@ test("Meta WhatsApp webhook is gateway-reachable and retains provider verificati
   assert.match(source, /META_WHATSAPP_APP_SECRET/);
   assert.match(source, /x-hub-signature-256/);
   assert.match(source, /verifyMetaWhatsAppSignature/);
+});
+
+// Public reads/enquiries must not accidentally expose the adjacent administrative operation.
+test("conditional public mappings still deny anonymous administrative methods", async () => {
+  for (const [path, method] of [["/api/content-controls?view=admin", "GET"],
+    ["/api/content-controls", "POST"], ["/api/meet-and-greet", "GET"], ["/api/relocation-enquiry", "GET"]]) {
+    const response = await authorizeApiRequest(new Request(`https://webhook-policy.pawspace.test${path}`, {
+      method, headers: { origin: "https://webhook-policy.pawspace.test", "content-type": "application/json" },
+      ...(method === "POST" ? { body: "{}" } : {}),
+    }), env);
+    assert.ok(response instanceof Response); assert.equal(response.status, 401);
+  }
 });

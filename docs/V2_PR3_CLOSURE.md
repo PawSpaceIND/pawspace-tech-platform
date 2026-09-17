@@ -146,3 +146,30 @@ V2 regression cases prove oversized requests return without financial writes.
 A new exact-head CI pass and pinned staging redeployment are still required before claiming the
 deployed gateway issue closed. Authentic Razorpay test capture, same-booking Partner/Ops
 acceptance and physical-device/human design sign-off remain separate open release gates.
+
+### Built-worker and regression follow-up
+
+The first gateway-fix candidate exposed four failures in the legacy webhook reachability
+inventory: it treated every path before the first textual `return null` as public. A new
+method-specific V2 return changed that text ordering without changing the existing webhook
+permissions. The inventory now executes anonymous GET/POST authorization and separately tests
+that conditional public surfaces still deny administrative methods. Its assertions were not
+removed, and no external-caller authentication was loosened.
+
+The hardened built-worker suite now performs real sandbox OTP, V2 catalogue/recovery reads,
+foreign/missing-booking and unknown-path refusals, and oversized cross-site return requests.
+These tests use the actual compiled Worker with preview superuser disabled, not route mocks.
+They also caught the shared response wrapper overwriting the return route's `no-referrer`
+policy. The wrapper now preserves that stricter policy and retains `same-origin` for other
+responses; no-store and nosniff are unchanged.
+
+Before this follow-up commit, the full local regression passed 6,189 tests with zero failures
+or skips. The complete hardened browser runner passed its desktop/mobile journeys, including
+four new V2 built-worker executions; its existing mobile-only skip for the redundant server
+auth precondition remains explicit. The separate CX visibility fixture also passed. Typecheck,
+application build, artifact validation, and focused lint passed. These local results still
+require exact-head hosted CI and a newly certified staging deployment.
+
+Read-only staging configuration inspection found no active Grooming packages. That is a
+separate operator-publication prerequisite, not permission to use fallback pricing or claim
+the booking/payment journey passed. No commercial package was published by these checks.

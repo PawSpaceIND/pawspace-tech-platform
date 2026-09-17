@@ -185,3 +185,14 @@ test("V1 oversized callback also returns while the edge inspection clone is reta
   assert.deepEqual(bookingSnapshot(w.sqlite), before);
   assert.equal(inspection.bodyUsed, false, "the retained clone need not consume attacker-supplied bytes to release the redirect");
 });
+
+for (const policy of [undefined, "unsafe-url", "no-referrer"]) {
+  test(`edge response wrapper retains strict receipt policy and secures fallback: ${policy}`, async () => {
+    const { secureApiResponse } = await import("../lib/api-security-headers.ts");
+    const response = secureApiResponse(new Response(null, { status: 303,
+      headers: { location: "https://pawspace.test/v2/grooming", ...(policy ? { "referrer-policy": policy } : {}) } }));
+    assert.equal(response.headers.get("referrer-policy"), policy === "no-referrer" ? "no-referrer" : "same-origin");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  });
+}
