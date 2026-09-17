@@ -795,6 +795,21 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     await page.getByRole("button", { name: /Refresh proof status/ }).click().catch(() => {});
     await expect(page.getByText(/Both photos approved/i)).toBeVisible({ timeout: 30_000 });
     log("✅ Partner app: \"Both photos approved.\"");
+
+    // The Partner app intentionally keeps service proof disabled until every after-service
+    // handover/safety acknowledgement is checked. Exercise those real UI controls so the
+    // acceptance journey proves the same completion gate a groomer must satisfy.
+    const afterServiceChecklist = page.getByRole("group", { name: /After-service checklist/i });
+    await expect(afterServiceChecklist, "after-service checklist before service proof").toBeVisible({ timeout: 30_000 });
+    const afterChecklistItems = afterServiceChecklist.getByRole("checkbox");
+    await expect(afterChecklistItems, "four required after-service checks").toHaveCount(4);
+    for (let i = 0; i < 4; i += 1) {
+      await afterChecklistItems.nth(i).check();
+      await expect(afterChecklistItems.nth(i)).toBeChecked();
+    }
+    await expect(page.getByRole("button", { name: /^Add service proof$/ }).first(), "Add service proof enabled after after-service checklist").toBeEnabled();
+    log("✅ After-service checklist completed; Add service proof enabled through the real Partner UI.");
+
     await partnerAct(page, /^Add service proof$/, /in service/i); log("✅ Add service proof recorded (approved before/after references, checklist).");
     await partnerAct(page, /^Complete job$/, /completed/i); log("✅ Complete job → completed.");
     await shot(page, "partner-completed");
