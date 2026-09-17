@@ -39,7 +39,13 @@ async function readFields(request: Request): Promise<Record<string, string>> {
       const chunk = await reader.read();
       if (chunk.done) break;
       bytes += chunk.value.byteLength;
-      if (bytes > MAX_CALLBACK_BYTES) { await reader.cancel(); return {}; }
+      if (bytes > MAX_CALLBACK_BYTES) {
+        // The edge gateway may retain an inspection clone. A tee's cancel promise waits for
+        // BOTH branches, so awaiting it can hang an oversized callback indefinitely.
+        // Request cancellation but return the same empty, untrusted receipt immediately.
+        void reader.cancel().catch(() => {});
+        return {};
+      }
       raw += decoder.decode(chunk.value, { stream: true });
     }
     raw += decoder.decode();

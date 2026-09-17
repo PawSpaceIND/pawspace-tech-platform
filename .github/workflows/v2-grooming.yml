@@ -5,6 +5,11 @@ on:
       - 'app/v2/**'
       - 'app/api/v2/**'
       - 'lib/v2/**'
+      - 'lib/api-gateway.ts'
+      - 'lib/session-api-gateway.ts'
+      - 'lib/trusted-workspace-identity.ts'
+      - 'app/api/razorpay-checkout-return/route.ts'
+      - 'worker/index.ts'
       - 'tests/v2-grooming*.test.mjs'
       - 'e2e/v2-grooming.spec.ts'
       - 'playwright.v2.config.ts'
@@ -38,7 +43,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Execute V2 runtime and database contracts
-        run: node --experimental-strip-types --test tests/v2-grooming-checkout.test.mjs tests/v2-grooming-integration.test.mjs tests/v2-grooming-foundation.test.mjs
+        run: node --experimental-strip-types --test tests/v2-grooming-checkout.test.mjs tests/v2-grooming-integration.test.mjs tests/v2-grooming-foundation.test.mjs tests/v2-grooming-worker-gateway.test.mjs
         env:
           PAWSPACE_LOCAL_PREVIEW: 'on'
           PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
