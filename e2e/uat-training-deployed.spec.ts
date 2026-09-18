@@ -92,13 +92,13 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     const cr=await created; const cb=await cr.json() as {data?:{bookingId?:string}}; expect(cr.status()).toBe(201); const bookingId=String(cb.data?.bookingId||""); expect(bookingId).not.toEqual(""); log(`✅ Canonical Training booking created: ${bookingId}.`);
     await expect(page.getByRole("heading",{name:"Review payment"})).toBeVisible({timeout:60_000});
 
-    let failOneConfirmation=true;
-    await page.route("**/api/customer-checkout",async route=>{const req=route.request();const body=req.postDataJSON?.() as {action?:string}|null;if(failOneConfirmation&&body?.action==="status"){failOneConfirmation=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time confirmation read failure"})});}return route.continue();});
+    let failOneProgrammeRead=true;
+    await page.route("**/api/training-programmes?bookingId=*",async route=>{if(failOneProgrammeRead&&route.request().method()==="GET"){failOneProgrammeRead=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time Training programme read failure"})});}return route.continue();});
     await page.getByRole("button",{name:/^Pay securely\b/i}).click(); await payRazorpay(page); log("✅ Razorpay sandbox card flow completed.");
-    // Let the page consume the injected one-time status failure before this harness polls the same endpoint.
-    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000});
     let s:CheckoutStatus={http:0,body:null};for(let i=0;i<12;i++){await page.waitForTimeout(4000);s=await status(page,bookingId);if(s.body?.data?.status==="captured")break;} expect(s.body?.data?.status).toBe("captured");log(`✅ Server-authoritative payment status captured for ${bookingId}.`);
-    await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time confirmation read failure entered read-only recovery; payment controls did not return.");
+    const checkStatus=page.getByRole("button",{name:"Check payment status"}); if(await checkStatus.isVisible().catch(()=>false))await checkStatus.click();
+    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000});
+    await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time post-payment Training read failure entered read-only recovery; payment controls did not return.");
     await recovery.getByRole("button",{name:"Refresh confirmation"}).click();
     await expect(page.getByRole("heading",{name:"Training programme confirmed"})).toBeVisible({timeout:60_000});
     await expect(page.getByText(bookingId,{exact:true})).toBeVisible();
