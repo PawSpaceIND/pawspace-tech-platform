@@ -174,10 +174,10 @@ export default function PawSpaceV2() {
           <div className={styles.navActions}>
             <Link href="/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
             {account ? (
-              <button className={styles.profileButton} onClick={() => void signOut()} disabled={signingOut} title="Sign out">
+              <Link href="/v2/account" className={styles.profileButton} title="Open account">
                 <span className={styles.avatar}>{account.name.slice(0, 1).toUpperCase()}</span>
                 <span className={styles.profileText}><small>Welcome back</small><b>{firstName}</b></span>
-              </button>
+              </Link>
             ) : (
               <button className={styles.signIn} onClick={() => setAuthOpen(true)}>Sign in</button>
             )}
@@ -315,8 +315,8 @@ export default function PawSpaceV2() {
         <Link href="/v2"><span>⌂</span><b>Home</b></Link>
         <a href="#services"><span>＋</span><b>Book</b></a>
         <Link href="/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
-        <Link href="/mobile-app"><span>◎</span><b>Activity</b></Link>
-        <button onClick={() => account ? void signOut() : setAuthOpen(true)}><span>◉</span><b>{account ? "Account" : "Sign in"}</b></button>
+        <Link href="/v2/activity"><span>◎</span><b>Activity</b></Link>
+        {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={() => setAuthOpen(true)}><span>◉</span><b>Sign in</b></button>}
       </nav>
 
       {authOpen && (
