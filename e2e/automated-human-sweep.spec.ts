@@ -187,13 +187,23 @@ test("Customer V2 persona — sandbox OTP → unified shell, account, activity a
 
     await page.goto("/v2/activity");
     await expect(page.getByRole("heading", { name: /Every booking, one clear timeline/ })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: "Upcoming & active", exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("heading", { name: /Sign in to see your care history/ })).toHaveCount(0);
     log("✅ /v2/activity reused the authenticated customer session.");
     await shot(page, "v2-activity");
 
     await page.goto("/v2/account");
     await expect(page.getByRole("heading", { name: /Family details without leaving V2/ })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(CUSTOMER_NAME, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+    const accountResponse = await context.request.get("/api/customer-account");
+    expect(accountResponse.status(), "same-session canonical account must load").toBe(200);
+    const accountBody = await accountResponse.json() as { data?: { customerId?: string; name?: string; primaryPhone?: string } };
+    expect(accountBody.data?.customerId, "canonical customer identity is present").toBeTruthy();
+    expect(accountBody.data?.name, "canonical customer name is present").toBeTruthy();
+    expect(accountBody.data?.primaryPhone, "canonical verified phone is present").toBeTruthy();
+    // Profile values are input values, not text nodes. Compare the rendered form to the real API.
+    await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(accountBody.data!.name!, { timeout: 20_000 });
+    await expect(page.getByRole("textbox", { name: "Verified mobile", exact: true })).toHaveValue(accountBody.data!.primaryPhone!);
+    await expect(page.getByRole("button", { name: "Save profile", exact: true })).toBeEnabled();
     log("✅ /v2/account loaded canonical signed-in customer details.");
     await shot(page, "v2-account");
 
@@ -202,6 +212,9 @@ test("Customer V2 persona — sandbox OTP → unified shell, account, activity a
     await page.getByRole("button", { name: "My PawSpace" }).click();
     await expect(page.getByRole("button", { name: "My PawSpace" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("Your message")).toBeEnabled();
+    await page.getByLabel("Your message").fill("What PawSpace services are available?");
+    // A text area alone is not proof of authentication; Send stays disabled until identity resolves.
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled({ timeout: 20_000 });
     log("✅ /v2/chat authenticated mode is available from the same customer session.");
     await shot(page, "v2-chat-authenticated");
   } finally { await context.close(); }
