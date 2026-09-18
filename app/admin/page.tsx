@@ -55,16 +55,7 @@ const nav: { id: View; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "⌂" },
   { id: "calendar", label: "Live calendar", icon: "▦" },
   { id: "bookings", label: "Bookings", icon: "▤" },
-  { id: "crm", label: "Customers & CRM", icon: "◉" },
   { id: "training", label: "Training operations", icon: "◆" },
-  { id: "boarding", label: "Boarding & sitting", icon: "⌂" },
-  { id: "mobility", label: "Taxi & walking", icon: "↗" },
-  { id: "food", label: "Fresh food", icon: "●" },
-  { id: "groomers", label: "Groomers", icon: "♟" },
-  { id: "workforce", label: "Workforce & payouts", icon: "₹" },
-  { id: "subscriptions", label: "Subscriptions", icon: "◈" },
-  { id: "payments", label: "Payments", icon: "₹" },
-  { id: "tickets", label: "Support tickets", icon: "◎" },
 ];
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -95,9 +86,6 @@ function useOperationsOverview(zoneId:string){
 const longDay=(day:string)=>{const at=new Date(`${day}T12:00:00+05:30`);return Number.isFinite(at.getTime())?at.toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"long",day:"numeric",month:"long",year:"numeric"}):day;};
 const longInstantDay=(value:string)=>{const at=new Date(value);return Number.isFinite(at.getTime())?at.toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"long",day:"numeric",month:"long",year:"numeric"}):value;};
 const titleCase=(value:string)=>value.replace(/[_-]+/g," ").replace(/\b\w/g,letter=>letter.toUpperCase());
-/** Tabs still rendering the built-in sample rows rather than the database. Labelled on screen so a
- *  tester never files a bug against invented data - and so the list shrinks visibly as each is wired. */
-const PROTOTYPE_VIEWS=new Set(["groomers","payments","crm","tickets","subscriptions","boarding","mobility","food","workforce"]);
 const rupees=(value:number)=>`\u20B9${value.toLocaleString("en-IN")}`;
 
 export default function AdminPage() {
@@ -137,7 +125,7 @@ export default function AdminPage() {
       <aside className={styles.sidebar}>
         <div className={styles.brand}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span>Operations</span></div>
         <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)} aria-label={item.label}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
-        <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/customer-experience">◎ Communications Desk</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/finance">₹ Finance & People OS</Link><Link href="/team/sales">⚡ Advanced CRM</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
+        <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/crm">◉ CRM workspace</Link><Link href="/team/customer-experience">◎ Communications Desk</Link><Link href="/team/provider-onboarding">♟ Provider operations</Link><Link href="/team/operations/boarding">⌂ Boarding & sitting</Link><Link href="/team/operations/taxi">↗ Taxi operations</Link><Link href="/team/operations/walking">↗ Walking operations</Link><Link href="/team/operations/food">● Fresh food operations</Link><Link href="/team/people">♟ People & workforce</Link><Link href="/team/subscriptions">◈ Subscriptions</Link><Link href="/team/finance">₹ Finance & payments</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/sales">⚡ Sales workspace</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
       </aside>
 
       <section className={styles.workspace}>
@@ -146,7 +134,6 @@ export default function AdminPage() {
           <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)} aria-label="Filter by zone"><option value="">All zones</option>{(overview?.zones??[]).map(id=><option key={id} value={id}>{id}</option>)}</select><Link className={styles.ghostButton} href="/team/operations/bookings">Open day board</Link><Link className={styles.primaryButton} href="/assisted-booking">＋ Add booking</Link></>}</div>
         </header>
         <TestSyncPanel surface="admin" />
-        {PROTOTYPE_VIEWS.has(view)&&<p className={styles.prototypeNotice}><b>Sample data.</b> This tab still shows built-in example rows, not your database. Overview, Live calendar and Bookings are live.</p>}
 
         {(view === "overview" || view === "calendar") && <>
           <section className={styles.metrics}>
