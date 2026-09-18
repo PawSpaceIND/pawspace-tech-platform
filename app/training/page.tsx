@@ -1,6 +1,6 @@
 "use client";
 import Link from"next/link";
-import{useEffect,useMemo,useState}from"react";
+import{useEffect,useMemo,useRef,useState}from"react";
 import{loadTrainingPackages,loadTrainingTrainers,quoteTraining,type TrainingPackage,type TrainingQuote,type TrainingTrainer}from"../../lib/training-commercial-client";
 import{reserveUatSchedule}from"../../lib/uat-scheduling-client";
 import{Button}from"../components/ui";
@@ -11,6 +11,7 @@ import type{CustomerAccountRecord}from"../../lib/customer-account";
 import{trainingQuoteKey,trainingQuoteSpendable,trainingLocationPincode,trainingLocationZone}from"../../lib/training-booking-guards";
 import styles from"./canonical-training.module.css";
 import BookingPaymentPage from"../mobile-app/booking-payment-page";
+import {loadVerifiedTrainingConfirmation,TrainingConfirmationPendingError} from "../../lib/training-confirmation-client";
 import{customerScopedHref}from"../../lib/v2/route-scope";
 
 // The customer and the pets are the SIGNED-IN ones, read from the platform session — never a fixture.
@@ -49,6 +50,11 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  const[error,setError]=useState("");
  const[booking,setBooking]=useState<TrainingBookingResult|null>(null);
  const[programme,setProgramme]=useState<CustomerTrainingProgramme|null>(null);
+ const[paymentVerified,setPaymentVerified]=useState(false);
+ const[confirmationError,setConfirmationError]=useState("");
+ const[confirmedProviderName,setConfirmedProviderName]=useState("");
+ const confirmationRequest=useRef<AbortController|null>(null);
+ useEffect(()=>()=>{confirmationRequest.current?.abort();confirmationRequest.current=null;},[]);
  const[pendingCheckout,setPendingCheckout]=useState<{booking:TrainingBookingResult;programme:CustomerTrainingProgramme;total:number;dueNow:number;mode:"prepaid"|"split"}|null>(null);
  const scheduledStart=`${date}T10:00:00+05:30`;
  const activePackage=useMemo(()=>packages.find(item=>item.package_code===packageCode),[packages,packageCode]);
@@ -154,13 +160,30 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  useEffect(()=>{if(packageCode==="trainer-meet-greet"&&paymentMode!=="prepaid")queueMicrotask(()=>setPaymentMode("prepaid"))},[packageCode,paymentMode]);
 
  async function hydrateVerifiedBooking(base:TrainingBookingResult){
-  for(let attempt=0;attempt<6;attempt+=1){
-   const latest=await loadCustomerAccount();
-   const canonical=latest.bookings.find(item=>item.id===base.bookingId);
-   if(canonical&&!["payment_pending","pending_payment","created"].includes(String(canonical.status))){setAccount(latest);return{...base,status:canonical.status};}
-   if(attempt<5)await new Promise(resolve=>window.setTimeout(resolve,500));
+  if(confirmationRequest.current)return;
+  const controller=new AbortController();confirmationRequest.current=controller;
+  const timer=window.setTimeout(()=>controller.abort(),30_000);
+  setBusy(true);setConfirmationError("");
+  try{
+   for(let attempt=0;attempt<3;attempt+=1){
+    try{
+     const verified=await loadVerifiedTrainingConfirmation(base,controller.signal);
+     if(confirmationRequest.current!==controller||controller.signal.aborted)return;
+     setBooking(verified.booking);setProgramme(verified.programme);setConfirmedProviderName(verified.providerName);
+     setPendingCheckout(null);window.scrollTo(0,0);return;
+    }catch(problem){
+     if(!(problem instanceof TrainingConfirmationPendingError)||attempt===2||controller.signal.aborted)throw problem;
+     await new Promise(resolve=>window.setTimeout(resolve,500));
+    }
+   }
+  }catch(problem){
+   if(confirmationRequest.current===controller)setConfirmationError(controller.signal.aborted?
+    "Confirmation refresh timed out. Refresh confirmation; do not pay again.":
+    problem instanceof Error?problem.message:"Unable to refresh Training confirmation. Do not pay again.");
+  }finally{
+   window.clearTimeout(timer);
+   if(confirmationRequest.current===controller){confirmationRequest.current=null;setBusy(false);}
   }
-  throw new Error("Payment was verified, but the canonical Training booking is still syncing. Check Activity before retrying.");
  }
 
  async function confirm(){
@@ -176,14 +199,28 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
    const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.id),serviceCode:"dog_training",zoneId:location.zoneId,scheduledStart,scheduledEnd,occurrences:quote.meetAndGreet?1:quote.sessions,cadenceDays:7,preferredProviderId:activeTrainer.id});
    const result=await createCanonicalTrainingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,trainingQuote:quote,customer,pets:bookingPets,cityId:location.cityId,zoneId:location.zoneId,scheduledStart,scheduledEnd,provider:schedule.provider});
    const nextProgramme=await materializeTrainingProgramme({bookingId:result.bookingId});
+   setPaymentVerified(false);setConfirmationError("");setConfirmedProviderName("");
    setPendingCheckout({booking:result,programme:nextProgramme,total:quote.totalAmount,dueNow:quote.amountDueNow,mode:quote.paymentMode});window.scrollTo(0,0);
   }catch(problem){setError(problem instanceof Error?problem.message:"Unable to confirm canonical Training programme")}
   finally{setBusy(false)}
  }
 
- if(pendingCheckout)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · PAYMENT</p><h1>Complete payment to confirm</h1><p>Your trainer and session calendar are held while Razorpay verifies the sandbox payment.</p></header>{error&&<p role="alert">{error}</p>}<BookingPaymentPage serviceName="Dog Training" totalAmount={pendingCheckout.total} amountDueNow={pendingCheckout.dueNow} mode={pendingCheckout.mode} bookingId={pendingCheckout.booking.bookingId} busy={busy} onVerified={async()=>{setBusy(true);setError("");try{const verified=await hydrateVerifiedBooking(pendingCheckout.booking);setBooking(verified);setProgramme(pendingCheckout.programme);setPendingCheckout(null);window.scrollTo(0,0);}catch(problem){setError(problem instanceof Error?problem.message:"Unable to hydrate verified Training booking");}finally{setBusy(false);}}}/></main>;
+ if(pendingCheckout)return <main className={styles.shell}>
+  <header><Link href={href("/")}>PawSpace</Link><p>TRAINING - PAYMENT</p>
+   <h1>{paymentVerified?"Payment verified. Updating confirmation.":"Complete payment to confirm"}</h1>
+   <p>{paymentVerified?"We are reading your booking, assigned trainer and programme from PawSpace. Do not pay again.":"Your trainer and session calendar are held while Razorpay verifies the sandbox payment."}</p>
+  </header>
+  {confirmationError&&<p role="alert">{confirmationError}</p>}
+  {paymentVerified?<section className={styles.card} aria-label="Training confirmation recovery">
+   {busy&&<p role="status">Refreshing canonical Training confirmation...</p>}
+   <button type="button" disabled={busy} onClick={()=>void hydrateVerifiedBooking(pendingCheckout.booking)}>Refresh confirmation</button>
+   <Link href={href("/mobile-app")}>My PawSpace</Link>
+  </section>:<BookingPaymentPage serviceName="Dog Training" totalAmount={pendingCheckout.total}
+   amountDueNow={pendingCheckout.dueNow} mode={pendingCheckout.mode} bookingId={pendingCheckout.booking.bookingId}
+   busy={busy} onVerified={async()=>{setPaymentVerified(true);await hydrateVerifiedBooking(pendingCheckout.booking);}}/>}
+ </main>;
 
- if(booking&&programme)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · CANONICAL UAT</p><h1>Training programme confirmed</h1><p>Booking, trainer assignment, payment ledger and programme sessions now share one canonical identity.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.grid3}><article className={styles.card}><small>Booking</small><strong className={styles.block}>{booking.bookingId}</strong><span>{label(booking.status)}</span></article><article className={styles.card}><small>Programme</small><strong className={styles.block}>{programme.programme.id}</strong><span>{programme.programme.total_sessions} session(s)</span></article><article className={styles.card}><small>Trainer</small><strong className={styles.block}>{activeTrainer?.name||programme.programme.provider_id}</strong><span>Canonical scheduler assignment</span></article></section><section className={styles.card}><h2>Programme sessions</h2>{programme.sessions.map(session=><article key={session.id} className={styles.sessionRow}><strong>Session {session.sequence_no} · {label(session.status)}</strong><div>{new Date(session.scheduled_start).toLocaleString("en-IN")} → {new Date(session.scheduled_end).toLocaleTimeString("en-IN")}</div><small>{session.id} · trainer {session.provider_id}</small></article>)}</section><section className={styles.card}><h2>UAT boundaries</h2><p>Payment is confirmed only from verified Razorpay sandbox evidence. Production media storage/scanning, GST/tax invoicing, payout execution and external messaging remain configuration/launch dependencies.</p><div className={styles.actions}><Link href={href("/mobile-app")}>My PawSpace</Link><button onClick={()=>{setBooking(null);setProgramme(null)}}>Book another programme</button></div></section></main>;
+ if(booking&&programme)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · CANONICAL UAT</p><h1>Training programme confirmed</h1><p>Booking, trainer assignment, payment ledger and programme sessions now share one canonical identity.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.grid3}><article className={styles.card}><small>Booking</small><strong className={styles.block}>{booking.bookingId}</strong><span>{label(booking.status)}</span></article><article className={styles.card}><small>Programme</small><strong className={styles.block}>{programme.programme.id}</strong><span>{programme.programme.total_sessions} session(s)</span></article><article className={styles.card}><small>Trainer</small><strong className={styles.block}>{confirmedProviderName||programme.programme.provider_id}</strong><span>Canonical scheduler assignment</span></article></section><section className={styles.card}><h2>Programme sessions</h2>{programme.sessions.map(session=><article key={session.id} className={styles.sessionRow}><strong>Session {session.sequence_no} · {label(session.status)}</strong><div>{new Date(session.scheduled_start).toLocaleString("en-IN")} → {new Date(session.scheduled_end).toLocaleTimeString("en-IN")}</div><small>{session.id} · trainer {session.provider_id}</small></article>)}</section><section className={styles.card}><h2>UAT boundaries</h2><p>Payment is confirmed only from verified Razorpay sandbox evidence. Production media storage/scanning, GST/tax invoicing, payout execution and external messaging remain configuration/launch dependencies.</p><div className={styles.actions}><Link href={href("/mobile-app")}>My PawSpace</Link><button onClick={()=>{setBooking(null);setProgramme(null);setPaymentVerified(false);setConfirmationError("");setConfirmedProviderName("")}}>Book another programme</button></div></section></main>;
 
  return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>DOG TRAINING · CANONICAL UAT</p><h1>Choose a server-owned Training programme</h1><p>Catalogue, price, trainer eligibility and schedule are read from PawSpace governance. The browser no longer invents a plan, trainer or progress journey.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.card}><h2>1. Pet and first session</h2><div className={styles.grid2}><div role="group" aria-labelledby="training-dogs-label"><span id="training-dogs-label">Dogs</span>{accountLoading?<p>Loading your pets…</p>:accountError?<p role="alert">{accountError} <Link href={href("/mobile-app")}>Sign in →</Link></p>:dogs.length===0?<p>No dogs on your profile yet. <Link href={href("/mobile-app")}>Add one in My PawSpace →</Link></p>:<div className={styles.petList}>{dogs.map(pet=><button key={pet.id} type="button" onClick={()=>togglePet(pet.id)} aria-pressed={selectedPetIds.includes(pet.id)} className={styles.choice}><strong>{pet.name}</strong><small className={styles.block}>{petLabel(pet)}</small></button>)}<small>{petCount} dog(s) selected{account?` · booking as ${account.name}`:""}</small></div>}</div><label>First session date<input type="date" value={date} onChange={event=>setDate(event.target.value)} className={styles.input}/></label></div>{locationLoading?<p>Confirming your training zone…</p>:locationError?<p role="alert">{locationError}</p>:location?<small>Training zone {location.zoneName} · confirmed from your address PIN code</small>:null}</section><section className={styles.card}><h2>2. Programme</h2>{catalogueLoading?<p>Loading canonical Training catalogue…</p>:<div className={styles.grid2}>{packages.map(item=><button key={item.package_code} onClick={()=>setPackageCode(item.package_code)} aria-pressed={packageCode===item.package_code} className={styles.choice}><strong>{item.name}</strong><div>{item.sessions} session(s) · valid {item.validity_days} days</div><b>{money(item.base_price)}</b><small className={styles.block}>{item.meet_and_greet?"Meet & Greet · prepaid":"Programme · prepaid or approved split"}</small></button>)}</div>}<div className={styles.topGap}><label>Payment mode <select value={paymentMode} disabled={packageCode==="trainer-meet-greet"} onChange={event=>setPaymentMode(event.target.value as "prepaid"|"split")}><option value="split">Approved split</option><option value="prepaid">Full prepaid</option></select></label></div></section><section className={styles.card}><h2>3. Eligible trainer</h2>{!location?<p>Your training zone must be confirmed before trainers can be listed.</p>:trainers.length===0?<p>No governed trainer is available in {location.zoneName} for this UAT window.</p>:<div className={styles.grid3}>{trainers.map(item=><button key={item.id} onClick={()=>setTrainerId(item.id)} aria-pressed={activeTrainer?.id===item.id} className={styles.choice}><strong>{item.name}</strong><div>{item.rating.toFixed(1)} ★ · quality {item.qualityScore}</div><small>{item.model.replaceAll("_"," ")} · capacity {item.capacity}</small></button>)}</div>}</section><section className={styles.stickyCard}><div><strong>{currentQuote?money(currentQuote.totalAmount):"—"}</strong><div>{currentQuote?`${currentQuote.packageName} · ${currentQuote.sessions} session(s) · ${currentQuote.minutesPerSession} min/session`:activePackage?.name||"Canonical quote unavailable"}</div><small>{currentQuote?`${money(currentQuote.amountDueNow)} sandbox amount due now · live money disabled`:locationError?"Booking unavailable for your location":locationLoading?"Confirming your training zone…":petCount===0?"Select at least one of your dogs to continue":"Repricing for your current selections…"}</small></div><Button size="lg" disabled={!currentQuote||!activeTrainer||busy||!account||!location||petCount===0} onClick={()=>void confirm()}>{busy?"Reserving trainer…":"Reserve trainer & continue to payment →"}</Button></section></main>;
 }
