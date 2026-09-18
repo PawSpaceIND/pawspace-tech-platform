@@ -95,8 +95,10 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     let failOneConfirmation=true;
     await page.route("**/api/customer-checkout",async route=>{const req=route.request();const body=req.postDataJSON?.() as {action?:string}|null;if(failOneConfirmation&&body?.action==="status"){failOneConfirmation=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time confirmation read failure"})});}return route.continue();});
     await page.getByRole("button",{name:/^Pay securely\b/i}).click(); await payRazorpay(page); log("✅ Razorpay sandbox card flow completed.");
+    // Let the page consume the injected one-time status failure before this harness polls the same endpoint.
+    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000});
     let s:CheckoutStatus={http:0,body:null};for(let i=0;i<12;i++){await page.waitForTimeout(4000);s=await status(page,bookingId);if(s.body?.data?.status==="captured")break;} expect(s.body?.data?.status).toBe("captured");log(`✅ Server-authoritative payment status captured for ${bookingId}.`);
-    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000}); await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time confirmation read failure entered read-only recovery; payment controls did not return.");
+    await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time confirmation read failure entered read-only recovery; payment controls did not return.");
     await recovery.getByRole("button",{name:"Refresh confirmation"}).click();
     await expect(page.getByRole("heading",{name:"Training programme confirmed"})).toBeVisible({timeout:60_000});
     await expect(page.getByText(bookingId,{exact:true})).toBeVisible();
