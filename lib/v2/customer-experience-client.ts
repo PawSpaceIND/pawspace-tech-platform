@@ -128,6 +128,41 @@ export async function updateV2CustomerProfile(input: {
   );
 }
 
+export async function upsertV2CustomerAddress(input: {
+  id?: string;
+  label: string;
+  line1: string;
+  line2?: string | null;
+  area?: string | null;
+  city: string;
+  postalCode?: string | null;
+  isDefault?: boolean;
+  idempotencyKey: string;
+}): Promise<void> {
+  await apiSend<Record<string, unknown>>(
+    "/api/customer-account",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "upsert_address",
+        idempotencyKey: input.idempotencyKey,
+        address: {
+          id: input.id,
+          label: input.label,
+          line1: input.line1,
+          line2: input.line2 ?? null,
+          area: input.area ?? null,
+          city: input.city,
+          postalCode: input.postalCode ?? null,
+          isDefault: input.isDefault ?? true,
+        },
+      }),
+    },
+    "We could not save your PawSpace address.",
+  );
+}
+
 export async function endV2CustomerSession(): Promise<void> {
   await apiSend<{ loggedOut: boolean }>(
     "/api/identity-session",
