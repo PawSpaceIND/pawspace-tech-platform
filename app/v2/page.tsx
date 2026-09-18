@@ -30,13 +30,13 @@ type ServiceCard = {
 
 const SERVICES: ServiceCard[] = [
   { code: "grooming", name: "Grooming", eyebrow: "Doorstep spa", note: "Salon-quality care, at home.", href: "/v2/grooming", image: "/assets/pawspace-grooming-cartoon.webp", accent: "#f0ad36", wash: "#fff0c9", size: "hero" },
-  { code: "boarding", name: "Boarding", eyebrow: "Trusted stays", note: "A second home when you travel.", href: "/boarding", image: "/assets/pawspace-boarding-cartoon.webp", accent: "#cf7c67", wash: "#ffe4db" },
-  { code: "dog_training", name: "Training", eyebrow: "Better habits", note: "Kind coaching for calmer days.", href: "/training", image: "/assets/pawspace-training-cartoon.webp", accent: "#6b7ed7", wash: "#e7eaff" },
-  { code: "pet_sitting", name: "Pet Sitting", eyebrow: "Care at home", note: "Familiar spaces, loving company.", href: "/sitting", image: "/assets/pawspace-sitting-cartoon.webp", accent: "#c56b9c", wash: "#fde6f2" },
-  { code: "dog_walking", name: "Dog Walking", eyebrow: "Happy steps", note: "Reliable walks with real updates.", href: "/walking", image: "/assets/pawspace-walking-cartoon.webp", accent: "#64a36f", wash: "#e3f2df" },
-  { code: "food", name: "Fresh Food", eyebrow: "Fresh bowls", note: "Made-for-pets meals, delivered.", href: "/food", image: "/assets/pawspace-food-cartoon.webp", accent: "#df7b3d", wash: "#ffead8" },
-  { code: "relocation", name: "Relocation", eyebrow: "Move together", note: "Thoughtful travel support end to end.", href: "/relocation", image: "/assets/pawspace-relocation-cartoon.webp", accent: "#5f8faa", wash: "#deeff8" },
-  { code: "pet_taxi", name: "Pet Taxi", eyebrow: "Safe rides", note: "Comfortable pickup and drop support.", href: "/taxi", image: "/assets/pawspace-taxi-cartoon.webp", accent: "#9d7b54", wash: "#f1e5d5" },
+  { code: "boarding", name: "Boarding", eyebrow: "Trusted stays", note: "A second home when you travel.", href: "/v2/boarding", image: "/assets/pawspace-boarding-cartoon.webp", accent: "#cf7c67", wash: "#ffe4db" },
+  { code: "dog_training", name: "Training", eyebrow: "Better habits", note: "Kind coaching for calmer days.", href: "/v2/training", image: "/assets/pawspace-training-cartoon.webp", accent: "#6b7ed7", wash: "#e7eaff" },
+  { code: "pet_sitting", name: "Pet Sitting", eyebrow: "Care at home", note: "Familiar spaces, loving company.", href: "/v2/sitting", image: "/assets/pawspace-sitting-cartoon.webp", accent: "#c56b9c", wash: "#fde6f2" },
+  { code: "dog_walking", name: "Dog Walking", eyebrow: "Happy steps", note: "Reliable walks with real updates.", href: "/v2/walking", image: "/assets/pawspace-walking-cartoon.webp", accent: "#64a36f", wash: "#e3f2df" },
+  { code: "food", name: "Fresh Food", eyebrow: "Fresh bowls", note: "Made-for-pets meals, delivered.", href: "/v2/food", image: "/assets/pawspace-food-cartoon.webp", accent: "#df7b3d", wash: "#ffead8" },
+  { code: "relocation", name: "Relocation", eyebrow: "Move together", note: "Thoughtful travel support end to end.", href: "/v2/relocation", image: "/assets/pawspace-relocation-cartoon.webp", accent: "#5f8faa", wash: "#deeff8" },
+  { code: "pet_taxi", name: "Pet Taxi", eyebrow: "Safe rides", note: "Comfortable pickup and drop support.", href: "/v2/taxi", image: "/assets/pawspace-taxi-cartoon.webp", accent: "#9d7b54", wash: "#f1e5d5" },
 ];
 
 const CLOSED_BOOKING_STATES = new Set(["completed", "cancelled", "canceled", "refunded", "closed"]);
@@ -172,7 +172,8 @@ export default function PawSpaceV2() {
             <span>{availability ? `${availableCount} services ready` : "Checking services"}</span>
           </div>
           <div className={styles.navActions}>
-            <Link href="/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
+            <Link href="/v2/activity" className={styles.aiNav}><span>◎</span> Activity</Link>
+            <Link href="/v2/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
             {account ? (
               <Link href="/v2/account" className={styles.profileButton} title="Open account">
                 <span className={styles.avatar}>{account.name.slice(0, 1).toUpperCase()}</span>
@@ -191,7 +192,7 @@ export default function PawSpaceV2() {
             <p>Trusted people, intelligent care and every service in one delightful PawSpace experience.</p>
             <div className={styles.heroActions}>
               <a href="#services" className={styles.primaryAction}>Explore care <span>↗</span></a>
-              <Link href="/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
+              <Link href="/v2/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
             </div>
             <div className={styles.trustRow}>
               <span><b>4.9</b><small>customer love</small></span>
@@ -276,7 +277,7 @@ export default function PawSpaceV2() {
               <div className={styles.aiTop}><span className={styles.aiOrb}>✦</span><div><small>PAWSPACE AI</small><b>Your pet-care co-pilot</b></div><span className={styles.beta}>AI</span></div>
               <h3>{firstPet ? `A little more ease for ${firstPet.name}.` : "Tell us about your pet. We'll connect the dots."}</h3>
               <p>{account ? (upcoming ? `You have ${upcoming.packageName} coming up. I can help with prep, follow-ups and the next best care step.` : "Your family profile is connected. Ask for care ideas, service guidance or help planning your next booking.") : "Ask what service fits, how to prepare, or what your pet may need next. Booking truth always comes from PawSpace systems."}</p>
-              <Link href="/chat" className={styles.aiCta}>Start a conversation <span>↗</span></Link>
+              <Link href="/v2/chat" className={styles.aiCta}>Start a conversation <span>↗</span></Link>
               <div className={styles.promptChips}><span>“What does my pet need?”</span><span>“Plan a travel stay”</span><span>“Grooming advice”</span></div>
             </section>
 
@@ -314,7 +315,7 @@ export default function PawSpaceV2() {
       <nav className={styles.mobileDock} aria-label="PawSpace mobile navigation">
         <Link href="/v2"><span>⌂</span><b>Home</b></Link>
         <a href="#services"><span>＋</span><b>Book</b></a>
-        <Link href="/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
+        <Link href="/v2/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
         <Link href="/v2/activity"><span>◎</span><b>Activity</b></Link>
         {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={() => setAuthOpen(true)}><span>◉</span><b>Sign in</b></button>}
       </nav>
