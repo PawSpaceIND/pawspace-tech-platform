@@ -172,6 +172,7 @@ export default function PawSpaceV2() {
             <span>{availability ? `${availableCount} services ready` : "Checking services"}</span>
           </div>
           <div className={styles.navActions}>
+            <Link href="/v2/activity" className={styles.aiNav}><span>◎</span> Activity</Link>
             <Link href="/v2/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
             {account ? (
               <Link href="/v2/account" className={styles.profileButton} title="Open account">
