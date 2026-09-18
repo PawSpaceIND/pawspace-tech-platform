@@ -295,8 +295,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, tracking, grooming, groomingLive, stays, sittingCare] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
+  const [training, trainer, grooming, groomingLive, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -304,12 +304,14 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(training, /Every pet has one paid \{plan\.directMinutes\+plan\.coachingMinutes\}-minute session/);
   assert.match(trainer, /loadTrainerSessions/);
   assert.match(trainer, /selected.total_sessions/);
-  assert.match(tracking, /LOCATION SHARING · NOT CONNECTED IN UAT/);
-  assert.match(tracking, /No location is collected or displayed by this UAT placeholder/);
-  assert.match(tracking, /Live route unavailable/);
   assert.match(grooming, /<CustomerGroomingLiveCard bookingId=\{bookedId\}\/>/);
   assert.match(groomingLive, />Groomer<\/dt>/);
   assert.match(groomingLive, /customer-grooming-summary/);
+  assert.match(groomingLive, /ETA about/);
+  assert.match(groomingLive, /shows ETA and distance only—not the groomer’s exact location/);
+  assert.match(groomingLive, /requestVersion=useRef/);
+  assert.match(groomingLive, /current\?\.abort\(\)/);
+  assert.match(groomingLive, /version===requestVersion\.current/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);
   assert.match(stays, /<SittingCustomerPanel/);
