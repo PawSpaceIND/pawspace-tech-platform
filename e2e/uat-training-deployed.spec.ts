@@ -1,4 +1,4 @@
-import { test, expect, type Frame, type FrameLocator, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -36,17 +36,50 @@ async function seedAccount(page:Page){
 }
 async function payRazorpay(page:Page){
   const selector="iframe.razorpay-checkout-frame, iframe[src*='razorpay']";
-  await page.locator(selector).first().waitFor({state:"visible",timeout:45_000}); const f=page.frameLocator(selector).first();
-  const contact=f.locator("#contact, input[name='contact'], input[type='tel']"); if(await visible(contact,8000)){await contact.first().fill(PHONE);const email=f.locator("#email,input[type='email']");if(await visible(email))await email.first().fill(EMAIL);const next=f.getByRole("button",{name:/continue|proceed|next/i});if(await visible(next,5000))await next.first().click();await page.waitForTimeout(1500);}
-  for(const tile of [f.locator("[data-value='card'],[data-method='card']"),f.getByRole("button",{name:/^cards?(\s|$)/i}),f.getByText(/^cards?$/i)]){if(await visible(tile)){await tile.first().click().catch(()=>{});break;}}
-  const num=f.locator("#card_number,input[name='card[number]'],input[autocomplete='cc-number'],input[placeholder*='card number' i]"); await expect(num.first()).toBeVisible({timeout:20_000}); await num.first().fill("4111111111111111");
+  await page.locator(selector).first().waitFor({state:"visible",timeout:45_000});
+  const f=page.frameLocator(selector).first();
+  log("ℹ️ Razorpay checkout iframe mounted.");
+  const contact=f.locator("#contact, input[name='contact'], input[type='tel']");
+  if(await visible(contact,8000)){
+    await contact.first().fill(PHONE);
+    const email=f.locator("#email,input[type='email']"); if(await visible(email))await email.first().fill(EMAIL);
+    const next=f.getByRole("button",{name:/continue|proceed|next/i}); if(await visible(next,5000))await next.first().click();
+    await page.waitForTimeout(1500);
+  }
+  for(const tile of [f.locator("[data-value='card'],[data-method='card']"),f.getByRole("button",{name:/^cards?(\\s|$)/i}),f.getByRole("button",{name:/credit|debit/i}),f.getByText(/^cards?$/i)]){
+    if(await visible(tile)){await tile.first().click().catch(()=>{});break;}
+  }
+  const add=f.getByText(/add (a )?new card/i); if(await visible(add))await add.first().click().catch(()=>{});
+  const num=f.locator("#card_number,input[name='card[number]'],input[autocomplete='cc-number'],input[placeholder*='card number' i]");
+  await expect(num.first()).toBeVisible({timeout:20_000}); await num.first().fill("4111111111111111");
   await f.locator("#card_expiry,input[name='card[expiry]'],input[autocomplete='cc-exp'],input[placeholder*='MM' i]").first().fill("12/29");
   await f.locator("#card_cvv,input[name='card[cvv]'],input[autocomplete='cc-csc'],input[placeholder*='CVV' i]").first().fill("123");
-  const pay=()=>f.getByRole("button",{name:/^pay\b|pay ₹|pay now|^continue$/i}).last(); await pay().click();
-  for(let i=0;i<3;i++){await page.waitForTimeout(1500);let filled=false;const holder=f.getByPlaceholder(/name on (your )?card/i).or(f.locator("#card_name,input[name='card[name]']"));if(await visible(holder)&&!(await holder.first().inputValue().catch(()=>""))){await holder.first().fill("UAT Training Customer");filled=true;}const em=f.getByPlaceholder(/email/i).or(f.locator("#email,input[type='email']"));if(await visible(em)&&!(await em.first().inputValue().catch(()=>""))){await em.first().fill(EMAIL);filled=true;}if(!filled)break;if(await visible(pay(),3000))await pay().click().catch(()=>{});}
-  const later=f.getByRole("button",{name:/maybe later|no thanks|not now|skip/i});if(await visible(later,5000))await later.first().click().catch(()=>{});
-  const deadline=Date.now()+90_000;while(Date.now()<deadline){const scopes:Array<FrameLocator|Frame>=[f,...page.frames()];for(const scope of scopes){const b=scope.getByRole("button",{name:/^success$/i}).first();if(await b.waitFor({state:"visible",timeout:1000}).then(()=>true).catch(()=>false)){await b.click();return;}}await page.waitForTimeout(1500);}
+  const popupPromise=page.context().waitForEvent("page",{timeout:25_000}).catch(()=>null);
+  const pay=()=>f.getByRole("button",{name:/^pay\\b|pay ₹|pay now|^continue$/i}).last();
+  await pay().click();
+  for(let i=0;i<3;i++){
+    await page.waitForTimeout(1500); let filled=false;
+    const holder=f.getByPlaceholder(/name on (your )?card/i).or(f.locator("#card_name,input[name='card[name]']"));
+    if(await visible(holder)&&!(await holder.first().inputValue().catch(()=>""))){await holder.first().fill("UAT Training Customer");filled=true;}
+    const em=f.getByPlaceholder(/email/i).or(f.locator("#email,input[type='email']"));
+    if(await visible(em)&&!(await em.first().inputValue().catch(()=>""))){await em.first().fill(EMAIL);filled=true;}
+    if(!filled)break; if(await visible(pay(),3000))await pay().click().catch(()=>{});
+  }
+  const decline=async()=>{const later=f.getByRole("button",{name:/maybe later|no thanks|not now|skip/i});if(await visible(later,5000)){await later.first().click().catch(()=>{});return true;}return false;};
+  await decline();
+  const popup=await popupPromise;
+  const pressSuccess=async()=>{
+    if(popup){const b=popup.getByRole("button",{name:/^success$/i}).first();if(await b.waitFor({state:"visible",timeout:1500}).then(()=>true).catch(()=>false)){await b.click();log("✅ Razorpay test-bank Success pressed in popup.");return true;}}
+    const inCheckout=f.getByRole("button",{name:/^success$/i}).first(); if(await inCheckout.waitFor({state:"visible",timeout:1500}).then(()=>true).catch(()=>false)){await inCheckout.click();log("✅ Razorpay test-bank Success pressed in checkout iframe.");return true;}
+    for(const frame of page.frames()){const b=frame.getByRole("button",{name:/^success$/i}).first();if(await b.waitFor({state:"visible",timeout:750}).then(()=>true).catch(()=>false)){await b.click();log(`✅ Razorpay test-bank Success pressed in nested frame ${frame.url()}.`);return true;}}
+    return false;
+  };
+  const deadline=Date.now()+90_000;
+  while(Date.now()<deadline){if(await pressSuccess())return;if(await decline())continue;await page.waitForTimeout(1200);}
+  await shot(page,"razorpay-success-not-found");
+  throw new Error("Razorpay test-bank Success was not reached; refusing to claim the sandbox card flow completed");
 }
+
 type CheckoutStatus={http:number;body:{data?:{status?:string}}|null};
 async function status(page:Page,bookingId:string){return page.evaluate(async id=>{const r=await fetch("/api/customer-checkout",{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify({action:"status",bookingId:id})});return{http:r.status,body:await r.json().catch(()=>null) as {data?:{status?:string}}|null}} ,bookingId) as Promise<CheckoutStatus>}
 
