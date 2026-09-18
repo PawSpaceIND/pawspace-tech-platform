@@ -87,7 +87,19 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
   test.setTimeout(600_000); try{
     await login(page); log(`✅ Customer sandbox OTP login (${PHONE}).`); await seedAccount(page); log("✅ Canonical Bengaluru address + dog available.");
     await page.goto("/training");
-    const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i}); await expect(reserve).toBeEnabled({timeout:60_000});
+    const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
+    const dateInput=page.getByRole("textbox",{name:"First session date"});
+    let capacityFound=false;
+    for(let offset=3;offset<=21;offset+=1){
+      const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
+      await dateInput.fill(candidate);
+      await page.waitForTimeout(1200);
+      const refresh=page.getByRole("button",{name:"Refresh trainer availability"});
+      if(await refresh.isEnabled().catch(()=>false))await refresh.click();
+      await page.waitForTimeout(1800);
+      if(await reserve.isEnabled().catch(()=>false)){capacityFound=true;log(`✅ Server-confirmed Training capacity found for ${candidate}.`);break;}
+    }
+    expect(capacityFound).toBe(true); await expect(reserve).toBeEnabled();
     const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST",{timeout:180_000}); await reserve.click();
     const cr=await created; const cb=await cr.json() as {data?:{bookingId?:string}}; expect(cr.status()).toBe(201); const bookingId=String(cb.data?.bookingId||""); expect(bookingId).not.toEqual(""); log(`✅ Canonical Training booking created: ${bookingId}.`);
     await expect(page.getByRole("heading",{name:"Review payment"})).toBeVisible({timeout:60_000});
