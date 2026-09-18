@@ -95,11 +95,14 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     for(let offset=3;offset<=21;offset+=1){
       const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
       await dateInput.fill(candidate);
-      const loading=page.getByRole("status",{name:/Checking availability for every programme session/i});
-      await loading.waitFor({state:"visible",timeout:10_000}).catch(()=>{});
-      await loading.waitFor({state:"hidden",timeout:20_000}).catch(()=>{});
-      await expect(page.getByText(/Repricing for your current selections/i)).toBeHidden({timeout:20_000}).catch(()=>{});
-      if(await reserve.isEnabled().catch(()=>false)){capacityFound=true;log(`✅ Server-confirmed Training capacity found for ${candidate}.`);break;}
+      const noTrainer=page.getByText(/No available trainer has been confirmed/i);
+      const deadline=Date.now()+45_000;
+      while(Date.now()<deadline){
+        if(await reserve.isEnabled().catch(()=>false)){capacityFound=true;log(`✅ Server-confirmed Training capacity found for ${candidate}.`);break;}
+        if(await noTrainer.isVisible().catch(()=>false)){log(`ℹ️ No server-confirmed Training capacity for ${candidate}.`);break;}
+        await page.waitForTimeout(500);
+      }
+      if(capacityFound)break;
     }
     expect(capacityFound).toBe(true); await expect(reserve).toBeEnabled();
     const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST",{timeout:180_000}); await reserve.click();
