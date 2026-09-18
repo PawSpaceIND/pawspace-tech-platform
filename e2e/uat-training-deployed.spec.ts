@@ -92,7 +92,7 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
     const dateInput=page.getByRole("textbox",{name:"First session date"});
     let capacityFound=false;
-    for(let offset=3;offset<=21;offset+=1){
+    for(let offset=3;offset<=3;offset+=1){
       const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
       await dateInput.fill(candidate);
       const noTrainer=page.getByText(/No available trainer has been confirmed/i);
@@ -103,6 +103,18 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
         await page.waitForTimeout(500);
       }
       if(capacityFound)break;
+    }
+    if(!capacityFound){
+      const diagnostic=await page.evaluate(async()=>{
+        const date=(document.querySelector('input[type="date"]') as HTMLInputElement|null)?.value||"";
+        const account=await fetch("/api/customer-account",{credentials:"include"}).then(r=>r.json()) as {data?:{customerId?:string;pets?:Array<{id?:string;species?:string}>}};
+        const quote=await fetch("/api/training-commercial",{method:"POST",headers:{"content-type":"application/json"},credentials:"include",body:JSON.stringify({packageCode:"trainer-meet-greet",petCount:1,scheduledStart:`${date}T10:00:00+05:30`,paymentMode:"prepaid"})}).then(r=>r.json()) as {data?:{quoteId?:string;minutesPerSession?:number}};
+        const pet=account.data?.pets?.find(p=>p.species==="dog");
+        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:1,cadenceDays:7};
+        const response=await fetch("/api/uat-scheduling",{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+        return{status:response.status,body:await response.json().catch(()=>null)};
+      });
+      log(`❌ Scheduler diagnostic: ${JSON.stringify(diagnostic)}`);
     }
     expect(capacityFound).toBe(true); await expect(reserve).toBeEnabled();
     const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST",{timeout:180_000}); await reserve.click();
