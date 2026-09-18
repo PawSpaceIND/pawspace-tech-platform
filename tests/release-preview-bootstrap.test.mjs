@@ -598,3 +598,52 @@ test("no file that runs in the hosted job carries a table definition of its own"
     }
   }
 });
+
+// Shared staging is mutable infrastructure. Deploying or reseeding during either live
+// browser proof invalidates its SHA evidence, even when every individual test passes.
+const STAGING_WORKFLOWS = [
+  ["deploy-staging.yml", "deploy"],
+  ["uat-btm-e2e.yml", "e2e"],
+  ["automated-human-sweep.yml", "sweep"],
+];
+const readStagingWorkflow = (name) => yaml.load(fs.readFileSync(path.join(repo, ".github/workflows", name), "utf8"));
+function assertSharedStagingLease(document, jobId) {
+  assert.equal(document.concurrency, undefined, "one job-level lease, not a nested workflow/job lock");
+  const concurrency = document.jobs[jobId].concurrency;
+  assert.equal(typeof concurrency, "object", "explicit running and pending cancellation policy");
+  assert.equal(concurrency.group, "pawspace-staging-sweep", "deploy and proof share one static group across refs");
+  assert.equal(concurrency["cancel-in-progress"], false, "never cancel an active deployment or proof");
+  assert.equal(concurrency.queue, "max", "new queued work must not silently replace an existing pending proof");
+}
+for (const [file, jobId] of STAGING_WORKFLOWS) {
+  test(`shared staging lease covers ${file}`, () => {
+    const document = readStagingWorkflow(file);
+    assertSharedStagingLease(document, jobId);
+    assert.deepEqual(Object.keys(document.on ?? document[true]), ["workflow_dispatch"], "manual dispatch only");
+  });
+}
+test("shared staging lease rejects the former split group, cancellation and pending replacement", () => {
+  const valid = readStagingWorkflow("deploy-staging.yml");
+  for (const patch of [{ group:"pawspace-staging-deploy" }, { group:"${{ github.workflow }}-${{ github.ref }}" }, { "cancel-in-progress":true }, { queue:"single" }]) {
+    const mutated = structuredClone(valid);
+    mutated.jobs.deploy.concurrency = { group:"pawspace-staging-sweep", "cancel-in-progress":false, queue:"max", ...patch };
+    assert.throws(() => assertSharedStagingLease(mutated, "deploy"), assert.AssertionError);
+  }
+});
+test("shared staging serialization preserves pinned checkout and safe dispatch defaults", () => {
+  const deploy = readStagingWorkflow("deploy-staging.yml"), deployment = deploy.jobs.deploy;
+  const input = (deploy.on ?? deploy[true]).workflow_dispatch.inputs;
+  assert.equal(input.expected_sha.required, true);
+  assert.equal(input.sms_smoke.default, "disabled");
+  const checkout = deployment.steps.find(step => String(step.uses || "").startsWith("actions/checkout@"));
+  assert.equal(checkout.with.ref, "${{ github.event.inputs.expected_sha }}");
+  for (const [file, jobId] of STAGING_WORKFLOWS.slice(1)) {
+    const document = readStagingWorkflow(file), env = document.jobs[jobId].env;
+    assert.equal(env.APP_ENV, "staging");
+    assert.equal(env.FORBID_PRODUCTION, "true");
+    assert.equal(env.PAWSPACE_PAYMENT_ENV, "sandbox");
+    assert.equal(env.PAWSPACE_PAYMENT_LIVE_APPROVED, "false");
+  }
+  const sweep = readStagingWorkflow("automated-human-sweep.yml");
+  assert.equal((sweep.on ?? sweep[true]).workflow_dispatch.inputs.reseed.default, "false");
+});
