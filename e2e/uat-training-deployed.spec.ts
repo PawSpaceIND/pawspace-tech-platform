@@ -95,10 +95,10 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     for(let offset=3;offset<=21;offset+=1){
       const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
       await dateInput.fill(candidate);
-      await page.waitForTimeout(1200);
-      const refresh=page.getByRole("button",{name:"Refresh trainer availability"});
-      if(await refresh.isEnabled().catch(()=>false))await refresh.click();
-      await page.waitForTimeout(1800);
+      const loading=page.getByRole("status",{name:/Checking availability for every programme session/i});
+      await loading.waitFor({state:"visible",timeout:10_000}).catch(()=>{});
+      await loading.waitFor({state:"hidden",timeout:20_000}).catch(()=>{});
+      await expect(page.getByText(/Repricing for your current selections/i)).toBeHidden({timeout:20_000}).catch(()=>{});
       if(await reserve.isEnabled().catch(()=>false)){capacityFound=true;log(`✅ Server-confirmed Training capacity found for ${candidate}.`);break;}
     }
     expect(capacityFound).toBe(true); await expect(reserve).toBeEnabled();
