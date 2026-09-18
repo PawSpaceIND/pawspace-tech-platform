@@ -1,6 +1,5 @@
 "use client";
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useMemo,useState}from"react";
 import{createCanonicalFoodOrder,createFoodQuote,loadFoodCatalogue,type FoodCatalogueItem,type FoodOrderResult,type FoodQuote}from"../../lib/food-client";
 import{loadCustomerAccount,type CustomerPet}from"../../lib/customer-account-client";
@@ -17,8 +16,8 @@ const renewalOptions=[7,14,30,60] as const;
 type PurchaseMode="single"|"subscription";
 type SubscriptionResult={subscriptionId:string;nextRenewalAt:number};
 
-export default function CanonicalFoodPage(){
- const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path);
+export default function CanonicalFoodPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){
+ const pathname=routeScope==="v2"?"/v2/food":"/food",href=(path:string)=>customerScopedHref(pathname,path);
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null);
  const[accountError,setAccountError]=useState("");
  const customer=account?{id:account.customerId,name:account.name,primaryPhone:account.primaryPhone,secondaryPhone:account.secondaryPhone??undefined,email:account.email??undefined}:null;

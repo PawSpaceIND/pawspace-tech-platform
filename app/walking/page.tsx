@@ -1,7 +1,6 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useState}from"react";
 import{createWalkingQuote,loadWalkingCatalogue,type WalkingQuote}from"../../lib/walking-commercial-client";
 import Button from"../components/ui/Button";
@@ -26,8 +25,8 @@ const localInstant=(date:string,time:string)=>`${date}T${time}:00+05:30`;
 // made it non-functional for EVERY real customer: anonymous callers get 401 and a signed-in customer
 // asking for TST-101 is refused by requireCustomerOwnership. [PTJA-P1-F37]
 
-export default function WalkingPage(){
- const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path),v2=isV2CustomerPath(pathname);
+export default function WalkingPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){
+ const pathname=routeScope==="v2"?"/v2/walking":"/walking",href=(path:string)=>customerScopedHref(pathname,path),v2=isV2CustomerPath(pathname);
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null);
  const[accountLoading,setAccountLoading]=useState(true);
  const[accountError,setAccountError]=useState("");

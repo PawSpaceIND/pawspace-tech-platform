@@ -1,6 +1,5 @@
 "use client";
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useMemo,useState}from"react";
 import{createTaxiQuote,loadTaxiRouteClasses,type TaxiQuote,type TaxiRouteClass}from"../../lib/taxi-commercial-client";
 import{reserveUatSchedule,type UatScheduleResult}from"../../lib/uat-scheduling-client";
@@ -21,8 +20,8 @@ const drivers=[
 ];
 const times=["08:00","11:00","14:00","18:00"],dateOffset=(days:number)=>new Date(Date.now()+days*86_400_000).toISOString().slice(0,10),localInstant=(date:string,time:string)=>`${date}T${time}:00+05:30`;
 const box={background:"white",border:"1px solid #e4e4e4",borderRadius:16,padding:20} as const;
-export default function CanonicalTaxiPage(){
- const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path),v2=isV2CustomerPath(pathname);
+export default function CanonicalTaxiPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){
+ const pathname=routeScope==="v2"?"/v2/taxi":"/taxi",href=(path:string)=>customerScopedHref(pathname,path),v2=isV2CustomerPath(pathname);
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null);
  const[accountLoading,setAccountLoading]=useState(true);
  const[accountError,setAccountError]=useState("");

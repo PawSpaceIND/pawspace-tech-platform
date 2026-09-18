@@ -1,6 +1,5 @@
 "use client";
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useState}from"react";
 import{createRelocationCase,updateRelocationCase,type RelocationCase}from"../../lib/relocation-client";
 import{loadCustomerAccount}from"../../lib/customer-account-client";
@@ -10,8 +9,8 @@ const future=()=>new Date(Date.now()+45*86_400_000).toISOString().slice(0,10);
 // The customer is the SIGNED-IN one, read from the platform session — never a fixture. This page used
 // to hardcode customer TST-101, which on a public host is refused for every real customer.
 // [PTJA-P1-F37]
-export default function RelocationPage(){
- const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path);
+export default function RelocationPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){
+ const pathname=routeScope==="v2"?"/v2/relocation":"/relocation",href=(path:string)=>customerScopedHref(pathname,path);
  const[customerId,setCustomerId]=useState("");
  const[accountError,setAccountError]=useState("");
  // loadCustomerAccount() sends NO id: the server derives the subject from the platform session.

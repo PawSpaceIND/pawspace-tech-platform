@@ -1,1 +1,2 @@
-export {default} from "../../training/page";
+import TrainingPage from "../../training/page";
+export default function V2TrainingPage(){return <TrainingPage routeScope="v2"/>;}

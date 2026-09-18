@@ -1,6 +1,5 @@
 "use client";
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useMemo,useState}from"react";
 import{loadTrainingPackages,loadTrainingTrainers,quoteTraining,type TrainingPackage,type TrainingQuote,type TrainingTrainer}from"../../lib/training-commercial-client";
 import{reserveUatSchedule}from"../../lib/uat-scheduling-client";
@@ -25,8 +24,8 @@ const initialDate=()=>new Date(Date.now()+3*day).toISOString().slice(0,10);
 const money=(value:number)=>`₹${Number(value||0).toLocaleString("en-IN")}`;
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ");
 
-export default function TrainingPage(){
- const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path);
+export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){
+ const pathname=routeScope==="v2"?"/v2/training":"/training",href=(path:string)=>customerScopedHref(pathname,path);
  const[date,setDate]=useState(initialDate);
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null);
  const[accountLoading,setAccountLoading]=useState(true);

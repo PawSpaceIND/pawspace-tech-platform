@@ -1,12 +1,11 @@
 "use client";
 import Link from"next/link";
-import{usePathname}from"next/navigation";
 import{useEffect,useState}from"react";
 import{loadFoodSubscription,payFoodRenewal,type FoodSubscriptionSnapshot}from"../../../lib/food-subscription-client";
 import{useQueryParameter}from"../../../lib/use-query-parameter";
 import{resourceScreenState}from"../../../lib/resource-screen-state";
 import{customerScopedHref}from"../../../lib/v2/route-scope";
-export default function FoodSubscriptionPaymentPage(){const pathname=usePathname(),href=(path:string)=>customerScopedHref(pathname,path);const renewalId=useQueryParameter("renewalId"),
+export default function FoodSubscriptionPaymentPage({routeScope="legacy"}:{routeScope?:"legacy"|"v2"}={}){const pathname=routeScope==="v2"?"/v2/food/subscription-payment":"/food/subscription-payment",href=(path:string)=>customerScopedHref(pathname,path);const renewalId=useQueryParameter("renewalId"),
 [data,setData]=useState<FoodSubscriptionSnapshot|null>(null),[loadedId,setLoadedId]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState("");useEffect(()=>{if(!renewalId)return;void loadFoodSubscription({renewalId}).then(snapshot=>{setData(snapshot);setLoadedId(renewalId)}).catch(problem=>{setError(problem instanceof Error?problem.message:"Unable to load payment request");setLoadedId(renewalId)})},[renewalId]);const renewal=data?.renewals.find(row=>String(row.id)===renewalId);
  const screen=resourceScreenState({id:renewalId,loaded:loadedId===renewalId,resource:renewal,error});
  async function pay(method:"cash"|"online_sandbox"){
