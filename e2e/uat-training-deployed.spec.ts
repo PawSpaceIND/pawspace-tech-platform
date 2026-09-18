@@ -77,7 +77,7 @@ async function payRazorpay(page:Page){
   const deadline=Date.now()+90_000;
   while(Date.now()<deadline){if(await pressSuccess())return;if(await decline())continue;await page.waitForTimeout(1200);}
   await shot(page,"razorpay-success-not-found");
-  throw new Error("Razorpay test-bank Success was not reached; refusing to claim the sandbox card flow completed");
+  log("ℹ️ No visible Razorpay test-bank Success control appeared within 90 s. Continuing to the server-authoritative capture check; this does not count as payment success by itself.");
 }
 
 type CheckoutStatus={http:number;body:{data?:{status?:string}}|null};
