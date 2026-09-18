@@ -100,6 +100,13 @@ export function providerRosterAssignabilityQuery(now = Date.now()) {
   return `SELECT p.id id,p.updated_by updated_by,CASE WHEN p.updated_by LIKE '%seed%' THEN 1 ELSE 0 END seeded,CASE WHEN EXISTS (SELECT 1 FROM json_each(p.services_json) s WHERE s.value IN (${radius})) THEN 1 ELSE 0 END radius_gated,CASE WHEN EXISTS (SELECT 1 FROM provider_home_base b WHERE b.provider_id=p.id AND b.effective_from<=${at} AND (b.effective_until IS NULL OR b.effective_until>${at})) THEN 1 ELSE 0 END has_home_base FROM provider_capacity_profiles p WHERE p.city_id='blr' AND p.live=1 AND p.status='active' AND p.effective_from<=date('now') AND (p.effective_to IS NULL OR p.effective_to>=date('now'))`;
 }
 
+export function trainingUatRosterHealthQuery() {
+  return `SELECT p.id id,
+    (SELECT COUNT(*) FROM provider_unavailability u WHERE u.provider_id=p.id AND u.status='active' AND u.ends_at>datetime('now')) active_blocks,
+    (SELECT COUNT(DISTINCT a.date) FROM scheduling_availability a WHERE a.provider_id=p.id AND a.zone_id='blr-east' AND a.source='roster' AND a.date>=date('now') AND a.date<=date('now','+30 day')) roster_days
+    FROM provider_capacity_profiles p WHERE p.id IN ('uatcap_train_ft','uatcap_train_east')`;
+}
+
 /** Build the read-only staff probe against the canonical role_definitions(code) schema. */
 export function staffIdentityQuery(email) {
   const escaped = String(email).replaceAll("'", "''");
@@ -288,6 +295,14 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
     const noBase = radiusGated.filter(row => val(row, "has_home_base") !== "1").map(row => val(row, "id"));
     check("radius-gated human-UAT providers (grooming, training) have a current home base", noBase.length === 0,
       noBase.length ? `no geocoded home base: ${noBase.join(", ")}` : `${radiusGated.length} radius-gated seeded providers located`);
+
+    const trainingRows = await d1(trainingUatRosterHealthQuery());
+    const blockedTraining = trainingRows.filter(row => Number(row.active_blocks || 0) > 0).map(row => val(row, "id"));
+    check("staging Training UAT providers have no persistent unavailability hold", blockedTraining.length === 0,
+      blockedTraining.length ? `active holds: ${blockedTraining.join(", ")}` : `${trainingRows.length} Training UAT providers clear`);
+    const shortRoster = trainingRows.filter(row => Number(row.roster_days || 0) < 31).map(row => `${val(row, "id")} (${row.roster_days || 0}/31 days)`);
+    check("staging Training UAT roster is published at least 30 days ahead", shortRoster.length === 0,
+      shortRoster.length ? `short roster horizon: ${shortRoster.join(", ")}` : `${trainingRows.length} Training UAT providers have 31-day roster coverage`);
   } catch (error) {
     unavailable("human-UAT seeded roster rows carry founder_seed provenance so the scheduler may use them", `roster assignability could not be verified (${error?.message})`);
   }

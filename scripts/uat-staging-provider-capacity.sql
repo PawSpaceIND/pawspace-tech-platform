@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_
 -- Repair rows loaded by the earlier version of this file: same UAT roster, wrong provenance.
 UPDATE provider_capacity_profiles SET updated_by='founder_seed',version=version+1,updated_at=1789300000000 WHERE updated_by='uat_staging_seed';
 
+-- Every staging deploy must restore the synthetic UAT roster to a deterministic assignable state.
+-- Human/automated UAT can legitimately toggle availability or verification holds while testing; those
+-- mutations must not poison the next certified deploy. Scope this repair strictly to uatcap_* fixtures.
+UPDATE provider_capacity_profiles
+SET live=1,status='active',updated_by='founder_seed',version=version+1,updated_at=strftime('%s','now')*1000
+WHERE id LIKE 'uatcap\_%' ESCAPE '\';
+
+-- Clear only UAT-fixture unavailability. Real/provider-authored rows are untouched.
+UPDATE provider_unavailability
+SET status='cleared',ends_at=datetime('now'),updated_at=strftime('%s','now')*1000
+WHERE provider_id LIKE 'uatcap\_%' ESCAPE '\' AND status='active';
+
 -- ---------------------------------------------------------------------------------------------------
 -- Grooming (radius-gated): eight full-time groomers per zone, each based inside their zone, plus a
 -- city-wide full-time team and a city-wide commission partner (exercises the accept/decline offer path).
@@ -267,8 +279,14 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
 CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date);
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source);
-WITH RECURSIVE days(d,n) AS (SELECT date('now','-1 day'),0 UNION ALL SELECT date(d,'+1 day'),n+1 FROM days WHERE n<16)
-INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at)
+-- Replace only synthetic UAT roster rows so a stale/narrow prior seed cannot remain authoritative.
+DELETE FROM scheduling_availability
+WHERE provider_id LIKE 'uatcap\_%' ESCAPE '\'
+  AND (id LIKE 'uatseed\_%' ESCAPE '\' OR source='uat_roster')
+  AND date>=date('now','-1 day');
+
+WITH RECURSIVE days(d,n) AS (SELECT date('now','-1 day'),0 UNION ALL SELECT date(d,'+1 day'),n+1 FROM days WHERE n<101)
+INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at)
 SELECT 'uatseed_'||p.id||'_'||days.d||'_'||z.value,p.id,p.city_id,z.value,days.d,CASE WHEN p.services_json LIKE '%"boarding"%' THEN '["00:00-23:59"]' ELSE '["06:00-22:00"]' END,'roster',strftime('%s','now')*1000
 FROM provider_capacity_profiles p,json_each(p.zones_json) z,days
 WHERE p.id LIKE 'uatcap\_%' ESCAPE '\';
