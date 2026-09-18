@@ -172,7 +172,7 @@ export default function PawSpaceV2() {
             <span>{availability ? `${availableCount} services ready` : "Checking services"}</span>
           </div>
           <div className={styles.navActions}>
-            <Link href="/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
+            <Link href="/v2/chat" className={styles.aiNav}><span>✦</span> Ask PawSpace AI</Link>
             {account ? (
               <Link href="/v2/account" className={styles.profileButton} title="Open account">
                 <span className={styles.avatar}>{account.name.slice(0, 1).toUpperCase()}</span>
@@ -191,7 +191,7 @@ export default function PawSpaceV2() {
             <p>Trusted people, intelligent care and every service in one delightful PawSpace experience.</p>
             <div className={styles.heroActions}>
               <a href="#services" className={styles.primaryAction}>Explore care <span>↗</span></a>
-              <Link href="/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
+              <Link href="/v2/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
             </div>
             <div className={styles.trustRow}>
               <span><b>4.9</b><small>customer love</small></span>
@@ -276,7 +276,7 @@ export default function PawSpaceV2() {
               <div className={styles.aiTop}><span className={styles.aiOrb}>✦</span><div><small>PAWSPACE AI</small><b>Your pet-care co-pilot</b></div><span className={styles.beta}>AI</span></div>
               <h3>{firstPet ? `A little more ease for ${firstPet.name}.` : "Tell us about your pet. We'll connect the dots."}</h3>
               <p>{account ? (upcoming ? `You have ${upcoming.packageName} coming up. I can help with prep, follow-ups and the next best care step.` : "Your family profile is connected. Ask for care ideas, service guidance or help planning your next booking.") : "Ask what service fits, how to prepare, or what your pet may need next. Booking truth always comes from PawSpace systems."}</p>
-              <Link href="/chat" className={styles.aiCta}>Start a conversation <span>↗</span></Link>
+              <Link href="/v2/chat" className={styles.aiCta}>Start a conversation <span>↗</span></Link>
               <div className={styles.promptChips}><span>“What does my pet need?”</span><span>“Plan a travel stay”</span><span>“Grooming advice”</span></div>
             </section>
 
@@ -314,7 +314,7 @@ export default function PawSpaceV2() {
       <nav className={styles.mobileDock} aria-label="PawSpace mobile navigation">
         <Link href="/v2"><span>⌂</span><b>Home</b></Link>
         <a href="#services"><span>＋</span><b>Book</b></a>
-        <Link href="/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
+        <Link href="/v2/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
         <Link href="/v2/activity"><span>◎</span><b>Activity</b></Link>
         {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={() => setAuthOpen(true)}><span>◉</span><b>Sign in</b></button>}
       </nav>
