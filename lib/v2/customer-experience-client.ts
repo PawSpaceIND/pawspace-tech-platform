@@ -99,6 +99,35 @@ export async function verifyV2CustomerOtp(input: {
   );
 }
 
+export async function updateV2CustomerProfile(input: {
+  name: string;
+  primaryPhone: string;
+  secondaryPhone?: string | null;
+  email?: string | null;
+  cityId: string;
+  idempotencyKey: string;
+}): Promise<void> {
+  await apiSend<Record<string, unknown>>(
+    "/api/customer-account",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "update_profile",
+        idempotencyKey: input.idempotencyKey,
+        profile: {
+          name: input.name,
+          primaryPhone: input.primaryPhone,
+          secondaryPhone: input.secondaryPhone ?? null,
+          email: input.email ?? null,
+          cityId: input.cityId,
+        },
+      }),
+    },
+    "We could not update your PawSpace account.",
+  );
+}
+
 export async function endV2CustomerSession(): Promise<void> {
   await apiSend<{ loggedOut: boolean }>(
     "/api/identity-session",
