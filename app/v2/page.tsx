@@ -31,12 +31,12 @@ type ServiceCard = {
 const SERVICES: ServiceCard[] = [
   { code: "grooming", name: "Grooming", eyebrow: "Doorstep spa", note: "Salon-quality care, at home.", href: "/v2/grooming", image: "/assets/pawspace-grooming-cartoon.webp", accent: "#f0ad36", wash: "#fff0c9", size: "hero" },
   { code: "boarding", name: "Boarding", eyebrow: "Trusted stays", note: "A second home when you travel.", href: "/v2/boarding", image: "/assets/pawspace-boarding-cartoon.webp", accent: "#cf7c67", wash: "#ffe4db" },
-  { code: "dog_training", name: "Training", eyebrow: "Better habits", note: "Kind coaching for calmer days.", href: "/training", image: "/assets/pawspace-training-cartoon.webp", accent: "#6b7ed7", wash: "#e7eaff" },
+  { code: "dog_training", name: "Training", eyebrow: "Better habits", note: "Kind coaching for calmer days.", href: "/v2/training", image: "/assets/pawspace-training-cartoon.webp", accent: "#6b7ed7", wash: "#e7eaff" },
   { code: "pet_sitting", name: "Pet Sitting", eyebrow: "Care at home", note: "Familiar spaces, loving company.", href: "/v2/sitting", image: "/assets/pawspace-sitting-cartoon.webp", accent: "#c56b9c", wash: "#fde6f2" },
-  { code: "dog_walking", name: "Dog Walking", eyebrow: "Happy steps", note: "Reliable walks with real updates.", href: "/walking", image: "/assets/pawspace-walking-cartoon.webp", accent: "#64a36f", wash: "#e3f2df" },
-  { code: "food", name: "Fresh Food", eyebrow: "Fresh bowls", note: "Made-for-pets meals, delivered.", href: "/food", image: "/assets/pawspace-food-cartoon.webp", accent: "#df7b3d", wash: "#ffead8" },
-  { code: "relocation", name: "Relocation", eyebrow: "Move together", note: "Thoughtful travel support end to end.", href: "/relocation", image: "/assets/pawspace-relocation-cartoon.webp", accent: "#5f8faa", wash: "#deeff8" },
-  { code: "pet_taxi", name: "Pet Taxi", eyebrow: "Safe rides", note: "Comfortable pickup and drop support.", href: "/taxi", image: "/assets/pawspace-taxi-cartoon.webp", accent: "#9d7b54", wash: "#f1e5d5" },
+  { code: "dog_walking", name: "Dog Walking", eyebrow: "Happy steps", note: "Reliable walks with real updates.", href: "/v2/walking", image: "/assets/pawspace-walking-cartoon.webp", accent: "#64a36f", wash: "#e3f2df" },
+  { code: "food", name: "Fresh Food", eyebrow: "Fresh bowls", note: "Made-for-pets meals, delivered.", href: "/v2/food", image: "/assets/pawspace-food-cartoon.webp", accent: "#df7b3d", wash: "#ffead8" },
+  { code: "relocation", name: "Relocation", eyebrow: "Move together", note: "Thoughtful travel support end to end.", href: "/v2/relocation", image: "/assets/pawspace-relocation-cartoon.webp", accent: "#5f8faa", wash: "#deeff8" },
+  { code: "pet_taxi", name: "Pet Taxi", eyebrow: "Safe rides", note: "Comfortable pickup and drop support.", href: "/v2/taxi", image: "/assets/pawspace-taxi-cartoon.webp", accent: "#9d7b54", wash: "#f1e5d5" },
 ];
 
 const CLOSED_BOOKING_STATES = new Set(["completed", "cancelled", "canceled", "refunded", "closed"]);
