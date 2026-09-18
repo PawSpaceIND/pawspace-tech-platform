@@ -87,6 +87,8 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
   test.setTimeout(600_000); try{
     await login(page); log(`✅ Customer sandbox OTP login (${PHONE}).`); await seedAccount(page); log("✅ Canonical Bengaluru address + dog available.");
     await page.goto("/training");
+    const meetGreet=page.getByRole("button",{name:/Trainer Meet & Greet/i}); await expect(meetGreet).toBeVisible({timeout:60_000}); await meetGreet.click();
+    log("✅ Selected canonical one-session Trainer Meet & Greet to avoid multi-week staging-capacity pollution.");
     const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
     const dateInput=page.getByRole("textbox",{name:"First session date"});
     let capacityFound=false;
