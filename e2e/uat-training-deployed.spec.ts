@@ -93,10 +93,10 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     await expect(page.getByRole("heading",{name:"Review payment"})).toBeVisible({timeout:60_000});
 
     let failOneProgrammeRead=true;
-    await page.route("**/api/training-programmes?bookingId=*",async route=>{if(failOneProgrammeRead&&route.request().method()==="GET"){failOneProgrammeRead=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time Training programme read failure"})});}return route.continue();});
+    await page.route("**/api/training-programmes**",async route=>{if(failOneProgrammeRead&&route.request().method()==="GET"){failOneProgrammeRead=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time Training programme read failure"})});}return route.continue();});
     await page.getByRole("button",{name:/^Pay securely\b/i}).click(); await payRazorpay(page); log("✅ Razorpay sandbox card flow completed.");
     let s:CheckoutStatus={http:0,body:null};for(let i=0;i<12;i++){await page.waitForTimeout(4000);s=await status(page,bookingId);if(s.body?.data?.status==="captured")break;} expect(s.body?.data?.status).toBe("captured");log(`✅ Server-authoritative payment status captured for ${bookingId}.`);
-    const checkStatus=page.getByRole("button",{name:"Check payment status"}); if(await checkStatus.isVisible().catch(()=>false))await checkStatus.click();
+    const checkStatus=page.getByRole("button",{name:"Check payment status"}); await expect(checkStatus).toBeVisible({timeout:60_000}); await checkStatus.click();
     const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000});
     await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time post-payment Training read failure entered read-only recovery; payment controls did not return.");
     await recovery.getByRole("button",{name:"Refresh confirmation"}).click();
