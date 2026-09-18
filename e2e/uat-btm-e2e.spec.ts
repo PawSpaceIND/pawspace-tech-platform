@@ -733,8 +733,14 @@ async function partnerLifecycle(page: Page) {
     log(settled ? `ℹ️ Partner app confirmed the ${label.toLowerCase()} upload and queue flush.` : `⚠️ Partner app did not show its "${label} uploaded and verified" message within 30 s.`);
   }
   await expect.poll(async () => (await page.getByText(/awaiting Ops approval/i).count()), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
-  const assets = await page.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ id: string; purpose: string; accessStatus?: string; access_status?: string; reviewStatus?: string; review_status?: string; proofReady?: boolean }> };
+  const assets = await page.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ id: string; purpose: string; accessStatus?: string; access_status?: string; reviewStatus?: string; review_status?: string; retention_status?: string; proofReady?: boolean }> };
   for (const asset of assets.assets ?? []) log(`ℹ️ Media asset ${asset.id}: ${asset.purpose}, access ${asset.accessStatus ?? asset.access_status}, review ${asset.reviewStatus ?? asset.review_status}, proofReady ${String(asset.proofReady)}.`);
+  const activeAssets = (assets.assets ?? []).filter(asset => asset.retention_status === "active");
+  expect(activeAssets.map(asset => asset.purpose).sort(), "exactly one active registration per proof purpose").toEqual(["after_service", "before_service"]);
+  for (const asset of activeAssets) {
+    expect(["quarantined", "ready"], "each active proof has received its bytes").toContain(asset.accessStatus ?? asset.access_status);
+  }
+  log("PASS: exactly one active before-service photo and one active after-service photo; no pending-upload duplicate.");
   log("✅ Partner app shows the photos as uploaded and awaiting Ops approval.");
   const premature = page.getByRole("button", { name: /^Add service proof$/ });
   if (await premature.isVisible().catch(() => false)) {
@@ -762,12 +768,12 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
     await expect(queue).toBeVisible({ timeout: 20_000 });
     await queue.getByRole("button", { name: "Refresh" }).click().catch(() => {});
     const mine = queue.locator("article").filter({ hasText: bookingId });
-    await expect.poll(async () => mine.count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
+    await expect.poll(async () => mine.count(), { timeout: 30_000 }).toBe(2);
     for (const label of ["before service", "after service"]) {
-      // More than one article can carry this label when a registration never received its bytes; the
-      // checker approves the asset whose upload completed and records every refusal as evidence.
+      // One uploaded photo must create one review entry, not a candidate list hiding duplicates.
       const candidates = mine.filter({ hasText: new RegExp(`^${label} photo`, "i") });
       const count = await candidates.count();
+      expect(count, `exactly one ${label} review entry for ${bookingId}`).toBe(1);
       log(`ℹ️ ${count} "${label} photo" asset(s) listed for ${bookingId} in the review queue.`);
       let approved = false;
       for (let i = 0; i < count && !approved; i += 1) {
@@ -785,6 +791,7 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
     }
     const listing = await page!.evaluate(async (id) => (await (await fetch(`/api/service-media?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" })).json()), bookingId) as { assets?: Array<{ purpose: string; proofReady: boolean }> };
     const ready = (listing.assets ?? []).filter(a => a.proofReady).map(a => a.purpose);
+    expect(ready.slice().sort(), "both unique proof purposes are approved").toEqual(["after_service", "before_service"]);
     log(`${ready.length >= 2 ? "✅" : "❌"} Media listing for ${bookingId}: proofReady for ${ready.join(", ") || "none"}.`);
     await shot(page!, "founder-approval");
   } finally { await context.close(); }
