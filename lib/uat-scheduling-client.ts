@@ -7,7 +7,25 @@ export class SchedulingRefusal extends Error { constructor(code:string|undefined
 function selectedAddress(){if(typeof window==="undefined")return null;try{const raw=window.sessionStorage.getItem("pawspace.selected-service-address");if(!raw)return null;const parsed=JSON.parse(raw)as{address?:unknown;pincode?:unknown;assignment?:{pincode?:unknown};latitude?:unknown;longitude?:unknown;verification?:unknown},address=String(parsed.address||"").trim(),pincode=String(parsed.pincode||parsed.assignment?.pincode||"").trim(),latitude=Number(parsed.latitude),longitude=Number(parsed.longitude),mapped=parsed.verification!=="manual"&&Number.isFinite(latitude)&&Number.isFinite(longitude);return address&&/^[1-9][0-9]{5}$/.test(pincode)?{serviceAddress:address,servicePincode:pincode,...(mapped?{latitude,longitude}:{})}:null;}catch{return null;}}
 /** The browser may identify the selected address, but city/zone/coordinates/radius are deliberately not authoritative. */
 export async function reserveUatSchedule(input:UatScheduleRequest){const remembered=!input.serviceAddress&&!input.servicePincode?selectedAddress():null,payload={...input,...remembered},response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),body=await response.json()as{data?:UatScheduleResult;error?:string;evaluations?:SchedulingEvaluation[]};if(!response.ok||!body.data)throw new SchedulingRefusal(body.error,body.evaluations);return body.data;}
-export type ProviderPreview={providers:Array<{id:string;name:string;model:"full_time"|"commission";rating?:number;qualityScore?:number}>;availabilityChecked:true;reserved:false;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string};
+export type ProviderPreview={occurrences?:Array<{start:string;end:string;occurrenceNumber:number}>;providers:Array<{id:string;name:string;model:"full_time"|"commission";rating?:number;qualityScore?:number}>;availabilityChecked:true;reserved:false;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string};
 export type SitterPreview=ProviderPreview;
-export async function previewUatProviders(input:UatScheduleRequest):Promise<ProviderPreview>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const remembered=!input.serviceAddress&&!input.servicePincode?selectedAddress():null;const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});const body=await response.json() as {data?:ProviderPreview;error?:string};if(!response.ok||!body.data||!Array.isArray(body.data.providers))throw new Error(body.error||"Unable to load available care professionals. Please try again.");return body.data;}catch(error){if(controller.signal.aborted)throw new Error("Availability search timed out. Please try again.");if(error instanceof SyntaxError)throw new Error("Availability response could not be read. Please try again.");throw error;}finally{clearTimeout(timer);}}
+export async function previewUatProviders(input:UatScheduleRequest,options:{timeoutMs?:number;signal?:AbortSignal}={}):Promise<ProviderPreview>{
+ const controller=new AbortController();
+ const timeout=Number.isFinite(options.timeoutMs)?Math.min(90_000,Math.max(1000,options.timeoutMs!)):15_000;
+ const abort=()=>controller.abort();
+ options.signal?.addEventListener("abort",abort,{once:true});
+ if(options.signal?.aborted)controller.abort();
+ const timer=setTimeout(abort,timeout);
+ try{
+  const remembered=!input.serviceAddress&&!input.servicePincode?selectedAddress():null;
+  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});
+  const body=await response.json() as {data?:ProviderPreview;error?:string};
+  if(!response.ok||!body.data||!Array.isArray(body.data.providers))throw new Error(body.error||"Unable to load available care professionals. Please try again.");
+  return body.data;
+ }catch(error){
+  if(controller.signal.aborted)throw new Error("Availability search timed out. Please try again.");
+  if(error instanceof SyntaxError)throw new Error("Availability response could not be read. Please try again.");
+  throw error;
+ }finally{clearTimeout(timer);options.signal?.removeEventListener("abort",abort);}
+}
 export async function previewSitters(input:UatScheduleRequest):Promise<SitterPreview>{return previewUatProviders({...input,serviceCode:"pet_sitting"});}
