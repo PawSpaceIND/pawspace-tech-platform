@@ -22,7 +22,11 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    concurrency: pawspace-staging-sweep
+    # Shared with staging deploy and both browser proofs; preserve running and queued work.
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
     env:
       NODE_ENV: test
       APP_ENV: staging

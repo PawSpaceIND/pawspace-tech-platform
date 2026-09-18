@@ -67,7 +67,11 @@ jobs:
   deploy:
     if: ${{ github.event.inputs.confirm == 'staging' }}
     runs-on: ubuntu-latest
-    concurrency: pawspace-staging-deploy
+    # Shared with staging deploy and both browser proofs; preserve running and queued work.
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
     steps:
       # Checked out AT the requested sha. Before this the workflow deployed whatever the default
       # branch happened to be, so "the staging deploy of <sha>" was an assumption nobody could check
