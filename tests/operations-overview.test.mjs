@@ -279,9 +279,14 @@ test("the /admin screen renders live data and labels anything that is still samp
   assert.match(page, /item\.id==="bookings"\?overview\?\.metrics\.bookingsToday/, "the badges that remain come from live metrics");
   // Unsourced fields render as "Not connected" rather than a number.
   assert.match(page, /Not connected/);
-  // Tabs still on sample rows say so.
-  assert.match(page, /PROTOTYPE_VIEWS/);
-  assert.match(page, /still shows built-in example rows/);
+  // Historical sample-only Admin tabs are retired from this navigation rather than presented as live.
+  for (const label of ["Customers & CRM","Boarding & sitting","Taxi & walking","Fresh food","Groomers","Workforce & payouts","Subscriptions","Payments","Support tickets"]) {
+    assert.doesNotMatch(navBlock, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${label} must use its canonical Team/Control workspace instead of an Admin sample tab`);
+  }
+  for (const href of ["/crm","/team/customer-experience","/team/provider-onboarding","/team/operations/boarding","/team/operations/taxi","/team/operations/walking","/team/operations/food","/team/people","/team/subscriptions","/team/finance"]) {
+    assert.match(page, new RegExp(`href=\"${href.replaceAll("/","\\/")}\"`), `Admin must link to canonical workspace ${href}`);
+  }
+  assert.doesNotMatch(page, /PROTOTYPE_VIEWS/, "retired sample tabs must not have a live Admin navigation marker");
   // Gateway + route contract.
   assert.match(read("lib/api-gateway.ts"), /url\.pathname==="\/api\/operations-overview"\)return "dashboard\.view"/);
   assert.match(read("app/api/operations-overview/route.ts"), /authorize\(request,"dashboard\.view"\)/);
