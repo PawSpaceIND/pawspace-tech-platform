@@ -2,7 +2,8 @@
 import Link from"next/link";
 import{useEffect,useMemo,useRef,useState}from"react";
 import{loadTrainingPackages,loadTrainingTrainers,quoteTraining,type TrainingPackage,type TrainingQuote,type TrainingTrainer}from"../../lib/training-commercial-client";
-import{reserveUatSchedule}from"../../lib/uat-scheduling-client";
+import{reserveUatSchedule,SchedulingRefusal}from"../../lib/uat-scheduling-client";
+import{loadAvailableTrainingTrainers,trainingScheduleRequest}from"../../lib/training-availability-client";
 import{Button}from"../components/ui";
 import{createCanonicalTrainingBooking,type TrainingBookingResult}from"../../lib/training-booking-client";
 import{materializeTrainingProgramme,type CustomerTrainingProgramme}from"../../lib/training-programme-client";
@@ -43,7 +44,9 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  // different account than it was fetched for — the derived values below do the invalidating.
  const[resolvedLocation,setResolvedLocation]=useState<{accountId:string;cityId:string;zoneId:string;zoneName:string}|null>(null);
  const[locationRefusal,setLocationRefusal]=useState<{accountId:string;reason:string}|null>(null);
- const[trainers,setTrainers]=useState<TrainingTrainer[]>([]);
+ const[availability,setAvailability]=useState<{key:string;providers:TrainingTrainer[];error?:string}|null>(null);
+ const[availabilityRefresh,setAvailabilityRefresh]=useState(0);
+ const bookingRequest=useRef(false);
  const[trainerId,setTrainerId]=useState("");
  const[catalogueLoading,setCatalogueLoading]=useState(true);
  const[busy,setBusy]=useState(false);
@@ -58,7 +61,6 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  const[pendingCheckout,setPendingCheckout]=useState<{booking:TrainingBookingResult;programme:CustomerTrainingProgramme;total:number;dueNow:number;mode:"prepaid"|"split"}|null>(null);
  const scheduledStart=`${date}T10:00:00+05:30`;
  const activePackage=useMemo(()=>packages.find(item=>item.package_code===packageCode),[packages,packageCode]);
- const activeTrainer=useMemo(()=>trainers.find(item=>item.id===trainerId)||trainers[0],[trainers,trainerId]);
  // Dog Training is a dogs-only service, so only the customer's dogs can be enrolled.
  const dogs=useMemo(()=>(account?.pets||[]).filter(pet=>pet.species==="dog"),[account]);
  const selectedPets=useMemo(()=>dogs.filter(pet=>selectedPetIds.includes(pet.id)),[dogs,selectedPetIds]);
@@ -75,6 +77,10 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  // longer matches quoteKey and currentQuote is null — the old price is gone from the UI and from
  // confirm() in the same render, with no state write and therefore no window to race against.
  const currentQuote=quoteReady?quote:null;
+ const availabilityKey=JSON.stringify([quoteKey,account?.customerId,location?.cityId,location?.zoneId,availabilityRefresh]);
+ const trainers=availability?.key===availabilityKey?availability.providers:[];
+ const activeTrainer=trainers.find(item=>item.id===trainerId)||trainers[0];
+ const availabilityLoading=Boolean(location&&petCount>0&&availability?.key!==availabilityKey);
 
  // Resolve the signed-in customer from the platform session. loadCustomerAccount() sends no id: the
  // server derives the subject from the session, which is the same identity the booking is scoped to,
@@ -136,26 +142,29 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  // form shows new selections while a stale price is still spendable — that window is what let an old
  // quote be submitted against changed dogs or a changed date.
  useEffect(()=>{
-  let active=true;
-  const mode=effectiveMode,pricedKey=quoteKey;
+  let active=true;const controller=new AbortController();
+  const mode=effectiveMode,pricedKey=quoteKey,searchKey=availabilityKey;
   if(!location)return()=>{active=false};
+  if(!account)return()=>{active=false};
   void Promise.all([
    // No dog selected yet — there is nothing to price, and a 0-pet quote is not a real quote.
    petCount>0?quoteTraining({packageCode,petCount,scheduledStart,paymentMode:mode}):Promise.resolve(null),
    loadTrainingTrainers({cityId:location.cityId,zoneId:location.zoneId,at:scheduledStart}),
-  ]).then(([nextQuote,providerResult])=>{
+  ]).then(async([nextQuote,providerResult])=>{
    if(!active)return;
    setQuote(nextQuote);
    // Stamp the quote with the inputs it was priced for. Belt and braces with `active`: even if a
    // slower earlier response were ever applied, it carries ITS key, not the current one, so
    // quoteReady stays false and confirm() refuses it rather than spending a superseded price.
    setQuotedKey(nextQuote?pricedKey:"");
-   setTrainers(providerResult.providers);
-   setTrainerId(current=>providerResult.providers.some(item=>item.id===current)?current:providerResult.providers[0]?.id||"");
+   const available=nextQuote?await loadAvailableTrainingTrainers({customerId:account.customerId,petIds:selectedPetIds,cityId:location.cityId,zoneId:location.zoneId,scheduledStart,quote:nextQuote},providerResult.providers,controller.signal):[];
+   if(!active)return;
+   setAvailability({key:searchKey,providers:available});
+   setTrainerId(current=>available.some(item=>item.id===current)?current:available[0]?.id||"");
    setError("");
-  }).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load canonical Training availability")});
-  return()=>{active=false};
- },[date,packageCode,paymentMode,petCount,scheduledStart,effectiveMode,quoteKey,location]);
+  }).catch(problem=>{if(active){const message=problem instanceof Error?problem.message:"Unable to load canonical Training availability";setAvailability({key:searchKey,providers:[],error:message});setError(message);}});
+  return()=>{active=false;controller.abort()};
+ },[date,packageCode,paymentMode,petCount,scheduledStart,effectiveMode,quoteKey,location,account,selectedPetIds,availabilityKey]);
 
  useEffect(()=>{if(packageCode==="trainer-meet-greet"&&paymentMode!=="prepaid")queueMicrotask(()=>setPaymentMode("prepaid"))},[packageCode,paymentMode]);
 
@@ -189,20 +198,21 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
  async function confirm(){
   // quoteReady is the guard that matters: a quote priced for different dogs, a different date,
   // package or payment mode is not spendable, no matter that one is still held in state.
-  if(!currentQuote||!activeTrainer||busy||!account||!location||selectedPets.length===0)return;
-  setBusy(true);setError("");
+  if(!currentQuote||!activeTrainer||busy||bookingRequest.current||!account||!location||selectedPets.length===0)return;
+  bookingRequest.current=true;setBusy(true);setError("");
   try{
    const quote=currentQuote;
    const customer={id:account.customerId,name:account.name,primaryPhone:account.primaryPhone,secondaryPhone:account.secondaryPhone??undefined,email:account.email??undefined};
    const bookingPets=selectedPets.map(pet=>({sourceId:pet.sourceId??pet.id,name:pet.name,species:"dog",breed:pet.breed??undefined,vaccinationStatus:pet.vaccinationStatus}));
-   const duration=quote.minutesPerSession*60_000,scheduledEnd=new Date(new Date(scheduledStart).getTime()+duration).toISOString(),requestId=`training:${quote.quoteId}:${customer.id}`;
-   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.id),serviceCode:"dog_training",zoneId:location.zoneId,scheduledStart,scheduledEnd,occurrences:quote.meetAndGreet?1:quote.sessions,cadenceDays:7,preferredProviderId:activeTrainer.id});
+   const request=trainingScheduleRequest({customerId:customer.id,petIds:selectedPets.map(pet=>pet.id),cityId:location.cityId,zoneId:location.zoneId,scheduledStart,quote});
+   const scheduledEnd=request.scheduledEnd,requestId=request.clientRequestId;
+   const schedule=await reserveUatSchedule({...request,preferredProviderId:activeTrainer.id});
    const result=await createCanonicalTrainingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,trainingQuote:quote,customer,pets:bookingPets,cityId:location.cityId,zoneId:location.zoneId,scheduledStart,scheduledEnd,provider:schedule.provider});
    const nextProgramme=await materializeTrainingProgramme({bookingId:result.bookingId});
    setPaymentVerified(false);setConfirmationError("");setConfirmedProviderName("");
    setPendingCheckout({booking:result,programme:nextProgramme,total:quote.totalAmount,dueNow:quote.amountDueNow,mode:quote.paymentMode});window.scrollTo(0,0);
-  }catch(problem){setError(problem instanceof Error?problem.message:"Unable to confirm canonical Training programme")}
-  finally{setBusy(false)}
+  }catch(problem){const message=problem instanceof Error?problem.message:"Unable to confirm canonical Training programme";setError(message);if(problem instanceof SchedulingRefusal){setAvailability({key:availabilityKey,providers:[],error:message});setTrainerId("");}}
+  finally{bookingRequest.current=false;setBusy(false)}
  }
 
  if(pendingCheckout)return <main className={styles.shell}>
@@ -222,5 +232,5 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
 
  if(booking&&programme)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · CANONICAL UAT</p><h1>Training programme confirmed</h1><p>Booking, trainer assignment, payment ledger and programme sessions now share one canonical identity.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.grid3}><article className={styles.card}><small>Booking</small><strong className={styles.block}>{booking.bookingId}</strong><span>{label(booking.status)}</span></article><article className={styles.card}><small>Programme</small><strong className={styles.block}>{programme.programme.id}</strong><span>{programme.programme.total_sessions} session(s)</span></article><article className={styles.card}><small>Trainer</small><strong className={styles.block}>{confirmedProviderName||programme.programme.provider_id}</strong><span>Canonical scheduler assignment</span></article></section><section className={styles.card}><h2>Programme sessions</h2>{programme.sessions.map(session=><article key={session.id} className={styles.sessionRow}><strong>Session {session.sequence_no} · {label(session.status)}</strong><div>{new Date(session.scheduled_start).toLocaleString("en-IN")} → {new Date(session.scheduled_end).toLocaleTimeString("en-IN")}</div><small>{session.id} · trainer {session.provider_id}</small></article>)}</section><section className={styles.card}><h2>UAT boundaries</h2><p>Payment is confirmed only from verified Razorpay sandbox evidence. Production media storage/scanning, GST/tax invoicing, payout execution and external messaging remain configuration/launch dependencies.</p><div className={styles.actions}><Link href={href("/mobile-app")}>My PawSpace</Link><button onClick={()=>{setBooking(null);setProgramme(null);setPaymentVerified(false);setConfirmationError("");setConfirmedProviderName("")}}>Book another programme</button></div></section></main>;
 
- return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>DOG TRAINING · CANONICAL UAT</p><h1>Choose a server-owned Training programme</h1><p>Catalogue, price, trainer eligibility and schedule are read from PawSpace governance. The browser no longer invents a plan, trainer or progress journey.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.card}><h2>1. Pet and first session</h2><div className={styles.grid2}><div role="group" aria-labelledby="training-dogs-label"><span id="training-dogs-label">Dogs</span>{accountLoading?<p>Loading your pets…</p>:accountError?<p role="alert">{accountError} <Link href={href("/mobile-app")}>Sign in →</Link></p>:dogs.length===0?<p>No dogs on your profile yet. <Link href={href("/mobile-app")}>Add one in My PawSpace →</Link></p>:<div className={styles.petList}>{dogs.map(pet=><button key={pet.id} type="button" onClick={()=>togglePet(pet.id)} aria-pressed={selectedPetIds.includes(pet.id)} className={styles.choice}><strong>{pet.name}</strong><small className={styles.block}>{petLabel(pet)}</small></button>)}<small>{petCount} dog(s) selected{account?` · booking as ${account.name}`:""}</small></div>}</div><label>First session date<input type="date" value={date} onChange={event=>setDate(event.target.value)} className={styles.input}/></label></div>{locationLoading?<p>Confirming your training zone…</p>:locationError?<p role="alert">{locationError}</p>:location?<small>Training zone {location.zoneName} · confirmed from your address PIN code</small>:null}</section><section className={styles.card}><h2>2. Programme</h2>{catalogueLoading?<p>Loading canonical Training catalogue…</p>:<div className={styles.grid2}>{packages.map(item=><button key={item.package_code} onClick={()=>setPackageCode(item.package_code)} aria-pressed={packageCode===item.package_code} className={styles.choice}><strong>{item.name}</strong><div>{item.sessions} session(s) · valid {item.validity_days} days</div><b>{money(item.base_price)}</b><small className={styles.block}>{item.meet_and_greet?"Meet & Greet · prepaid":"Programme · prepaid or approved split"}</small></button>)}</div>}<div className={styles.topGap}><label>Payment mode <select value={paymentMode} disabled={packageCode==="trainer-meet-greet"} onChange={event=>setPaymentMode(event.target.value as "prepaid"|"split")}><option value="split">Approved split</option><option value="prepaid">Full prepaid</option></select></label></div></section><section className={styles.card}><h2>3. Eligible trainer</h2>{!location?<p>Your training zone must be confirmed before trainers can be listed.</p>:trainers.length===0?<p>No governed trainer is available in {location.zoneName} for this UAT window.</p>:<div className={styles.grid3}>{trainers.map(item=><button key={item.id} onClick={()=>setTrainerId(item.id)} aria-pressed={activeTrainer?.id===item.id} className={styles.choice}><strong>{item.name}</strong><div>{item.rating.toFixed(1)} ★ · quality {item.qualityScore}</div><small>{item.model.replaceAll("_"," ")} · capacity {item.capacity}</small></button>)}</div>}</section><section className={styles.stickyCard}><div><strong>{currentQuote?money(currentQuote.totalAmount):"—"}</strong><div>{currentQuote?`${currentQuote.packageName} · ${currentQuote.sessions} session(s) · ${currentQuote.minutesPerSession} min/session`:activePackage?.name||"Canonical quote unavailable"}</div><small>{currentQuote?`${money(currentQuote.amountDueNow)} sandbox amount due now · live money disabled`:locationError?"Booking unavailable for your location":locationLoading?"Confirming your training zone…":petCount===0?"Select at least one of your dogs to continue":"Repricing for your current selections…"}</small></div><Button size="lg" disabled={!currentQuote||!activeTrainer||busy||!account||!location||petCount===0} onClick={()=>void confirm()}>{busy?"Reserving trainer…":"Reserve trainer & continue to payment →"}</Button></section></main>;
+ return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>DOG TRAINING · CANONICAL UAT</p><h1>Choose a server-owned Training programme</h1><p>Catalogue, price, trainer eligibility and schedule are read from PawSpace governance. The browser no longer invents a plan, trainer or progress journey.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.card}><h2>1. Pet and first session</h2><div className={styles.grid2}><div role="group" aria-labelledby="training-dogs-label"><span id="training-dogs-label">Dogs</span>{accountLoading?<p>Loading your pets…</p>:accountError?<p role="alert">{accountError} <Link href={href("/mobile-app")}>Sign in →</Link></p>:dogs.length===0?<p>No dogs on your profile yet. <Link href={href("/mobile-app")}>Add one in My PawSpace →</Link></p>:<div className={styles.petList}>{dogs.map(pet=><button key={pet.id} type="button" onClick={()=>togglePet(pet.id)} aria-pressed={selectedPetIds.includes(pet.id)} className={styles.choice}><strong>{pet.name}</strong><small className={styles.block}>{petLabel(pet)}</small></button>)}<small>{petCount} dog(s) selected{account?` · booking as ${account.name}`:""}</small></div>}</div><label>First session date<input type="date" value={date} onChange={event=>setDate(event.target.value)} className={styles.input}/></label></div>{locationLoading?<p>Confirming your training zone…</p>:locationError?<p role="alert">{locationError}</p>:location?<small>Training zone {location.zoneName} · confirmed from your address PIN code</small>:null}</section><section className={styles.card}><h2>2. Programme</h2>{catalogueLoading?<p>Loading canonical Training catalogue…</p>:<div className={styles.grid2}>{packages.map(item=><button key={item.package_code} onClick={()=>setPackageCode(item.package_code)} aria-pressed={packageCode===item.package_code} className={styles.choice}><strong>{item.name}</strong><div>{item.sessions} session(s) · valid {item.validity_days} days</div><b>{money(item.base_price)}</b><small className={styles.block}>{item.meet_and_greet?"Meet & Greet · prepaid":"Programme · prepaid or approved split"}</small></button>)}</div>}<div className={styles.topGap}><label>Payment mode <select value={paymentMode} disabled={packageCode==="trainer-meet-greet"} onChange={event=>setPaymentMode(event.target.value as "prepaid"|"split")}><option value="split">Approved split</option><option value="prepaid">Full prepaid</option></select></label></div></section><section className={styles.card}><h2>3. Available trainer</h2><p>Availability is checked for every session in this programme. A search does not reserve a trainer.</p><button type="button" disabled={!location||petCount===0||busy||availabilityLoading} onClick={()=>{setError("");setAvailabilityRefresh(value=>value+1);}}>Refresh trainer availability</button>{availabilityLoading?<p role="status">Checking availability for every programme session...</p>:!location?<p>Your training zone must be confirmed before trainers can be listed.</p>:trainers.length===0?<p>No available trainer has been confirmed in {location.zoneName} for this programme. Refresh availability or choose another date.</p>:<div className={styles.grid3}>{trainers.map(item=><button key={item.id} onClick={()=>setTrainerId(item.id)} aria-pressed={activeTrainer?.id===item.id} className={styles.choice}><strong>{item.name}</strong><div>{item.rating.toFixed(1)} ★ · quality {item.qualityScore}</div><small>{item.model.replaceAll("_"," ")} · capacity {item.capacity}</small></button>)}</div>}</section><section className={styles.stickyCard}><div><strong>{currentQuote?money(currentQuote.totalAmount):"—"}</strong><div>{currentQuote?`${currentQuote.packageName} · ${currentQuote.sessions} session(s) · ${currentQuote.minutesPerSession} min/session`:activePackage?.name||"Canonical quote unavailable"}</div><small>{currentQuote?`${money(currentQuote.amountDueNow)} sandbox amount due now · live money disabled`:locationError?"Booking unavailable for your location":locationLoading?"Confirming your training zone…":petCount===0?"Select at least one of your dogs to continue":"Repricing for your current selections…"}</small></div><Button size="lg" disabled={!currentQuote||!activeTrainer||busy||!account||!location||petCount===0} onClick={()=>void confirm()}>{busy?"Reserving trainer…":"Reserve trainer & continue to payment →"}</Button></section></main>;
 }
