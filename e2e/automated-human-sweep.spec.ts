@@ -165,6 +165,48 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
   return page;
 }
 
+test("Customer V2 persona — sandbox OTP → unified shell, account, activity and AI", async ({ browser }) => {
+  test.setTimeout(180_000);
+  section("Customer V2 persona");
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await customerOtpLogin(page);
+    log(`✅ V2 login prerequisite: sandbox OTP for ${PHONE} accepted; customer session is active.`);
+
+    await page.goto("/v2");
+    await expect(page.getByRole("heading", { name: /Everything your pet needs/ })).toBeVisible({ timeout: 20_000 });
+    for (const route of ["grooming", "boarding", "training", "sitting", "walking", "food", "relocation", "taxi"]) {
+      await expect(page.locator(`a[href="/v2/${route}"]`), `V2 service link /v2/${route}`).toHaveCount(1);
+    }
+    await expect(page.locator('a[href="/v2/chat"]:visible').first()).toBeVisible();
+    await expect(page.locator('a[href="/v2/activity"]:visible').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "V2 home should not overflow horizontally").toBe(true);
+    log("✅ /v2 rendered with all 8 service links plus V2 AI and Activity; no horizontal overflow.");
+    await shot(page, "v2-home");
+
+    await page.goto("/v2/activity");
+    await expect(page.getByRole("heading", { name: /Every booking, one clear timeline/ })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /Sign in to see your care history/ })).toHaveCount(0);
+    log("✅ /v2/activity reused the authenticated customer session.");
+    await shot(page, "v2-activity");
+
+    await page.goto("/v2/account");
+    await expect(page.getByRole("heading", { name: /Family details without leaving V2/ })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(CUSTOMER_NAME, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+    log("✅ /v2/account loaded canonical signed-in customer details.");
+    await shot(page, "v2-account");
+
+    await page.goto("/v2/chat");
+    await expect(page.getByRole("heading", { name: /One conversation for your pet/ })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: "My PawSpace" }).click();
+    await expect(page.getByRole("button", { name: "My PawSpace" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByLabel("Your message")).toBeEnabled();
+    log("✅ /v2/chat authenticated mode is available from the same customer session.");
+    await shot(page, "v2-chat-authenticated");
+  } finally { await context.close(); }
+});
+
 test("Customer persona — OTP → grooming booking → real booking ID (+ Razorpay modal probe)", async ({ browser }) => {
   test.setTimeout(480_000); // two real scheduler reservations on remote D1 (~40 s each) plus the preview
   section("Customer persona (mobile app)");
