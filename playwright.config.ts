@@ -21,6 +21,7 @@ export default defineConfig({
     "e2e/frontend-hydration-state-alignment.spec.ts",
     "e2e/mission-01.spec.ts",
     "e2e/partner-journey.spec.ts",
+    "e2e/uat-phase3-partner-training.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
     "e2e/uat-cross-module-wiring.spec.ts",
     "e2e/visual-uat-sweep.spec.ts",

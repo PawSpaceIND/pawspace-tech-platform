@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installAiHooks, freshAiDb, seedCustomer } from "./helpers/ai-harness.mjs";
@@ -20,11 +21,11 @@ test("Capacitor dual-target configuration exports distinct customer and partner 
 
   assert.equal(customerConfig.appId, "com.pawspace.customer");
   assert.equal(customerConfig.appName, "PawSpaceCustomer");
-  assert.equal(customerConfig.webDir, ".next");
+  assert.equal(customerConfig.webDir, "native/customer-shell");
 
   assert.equal(partnerConfig.appId, "com.pawspace.partner");
   assert.equal(partnerConfig.appName, "PawSpacePartner");
-  assert.equal(partnerConfig.webDir, ".next");
+  assert.equal(partnerConfig.webDir, "native/partner-shell");
 
   assert.notEqual(customerConfig.appId, partnerConfig.appId);
   assert.notEqual(customerConfig.appName, partnerConfig.appName);
@@ -234,12 +235,14 @@ test("Native permission manifests for iOS and Android declare all required hardw
   // Verify iOS Info.plist
   const iosPlist = readFileSync(resolve("ios/App/App/Info.plist"), "utf-8");
   assert.match(iosPlist, /<key>NSLocationWhenInUseUsageDescription<\/key>/);
-  assert.match(iosPlist, /PawSpace requires location access to track walker routes during active sessions\./);
+  assert.match(iosPlist, /PawSpace shares your location during an accepted partner job\./);
   assert.match(iosPlist, /<key>NSLocationAlwaysAndWhenInUseUsageDescription<\/key>/);
-  assert.match(iosPlist, /PawSpace requires background location access for live pet walking telemetry\./);
+  assert.match(iosPlist, /Tracking stops when the job ends\./);
   assert.match(iosPlist, /<key>NSCameraUsageDescription<\/key>/);
   assert.match(iosPlist, /PawSpace requires camera access for pet grooming verification photos\./);
 
+  assert.match(iosPlist, /<key>UIBackgroundModes<\/key>/);
+  assert.match(iosPlist, /<string>location<\/string>/);
   // Verify Android AndroidManifest.xml
   const androidManifest = readFileSync(resolve("android/app/src/main/AndroidManifest.xml"), "utf-8");
   assert.match(androidManifest, /android:name="android\.permission\.ACCESS_FINE_LOCATION"/);
@@ -249,3 +252,23 @@ test("Native permission manifests for iOS and Android declare all required hardw
   assert.match(androidManifest, /android:name="android\.permission\.POST_NOTIFICATIONS"/);
 });
 
+
+
+test("native preparation requires partner URL for normalized targets and aliases", () => {
+  for (const selection of [
+    { CAPACITOR_TARGET: "partner" },
+    { CAPACITOR_TARGET: "PARTNER" },
+    { APP_TARGET: "partner" },
+    { APP_TARGET: "PARTNER" },
+  ]) {
+    const env = { ...process.env };
+    delete env.CAPACITOR_TARGET;
+    delete env.APP_TARGET;
+    delete env.PAWSPACE_PARTNER_APP_URL;
+    const result = spawnSync(process.execPath, ["scripts/prepare-partner-native.mjs"], {
+      cwd: new URL("..", import.meta.url), env: { ...env, ...selection }, encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Set PAWSPACE_PARTNER_APP_URL/);
+  }
+});

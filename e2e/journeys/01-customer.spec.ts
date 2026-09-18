@@ -73,7 +73,9 @@ test("customer navigation and billing controls have physical 44px targets and re
     await expect(control, label).toBeVisible();
     await expect(control, label).toBeEnabled();
     await control.scrollIntoViewIfNeeded();
-    await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "center" }));
+    await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }));
+    // Wait for layout stability before measuring hit targets; the app enables smooth scrolling.
+    await control.click({ trial: true });
     const box = await control.boundingBox();
     expect(box, `${label}: a physical rectangle is required`).not.toBeNull();
     const hit = await control.evaluate(element => {
@@ -91,6 +93,10 @@ test("customer navigation and billing controls have physical 44px targets and re
   try {
     const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
     expect(response?.status()).toBe(200);
+    // Consent remains visible through checkout: neither it nor the fixed navigation may intercept the other.
+    const consent = page.getByRole("dialog", { name: "Cookie consent" });
+    await target(consent.getByRole("button", { name: "Essential only" }), "consent:essential");
+    await target(consent.getByRole("button", { name: "Accept optional" }), "consent:optional");
     const nav = page.getByRole("navigation", { name: "Customer navigation" });
     const surfaces = [["Home", /Good morning,/], ["Book", /^Book Grooming$/], ["Activity", /^Your activity$/],
       ["My Pets", /^Your pets$/], ["Account", /^My PawSpace$/]] as const;

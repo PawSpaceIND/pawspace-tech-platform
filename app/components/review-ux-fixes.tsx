@@ -47,7 +47,7 @@ function enhanceAddressInputs() {
 }
 
 function hideCustomerTestPanels() {
-  const customerPaths = new Set(["/", "/mobile-app", "/grooming", "/boarding", "/sitting", "/training", "/walking", "/food", "/relocation", "/funeral-memorial"]);
+  const customerPaths = new Set(["/", "/mobile-app", "/grooming", "/boarding", "/sitting", "/training", "/walking", "/taxi", "/food", "/relocation", "/funeral-memorial"]);
   if (!customerPaths.has(window.location.pathname)) return;
   document.querySelectorAll<HTMLElement>("[data-surface='customer']").forEach((node) => {
     node.style.display = "none";

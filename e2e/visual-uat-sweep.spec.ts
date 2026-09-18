@@ -4,7 +4,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 const ADDRESS = "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
 const PROVIDER_NAME = "PawSpace Grooming Team (UAT)";
-const PROVIDER_ID = "uatcap_groom_ft";
+const PREFERRED_PROVIDER_ID = "uatcap_groom_ft";
 const phone = `6${String(Date.now()).slice(-9)}`;
 const evidenceDir = process.env.PW_VISUAL_UAT_ARTIFACT_DIR || "visual-uat-evidence";
 mkdirSync(evidenceDir, { recursive: true });
@@ -90,15 +90,21 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
   const preferredRegion = page.getByRole("region", { name: "Preferred groomer" });
   await expect(preferredRegion).toBeVisible();
   const preferredProvider = preferredRegion.getByRole("button", { name: new RegExp(PROVIDER_NAME) });
-  const preferredVisible = await expect(preferredProvider).toBeVisible({ timeout: 10_000 }).then(() => true).catch(() => false);
+  const availabilityAlert = preferredRegion.getByRole("alert");
+  await expect.poll(
+    async () => (await preferredProvider.isVisible()) || (await availabilityAlert.isVisible()),
+    { timeout: 20_000, message: "preferred groomer preview should resolve to availability or a governed timeout" },
+  ).toBe(true);
+  const preferredVisible = await preferredProvider.isVisible();
   if (preferredVisible) {
     await preferredProvider.click();
   } else {
-    await expect(preferredRegion.getByRole("alert")).toContainText("Availability search timed out");
+    await expect(availabilityAlert).toContainText("Availability search timed out");
     await preferredRegion.getByRole("button", { name: "No preference" }).click();
   }
   await page.getByRole("button", { name: "Review booking" }).click();
   await page.getByLabel("Alternative Phone Number").fill("9876543210");
+  return preferredVisible;
 }
 
 async function createPayAfter(page: Page) {
@@ -133,7 +139,7 @@ async function verifyRazorpayModal(page: Page, serviceDate: string) {
 }
 
 test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async ({ page, browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   const baseURL = process.env.PW_BASE_URL!;
   const serviceDate = process.env.PW_UAT_SERVICE_DATE!;
   expect(baseURL).toContain("pawspace-staging");
@@ -152,7 +158,7 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const before = await beforeResponse.json();
     const beforeCount = Number(before.data.metrics.bookingsToday);
 
-    await openGrooming(page, serviceDate);
+    const preferredProviderSelected = await openGrooming(page, serviceDate);
     const bookingId = await createPayAfter(page);
     await shot(page, "01-customer-pay-after-confirmed.png");
 
@@ -161,7 +167,19 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const canonical = await canonicalResponse.json();
     const canonicalBooking = (canonical.bookings || []).find((row: { id?: string }) => row.id === bookingId);
     expect(canonicalBooking, `ADMIN_DISCONNECTION: ${bookingId} missing from canonical lifecycle`).toBeTruthy();
-    expect(canonicalBooking.provider_id, `SCHEDULING_DISCONNECTION: ${bookingId} assigned to unexpected provider`).toBe(PROVIDER_ID);
+    const assignedProviderId = String(canonicalBooking.provider_id || "");
+    expect(assignedProviderId, `SCHEDULING_DISCONNECTION: ${bookingId} has no assigned provider`).toBeTruthy();
+    if (preferredProviderSelected) {
+      expect(assignedProviderId, `SCHEDULING_DISCONNECTION: preferred groomer was selected but ${bookingId} was assigned elsewhere`).toBe(PREFERRED_PROVIDER_ID);
+    }
+
+    const switched = await partner.page.request.post("/api/uat-provider-switch", { data: {
+      providerId: assignedProviderId,
+      code: process.env.PW_STAFF_UAT_ACCESS_CODE,
+    }});
+    expect(switched.status(), await switched.text()).toBe(200);
+    const switchedBody = await switched.json();
+    expect(switchedBody.data?.providerId).toBe(assignedProviderId);
 
     const feedResponse = await partner.page.request.get("/api/partner-job-feed");
     expect(feedResponse.status(), await feedResponse.text()).toBe(200);
@@ -169,7 +187,7 @@ test("live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM", async
     const jobs = [ ...(feed.data?.needsAction || []), ...(feed.data?.today || []), ...(feed.data?.upcoming || []), ...(feed.data?.completed || []) ];
     expect(jobs.some((job: { bookingId?: string }) => job.bookingId === bookingId), `PARTNER_DISCONNECTION: ${bookingId} missing from authenticated provider feed`).toBe(true);
     await partner.page.goto("/partner/jobs");
-    await expect(partner.page.getByTestId(`partner-workspace-${bookingId}`)).toBeVisible();
+    await expect(partner.page.getByTestId(`partner-job-${bookingId}`)).toBeVisible();
     await shot(partner.page, "03-partner-exact-job.png");
 
     await expect.poll(async () => {

@@ -491,19 +491,58 @@ async function awaitPartnerAction(page: Page, label: RegExp, timeoutMs: number):
   return false;
 }
 
+type PartnerLifecycleProjection = {
+  data?: {
+    booking?: { status?: string; workOrderStatus?: string; work_order_status?: string };
+    events?: Array<{ eventType?: string }>;
+  };
+};
+
+async function readPartnerLifecycle(page: Page): Promise<PartnerLifecycleProjection | null> {
+  const res = await page.context().request.get(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(bookingId)}`, {
+    headers: { "cache-control": "no-store" },
+  }).catch(() => null);
+  if (!res?.ok()) return null;
+  return res.json().catch(() => null) as Promise<PartnerLifecycleProjection | null>;
+}
+
 async function partnerAct(page: Page, label: RegExp, expectStatus: RegExp) {
   const button = page.getByRole("button", { name: label }).first();
   await awaitPartnerAction(page, label, 30_000);
   await expect(button, `partner action ${label}`).toBeVisible({ timeout: 5_000 });
-  // Lifecycle transitions post to /api/grooming-lifecycle; a COMMISSION partner's Accept/Decline is the
-  // offer path (/api/provider-assignment-recovery). Wait for whichever the app calls.
-  const lifecycle = page.waitForResponse(r => /\/api\/(grooming-lifecycle|provider-assignment-recovery)(\?|$)/.test(r.url()) && r.request().method() === "POST", { timeout: 60_000 });
-  await button.click();
-  const res = await lifecycle;
-  const body = await res.json().catch(() => ({})) as { error?: string; code?: string };
-  log(`ℹ️ ${String(label)} → POST ${new URL(res.url()).pathname} HTTP ${res.status()}${body.error ? `: ${body.error}` : ""}`);
-  if (!res.ok()) { await frameOutline(page, `Partner job after ${String(label)} was refused`, 2_500); throw new Error(`${String(label)} refused (HTTP ${res.status()}): ${body.error || body.code || "no detail"}`); }
-  // The status shows on the job card (<em>) and in the detail (<span>); any visible occurrence will do.
+
+  // On deployed Chromium, waitForResponse can remain unresolved for minutes even after the lifecycle
+  // POST has returned 200 and D1/UI have moved forward. Use the authenticated canonical projection as
+  // the completion authority instead. This also keeps a real postcondition for add_proof, whose status
+  // intentionally remains in_service: require a new service_proof_updated lifecycle event.
+  const before = await readPartnerLifecycle(page);
+  const proofEventsBefore = before?.data?.events?.filter(e => e.eventType === "service_proof_updated").length ?? 0;
+  void button.click({ noWaitAfter: true, timeout: 15_000 }).catch((error) =>
+    log(`ℹ️ ${String(label)} click did not settle within the bounded browser wait: ${errText(error)}`),
+  );
+
+  let canonicalStatus = "";
+  const committed = await expect.poll(async () => {
+    const projection = await readPartnerLifecycle(page);
+    const booking = projection?.data?.booking;
+    canonicalStatus = String(booking?.workOrderStatus || booking?.work_order_status || booking?.status || "").replaceAll("_", " ");
+    if (/Add service proof/i.test(String(label))) {
+      const proofEvents = projection?.data?.events?.filter(e => e.eventType === "service_proof_updated").length ?? 0;
+      return proofEvents > proofEventsBefore;
+    }
+    return expectStatus.test(canonicalStatus);
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000, 3_000] }).toBe(true).then(() => true, () => false);
+
+  if (!committed) {
+    await frameOutline(page, `Partner job after ${String(label)} did not reach canonical ${String(expectStatus)}`, 2_500);
+    throw new Error(`${String(label)} did not commit within 60 s (last canonical status: "${canonicalStatus || "unknown"}")`);
+  }
+  log(`✅ ${String(label)} committed in canonical lifecycle${canonicalStatus ? ` (status: ${canonicalStatus})` : ""}.`);
+
+  // Refresh/reselect once so the visual assertion proves the Partner UI consumed the committed truth.
+  await page.getByRole("button", { name: "↻" }).first().click().catch(() => {});
+  await page.waitForTimeout(2_000);
+  await reselectJobCard(page);
   const shown = page.getByText(expectStatus).first();
   if (!(await shown.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) await frameOutline(page, `Partner job after ${String(label)} (expected ${String(expectStatus)})`, 2_500);
   await expect(shown, `status after ${String(label)}`).toBeVisible();
@@ -546,6 +585,10 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
 
     section("2. Razorpay sandbox payment");
     try {
+      const paySecurely = page.getByRole("button", { name: /^Pay securely\b/i });
+      await expect(paySecurely, "prepaid checkout must expose the real Pay securely button").toBeVisible({ timeout: 30_000 });
+      await paySecurely.click();
+      log("✅ Pay securely pressed through the real Customer UI; waiting for Razorpay sandbox checkout.");
       await completeRazorpayTestPayment(page);
       const verified = page.getByText(/Payment verified by PawSpace/i).first();
       const reserved = page.getByText("Your groomer is reserved.", { exact: true });
@@ -560,6 +603,7 @@ test("1. Customer — BTM Layout 560068 on the requested date, pay online throug
     log(paymentCaptured
       ? `✅ Server checkout status for ${bookingId}: "captured" (signed receipt verified by PawSpace). Post-payment saga engaged.`
       : `❌ Server checkout status for ${bookingId}: HTTP ${status.http}, ${JSON.stringify(status.body)}. The sandbox capture did not complete under automation; see the checkout outlines above and the screenshots.`);
+    expect(paymentCaptured, "online UAT must prove the Razorpay sandbox payment captured; pay-after fallback cannot make this gate green").toBe(true);
     await frameOutline(page, "Customer payment page after the checkout attempt", 2_000);
     if (paymentCaptured) {
       if (await page.getByText("Your groomer is reserved.", { exact: true }).isVisible({ timeout: 20_000 }).catch(() => false)) log("✅ Confirmation screen: \"Your groomer is reserved.\"");
@@ -601,7 +645,7 @@ test("2. Fallback — pay-after booking for the partner lifecycle when the onlin
 });
 
 test("3. Partner — OTP login as the assigned groomer, accept, GPS, arrive, start service, upload photos", async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(600_000);
   section("3. Partner persona (/partner-app)");
   expect(bookingId, "a booking must exist from the customer step").not.toEqual("");
   providerPhone = PROVIDER_PHONES[assignedProviderId] || "9000000904";
@@ -655,6 +699,21 @@ async function partnerLifecycle(page: Page) {
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
   expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
   await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
+
+  // The Partner app intentionally blocks service start until the groomer acknowledges every
+  // before-service safety check. Exercise those real UI controls rather than bypassing the gate.
+  const beforeServiceChecklist = page.getByRole("group", { name: /Before-service checklist/i });
+  await expect(beforeServiceChecklist, "before-service checklist after arrival").toBeVisible({ timeout: 30_000 });
+  const checklistItems = beforeServiceChecklist.getByRole("checkbox");
+  await expect(checklistItems, "three required before-service checks").toHaveCount(3);
+  for (let i = 0; i < 3; i += 1) {
+    await checklistItems.nth(i).check();
+    await expect(checklistItems.nth(i), `before-service check ${i + 1}`).toBeChecked();
+  }
+  const startService = page.getByRole("button", { name: /^Start service$/ }).first();
+  await expect(startService, "Start service must unlock only after all safety checks").toBeEnabled({ timeout: 15_000 });
+  log("✅ Before-service checklist completed; Start service enabled through the real Partner UI.");
+
   await partnerAct(page, /^Start service$/, /in service/i); log("✅ Start service → in service.");
   await shot(page, "partner-in-service");
 
@@ -741,6 +800,21 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     await page.getByRole("button", { name: /Refresh proof status/ }).click().catch(() => {});
     await expect(page.getByText(/Both photos approved/i)).toBeVisible({ timeout: 30_000 });
     log("✅ Partner app: \"Both photos approved.\"");
+
+    // The Partner app intentionally keeps service proof disabled until every after-service
+    // handover/safety acknowledgement is checked. Exercise those real UI controls so the
+    // acceptance journey proves the same completion gate a groomer must satisfy.
+    const afterServiceChecklist = page.getByRole("group", { name: /After-service checklist/i });
+    await expect(afterServiceChecklist, "after-service checklist before service proof").toBeVisible({ timeout: 30_000 });
+    const afterChecklistItems = afterServiceChecklist.getByRole("checkbox");
+    await expect(afterChecklistItems, "four required after-service checks").toHaveCount(4);
+    for (let i = 0; i < 4; i += 1) {
+      await afterChecklistItems.nth(i).check();
+      await expect(afterChecklistItems.nth(i)).toBeChecked();
+    }
+    await expect(page.getByRole("button", { name: /^Add service proof$/ }).first(), "Add service proof enabled after after-service checklist").toBeEnabled();
+    log("✅ After-service checklist completed; Add service proof enabled through the real Partner UI.");
+
     await partnerAct(page, /^Add service proof$/, /in service/i); log("✅ Add service proof recorded (approved before/after references, checklist).");
     await partnerAct(page, /^Complete job$/, /completed/i); log("✅ Complete job → completed.");
     await shot(page, "partner-completed");

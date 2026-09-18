@@ -108,3 +108,23 @@ test("the sweep reports honestly about its own coverage", () => {
   assert.ok(EXPECTED_WITHOUT_SESSION.length >= 3);
   assert.ok(EMPTY_STATE_PHRASES.length >= 25, "the empty-state vocabulary must cover the wordings actually in use");
 });
+
+test("with a real session, that same by-design 401 must not bury a screen that rendered", () => {
+  // The other half of the rule above, and the reason it is conditional at all.
+  //
+  // Signed out, an identity-session 401 means the signed-in screen was never seen — GATED is right.
+  // Signed IN as staff, the same endpoint still 401s, because a staff member is neither a customer
+  // nor a provider. Letting that decide the verdict made one signed-in run report 139 routes
+  // "not tested" while holding measurements showing 123 of them had rendered a full working screen.
+  const rendered = { apiFailures: ["401 /api/identity-session"] };
+  assert.equal(verdict({ ...base, ...rendered }, { sessionSupplied: false }).level, "GATED");
+  assert.equal(verdict({ ...base, ...rendered }, { sessionSupplied: true }).level, "OK");
+
+  // A session does not turn a blank screen into a pass: with nothing rendered it is still untested,
+  // because the 401 is then the reason there is nothing to see.
+  const blank = { apiFailures: ["401 /api/identity-session"], textLength: 40, formControls: 0, emptyStates: [] };
+  assert.equal(verdict({ ...base, ...blank }, { sessionSupplied: true }).level, "GATED");
+
+  // And a genuine failure is still a failure no matter which session is in play.
+  assert.equal(verdict({ ...base, apiFailures: ["500 /api/team-overview"] }, { sessionSupplied: true }).level, "DATA");
+});

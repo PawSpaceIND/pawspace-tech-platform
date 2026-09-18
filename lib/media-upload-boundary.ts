@@ -247,54 +247,37 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
   const token=`${grantId}.${secret()}`,tokenHash=await digest(token);
   const now=Date.now(),expiresAt=now+config.uploadTokenTtlSeconds*1000;
 
+  // Re-check arrival and retire pending twins in the SAME D1 transaction as insertion.
+  // The optimistic precheck above is only an early explanation, never the race-control boundary.
+  const arrivedPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=?";
+  const arrivedBinds=[bookingId,providerId,category,sha256,input.supersedes??""];
+  const pendingPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND access_status='pending_upload' AND retention_status='active' AND rowid<(SELECT rowid FROM service_media_assets WHERE id=?)";
+  const pendingBinds=[bookingId,providerId,category,sha256,mediaId];
+  const retirementDetail=JSON.stringify({reason:"the same bytes were registered again before this upload arrived",supersededBy:mediaId,sha256,category});
   await db.batch([
-    db.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,supersedes) VALUES (?,?,?,?,?,?,?,?,'pending','pending_upload','active',0,?,?,?,'pending_review',?)")
-      .bind(mediaId,bookingId,providerId,category,objectKey,mimeType,sizeBytes,sha256,actorId,now,now,input.supersedes??null),
-    db.prepare("INSERT INTO media_upload_grants (id,media_id,booking_id,scope_type,scope_id,provider_id,service_code,city_id,category,object_key,mime_type,size_bytes,sha256,token_hash,status,expires_at,consumed_at,policy_version,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'issued',?,NULL,?,?,?)")
-      .bind(grantId,mediaId,bookingId,input.scopeType,scopeId,providerId,serviceCode,String(input.cityId||POLICY_ANY).trim().toLowerCase()||POLICY_ANY,category,objectKey,mimeType,sizeBytes,sha256,tokenHash,expiresAt,policy.policyVersion,actorId,now),
+    db.prepare(`INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,supersedes) SELECT ?,?,?,?,?,?,?,?,'pending','pending_upload','active',0,?,?,?,'pending_review',? WHERE NOT EXISTS (SELECT 1 FROM service_media_assets WHERE ${arrivedPredicate})`)
+      .bind(mediaId,bookingId,providerId,category,objectKey,mimeType,sizeBytes,sha256,actorId,now,now,input.supersedes??null,...arrivedBinds),
+    db.prepare("INSERT INTO media_upload_grants (id,media_id,booking_id,scope_type,scope_id,provider_id,service_code,city_id,category,object_key,mime_type,size_bytes,sha256,token_hash,status,expires_at,consumed_at,policy_version,created_by,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,'issued',?,NULL,?,?,? WHERE EXISTS (SELECT 1 FROM service_media_assets WHERE id=?)")
+      .bind(grantId,mediaId,bookingId,input.scopeType,scopeId,providerId,serviceCode,String(input.cityId||POLICY_ANY).trim().toLowerCase()||POLICY_ANY,category,objectKey,mimeType,sizeBytes,sha256,tokenHash,expiresAt,policy.policyVersion,actorId,now,mediaId),
+    ...(input.supersedes===undefined?[
+      db.prepare(`UPDATE service_media_assets SET supersedes=(SELECT id FROM service_media_assets WHERE ${pendingPredicate} ORDER BY rowid DESC LIMIT 1) WHERE id=?`).bind(...pendingBinds,mediaId),
+      db.prepare(`INSERT INTO service_media_events (id,media_id,booking_id,event_type,actor_id,detail_json,created_at) SELECT ?||id,id,?,'media_registration_superseded',?,?,? FROM service_media_assets WHERE ${pendingPredicate}`).bind(crypto.randomUUID()+":",bookingId,actorId,retirementDetail,now,...pendingBinds),
+      db.prepare(`UPDATE media_upload_grants SET status='superseded' WHERE status='issued' AND media_id IN (SELECT id FROM service_media_assets WHERE ${pendingPredicate})`).bind(...pendingBinds),
+      db.prepare(`UPDATE service_media_assets SET retention_status='superseded',access_status='revoked',updated_at=? WHERE ${pendingPredicate}`).bind(now,...pendingBinds),
+    ]:[]),
   ]);
-  // Idempotent re-registration. The Partner app keys a queued photo by (booking, purpose, sha256). When the
-  // same bytes are registered again while an earlier registration never received them (a dropped upload,
-  // a reload, a flush racing the direct upload), that earlier asset would otherwise sit in the Ops review
-  // queue for ever as "upload incomplete". Retire it and link the new registration to it instead. This runs
-  // AFTER this registration exists and retires only rows inserted before it, so two registrations of the
-  // same bytes that overlap in flight settle on exactly one live row (the later one) whichever way their
-  // statements interleave, and a registration whose insert failed has retired nothing.
-  const supersedes=input.supersedes??await supersedeStalePendingRegistrations(db,{mediaId,bookingId,providerId,category,sha256,actorId});
-  if(supersedes&&input.supersedes===undefined)await db.prepare("UPDATE service_media_assets SET supersedes=? WHERE id=?").bind(supersedes,mediaId).run();
+  const created=await db.prepare("SELECT id,supersedes FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>();
+  if(!created){
+    const winner=await db.prepare(`SELECT id FROM service_media_assets WHERE ${arrivedPredicate} LIMIT 1`).bind(...arrivedBinds).first<Row>();
+    refuse("This photo has already been uploaded for this booking and purpose; it is waiting for review",409,{code:"media_already_registered",mediaId:String(winner?.id||"")});
+  }
+  const supersedes=created!.supersedes?String(created!.supersedes):undefined;
   await mediaEvent(db,mediaId,bookingId,"media_upload_grant_issued",actorId,{grantId,category,objectKey,mimeType,sizeBytes,expiresAt,scopeType:input.scopeType,scopeId,policyVersion:policy.policyVersion,adapterConnected:false});
 
   return{mediaId,mediaRef:`media://asset/${mediaId}`,grantId,token,objectKey,category,mimeType,sizeBytes,sha256,expiresAt,
     reviewStatus:"pending_review",proofReady:false,policyVersion:policy.policyVersion,
     upload:{mode:"private_object_put",adapterConnected:false,rawPublicUrl:false,singleUse:true},
     ...(supersedes?{supersedes}:{})};
-}
-
-/**
- * Retire every registration of the same bytes for the same booking, provider and purpose that was inserted
- * before `mediaId` and is still waiting for its upload: its grant is voided (a late PUT with that token is
- * refused as superseded, never as "used") and the asset leaves the active set, so the Ops queue never lists a
- * duplicate that can only ever answer "upload incomplete". The rowid bound is what makes concurrent
- * registrations converge: each retires only what came before it, so the newest survives and none retires its
- * own successor. Returns the most recent retired asset id, or null.
- */
-async function supersedeStalePendingRegistrations(db:Db,input:{mediaId:string;bookingId:string;providerId:string;category:string;sha256:string;actorId:string}):Promise<string|null>{
-  const stale=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND access_status='pending_upload' AND retention_status='active' AND id!=? AND rowid<(SELECT rowid FROM service_media_assets WHERE id=?) ORDER BY rowid")
-    .bind(input.bookingId,input.providerId,input.category,input.sha256,input.mediaId,input.mediaId).all<Row>();
-  let last:string|null=null;
-  const now=Date.now();
-  for(const row of stale.results){
-    const id=String(row.id);
-    const [retired]=await db.batch([
-      db.prepare("UPDATE service_media_assets SET retention_status='superseded',access_status='revoked',updated_at=? WHERE id=? AND access_status='pending_upload'").bind(now,id),
-      db.prepare("UPDATE media_upload_grants SET status='superseded' WHERE media_id=? AND status='issued'").bind(id),
-    ]);
-    // An overlapping registration may have retired this row first; it recorded that, so this one does not.
-    if(Number(retired?.meta?.changes??1)===0)continue;
-    await mediaEvent(db,id,input.bookingId,"media_registration_superseded",input.actorId,{reason:"the same bytes were registered again before this upload arrived",supersededBy:input.mediaId,sha256:input.sha256,category:input.category});
-    last=id;
-  }
-  return last;
 }
 
 /**
@@ -374,10 +357,15 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   }
 
   const mediaId=String(grant!.media_id),bookingId=String(grant!.booking_id);
-  await db.batch([
-    db.prepare("UPDATE media_upload_grants SET status='consumed',consumed_at=? WHERE id=? AND status='issued'").bind(now,grantId),
-    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',updated_at=? WHERE id=?").bind(now,mediaId),
+  const [claimed,published]=await db.batch([
+    db.prepare("UPDATE media_upload_grants SET status='consumed',consumed_at=? WHERE id=? AND status='issued' AND EXISTS (SELECT 1 FROM service_media_assets a WHERE a.id=media_upload_grants.media_id AND a.retention_status='active' AND a.access_status='pending_upload')").bind(now,grantId),
+    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',updated_at=? WHERE id=? AND retention_status='active' AND access_status='pending_upload' AND EXISTS (SELECT 1 FROM media_upload_grants g WHERE g.id=? AND g.status='consumed' AND g.consumed_at=?)").bind(now,mediaId,grantId,now),
   ]);
+  if(Number(claimed?.meta?.changes??0)!==1||Number(published?.meta?.changes??0)!==1){
+    const current=await db.prepare("SELECT status FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
+    if(String(current?.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
+    refuse("This media upload grant is no longer pending",409,{code:"upload_token_consumed"});
+  }
   await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected});
   return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected};
 }

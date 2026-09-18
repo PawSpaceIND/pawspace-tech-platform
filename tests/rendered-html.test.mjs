@@ -242,7 +242,7 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /serviceAddress:serviceLocation.address/);
   assert.doesNotMatch(stays, /15 km service radius/);
   assert.match(stays, /loadBoardingCommercial/);
-  assert.match(stays, /AddressPicker/);
+  assert.match(stays, /StayAddress/);
   assert.match(stays, /Three walks/);
   assert.match(stays, /1-hour play time/);
   assert.match(training, /meetPackage\.direct_minutes_per_pet/);
@@ -281,7 +281,7 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   assert.match(grooming, /<BookingPaymentPage/);
   assert.doesNotMatch(grooming.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//")).join("\n"), /status:pay==="online"\?"captured":"created"/);
   assert.match(training, /MEET A TRAINER FIRST/);
-  assert.match(training, /Book Meet & Greet only/);
+  assert.match(training, /Book a Meet & Greet/);
   assert.match(stays, /10-minute phone call · Included/);
   assert.match(groomer, /Package upgraded/);
   assert.match(groomer, /Bike issue/);
@@ -295,8 +295,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, tracking, grooming, stays, sittingCare] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
+  const [training, trainer, tracking, grooming, groomingLive, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/provider-tracking-card.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -307,7 +307,9 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(tracking, /LOCATION SHARING · NOT CONNECTED IN UAT/);
   assert.match(tracking, /No location is collected or displayed by this UAT placeholder/);
   assert.match(tracking, /Live route unavailable/);
-  assert.match(grooming, /role="Groomer"/);
+  assert.match(grooming, /<CustomerGroomingLiveCard bookingId=\{bookedId\}\/>/);
+  assert.match(groomingLive, />Groomer<\/dt>/);
+  assert.match(groomingLive, /customer-grooming-summary/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);
   assert.match(stays, /<SittingCustomerPanel/);

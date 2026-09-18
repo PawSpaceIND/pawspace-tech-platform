@@ -39,7 +39,7 @@ export const groomingCommercialPackages:GroomingCommercialPackage[]=[
 ];
 
 export const groomingCommercialAddOns:GroomingCommercialAddOn[]=[
-  {code:"tick-flea-treatment",name:"Tick & Flea Treatment",price:499,eligiblePetTypes:["dog","cat"],active:true},
+  {code:"tick-flea-treatment",name:"Tick & Flea Treatment",price:499,eligiblePetTypes:["dog"],active:true},
   {code:"full-body-oil-massage",name:"Full Body Oil Massage",price:299,eligiblePetTypes:["dog","cat"],active:true},
 ];
 

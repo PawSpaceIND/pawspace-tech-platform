@@ -1,4 +1,5 @@
 import { authorize, database } from "../../../../lib/server-auth";
+import { ensureCanonicalBookingCoreTables } from "../../../../lib/canonical-booking-core-schema";
 import { OPERATIONS_MANAGER_DOMAIN, requireManagerDomain, resolveManagerOrganizationalScope } from "../../../../lib/organizational-scope";
 
 type Row = Record<string, unknown>;
@@ -21,6 +22,10 @@ export async function GET(request: Request) {
   const actor = await authorize(request, "bookings.manage");
   const db = await database();
   const scope = await resolveManagerOrganizationalScope(db, actor); requireManagerDomain(scope, OPERATIONS_MANAGER_DOMAIN);
+  // This surface only reads, but reading is not a reason to skip provisioning: on a cold database
+  // (fresh preview branch, rebuilt D1, restored backup) no writer has run yet, and snapshot() used
+  // to fail the whole request with "no such table: booking_payments".
+  await ensureCanonicalBookingCoreTables(db);
   let closed = false, current = await snapshot(db, scope?.cityId), timer: ReturnType<typeof setInterval> | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {

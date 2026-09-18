@@ -5,6 +5,9 @@ type SessionAccess={actor:{email:string;roleCode:string;permissions:string[];pre
 type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:string};
 
 async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
+  // V2 reads are customer-only for platform sessions. Booking ownership remains in the route;
+  // do not accept a client-supplied customer ID as the account behind a checkout projection.
+  if(method==="GET"&&(url.pathname==="/api/v2/grooming-catalogue"||url.pathname==="/api/v2/grooming-checkout"))return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/customer-checkout"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/provider-chat"&&method==="GET")return{permission:"communications.message",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
@@ -27,9 +30,10 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   // cloned browser request body here: on streamed browser POSTs this can stall the downstream body
   // reader before the route can answer. Session auth still requires a customer with scheduling.book.
   if(url.pathname==="/api/grooming-booking-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/partner-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/partner-grooming-jobs"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/grooming-route"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
-  if(url.pathname==="/api/grooming-route"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
+  if((url.pathname==="/api/grooming-route"||url.pathname==="/api/partner-heartbeat")&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return{permission:"bookings.view",subjectType:"provider"};if(method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?undefined:{permission:"bookings.view",subjectType:"provider"};}}
   if(url.pathname==="/api/provider-assignment-recovery"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
   return undefined;

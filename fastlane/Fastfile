@@ -43,7 +43,7 @@ platform :android do
   lane :beta do
     select_pawspace_target("customer")
     UI.message("Syncing latest Capacitor Android assets...")
-    sh("npx", "cap", "sync", "android")
+    sh("npm", "run", "cap:sync", "--", "android")
 
     UI.message("Compiling Android release bundle (AAB)...")
     gradle(
@@ -67,7 +67,7 @@ platform :android do
   lane :partner_beta do
     select_pawspace_target("partner")
     UI.message("Syncing latest Capacitor Android assets...")
-    sh("npx", "cap", "sync", "android")
+    sh("npm", "run", "cap:sync", "--", "android")
 
     gradle(
       task: "bundleRelease",
@@ -92,7 +92,7 @@ platform :ios do
     select_pawspace_target("customer")
     api_key = pawspace_apple_key
     UI.message("Syncing latest Capacitor iOS assets...")
-    sh("npx", "cap", "sync", "ios")
+    sh("npm", "run", "cap:sync", "--", "ios")
 
     UI.message("Building iOS release archive...")
     build_app(
@@ -116,7 +116,7 @@ platform :ios do
     select_pawspace_target("partner")
     api_key = pawspace_apple_key
     UI.message("Syncing latest Capacitor iOS assets...")
-    sh("npx", "cap", "sync", "ios")
+    sh("npm", "run", "cap:sync", "--", "ios")
 
     build_app(
       project: "ios/App/App.xcodeproj",

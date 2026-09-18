@@ -38,7 +38,7 @@ export default function PartnerJobsPage(){
   const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.green,color:"#01261F",fontWeight:700,cursor:"pointer"};
   const chip=(color:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:"rgba(255,255,255,0.06)",color});
 
-  const jobCard=(job:Job)=><div key={job.bookingId} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
+  const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
       <span><b>{job.serviceCode}</b> · {job.packageName} <small style={{color:C.dim}}>for {job.customerFirstName}</small></span>
       <span style={chip(statusColor(job.status))}>{job.status.replace(/_/g," ")}</span>

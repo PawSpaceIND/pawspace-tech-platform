@@ -1,7 +1,7 @@
 import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
 const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),lib=read("lib/provider-onboarding-transactional.ts"),route=read("app/api/provider-onboarding/route.ts");
 
-test("PO1 persists canonical application state and immutable event history",()=>{for(const token of["provider_onboarding_applications","provider_onboarding_events","application_created","from_status","to_status","actor_id","policy_ref"])assert.match(lib,new RegExp(token));assert.match(lib,/resolveProviderOnboardingPolicy/);assert.match(lib,/An active onboarding policy is required before submission/);});
+test("PO1 persists canonical application state and immutable event history",()=>{for(const token of["provider_onboarding_applications","provider_onboarding_events","application_created","from_status","to_status","actor_id","policy_ref"])assert.match(lib,new RegExp(token));assert.match(lib,/resolveProviderOnboardingPolicy/);assert.match(lib,/We are not accepting caregiver applications for this service and city just yet/);assert.match(lib,/application stays saved/);});
 
 test("PO1 enforces prerequisites instead of advancing a browser-owned state machine",()=>{assert.match(lib,/Only draft applications can be submitted/);assert.match(lib,/Application must be submitted before verification/);assert.match(lib,/Verification must be explicitly verified before quiz/);assert.match(lib,/Quiz must be completed before interview/);});
 

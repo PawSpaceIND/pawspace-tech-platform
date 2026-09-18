@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import {importLibModule} from "./helpers/ts-module-loader.mjs";
+const home=fs.readFileSync(new URL("../app/v2/page.tsx",import.meta.url),"utf8");
+const shell=fs.readFileSync(new URL("../app/v2/service-bridge-shell.tsx",import.meta.url),"utf8");
+const routes=["training","walking","food","taxi","relocation"];
+test("V2 service bridge regression executes canonical product code",async()=>{const {canonicalPetId}=await importLibModule("customer-account");assert.equal(canonicalPetId("C-9","P-4"),"PET-C9-P4");});
+test("all customer service cards now stay under the V2 namespace",()=>{for(const route of routes)assert.match(home,new RegExp('href: "/v2/'+route+'"'));});
+test("V2 bridge pages reuse the existing canonical service implementations",()=>{for(const route of routes){const src=fs.readFileSync(new URL("../app/v2/"+route+"/page.tsx",import.meta.url),"utf8");assert.match(src,/routeScope="v2"/);assert.match(src,/from "\.\.\/\.\.\//);assert.doesNotMatch(src,/fetch\(|api\//);}});
+test("bridged services retain persistent V2 navigation",()=>{for(const route of routes){const layout=fs.readFileSync(new URL("../app/v2/"+route+"/layout.tsx",import.meta.url),"utf8");assert.match(layout,/V2ServiceBridgeShell/);}for(const href of ["/v2","/v2/activity","/v2/chat","/v2/account"])assert.match(shell,new RegExp('href="'+href.replaceAll("/","\\/")+'"'));});

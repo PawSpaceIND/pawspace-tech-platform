@@ -1,0 +1,86 @@
+name: Native test builds
+on:
+  pull_request:
+    paths:
+      - 'capacitor*.ts'
+      - 'native/**'
+      - 'android/**'
+      - 'ios/**'
+      - 'scripts/prepare-partner-native.mjs'
+      - 'package*.json'
+      - '.github/workflows/native-test-builds.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-test-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PAWSPACE_CUSTOMER_APP_URL: https://pawspace-staging.karthik-fce.workers.dev/mobile-app
+  PAWSPACE_PARTNER_APP_URL: https://pawspace-staging.karthik-fce.workers.dev/partner-app
+  PAWSPACE_PAYMENT_ENV: sandbox
+  PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+  FORBID_PRODUCTION: 'true'
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [customer, partner]
+    env:
+      CAPACITOR_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: npm run cap:sync -- android
+      - name: Compile debug APK
+        working-directory: android
+        run: bash gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pawspace-${{ matrix.target }}-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+  ios:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [customer, partner]
+    env:
+      CAPACITOR_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run cap:sync -- ios
+      - name: Compile simulator app without distribution signing
+        run: >-
+          xcodebuild -project ios/App/App.xcodeproj -scheme App
+          -configuration Debug -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build/ios-simulator
+          PRODUCT_BUNDLE_IDENTIFIER=com.pawspace.${{ matrix.target }}
+          CODE_SIGNING_ALLOWED=NO build
+      - name: Package simulator app
+        run: ditto -c -k --sequesterRsrc --keepParent build/ios-simulator/Build/Products/Debug-iphonesimulator/App.app simulator-app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pawspace-${{ matrix.target }}-ios-simulator
+          path: simulator-app.zip
+          if-no-files-found: error
+          retention-days: 14

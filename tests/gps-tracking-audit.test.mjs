@@ -71,6 +71,10 @@ test("arrival ignores raw lifecycle coordinates and binds to trusted server evid
  assert.match(lifecycle,/UPDATE canonical_bookings SET status=\?,updated_at=\? WHERE id=\? AND status=\?/);
  assert.match(lifecycle,/runAtomicProviderLifecycleTransition/);assert.match(lifecycle,/providerLifecycleAssertionStatement/);
  assert.doesNotMatch(lifecycle,/Number\(input\.latitude\)|Number\(input\.longitude\)/);
+ assert.match(lifecycle,/PAWSPACE_PAYMENT_ENV\|\|""\)\.toLowerCase\(\)==="sandbox"/);
+ assert.match(lifecycle,/PAWSPACE_ENV\|\|runtimeEnv\.APP_ENV\|\|""\)\.toLowerCase\(\)==="staging"/);
+ assert.match(lifecycle,/if\(!trusted\.ok\)\{if\(uatBypass\)return\{bypassed:true/);
+ assert.match(lifecycle,/throw governedJsonError\(\{error:`Mark arrived needs a fresh GPS fix/);
 });
 
 test("foreground sender is serialized, cancellable and latest-fix wins",async()=>{

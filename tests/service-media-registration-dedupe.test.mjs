@@ -18,7 +18,7 @@ function makeD1(sqlite, hooks = {}) {
   const statement = (sql, args = []) => ({
     sql,
     bind: (...bound) => statement(sql, bound),
-    first: async () => sqlite.prepare(sql).get(...args) ?? null,
+    first: async () => { const row=sqlite.prepare(sql).get(...args) ?? null; await hooks.afterFirst?.(sql,row); return row; },
     run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
     all: async () => { await hooks.beforeAll?.(sql); return { results: sqlite.prepare(sql).all(...args) }; },
   });
@@ -26,6 +26,7 @@ function makeD1(sqlite, hooks = {}) {
   return {
     prepare: (sql) => statement(sql),
     batch: async (items) => {
+      await hooks.beforeBatch?.(items);
       const outer = depth === 0;
       if (outer) sqlite.exec("BEGIN IMMEDIATE");
       depth += 1;
@@ -166,16 +167,14 @@ test("supersession is scoped to the same booking, provider, purpose and bytes", 
 test("two registrations of the same bytes that overlap in flight settle on exactly one live registration", async () => {
   const { sqlite, hooks, call, put, register } = await world();
   const before = file();
-  // Hold each request at its search for a stale twin until BOTH have searched. A design that searches, retires
-  // and only then inserts sees nothing to retire in either request and leaves two live rows; one that retires
-  // every pending twin it can see, without bounding itself to rows older than its own, retires its rival and
-  // leaves none. Time-boxed so a request that never searches fails the assertions instead of hanging.
-  let searched = 0; const bothSearched = new Promise(resolve => { hooks.beforeAll = async (sql) => {
-    if (!sql.startsWith("SELECT") || !sql.includes("FROM service_media_assets") || !sql.includes("access_status='pending_upload'")) return;
+  // Both optimistic prechecks finish before either atomic registration transaction starts.
+  let searched = 0; const bothSearched = new Promise(resolve => { hooks.beforeBatch = async items => {
+    if (!items.some(item=>item.sql.startsWith("INSERT INTO service_media_assets"))) return;
     if (++searched === 2) resolve(); await Promise.race([bothSearched, new Promise(done => setTimeout(done, 2000))]);
   }; });
   const [one, two] = await Promise.all([register("before_service", before), register("before_service", before)]);
-  hooks.beforeAll = undefined;
+  hooks.beforeBatch = undefined;
+  assert.equal(searched,2,"both competing registrations reached the transaction");
   assert.notEqual(one.id, two.id);
   const listing = await call("GET", null, STAFF, `?bookingId=${BOOKING}`);
   const live = listing.body.assets.filter(asset => asset.access_status === "pending_upload" && asset.retention_status === "active");
@@ -196,4 +195,50 @@ test("two registrations of the same bytes that overlap in flight settle on exact
   assert.equal(up.status, 200, JSON.stringify(up.body));
   const queue = await call("GET", null, CHECKER, "?pending=1");
   assert.deepEqual(queue.body.pending.map(asset => asset.id), [live[0].id], "the review queue holds exactly one entry for one photo");
+});
+
+test("an upload arriving after the duplicate precheck cannot open a second active registration", async () => {
+  const { sqlite, hooks, call, put, register } = await world();
+  const photo = file();
+  const original = await register("before_service", photo);
+  let release, observed;
+  const paused = new Promise(resolve => { observed = resolve; });
+  const resume = new Promise(resolve => { release = resolve; });
+  hooks.afterFirst = async sql => {
+    if (!sql.includes("access_status IN ('quarantined','ready')")) return;
+    hooks.afterFirst = undefined; observed(); await resume;
+  };
+  const duplicate = call("POST", {bookingId:BOOKING,purpose:"before_service",mimeType:"image/jpeg",sizeBytes:photo.size,sha256:photo.sha256,fileName:"same.jpg"});
+  try {
+    await Promise.race([paused,new Promise((_,reject)=>setTimeout(()=>reject(new Error("duplicate precheck was not observed")),2000))]);
+    const uploaded = await put({id:original.id,token:original.upload.token,bytes:photo.bytes});
+    assert.equal(uploaded.status,200);
+  } finally { release(); }
+  const again = await duplicate;
+  assert.equal(again.status,409,JSON.stringify(again.body));
+  assert.equal(again.body.code,"media_already_registered");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_media_assets WHERE booking_id=? AND retention_status='active'").get(BOOKING).n,1);
+});
+
+test("an upload superseded after token inspection cannot report a successful redemption", async () => {
+  const { hooks, call, put, register } = await world();
+  const photo=file(), first=await register("before_service",photo);
+  let release, observed, reads=0;
+  const paused=new Promise(resolve=>{observed=resolve;});
+  const resume=new Promise(resolve=>{release=resolve;});
+  hooks.afterFirst=async sql=>{
+    if(!sql.startsWith("SELECT * FROM media_upload_grants")||++reads!==2)return;
+    hooks.afterFirst=undefined;observed();await resume;
+  };
+  const late=put({id:first.id,token:first.upload.token,bytes:photo.bytes});
+  let fresh;
+  try{
+    await Promise.race([paused,new Promise((_,reject)=>setTimeout(()=>reject(new Error("redemption read was not observed")),2000))]);
+    fresh=await register("before_service",photo);
+  }finally{release();}
+  const result=await late;
+  assert.equal(result.status,409,JSON.stringify(result.body));
+  assert.equal(result.body.code,"upload_token_superseded");
+  const listing=await call("GET",null,STAFF,`?bookingId=${BOOKING}`);
+  assert.deepEqual(listing.body.assets.filter(a=>a.retention_status==="active").map(a=>a.id),[fresh.id]);
 });

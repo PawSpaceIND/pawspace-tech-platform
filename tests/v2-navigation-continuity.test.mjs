@@ -1,0 +1,14 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import {importLibModule} from "./helpers/ts-module-loader.mjs";
+const home=fs.readFileSync(new URL("../app/v2/page.tsx",import.meta.url),"utf8");
+const activity=fs.readFileSync(new URL("../app/v2/activity/page.tsx",import.meta.url),"utf8");
+const account=fs.readFileSync(new URL("../app/v2/account/page.tsx",import.meta.url),"utf8");
+const client=fs.readFileSync(new URL("../lib/v2/customer-experience-client.ts",import.meta.url),"utf8");
+test("V2 continuity regression also executes canonical customer code",async()=>{const {canonicalPetId}=await importLibModule("customer-account");assert.equal(canonicalPetId("CUS-1","PET-2"),"PET-CUS1-PET2");});
+test("V2 navigation does not fall back to legacy mobile-app",()=>{assert.match(home,/href="\/v2\/activity"/);assert.match(home,/href="\/v2\/account"/);assert.doesNotMatch(home,/href="\/mobile-app"/);});
+test("V2 profile opens account rather than signing out",()=>{assert.match(home,/title="Open account"/);assert.doesNotMatch(home,/profileButton.*signOut/);assert.match(account,/endV2CustomerSession/);});
+test("V2 activity and account both consume canonical customer truth",()=>{assert.match(activity,/loadV2CustomerAccount/);assert.match(account,/loadV2CustomerAccount/);assert.match(activity,/same canonical PawSpace customer record/);});
+test("V2 profile edits reuse the canonical customer-account mutation",()=>{assert.match(account,/updateV2CustomerProfile/);assert.match(account,/Save profile/);assert.match(client,/action: "update_profile"/);assert.match(client,/\/api\/customer-account/);});
+test("V2 account reuses rich PetManager and canonical saved-address mutation",()=>{assert.match(account,/PetManager/);assert.match(account,/upsertV2CustomerAddress/);assert.match(account,/Save address/);assert.match(client,/action: "upsert_address"/);});

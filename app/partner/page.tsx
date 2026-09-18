@@ -1,5 +1,4 @@
 import Link from "next/link";
-import CanonicalGroomingJobs from "../partner-app/canonical-grooming-jobs";
 import styles from "./partner-hub.module.css";
 
 export default function PartnerUatHub() {
@@ -41,7 +40,7 @@ export default function PartnerUatHub() {
         <p>
           Work orders resolve from the verified provider identity session. A provider cannot select another provider ID in the browser.
         </p>
-        <CanonicalGroomingJobs />
+        <Link href="/partner-app" className={styles.primary}>Open active job, checklists &amp; tracking →</Link>
       </section>
     </main>
   );

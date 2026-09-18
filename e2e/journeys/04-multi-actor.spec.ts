@@ -199,7 +199,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     expect(gpsBody?.data?.telemetryAccepted).toBe(true);
 
     for (const action of ["arrived", "start_service"] as const) {
-      const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action } });
+      const response = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action, ...(action === "start_service" ? { checklist: ["pet_identity", "safety_review", "safe_setup"] } : {}) } });
       const body = await expectOk(response, `provider ${action}`);
       expect(body?.data?.booking?.provider_id).toBe(assignedProviderId);
     }
@@ -216,7 +216,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     });
     await expectOk(proof, "provider service proof");
 
-    const completed = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action: "complete" } });
+    const completed = await provider.post("/api/grooming-lifecycle", { data: { bookingId, action: "complete", checklist: ["service_delivered", "pet_welfare", "customer_handover", "proof_captured"] } });
     const completedBody = await expectOk(completed, "provider complete");
     expect(completedBody?.data?.booking?.status).toBe("completed");
     expect(completedBody?.data?.booking?.work_order_status).toBe("completed");

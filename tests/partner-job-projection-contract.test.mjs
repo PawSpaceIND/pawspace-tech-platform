@@ -185,3 +185,11 @@ test("the timeline renders only the event's non-contact fields", () => {
   assert.doesNotMatch(page, /event\.detail/,
     "sanitized or not, free-form event detail is not rendered on a partner's phone");
 });
+
+
+test("fresh Partner job reads start from the D1 primary", () => {
+  assert.match(route, /withSession\?\.\("first-primary"\)\?\?db/,
+    "a newly opened Partner session must see the just-confirmed work order instead of a stale replica");
+  assert.match(route, /const rows=await readDb\.prepare/,
+    "the canonical work-order query must use the primary-pinned read session");
+});

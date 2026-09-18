@@ -35,5 +35,5 @@ test("Partner mobile app declares itself as the real, identity-verified UAT surf
   const layout=await source("app/partner-app/layout.tsx");
   assert.match(layout,/PARTNER MOBILE UAT/);
   assert.match(layout,/Verified provider identity/);
-  assert.match(layout,/Live payouts, background GPS and production activation remain disabled/);
+  assert.match(layout,/Live payouts and production activation remain disabled/);
 });

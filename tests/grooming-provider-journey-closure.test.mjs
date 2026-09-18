@@ -1,3 +1,4 @@
+import {fixtureChecklist} from "./helpers/partner-checklist-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -150,7 +151,7 @@ async function lifecycle(cookie, action) {
   const response = await POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action }),
+    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action, checklist:fixtureChecklist(action) }),
   }));
   return { status: response.status, body: await response.json() };
 }

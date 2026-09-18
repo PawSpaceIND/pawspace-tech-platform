@@ -278,7 +278,7 @@ const DEFAULT_SELECTED_CONTROLS = [
   { file: "../app/team/performance/page.tsx", label: "30 days", state: /useState\(30\)/, option: /\[7,30,90\]\.map/ },
   { file: "../app/team/people/service-incentives/page.tsx", label: "groomer", state: /useState<Kind>\("groomer"\)/, option: /\["groomer", "trainer", "sales"\]/ },
   { file: "../app/partner-app/page.tsx", label: "Home", state: /useState<Tab>\("home"\)/, option: /"home", "⌂", "Home"/ },
-  { file: "../app/partner-mobile/page.tsx", label: "Home", state: /useState<Tab>\("home"\)/, option: /\["home","⌂","Home"\]/ },
+  { file: "../app/partner-app/page.tsx", label: "Home", state: /useState<Tab>\("home"\)/, option: /\[\s*"home",\s*"⌂",\s*"Home"\s*\]/ },
 ];
 
 for (const control of DEFAULT_SELECTED_CONTROLS) {

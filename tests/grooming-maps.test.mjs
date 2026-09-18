@@ -40,6 +40,8 @@ async function assignedJourney(t, overrides) {
   const result = await runCompletedJourney(ctx, config);
   assert.equal(result.location.status, 201, `the journey must save its doorstep: ${JSON.stringify(result.location.body)}`);
   const providerCookie = await sessionCookie(ctx.db, "provider", result.provider.id, `provider:${result.provider.id}`);
+  const accepted=await routeCall("../../app/api/grooming-lifecycle/route.ts","POST","/api/grooming-lifecycle",{bookingId:result.bookingId,action:"accept"},providerCookie);
+  assert.equal(accepted.status,200,JSON.stringify(accepted.body));
   return { ...ctx, config, result, providerCookie };
 }
 
@@ -111,11 +113,11 @@ test("provider GPS capture is provider-owned and limited to active travel states
   assert.equal(second.body.data.duplicate, true, "the same idempotency key never stores a second observation");
   assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM grooming_location_ingestions WHERE idempotency_key=?").get(key).n, 1);
 
-  for (const state of ["in_service", "completed"]) {
+  for (const state of ["completed", "cancelled"]) {
     f.sqlite.prepare("UPDATE provider_work_orders SET status=? WHERE booking_id=?").run(state, f.result.bookingId);
     const closed = await telemetry(f);
     assert.equal(closed.status, 409, `${state}: ${JSON.stringify(closed.body)}`);
-    assert.match(closed.body.error, /GPS capture is disabled outside assigned, on-the-way or arrived states/);
+    assert.match(closed.body.error, /GPS capture requires an accepted, active job/);
   }
   f.sqlite.prepare("UPDATE provider_work_orders SET status='on_the_way' WHERE booking_id=?").run(f.result.bookingId);
   const enRoute = await telemetry(f);

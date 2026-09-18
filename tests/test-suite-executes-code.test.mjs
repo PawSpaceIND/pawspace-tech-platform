@@ -46,7 +46,11 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 // training-programme and training-session-lifecycle drive the quote, programme and session lifecycle
 // modules and their routes. Sabotage-verified in the PR: each converted suite goes red when its
 // guard is disabled behind the very string the old regex matched, while the old file stays green.
-const STATIC_FILE_BUDGET = 164;
+/* 165, not 164: schema-read-coverage.test.mjs is deliberately static. It is the read-side twin of
+ * schema-column-reference-contract.test.mjs above — it reads source to find routes that SELECT from
+ * a table nothing on their import path creates, which is precisely the defect that executing a
+ * module cannot reveal, because the failing query only runs against a cold database. */
+const STATIC_FILE_BUDGET = 165;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
@@ -79,8 +83,15 @@ const TRANSPILE     = /typescript|transpile/;
  * loads cannot reach them. Err towards counting a file as EXECUTING - over-reporting static files
  * invites converting something that already works.
  */
+/* tests/helpers/ts-module-loader.mjs transpiles a lib/ module and its transitive dependencies and
+ * imports the result. A file calling it is executing production code by definition - the helper does
+ * nothing else - and it names the module bare ("provider-workspace"), with no lib/ prefix for
+ * PRODUCT_PATH to match. Without this clause the loader's own users are counted static, which is the
+ * opposite of what this ratchet exists to encourage. */
+const LIB_LOADER    = /importLibModule\s*\(/;
+
 const executes = (src) =>
-  STATIC_IMPORT.test(src) || HARNESS.test(src) ||
+  STATIC_IMPORT.test(src) || HARNESS.test(src) || LIB_LOADER.test(src) ||
   ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src));
 
 /*
@@ -98,10 +109,31 @@ const executes = (src) =>
  *                                       every executing test - three real defects reached main
  *                                       through exactly that gap. Executing the module is what
  *                                       CANNOT catch it: the bad line only runs on a rare branch.
+ *
+ *   use-client-directive-placement       checks that "use client" is the FIRST statement in its
+ *   .test.mjs                            file. Put an import above it and Next.js silently ignores
+ *                                        the directive, so the module ships as a server component
+ *                                        and every hook in it fails. Executing the module is what
+ *                                        CANNOT catch it - the directive is just a string
+ *                                        expression, legal to tsc, clean to eslint, and tolerated
+ *                                        by the dev server, so even a browser check of the page
+ *                                        looks fine. It reached three pages at once before a review
+ *                                        bot caught it, and it fails: swapping the two lines back
+ *                                        turns it red and names the import that pushed it down.
+ *
+ *   customer-vertical-routes            checks that every vertical resolves at its own path. There
+ *   .test.mjs                           is nothing to execute: /grooming 404'd because app/grooming
+ *                                       held only manage/page.tsx, and a page that does not exist
+ *                                       exports nothing to import. tsc, lint and every module test
+ *                                       stayed green the whole time it was down. The filesystem is
+ *                                       the only witness, and it fails - deleting the page again
+ *                                       turns all three of its tests red.
  */
 const META_TESTS = new Set([
   "test-suite-executes-code.test.mjs",
   "schema-column-reference-contract.test.mjs",
+  "customer-vertical-routes.test.mjs",
+  "use-client-directive-placement.test.mjs",
 ]);
 
 function staticTestFiles() {

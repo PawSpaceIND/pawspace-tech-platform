@@ -21,7 +21,7 @@ const allowUnevaluatedFixture=(providerId:string,reason:string):AssignmentBlock=
 const block=(providerId:string,reason:string,policyVersion:string|null=null,outstanding:AssignmentBlock["outstanding"]=[]):AssignmentBlock=>({blocked:true,providerId,reasons:[reason],outstanding,policyVersion,evaluated:true});
 
 async function runtimeEnv():Promise<Record<string,unknown>>{
-  try{const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}catch{return{};}
+  try{const specifier="cloudflare:workers";const{env}=await import(specifier);return env as unknown as Record<string,unknown>;}catch{return{};}
 }
 
 /**
