@@ -153,6 +153,16 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
 
  useEffect(()=>{if(packageCode==="trainer-meet-greet"&&paymentMode!=="prepaid")queueMicrotask(()=>setPaymentMode("prepaid"))},[packageCode,paymentMode]);
 
+ async function hydrateVerifiedBooking(base:TrainingBookingResult){
+  for(let attempt=0;attempt<6;attempt+=1){
+   const latest=await loadCustomerAccount();
+   const canonical=latest.bookings.find(item=>item.id===base.bookingId);
+   if(canonical&&!["payment_pending","pending_payment","created"].includes(String(canonical.status))){setAccount(latest);return{...base,status:canonical.status};}
+   if(attempt<5)await new Promise(resolve=>window.setTimeout(resolve,500));
+  }
+  throw new Error("Payment was verified, but the canonical Training booking is still syncing. Check Activity before retrying.");
+ }
+
  async function confirm(){
   // quoteReady is the guard that matters: a quote priced for different dogs, a different date,
   // package or payment mode is not spendable, no matter that one is still held in state.
@@ -171,7 +181,7 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
   finally{setBusy(false)}
  }
 
- if(pendingCheckout)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · PAYMENT</p><h1>Complete payment to confirm</h1><p>Your trainer and session calendar are held while Razorpay verifies the sandbox payment.</p></header><BookingPaymentPage serviceName="Dog Training" totalAmount={pendingCheckout.total} amountDueNow={pendingCheckout.dueNow} mode={pendingCheckout.mode} bookingId={pendingCheckout.booking.bookingId} onVerified={()=>{setBooking(pendingCheckout.booking);setProgramme(pendingCheckout.programme);setPendingCheckout(null);window.scrollTo(0,0);}}/></main>;
+ if(pendingCheckout)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · PAYMENT</p><h1>Complete payment to confirm</h1><p>Your trainer and session calendar are held while Razorpay verifies the sandbox payment.</p></header>{error&&<p role="alert">{error}</p>}<BookingPaymentPage serviceName="Dog Training" totalAmount={pendingCheckout.total} amountDueNow={pendingCheckout.dueNow} mode={pendingCheckout.mode} bookingId={pendingCheckout.booking.bookingId} busy={busy} onVerified={async()=>{setBusy(true);setError("");try{const verified=await hydrateVerifiedBooking(pendingCheckout.booking);setBooking(verified);setProgramme(pendingCheckout.programme);setPendingCheckout(null);window.scrollTo(0,0);}catch(problem){setError(problem instanceof Error?problem.message:"Unable to hydrate verified Training booking");}finally{setBusy(false);}}}/></main>;
 
  if(booking&&programme)return <main className={styles.shell}><header><Link href={href("/")}>PawSpace</Link><p>TRAINING · CANONICAL UAT</p><h1>Training programme confirmed</h1><p>Booking, trainer assignment, payment ledger and programme sessions now share one canonical identity.</p></header>{error&&<p role="alert">{error}</p>}<section className={styles.grid3}><article className={styles.card}><small>Booking</small><strong className={styles.block}>{booking.bookingId}</strong><span>{label(booking.status)}</span></article><article className={styles.card}><small>Programme</small><strong className={styles.block}>{programme.programme.id}</strong><span>{programme.programme.total_sessions} session(s)</span></article><article className={styles.card}><small>Trainer</small><strong className={styles.block}>{activeTrainer?.name||programme.programme.provider_id}</strong><span>Canonical scheduler assignment</span></article></section><section className={styles.card}><h2>Programme sessions</h2>{programme.sessions.map(session=><article key={session.id} className={styles.sessionRow}><strong>Session {session.sequence_no} · {label(session.status)}</strong><div>{new Date(session.scheduled_start).toLocaleString("en-IN")} → {new Date(session.scheduled_end).toLocaleTimeString("en-IN")}</div><small>{session.id} · trainer {session.provider_id}</small></article>)}</section><section className={styles.card}><h2>UAT boundaries</h2><p>Payment is confirmed only from verified Razorpay sandbox evidence. Production media storage/scanning, GST/tax invoicing, payout execution and external messaging remain configuration/launch dependencies.</p><div className={styles.actions}><Link href={href("/mobile-app")}>My PawSpace</Link><button onClick={()=>{setBooking(null);setProgramme(null)}}>Book another programme</button></div></section></main>;
 
