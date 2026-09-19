@@ -156,15 +156,13 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
     await page
       .getByRole("button", { name: "Choose address and requested time" })
       .click();
-    await page
-      .getByLabel("Complete doorstep address")
-      .fill("42, Indiranagar Double Road, Bengaluru");
-    await page.getByLabel("Pincode").fill("560038");
-    await page.getByRole("button", { name: "Use this address" }).click();
-    await page
-      .getByRole("region", { name: "Matching map addresses" })
-      .getByRole("button", { name: /42.*Indiranagar Double Road/ })
-      .click();
+    const line1 = page.locator("#grooming-address-line-1");
+    await expect(line1, "Address Line 1 (Google Places) input present").toBeVisible();
+    await line1.fill("42, Indiranagar Double Road");
+    const suggestions = page.getByRole("region", { name: "Google address suggestions" });
+    await expect(suggestions).toBeVisible({ timeout: 20_000 });
+    await suggestions.getByRole("button").first().click();
+    await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible({ timeout: 20_000 });
 
     const serviceDay = Number(serviceDate.slice(-2));
     const serviceMonth = new Intl.DateTimeFormat("en-IN", {
