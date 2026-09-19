@@ -40,7 +40,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - name: Verify preinstalled Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}"
+          test -d "$ANDROID_HOME"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          echo "Using GitHub runner Android SDK at $ANDROID_HOME"
       - run: npm ci
       - run: npm run cap:sync -- android
       - name: Compile debug APK
