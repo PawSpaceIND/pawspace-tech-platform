@@ -110,7 +110,9 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
         const account=await fetch("/api/customer-account",{credentials:"include"}).then(r=>r.json()) as {data?:{customerId?:string;pets?:Array<{id?:string;species?:string}>}};
         const quote=await fetch("/api/training-commercial",{method:"POST",headers:{"content-type":"application/json"},credentials:"include",body:JSON.stringify({packageCode:"trainer-meet-greet",petCount:1,scheduledStart:`${date}T10:00:00+05:30`,paymentMode:"prepaid"})}).then(r=>r.json()) as {data?:{quoteId?:string;minutesPerSession?:number}};
         const pet=account.data?.pets?.find(p=>p.species==="dog");
-        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:1,cadenceDays:7};
+        const trainers=await fetch(`/api/training-trainers?cityId=blr&zoneId=blr-east&at=${encodeURIComponent(`${date}T10:00:00+05:30`)}`,{credentials:"include"}).then(r=>r.json()) as {data?:{providers?:Array<{id?:string;name?:string}>}};
+        const preferred=trainers.data?.providers?.[0];
+        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:1,cadenceDays:7,preferredProviderId:String(preferred?.id||"")};
         const response=await fetch("/api/uat-scheduling",{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
         return{status:response.status,body:await response.json().catch(()=>null)};
       });
