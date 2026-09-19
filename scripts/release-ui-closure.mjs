@@ -168,11 +168,18 @@ async function assessRouteDocument(page, cfTextSource) {
 // Load a route for probing, retrying a bounded number of times when the edge answers with a 5xx or
 // a Cloudflare error page instead of the application. Never snapshot controls from a page that is
 // not a PawSpace document; if PawSpace still will not load, say so explicitly.
+async function resetCookieConsentForProbe(page) {
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("pawspace.cookie-consent.v1");
+  });
+}
+
 async function loadRouteForProbe(page, route) {
   let outcome = { ok: false, attempts: 0, status: 0, reason: "route was never loaded" };
   for (let attempt = 1; attempt <= ROUTE_LOAD_ATTEMPTS; attempt += 1) {
     let status = 0, navigationFailure = "";
     try {
+      await resetCookieConsentForProbe(page);
       const response = await gotoSettled(page, `${BASE}${route}`);
       status = response?.status() || 0;
     } catch (error) { navigationFailure = String(error.message).split("\n")[0].slice(0, 200); }

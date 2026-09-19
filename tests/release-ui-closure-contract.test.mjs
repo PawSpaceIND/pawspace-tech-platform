@@ -86,3 +86,10 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.doesNotMatch(workflow, /wrangler deploy/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
 });
+
+test("release UI control probing resets cookie consent before each route load", () => {
+  assert.match(script, /async function resetCookieConsentForProbe/);
+  assert.match(script, /localStorage\.removeItem\("pawspace\.cookie-consent\.v1"\)/);
+  const loader = script.slice(script.indexOf("async function loadRouteForProbe"), script.indexOf("// Resolve the control"));
+  assert.match(loader, /await resetCookieConsentForProbe\(page\)/);
+});
