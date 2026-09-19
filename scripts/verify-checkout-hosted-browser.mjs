@@ -34,7 +34,7 @@ try{
    await expect(care.getByRole("button")).toHaveCount(8);await expect(page.locator("html")).toHaveAttribute("data-paw-style","cartoon");
    await page.screenshot({path:resolve(output,`${label}-cartoon.png`),fullPage:true});
    await page.getByRole("button",{name:"Change PawSpace appearance"}).click();const appearance=page.getByRole("dialog",{name:"Make PawSpace yours."});
-   await expect(appearance.getByRole("radio",{name:/^Cartoon/})).toBeChecked();await appearance.getByRole("button",{name:"Done",exact:true}).click();
+   await expect(appearance.getByRole("radio",{name:/^Illustrated mascots/})).toBeChecked();await appearance.getByRole("button",{name:"Done",exact:true}).click();
    for(const name of names){
     const card=care.getByRole("button",{name:new RegExp(name,"i")});await expect(card).toBeEnabled();await card.scrollIntoViewIfNeeded();await card.click({trial:true});
     const bounds=await card.boundingBox();expect(bounds.width).toBeGreaterThanOrEqual(44);expect(bounds.height).toBeGreaterThanOrEqual(44);
