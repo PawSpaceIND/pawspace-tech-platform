@@ -6,7 +6,7 @@ export type TrainingPaymentMode="prepaid"|"split";
 export type TrainingPaymentState="PARTIALLY_PAID"|"FULLY_PAID";
 export type TrainingCommercialQuote={quoteId:string;packageCode:string;packageName:string;packageVersion:number;sessions:number;validityDays:number;petCount:number;minutesPerSession:number;basePrice:number;discount:number;totalAmount:number;amountDueNow:number;paymentMode:TrainingPaymentMode;meetAndGreet:boolean;expiresAt:number};
 const defaults=[
- {code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500,meet:1,maxPets:4,direct:30,coaching:15,split:0},
+ {code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500,meet:1,maxPets:4,direct:45,coaching:15,split:0},
  {code:"training-2-starter",name:"Starter Plan",sessions:2,validityDays:31,price:3500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-4-puppy",name:"Puppy Training Plan",sessions:4,validityDays:31,price:6000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-8-basic",name:"Basic Obedience Plan",sessions:8,validityDays:62,price:12000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
@@ -24,7 +24,18 @@ export async function ensureTrainingCommercialTables(db:D1Database){await db.bat
  db.prepare("CREATE TABLE IF NOT EXISTS training_coupon_rules (code TEXT PRIMARY KEY,discount_type TEXT NOT NULL,value REAL NOT NULL,max_discount REAL,status TEXT NOT NULL DEFAULT 'active',effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_balance_payment_events (id TEXT PRIMARY KEY,quote_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL UNIQUE,bound_payment_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
-]);const now=Date.now();for(const item of defaults)await db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now).run();}
+]);const now=Date.now();for(const item of defaults)await db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now).run();
+ // Repair the original founder Meet & Greet seed (30+15=45m), which violates the scheduler's
+ // governed 60-minute minimum for dog_training. Expire still-open quotes before bumping the package
+ // version so a pre-repair quote can never be booked against different duration semantics.
+ const meet=await db.prepare("SELECT direct_minutes_per_pet,coaching_minutes_per_pet,updated_by FROM training_commercial_packages WHERE package_code='trainer-meet-greet'").first<Row>();
+ if(meet&&String(meet.updated_by)==="founder_seed"&&Number(meet.direct_minutes_per_pet)+Number(meet.coaching_minutes_per_pet)<60){
+  await db.batch([
+   db.prepare("UPDATE training_commercial_quotes SET status='expired' WHERE package_code='trainer-meet-greet' AND status='open'"),
+   db.prepare("UPDATE training_commercial_packages SET direct_minutes_per_pet=45,coaching_minutes_per_pet=15,version=version+1,updated_at=? WHERE package_code='trainer-meet-greet' AND updated_by='founder_seed'").bind(now),
+  ]);
+ }
+}
 
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}
 async function discountFor(db:D1Database,couponCode:string|undefined,total:number,scheduledStart:string){const code=String(couponCode||"").trim().toUpperCase();if(!code)return{code:null,discount:0};const row=await db.prepare("SELECT * FROM training_coupon_rules WHERE code=? AND status='active'").bind(code).first<Row>();if(!row)return{code,discount:0,invalid:true};const date=scheduledStart.slice(0,10);if(date<String(row.effective_from)||row.effective_to&&date>String(row.effective_to))return{code,discount:0,invalid:true};let discount=String(row.discount_type)==="percent"?total*Number(row.value)/100:Number(row.value);if(row.max_discount!==null&&row.max_discount!==undefined)discount=Math.min(discount,Number(row.max_discount));return{code,discount:Math.max(0,Math.min(total,Math.round(discount)))};}

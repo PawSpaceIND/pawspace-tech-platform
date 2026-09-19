@@ -92,7 +92,7 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
     const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
     const dateInput=page.getByRole("textbox",{name:"First session date"});
     let capacityFound=false;
-    for(let offset=3;offset<=3;offset+=1){
+    for(let offset=3;offset<=21;offset+=1){
       const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
       await dateInput.fill(candidate);
       const noTrainer=page.getByText(/No available trainer has been confirmed/i);
