@@ -240,11 +240,26 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
 
     expect(assignedProviderId, "scheduler must expose the assigned provider ID").toBeTruthy();
     partner = await assignedPartnerPage(browser, baseURL, assignedProviderId);
+    const partnerFeedResponse = await partner.context.request.get("/api/partner-job-feed");
+    expect(partnerFeedResponse.status(), await partnerFeedResponse.text()).toBe(200);
+    const partnerFeed = await partnerFeedResponse.json() as { data?: { needsAction?: Array<{ bookingId?: string }>; today?: Array<{ bookingId?: string }>; upcoming?: Array<{ bookingId?: string }>; completed?: Array<{ bookingId?: string }> } };
+    const partnerBookingIds = [
+      ...(partnerFeed.data?.needsAction ?? []),
+      ...(partnerFeed.data?.today ?? []),
+      ...(partnerFeed.data?.upcoming ?? []),
+      ...(partnerFeed.data?.completed ?? []),
+    ].map(job => String(job.bookingId ?? ""));
+    expect(
+      partnerBookingIds,
+      `PARTNER_DISCONNECTION: assigned provider ${assignedProviderId} API feed does not contain canonical booking ${bookingId}`,
+    ).toContain(bookingId);
+
     await partner.page.goto("/partner/jobs");
     await expect(
       partner.page.locator("body"),
-      `PARTNER_DISCONNECTION: assigned provider ${assignedProviderId} job feed does not expose the canonical booking ID`,
-    ).toContainText(bookingId, { timeout: 30_000 });
+      `PARTNER_DISCONNECTION: assigned provider ${assignedProviderId} UI does not expose the assigned Grooming booking`,
+    ).toContainText(/grooming/i, { timeout: 30_000 });
+    await expect(partner.page.locator("body")).toContainText(/Essential Bath/i);
     await partner.page.screenshot({
       path: test.info().outputPath(`partner-${bookingId}.png`),
       fullPage: true,
