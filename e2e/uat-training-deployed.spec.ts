@@ -87,16 +87,49 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
   test.setTimeout(600_000); try{
     await login(page); log(`✅ Customer sandbox OTP login (${PHONE}).`); await seedAccount(page); log("✅ Canonical Bengaluru address + dog available.");
     await page.goto("/training");
-    const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i}); await expect(reserve).toBeEnabled({timeout:60_000});
+    const meetGreet=page.getByRole("button",{name:/Trainer Meet & Greet/i}); await expect(meetGreet).toBeVisible({timeout:60_000}); await meetGreet.click();
+    log("✅ Selected canonical one-session Trainer Meet & Greet to avoid multi-week staging-capacity pollution.");
+    const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
+    const dateInput=page.getByRole("textbox",{name:"First session date"});
+    let capacityFound=false;
+    for(let offset=3;offset<=21;offset+=1){
+      const candidate=new Date(Date.now()+offset*86_400_000).toISOString().slice(0,10);
+      await dateInput.fill(candidate);
+      const noTrainer=page.getByText(/No available trainer has been confirmed/i);
+      const deadline=Date.now()+45_000;
+      while(Date.now()<deadline){
+        if(await reserve.isEnabled().catch(()=>false)){capacityFound=true;log(`✅ Server-confirmed Training capacity found for ${candidate}.`);break;}
+        if(await noTrainer.isVisible().catch(()=>false)){log(`ℹ️ No server-confirmed Training capacity for ${candidate}.`);break;}
+        await page.waitForTimeout(500);
+      }
+      if(capacityFound)break;
+    }
+    if(!capacityFound){
+      const diagnostic=await page.evaluate(async()=>{
+        const date=(document.querySelector('input[type="date"]') as HTMLInputElement|null)?.value||"";
+        const account=await fetch("/api/customer-account",{credentials:"include"}).then(r=>r.json()) as {data?:{customerId?:string;pets?:Array<{id?:string;species?:string}>}};
+        const quote=await fetch("/api/training-commercial",{method:"POST",headers:{"content-type":"application/json"},credentials:"include",body:JSON.stringify({packageCode:"trainer-meet-greet",petCount:1,scheduledStart:`${date}T10:00:00+05:30`,paymentMode:"prepaid"})}).then(r=>r.json()) as {data?:{quoteId?:string;minutesPerSession?:number}};
+        const pet=account.data?.pets?.find(p=>p.species==="dog");
+        const trainers=await fetch(`/api/training-trainers?cityId=blr&zoneId=blr-east&at=${encodeURIComponent(`${date}T10:00:00+05:30`)}`,{credentials:"include"}).then(r=>r.json()) as {data?:{providers?:Array<{id?:string;name?:string}>}};
+        const preferred=trainers.data?.providers?.[0];
+        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:1,cadenceDays:7,preferredProviderId:String(preferred?.id||"")};
+        const response=await fetch("/api/uat-scheduling",{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+        return{status:response.status,body:await response.json().catch(()=>null)};
+      });
+      log(`❌ Scheduler diagnostic: ${JSON.stringify(diagnostic)}`);
+    }
+    expect(capacityFound).toBe(true); await expect(reserve).toBeEnabled();
     const created=page.waitForResponse(r=>r.url().includes("/api/canonical-bookings")&&r.request().method()==="POST",{timeout:180_000}); await reserve.click();
     const cr=await created; const cb=await cr.json() as {data?:{bookingId?:string}}; expect(cr.status()).toBe(201); const bookingId=String(cb.data?.bookingId||""); expect(bookingId).not.toEqual(""); log(`✅ Canonical Training booking created: ${bookingId}.`);
     await expect(page.getByRole("heading",{name:"Review payment"})).toBeVisible({timeout:60_000});
 
-    let failOneConfirmation=true;
-    await page.route("**/api/customer-checkout",async route=>{const req=route.request();const body=req.postDataJSON?.() as {action?:string}|null;if(failOneConfirmation&&body?.action==="status"){failOneConfirmation=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time confirmation read failure"})});}return route.continue();});
+    let failOneProgrammeRead=true;
+    await page.route("**/api/training-programmes**",async route=>{if(failOneProgrammeRead&&route.request().method()==="GET"){failOneProgrammeRead=false;return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"UAT injected one-time Training programme read failure"})});}return route.continue();});
     await page.getByRole("button",{name:/^Pay securely\b/i}).click(); await payRazorpay(page); log("✅ Razorpay sandbox card flow completed.");
     let s:CheckoutStatus={http:0,body:null};for(let i=0;i<12;i++){await page.waitForTimeout(4000);s=await status(page,bookingId);if(s.body?.data?.status==="captured")break;} expect(s.body?.data?.status).toBe("captured");log(`✅ Server-authoritative payment status captured for ${bookingId}.`);
-    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000}); await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time confirmation read failure entered read-only recovery; payment controls did not return.");
+    const checkStatus=page.getByRole("button",{name:"Check payment status"}); await expect(checkStatus).toBeVisible({timeout:60_000}); await checkStatus.click();
+    const recovery=page.getByRole("region",{name:"Training confirmation recovery"}); await expect(recovery).toBeVisible({timeout:60_000});
+    await expect(page.getByText(/do not pay again/i)).toBeVisible(); log("✅ One-time post-payment Training read failure entered read-only recovery; payment controls did not return.");
     await recovery.getByRole("button",{name:"Refresh confirmation"}).click();
     await expect(page.getByRole("heading",{name:"Training programme confirmed"})).toBeVisible({timeout:60_000});
     await expect(page.getByText(bookingId,{exact:true})).toBeVisible();

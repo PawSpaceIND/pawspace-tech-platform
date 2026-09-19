@@ -51,7 +51,19 @@ test("TRN-01 catalogue: the governed training plans are what the customer is off
   const meet = byCode.get("trainer-meet-greet");
   assert.ok(meet, "the Meet & Greet must be offered as its own governed item");
   assert.equal(Number(meet.sessions), 1);
+  assert.equal(Number(meet.direct_minutes_per_pet) + Number(meet.coaching_minutes_per_pet), 60,
+    "Meet & Greet must satisfy the scheduler's 60-minute Training minimum");
   stage("Catalogue", "PASS", `${listed.value.length} governed plans; ${PACKAGE} is 4 sessions at Rs 6000`);
+});
+
+test("TRN-01B Meet & Greet quote is schedulable under the Training duration contract", async () => {
+  const { db } = trnWorld();
+  const com = await import("../lib/training-commercial-governance.ts");
+  const quote = await com.createTrainingQuote(db, {
+    packageCode: "trainer-meet-greet", petCount: 1, scheduledStart: futureStart(), paymentMode: "prepaid",
+  });
+  assert.equal(quote.minutesPerSession, 60, "commercial quote and scheduler must agree on the minimum duration");
+  stage("Meet & Greet duration contract", "PASS", "Meet & Greet quotes 60 minutes and is schedulable");
 });
 
 test("TRN-02 quote: priced by the catalogue, refused for a past start or an unknown plan", async () => {
