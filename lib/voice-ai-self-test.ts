@@ -344,8 +344,18 @@ async function createExotelAgentStreamCall(
   const call =
     parsed.call && typeof parsed.call === "object"
       ? (parsed.call as Record<string, unknown>)
-      : parsed;
-  const providerCallId = text(call.sid || call.call_sid || parsed.call_sid);
+      : parsed.Call && typeof parsed.Call === "object"
+        ? (parsed.Call as Record<string, unknown>)
+        : parsed;
+  const providerCallId = text(
+    call.sid ||
+      call.Sid ||
+      call.call_sid ||
+      parsed.call_sid ||
+      parsed.CallSid ||
+      parsed.sid ||
+      parsed.Sid,
+  );
   if (!providerCallId) {
     return {
       ok: false as const,
