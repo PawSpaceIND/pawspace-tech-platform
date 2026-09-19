@@ -87,8 +87,8 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
   test.setTimeout(600_000); try{
     await login(page); log(`✅ Customer sandbox OTP login (${PHONE}).`); await seedAccount(page); log("✅ Canonical Bengaluru address + dog available.");
     await page.goto("/training");
-    const meetGreet=page.getByRole("button",{name:/Trainer Meet & Greet/i}); await expect(meetGreet).toBeVisible({timeout:60_000}); await meetGreet.click();
-    log("✅ Selected canonical one-session Trainer Meet & Greet to avoid multi-week staging-capacity pollution.");
+    const starter=page.getByRole("button",{name:/Starter Plan/i}); await expect(starter).toBeVisible({timeout:60_000}); await starter.click();
+    log("✅ Selected canonical two-session Starter Plan for real programme materialization.");
     const reserve=page.getByRole("button",{name:/Reserve trainer & continue to payment/i});
     const dateInput=page.getByRole("textbox",{name:"First session date"});
     let capacityFound=false;
@@ -108,11 +108,11 @@ test("Training — captured payment, canonical trainer/programme, read-only reco
       const diagnostic=await page.evaluate(async()=>{
         const date=(document.querySelector('input[type="date"]') as HTMLInputElement|null)?.value||"";
         const account=await fetch("/api/customer-account",{credentials:"include"}).then(r=>r.json()) as {data?:{customerId?:string;pets?:Array<{id?:string;species?:string}>}};
-        const quote=await fetch("/api/training-commercial",{method:"POST",headers:{"content-type":"application/json"},credentials:"include",body:JSON.stringify({packageCode:"trainer-meet-greet",petCount:1,scheduledStart:`${date}T10:00:00+05:30`,paymentMode:"prepaid"})}).then(r=>r.json()) as {data?:{quoteId?:string;minutesPerSession?:number}};
+        const quote=await fetch("/api/training-commercial",{method:"POST",headers:{"content-type":"application/json"},credentials:"include",body:JSON.stringify({packageCode:"starter-plan",petCount:1,scheduledStart:`${date}T10:00:00+05:30`,paymentMode:"prepaid"})}).then(r=>r.json()) as {data?:{quoteId?:string;minutesPerSession?:number}};
         const pet=account.data?.pets?.find(p=>p.species==="dog");
         const trainers=await fetch(`/api/training-trainers?cityId=blr&zoneId=blr-east&at=${encodeURIComponent(`${date}T10:00:00+05:30`)}`,{credentials:"include"}).then(r=>r.json()) as {data?:{providers?:Array<{id?:string;name?:string}>}};
         const preferred=trainers.data?.providers?.[0];
-        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:1,cadenceDays:7,preferredProviderId:String(preferred?.id||"")};
+        const body={clientRequestId:`training-diag:${Date.now()}`,customerId:String(account.data?.customerId||""),petIds:[String(pet?.id||"")],serviceCode:"dog_training",scheduledStart:`${date}T10:00:00+05:30`,scheduledEnd:new Date(Date.parse(`${date}T10:00:00+05:30`)+Number(quote.data?.minutesPerSession||45)*60_000).toISOString(),occurrences:2,cadenceDays:7,preferredProviderId:String(preferred?.id||"")};
         const response=await fetch("/api/uat-scheduling",{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
         return{status:response.status,body:await response.json().catch(()=>null)};
       });
