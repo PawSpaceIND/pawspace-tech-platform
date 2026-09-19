@@ -329,3 +329,10 @@ test("the shared Button component still forwards type and handlers to the real b
   assert.match(button, /\.\.\.rest/, "Button must spread type/onClick through, or every Button-based control is genuinely unwired");
   assert.match(button, /<button className=\{combined\} \{\.\.\.rest\}>/);
 });
+
+test("team case refresh is disabled while its canonical load is already in flight", () => {
+  const source = read("../app/team/cases/page.tsx");
+  assert.match(source, /disabled=\{loading\}/);
+  assert.match(source, /aria-busy=\{loading\}/);
+  assert.match(source, /loading\?"Refreshing…":"Refresh"/);
+});
