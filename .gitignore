@@ -89,3 +89,6 @@ artifacts/
 /test-results/
 /playwright-report/
 /dist/server/.wrangler/
+
+# Transient agent worktrees: full repo copies created per subagent run, never source.
+.claude/worktrees/
