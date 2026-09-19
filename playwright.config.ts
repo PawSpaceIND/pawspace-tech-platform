@@ -24,6 +24,7 @@ export default defineConfig({
     "e2e/uat-phase3-partner-training.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
     "e2e/uat-cross-module-wiring.spec.ts",
+    "e2e/checkout-provider-webhook-proof-736.spec.ts",
     "e2e/voice-console-human-readiness.spec.ts",
     "e2e/journeys/05-voice-human-readiness.spec.ts",
     "e2e/visual-uat-sweep.spec.ts",
