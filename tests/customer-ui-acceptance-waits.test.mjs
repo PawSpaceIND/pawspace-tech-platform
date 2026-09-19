@@ -19,6 +19,15 @@ test("customer acceptance targets each premium service card before its generic C
   assert.doesNotMatch(source, /care\(page\)\.getByRole\("button",\{name:new RegExp\(name,"i"\)\}\)/);
 });
 
+
+
+test("customer acceptance synchronizes OTP request with the live staging response", () => {
+  assert.match(source, /waitForResponse\(response=>response\.url\(\)\.includes\("\/api\/customer-otp"\)/);
+  assert.match(source, /timeout:SERVER_TIMEOUT/);
+  assert.match(source, /sandbox OTP request failed/);
+  assert.match(source, /rendered sandbox OTP did not match the server challenge/);
+  assert.match(source, /sandbox\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+});
 test("customer acceptance waits for OTP verification to replace the login UI", () => {
   assert.match(source, /codeInput\.waitFor\(\{state:"hidden",timeout:TIMEOUT\}\)/);
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
