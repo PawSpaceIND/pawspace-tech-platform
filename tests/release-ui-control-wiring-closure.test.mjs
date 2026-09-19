@@ -334,3 +334,15 @@ test("Case Center disables Refresh while canonical case data is already loading"
   const source = read("../app/team/cases/page.tsx");
   assert.match(source, /disabled=\{loading\}[\s\S]*?loading\?"Refreshing…":"Refresh"/);
 });
+
+test("signed-in customer acceptance tracks the current discovery and service flows", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  for (const token of ["Choose your service area","6-digit PIN code","Book a Meet & Greet","Address Line 1","Verify service address","Continue to payment","Who is travelling?","Pickup address","Drop address / Point 1","Review payment"]) assert.equal(source.includes(token), true, token);
+  for (const retired of ["e.g. HSR Layout, Bengaluru","Save location","Choose a route class","e.g. Indiranagar, 100 Feet Road"]) assert.equal(source.includes(retired), false, retired);
+});
+
+test("Taxi address controls expose stable accessible names for customer acceptance", () => {
+  const source = read("../app/mobile-app/taxi-flow.tsx");
+  assert.match(source, /aria-label="Pickup address"/);
+  assert.match(source, /aria-label="Drop address \/ Point 1"/);
+});
