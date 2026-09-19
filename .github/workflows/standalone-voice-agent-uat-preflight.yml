@@ -26,7 +26,7 @@ jobs:
       group: standalone-voice-agent-real-uat
       cancel-in-progress: false
     env:
-      VOICE_REPO: /Users/karthikeyanparamasivam/Projects/voice-agent-platform
+      VOICE_SOURCE_REPO: /Users/karthikeyanparamasivam/Projects/voice-agent-platform
       VOICE_DATA_PATH: /Users/karthikeyanparamasivam/Projects/voice-agent-platform/.uat/voice.sqlite
       VOICE_SERVER_MODE: hosted_uat
       VOICE_PUBLIC_ORIGIN: https://standalone-voice-uat.invalid
@@ -53,18 +53,24 @@ jobs:
       VOICE_PAYMENT_LIVE_APPROVED: 'false'
       VOICE_PAYMENT_PROVIDER: ''
     steps:
-      - name: Verify exact standalone Voice Agent SHA and clean tree
+      - name: Prepare exact isolated Voice Agent worktree
         env:
           EXPECTED_VOICE_SHA: ${{ github.event.inputs.expected_voice_sha }}
         run: |
           set -euo pipefail
           case "$EXPECTED_VOICE_SHA" in *[!0-9a-f]* | "") exit 1;; esac
           [ "${#EXPECTED_VOICE_SHA}" -eq 40 ]
-          test -d "$VOICE_REPO/.git"
-          ACTUAL="$(git -C "$VOICE_REPO" rev-parse HEAD)"
+          test -d "$VOICE_SOURCE_REPO/.git"
+          git -C "$VOICE_SOURCE_REPO" cat-file -e "$EXPECTED_VOICE_SHA^{commit}"
+          git -C "$VOICE_SOURCE_REPO" worktree prune
+          WORKTREE="$RUNNER_TEMP/voice-agent-uat-$GITHUB_RUN_ID"
+          rm -rf "$WORKTREE"
+          git -C "$VOICE_SOURCE_REPO" worktree add --detach "$WORKTREE" "$EXPECTED_VOICE_SHA"
+          ACTUAL="$(git -C "$WORKTREE" rev-parse HEAD)"
           [ "$ACTUAL" = "$EXPECTED_VOICE_SHA" ]
-          [ -z "$(git -C "$VOICE_REPO" status --porcelain)" ]
-          echo "Standalone Voice Agent exact SHA verified."
+          [ -z "$(git -C "$WORKTREE" status --porcelain)" ]
+          echo "VOICE_REPO=$WORKTREE" >> "$GITHUB_ENV"
+          echo "Standalone Voice Agent exact SHA isolated in a clean detached worktree."
 
       - name: Verify durable UAT database and resolve workspace
         run: |
@@ -112,25 +118,30 @@ jobs:
           echo "Protected provider secret presence verified; values withheld."
 
       - name: Build exact standalone Voice Agent
-        working-directory: /Users/karthikeyanparamasivam/Projects/voice-agent-platform
         run: |
           set -euo pipefail
+          cd "$VOICE_REPO"
           npm ci
           npm run build
 
       - name: Run hosted-UAT structural preflight
-        working-directory: /Users/karthikeyanparamasivam/Projects/voice-agent-platform
-        run: npm run preflight:uat
+        run: |
+          set -euo pipefail
+          cd "$VOICE_REPO"
+          npm run preflight:uat
 
       - name: Run real-provider readiness gate
-        working-directory: /Users/karthikeyanparamasivam/Projects/voice-agent-platform
-        run: npm run preflight:real-uat
+        run: |
+          set -euo pipefail
+          cd "$VOICE_REPO"
+          npm run preflight:real-uat
 
       - name: Publish sanitized readiness summary
         run: |
           {
             echo '## Standalone Voice Agent real-UAT preflight'
-            echo '- exact standalone Voice Agent SHA: verified'
+            echo '- exact standalone Voice Agent SHA: verified in isolated detached worktree'
+            echo '- concurrent local Voice Agent changes touched: no'
             echo '- durable UAT SQLite integrity: passed'
             echo '- owner/workspace binding: passed'
             echo '- Cloudflare protected credentials: present'
@@ -145,3 +156,12 @@ jobs:
             echo '- provider request made by this workflow: no'
             echo '- phone call placed by this workflow: no'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove isolated Voice Agent worktree
+        if: always()
+        run: |
+          set +e
+          if [ -n "${VOICE_REPO:-}" ] && [ -d "${VOICE_REPO:-}" ]; then
+            git -C "$VOICE_SOURCE_REPO" worktree remove --force "$VOICE_REPO"
+          fi
+          git -C "$VOICE_SOURCE_REPO" worktree prune
