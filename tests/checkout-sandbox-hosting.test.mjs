@@ -163,6 +163,14 @@ test("retired provisioning workflow contains no hosted-browser mutation path; br
  assert.doesNotMatch(browser,/setExtraHTTPHeaders|addCookies|\.route\(/);
 });
 
+test("hosted checkout browser follows the current cartoon default and proves professional persistence",()=>{
+ const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
+ assert.match(browser,/toHaveAttribute\("data-paw-style","cartoon"\)/);
+ assert.match(browser,/getByRole\("radio",\{name:\/\^Cartoon\/\}\)\.toBeChecked|toBeChecked\(\)/);
+ assert.match(browser,/getByRole\("radio",\{name:\/\^Professional\/\}\)\.check\(\)/);
+ assert.match(browser,/toHaveAttribute\("data-paw-style","professional"\)/);
+});
+
 test("hosted browser and assertions use the same installed Playwright runtime",()=>{
  const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
  assert.match(browser,/const \{chromium,expect\}=require\("@playwright\/test"\)/);
