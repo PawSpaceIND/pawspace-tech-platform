@@ -238,14 +238,19 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
 
   await db.batch(statements);
 
-  const [persistedIntent, persistedPayment, persistedInbox, postedJournal, persistedEffects] = await Promise.all([
-    input.intentId ? db.prepare("SELECT state,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
-    db.prepare("SELECT status FROM booking_payments WHERE id=?").bind(input.paymentId).first<Row>(),
-    input.inboxId?db.prepare("SELECT processing_status FROM gateway_webhook_events WHERE id=?").bind(input.inboxId).first<Row>():Promise.resolve({processing_status:"PROCESSED"} as Row),
-    db.prepare("SELECT id,status FROM journal_transactions WHERE source_event_id=?").bind(journalEventId).first<Row>(),
-    db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>(),
+  const verifyDb = firstPrimaryRead(db);
+  const [persistedIntent, persistedPayment, persistedInbox, persistedReconciliation, postedJournal, persistedEffects] = await Promise.all([
+    input.intentId ? verifyDb.prepare("SELECT state,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
+    verifyDb.prepare("SELECT status FROM booking_payments WHERE id=?").bind(input.paymentId).first<Row>(),
+    input.inboxId?verifyDb.prepare("SELECT processing_status FROM gateway_webhook_events WHERE id=?").bind(input.inboxId).first<Row>():Promise.resolve({processing_status:"PROCESSED"} as Row),
+    verifyDb.prepare("SELECT captured_amount,gateway_status,reconciliation_status FROM payment_reconciliation_records WHERE payment_id=?").bind(input.paymentId).first<Row>(),
+    verifyDb.prepare("SELECT id,status FROM journal_transactions WHERE source_event_id=?").bind(journalEventId).first<Row>(),
+    verifyDb.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>(),
   ]);
-  if ((input.intentId && text(persistedIntent?.state) !== "CAPTURED") || text(persistedPayment?.status) !== "captured" || text(persistedInbox?.processing_status) !== "PROCESSED" || !postedJournal || text(postedJournal.status) !== "POSTED" || !persistedEffects) {
+  const reconciliationVerified = Number(persistedReconciliation?.captured_amount || 0) + 0.009 >= capturedTotal
+    && text(persistedReconciliation?.gateway_status) === "captured"
+    && ["matched","partially_captured"].includes(text(persistedReconciliation?.reconciliation_status));
+  if ((input.intentId && text(persistedIntent?.state) !== "CAPTURED") || text(persistedPayment?.status) !== "captured" || text(persistedInbox?.processing_status) !== "PROCESSED" || !reconciliationVerified || !postedJournal || text(postedJournal.status) !== "POSTED" || !persistedEffects) {
     throw new Error("Atomic Razorpay capture commit verification failed");
   }
   return { duplicateCapture: false, effectsOutboxId: text(persistedEffects.id), effectsStatus: text(persistedEffects.status), journalId: text(postedJournal.id), capturedTotal, collectedInFull };

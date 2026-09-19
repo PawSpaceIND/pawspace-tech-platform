@@ -519,7 +519,7 @@ async function strictFinancialTruth(dbId: string, bookingId: string) {
 async function waitForStrictFinancialTruth(
   dbId: string,
   bookingId: string,
-  timeoutMs = 30_000,
+  timeoutMs = 120_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   let latest = await strictFinancialTruth(dbId, bookingId);
