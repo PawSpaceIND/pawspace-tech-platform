@@ -237,6 +237,21 @@ test('status returns a customer-owned ready projection with exact server slot, p
   const denied = await POST(request({ action: 'status', bookingId: 'B1' }, await cookie(db, 'C2')));
   assert.equal(denied.status, 404, 'another customer cannot read the projection');
 });
+test('status treats atomic provider-api capture as trusted confirmation evidence', async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  event(sqlite, { signature_verified: 0, detail_json: JSON.stringify({ captureAuthority: 'provider_api', source: 'razorpay_provider_api', providerCaptured: true }) });
+  sqlite.exec("UPDATE booking_payments SET status='captured',amount_due_now=0 WHERE id='P1'");
+  const response = await POST(request({ action: 'status', bookingId: 'B1' }, session));
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.equal(body.data.confirmation.ready, true); assert.equal(body.data.confirmation.transactionId, 'pay_fixture');
+});
+test('status still rejects unsigned capture without provider-api authority', async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  event(sqlite, { signature_verified: 0, detail_json: '{}' }); sqlite.exec("UPDATE booking_payments SET status='captured',amount_due_now=0 WHERE id='P1'");
+  const response = await POST(request({ action: 'status', bookingId: 'B1' }, session));
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.equal(body.data.confirmation.ready, false); assert.equal(body.data.confirmation.transactionId, null);
+});
 test('route rejects cross-account receipt even when body forges customerId', async t => {
   const { db } = world(t); const { POST } = await import('../app/api/customer-checkout/route.ts');
   const response = await POST(request({ action: 'confirm', ...receipt, customerId: 'C1' }, await cookie(db, 'C2')));

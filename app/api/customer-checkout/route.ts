@@ -61,7 +61,7 @@ export async function POST(request: Request) {
       ]);
       const transactionExpression = gatewayEventsTable
         ? `(SELECT MAX(e.gateway_payment_id) FROM payment_gateway_events e
-            WHERE e.booking_id=b.id AND e.payment_id=p.id AND e.signature_verified=1 AND e.processing_status='processed'
+            WHERE e.booking_id=b.id AND e.payment_id=p.id AND (e.signature_verified=1 OR (e.signature_verified=0 AND json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api')) AND e.processing_status='processed'
               AND e.event_type IN ('payment.captured','order.paid','payment_link.paid'))`
         : "NULL";
       const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
