@@ -55,14 +55,16 @@ test("customer acceptance observes async final mutations through the server time
   assert.match(source, /while\(!seen\.length&&!unexpected\.length&&Date\.now\(\)<deadline\)await page\.waitForTimeout\(100\)/);
 });
 
-test("customer acceptance uses the governed east-zone UAT location for Training", () => {
+test("customer acceptance uses the governed east-zone UAT location and current address verification", () => {
   assert.match(source, /PIN="560038"/);
   assert.match(source, /ADDRESS="42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru"/);
   assert.doesNotMatch(source, /PIN="560034"/);
-  assert.match(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
-  assert.match(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Check area",exact:true\}\)/);
+  assert.match(source, /getByRole\("button",\{name:\/Continue in Bengaluru\/i\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Verify service address",exact:true\}\)/);
   assert.match(source, /getByText\("Verified service doorstep",\{exact:true\}\)/);
-  assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
 });
 
 test("customer acceptance retries one governed Sitting search before failing closed", () => {
