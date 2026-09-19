@@ -500,6 +500,23 @@ test("WH-15: a payment failure arriving AFTER a capture does not mark a paid boo
   assert.equal(Number(money("PAY-bkg_adv_ooo_fail")?.captured_amount), 2000, "and the money must stay collected");
 });
 
+test("WH-15b: stale pre-read cannot roll captured reconciliation back at the SQL write boundary", async () => {
+  freshDb();
+  seedBooking({ id: "bkg_adv_stale_fail" });
+  await postSigned(captureEvent("bkg_adv_stale_fail", 200_000), { eventId: "evt_stale_cap" });
+  assert.equal(Number(money("PAY-bkg_adv_stale_fail")?.captured_amount), 2000, "control: capture landed");
+  // Simulate the only part replica lag can corrupt: the handler branches as though payment/reconciliation
+  // were still pre-capture. The production safeguard must therefore live on the UPDATE/UPSERT itself.
+  sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE id='PAY-bkg_adv_stale_fail'").run();
+  sqlite.prepare("UPDATE payment_reconciliation_records SET gateway_status='captured',reconciliation_status='matched',captured_amount=2000 WHERE payment_id='PAY-bkg_adv_stale_fail'").run();
+  const late = await postSigned(failedEvent("bkg_adv_stale_fail", 200_000), { eventId: "evt_stale_fail" });
+  assert.equal(late.status, 200, JSON.stringify(late));
+  assert.equal(payStatus("PAY-bkg_adv_stale_fail"), "captured", "write boundary must preserve captured payment");
+  assert.equal(Number(money("PAY-bkg_adv_stale_fail")?.captured_amount), 2000, "write boundary must preserve collected total");
+  assert.equal(money("PAY-bkg_adv_stale_fail")?.gateway_status, "captured", "reconciliation cannot regress");
+});
+
+
 test("WH-17: a refund failure arriving AFTER the refund processed does not reopen the case", async () => {
   freshDb();
   seedBooking({ id: "bkg_adv_ooo_rf", payStatus: "captured" });
