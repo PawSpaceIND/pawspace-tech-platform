@@ -1,8 +1,44 @@
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 const ADDRESS =
   "42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038";
 const phone = `6${String(Date.now()).slice(-9)}`;
+const PROVIDER_PHONES: Record<string, string> = {
+  uatcap_groom_ft: "9000000901", uatcap_groom_cm: "9000000902", uatcap_groom_east: "9000000903",
+  uatcap_groom_south: "9000000904", uatcap_groom_north: "9000000905", uatcap_groom_west: "9000000906", uatcap_groom_central: "9000000907",
+  uatcap_groom_east_2: "9000000911", uatcap_groom_east_3: "9000000912", uatcap_groom_south_2: "9000000913", uatcap_groom_south_3: "9000000914",
+  uatcap_groom_north_2: "9000000915", uatcap_groom_north_3: "9000000916", uatcap_groom_west_2: "9000000917", uatcap_groom_west_3: "9000000918",
+  uatcap_groom_central_2: "9000000919", uatcap_groom_central_3: "9000000920",
+  uatcap_groom_east_4: "9000000921", uatcap_groom_east_5: "9000000922", uatcap_groom_south_4: "9000000923", uatcap_groom_south_5: "9000000924",
+  uatcap_groom_north_4: "9000000925", uatcap_groom_north_5: "9000000926", uatcap_groom_west_4: "9000000927", uatcap_groom_west_5: "9000000928",
+  uatcap_groom_central_4: "9000000929", uatcap_groom_central_5: "9000000930",
+  uatcap_groom_east_6: "9000000951", uatcap_groom_east_7: "9000000952", uatcap_groom_east_8: "9000000953", uatcap_groom_south_6: "9000000954",
+  uatcap_groom_south_7: "9000000955", uatcap_groom_south_8: "9000000956", uatcap_groom_north_6: "9000000957", uatcap_groom_north_7: "9000000958",
+  uatcap_groom_north_8: "9000000959", uatcap_groom_west_6: "9000000960", uatcap_groom_west_7: "9000000961", uatcap_groom_west_8: "9000000962",
+  uatcap_groom_central_6: "9000000963", uatcap_groom_central_7: "9000000964", uatcap_groom_central_8: "9000000965",
+};
+
+async function assignedPartnerPage(browser: Browser, baseURL: string, providerId: string) {
+  const providerPhone = PROVIDER_PHONES[providerId];
+  expect(providerPhone, `No seeded OTP phone for assigned provider ${providerId}`).toBeTruthy();
+  const context: BrowserContext = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  await page.goto("/partner/onboarding");
+  await page.getByPlaceholder("10-digit phone number").fill(providerPhone);
+  await page.getByRole("button", { name: "Send OTP" }).click();
+  const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+  await expect(sandbox).toBeVisible({ timeout: 20_000 });
+  const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+  expect(code).toMatch(/^\d{6}$/);
+  await page.getByPlaceholder("6-digit code").fill(code!);
+  const verify = page.waitForResponse(r => r.url().includes("/api/partner-otp") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  const response = await verify;
+  const body = await response.json().catch(() => ({})) as { data?: { providerId?: string } };
+  expect(response.status()).toBe(200);
+  expect(body.data?.providerId).toBe(providerId);
+  return { context, page };
+}
 
 async function sandboxLogin(page: Page) {
   await page.goto("/mobile-app");
@@ -72,21 +108,21 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
     process.env.PW_BASE_URL ||
     `http://localhost:${process.env.PW_PORT || "4185"}`;
   const founder = await staffPage(browser, baseURL, /Founder \(full access\)/);
-  const partner = await staffPage(
-    browser,
-    baseURL,
-    /Employee — groomer \(self-service\)/,
-  );
+  let partner: Awaited<ReturnType<typeof assignedPartnerPage>> | null = null;
+  let assignedProviderId = "";
   page.on("response", async (response) => {
     if (
       response.url().includes("/api/uat-scheduling") &&
       response.request().method() === "POST"
     ) {
-      console.log(
-        "UAT-SCHEDULING",
-        response.status(),
-        await response.text().catch(() => "<unreadable>"),
-      );
+      const text = await response.text().catch(() => "<unreadable>");
+      console.log("UAT-SCHEDULING", response.status(), text);
+      try {
+        const body = JSON.parse(text) as { data?: { status?: string; provider?: { id?: string } } };
+        if (response.status() === 200 && body.data?.status === "assigned" && body.data.provider?.id) {
+          assignedProviderId = body.data.provider.id;
+        }
+      } catch {}
     }
   });
   try {
@@ -202,11 +238,13 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
       fullPage: true,
     });
 
+    expect(assignedProviderId, "scheduler must expose the assigned provider ID").toBeTruthy();
+    partner = await assignedPartnerPage(browser, baseURL, assignedProviderId);
     await partner.page.goto("/partner/jobs");
     await expect(
       partner.page.locator("body"),
-      "PARTNER_DISCONNECTION: Asha job feed does not expose the canonical booking ID",
-    ).toContainText(bookingId);
+      `PARTNER_DISCONNECTION: assigned provider ${assignedProviderId} job feed does not expose the canonical booking ID`,
+    ).toContainText(bookingId, { timeout: 30_000 });
     await partner.page.screenshot({
       path: test.info().outputPath(`partner-${bookingId}.png`),
       fullPage: true,
@@ -260,7 +298,7 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
     });
     console.log(`CROSS_MODULE_BOOKING_ID=${bookingId}`);
   } finally {
-    await partner.context.close();
+    if (partner) await partner.context.close();
     await founder.context.close();
   }
 });
