@@ -146,6 +146,7 @@ journeys=(
   e2e/journeys/02-partner.spec.ts
   e2e/journeys/03-admin.spec.ts
   e2e/journeys/04-multi-actor.spec.ts
+  e2e/journeys/05-voice-human-readiness.spec.ts
 )
 projects=(chromium mobile-chromium)
 
