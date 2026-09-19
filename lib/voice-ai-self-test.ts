@@ -347,6 +347,8 @@ async function createExotelAgentStreamCall(
       : parsed.Call && typeof parsed.Call === "object"
         ? (parsed.Call as Record<string, unknown>)
         : parsed;
+  const xmlSid = raw.match(/<Sid>([A-Za-z0-9_-]{8,128})<\/Sid>/)?.[1] || "";
+  const xmlStatus = raw.match(/<Status>([^<]{1,64})<\/Status>/)?.[1] || "";
   const providerCallId = text(
     call.sid ||
       call.Sid ||
@@ -354,7 +356,8 @@ async function createExotelAgentStreamCall(
       parsed.call_sid ||
       parsed.CallSid ||
       parsed.sid ||
-      parsed.Sid,
+      parsed.Sid ||
+      xmlSid,
   );
   if (!providerCallId) {
     return {
@@ -366,7 +369,7 @@ async function createExotelAgentStreamCall(
   return {
     ok: true as const,
     providerCallId,
-    providerStatus: text(call.status) || "accepted",
+    providerStatus: text(call.status || call.Status || xmlStatus) || "accepted",
   };
 }
 
