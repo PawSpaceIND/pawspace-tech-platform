@@ -64,6 +64,21 @@ test("the dial uses Exotel's documented Connect API and points at a Voicebot App
   );
 });
 
+test("Exotel success parsing accepts the provider's uppercase Call/Sid response as well as lowercase shapes", () => {
+  assert.ok(
+    flatVoice.includes('parsed.Call&&typeofparsed.Call==="object"'),
+    "self-test must accept Exotel's uppercase Call object",
+  );
+  assert.ok(
+    flatVoice.includes("call.Sid"),
+    "self-test must accept the uppercase Sid field returned by Exotel",
+  );
+  assert.ok(
+    flatVoice.includes("parsed.CallSid"),
+    "self-test must accept a top-level CallSid fallback without weakening HTTP success checks",
+  );
+});
+
 test("a missing Voicebot App id fails closed instead of placing a silent call", () => {
   assert.ok(
     flatVoice.includes("if(!appId){"),
