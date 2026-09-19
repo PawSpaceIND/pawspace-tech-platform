@@ -47,15 +47,28 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 installWorkersHooks("__ADV_WH_DB__", "__ADV_WH_ENV__");
 
 function makeD1(sqlite) {
+  const firstHooks = [];
+  const takeFirstHook = (sql, args) => {
+    const index = firstHooks.findIndex((hook) => sql.includes(hook.pattern));
+    if (index === -1) return { hit: false, value: null };
+    const [hook] = firstHooks.splice(index, 1);
+    return { hit: true, value: hook.value(sql, args) };
+  };
   function statement(sql, args) {
     return {
       bind: (...bound) => statement(sql, bound),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      first: async () => {
+        const hook = takeFirstHook(sql, args);
+        if (hook.hit) return hook.value;
+        const row = sqlite.prepare(sql).get(...args);
+        return row === undefined ? null : row;
+      },
       run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };
   }
   return {
+    onFirst: (pattern, value) => { firstHooks.push({ pattern, value: typeof value === "function" ? value : () => value }); },
     prepare: (sql) => statement(sql, []),
     batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
@@ -505,14 +518,25 @@ test("WH-15b: stale pre-read cannot roll captured reconciliation back at the SQL
   seedBooking({ id: "bkg_adv_stale_fail" });
   await postSigned(captureEvent("bkg_adv_stale_fail", 200_000), { eventId: "evt_stale_cap" });
   assert.equal(Number(money("PAY-bkg_adv_stale_fail")?.captured_amount), 2000, "control: capture landed");
-  // Simulate the only part replica lag can corrupt: the handler branches as though payment/reconciliation
-  // were still pre-capture. The production safeguard must therefore live on the UPDATE/UPSERT itself.
-  sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE id='PAY-bkg_adv_stale_fail'").run();
-  sqlite.prepare("UPDATE payment_reconciliation_records SET gateway_status='captured',reconciliation_status='matched',captured_amount=2000 WHERE payment_id='PAY-bkg_adv_stale_fail'").run();
+
+  // D1 may serve these two authority pre-reads from a lagging replica even though the primary has
+  // already committed the capture. Force exactly that observation: the processor thinks the payment
+  // and reconciliation are still pre-capture, while every subsequent SQL write sees current primary.
+  db.onFirst("SELECT * FROM booking_payments WHERE booking_id=?", () => ({
+    id: "PAY-bkg_adv_stale_fail", booking_id: "bkg_adv_stale_fail", customer_id: "cus_adv",
+    amount: 2000, amount_due_now: 2000, currency: "INR", method: "upi", mode: "prepaid",
+    status: "created", gateway: "uat_sandbox", detail_json: "{}",
+  }));
+  db.onFirst("SELECT captured_amount,refunded_amount,gateway_status,reconciliation_status,variance_amount,last_event_id FROM payment_reconciliation_records", () => ({
+    captured_amount: 0, refunded_amount: 0, gateway_status: "order_linked",
+    reconciliation_status: "pending", variance_amount: 0, last_event_id: null,
+  }));
+
   const late = await postSigned(failedEvent("bkg_adv_stale_fail", 200_000), { eventId: "evt_stale_fail" });
   assert.equal(late.status, 200, JSON.stringify(late));
-  assert.equal(payStatus("PAY-bkg_adv_stale_fail"), "captured", "write boundary must preserve captured payment");
-  assert.equal(Number(money("PAY-bkg_adv_stale_fail")?.captured_amount), 2000, "write boundary must preserve collected total");
+  assert.equal(late.body?.reason, "out_of_order_failed", JSON.stringify(late));
+  assert.equal(payStatus("PAY-bkg_adv_stale_fail"), "captured", "primary payment cannot regress despite stale pre-read");
+  assert.equal(Number(money("PAY-bkg_adv_stale_fail")?.captured_amount), 2000, "primary collected total cannot regress");
   assert.equal(money("PAY-bkg_adv_stale_fail")?.gateway_status, "captured", "reconciliation cannot regress");
 });
 
