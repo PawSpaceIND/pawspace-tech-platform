@@ -169,6 +169,15 @@ test("Cloudflare detection keys off edge markers, not words the product may legi
   }
 });
 
+
+test("cookie consent choices are independently re-probed without weakening genuine index drift", () => {
+  assert.match(harness, /cookieConsent: Boolean\(el\.closest\('\[role="dialog"\]\[aria-label="Cookie consent"\]'\)\)/);
+  assert.match(harness, /if \(descriptor\.cookieConsent\)/);
+  assert.match(harness, /localStorage\.removeItem\("pawspace\.cookie-consent\.v1"\)/);
+  assert.match(harness, /Every other disappearing control still fails as genuine index_drift/);
+  assert.equal(isControlFailure(classifyControl({ ...NOTHING, indexDrift: true })), true);
+});
+
 test("genuine index_drift stays a failure for a real PawSpace control", () => {
   const verdict = classifyControl({ ...NOTHING, indexDrift: true });
   assert.equal(verdict, CONTROL_RESULT.indexDrift);
