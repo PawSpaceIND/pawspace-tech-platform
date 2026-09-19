@@ -17,5 +17,11 @@ const webhook=bindings.find(b=>b?.name==="RAZORPAY_WEBHOOK_SECRET_SANDBOX");if(!
 const d1=bindings.filter(b=>b?.type==="d1");if(d1.length!==1||d1[0]?.name!=="DB")throw new Error("Relay target must have exactly one isolated DB binding");
 const active=deployments?.deployments?.[0];if(!active?.id||active?.versions?.length!==1||active.versions[0]?.percentage!==100)throw new Error("Relay target does not have one 100% active deployment");
 if(settings?.annotations?.["workers/message"]!==`checkout-sandbox ${sha}`)throw new Error("Relay target deployment annotation does not match candidate SHA");
-const pr=await fetch("https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/pulls/736",{headers:{authorization:`Bearer ${gh}`,accept:"application/vnd.github+json"},redirect:"error",signal:AbortSignal.timeout(20000)});if(!pr.ok)throw new Error("Unable to verify certified checkout PR for relay target");const body=await pr.json();if(body.state!=="closed"||body.merged!==true||body.head?.sha!==sha||body.head?.ref!=="test/razorpay-recon-untrusted-evidence-20260911")throw new Error("Relay target SHA is not the exact merged PR736 certified head");
-console.log(`Verified sandbox relay target ${worker} for exact merged PR736 SHA ${sha.slice(0,12)}…; secrets withheld.`);
+const targetMode=String(process.env.CHECKOUT_TARGET_MODE||"pr736").trim();
+if(targetMode==="current_main"){
+ const ref=await fetch("https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/commits/main",{headers:{authorization:`Bearer ${gh}`,accept:"application/vnd.github+json"},redirect:"error",signal:AbortSignal.timeout(20000)});if(!ref.ok)throw new Error("Unable to verify current main for relay target");const body=await ref.json();if(body.sha!==sha)throw new Error("Relay target SHA is not the current protected main head");
+ console.log(`Verified sandbox relay target ${worker} for current-main SHA ${sha.slice(0,12)}…; secrets withheld.`);
+}else{
+ const pr=await fetch("https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/pulls/736",{headers:{authorization:`Bearer ${gh}`,accept:"application/vnd.github+json"},redirect:"error",signal:AbortSignal.timeout(20000)});if(!pr.ok)throw new Error("Unable to verify certified checkout PR for relay target");const body=await pr.json();if(body.state!=="closed"||body.merged!==true||body.head?.sha!==sha||body.head?.ref!=="test/razorpay-recon-untrusted-evidence-20260911")throw new Error("Relay target SHA is not the exact merged PR736 certified head");
+ console.log(`Verified sandbox relay target ${worker} for exact merged PR736 SHA ${sha.slice(0,12)}…; secrets withheld.`);
+}
