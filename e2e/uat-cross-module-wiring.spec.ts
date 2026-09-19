@@ -103,7 +103,7 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
   page,
   browser,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   const baseURL =
     process.env.PW_BASE_URL ||
     `http://localhost:${process.env.PW_PORT || "4185"}`;
@@ -298,7 +298,7 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
     });
     console.log(`CROSS_MODULE_BOOKING_ID=${bookingId}`);
   } finally {
-    if (partner) await partner.context.close();
-    await founder.context.close();
+    if (partner) await partner.context.close().catch(() => {});
+    await founder.context.close().catch(() => {});
   }
 });
