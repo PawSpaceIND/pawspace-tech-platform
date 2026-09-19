@@ -86,3 +86,12 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.doesNotMatch(workflow, /wrangler deploy/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
 });
+
+test("release UI closure waits for a bounded stable UI before snapshotting controls", () => {
+  assert.match(script, /async function waitForStableUi/);
+  assert.match(script, /timeoutMs = 3000/);
+  assert.match(script, /stableSamples >= 2/);
+  const loader = script.slice(script.indexOf("async function loadRouteForProbe"), script.indexOf("// Resolve the control"));
+  assert.match(loader, /const stable = await waitForStableUi\(page\)/);
+  assert.match(loader, /UI did not settle after route load/);
+});

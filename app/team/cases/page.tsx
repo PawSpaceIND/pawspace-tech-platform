@@ -70,7 +70,7 @@ export default function CasesPage(){
    {FILTERS.map(([value,label])=><Button key={value} size="sm" variant={filter===value?"primary":"secondary"} onClick={()=>setFilter(value)}>{label}</Button>)}
    <Button size="sm" variant="ghost" onClick={()=>{void act({action:"sync_native"});}}>Sync refunds / SLA / reconciliation</Button>
    <Button size="sm" variant="ghost" onClick={()=>{void act({action:"run_escalations"});}}>Run escalations</Button>
-   <Button size="sm" variant="ghost" onClick={()=>{void load();}}>{loading?"Refreshing…":"Refresh"}</Button>
+   <Button size="sm" variant="ghost" disabled={loading} onClick={()=>{void load();}}>{loading?"Refreshing…":"Refresh"}</Button>
   </section>
 
   {rows.length===0?<EmptyState
