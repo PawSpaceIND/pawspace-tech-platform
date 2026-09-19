@@ -166,7 +166,7 @@ test("retired provisioning workflow contains no hosted-browser mutation path; br
 test("hosted checkout browser follows the current cartoon default and proves professional persistence",()=>{
  const browser=readFileSync(new URL("../scripts/verify-checkout-hosted-browser.mjs",import.meta.url),"utf8");
  assert.match(browser,/toHaveAttribute\("data-paw-style","cartoon"\)/);
- assert.match(browser,/getByRole\("radio",\{name:\/\^Cartoon\/\}\)\.toBeChecked|toBeChecked\(\)/);
+ assert.match(browser,/getByRole\("radio",\{name:\/\^Illustrated mascots\/\}\)\.toBeChecked|toBeChecked\(\)/);
  assert.match(browser,/getByRole\("radio",\{name:\/\^Professional\/\}\)\.check\(\)/);
  assert.match(browser,/toHaveAttribute\("data-paw-style","professional"\)/);
 });
