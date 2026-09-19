@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { checkoutSandboxPlan } from "../lib/checkout-sandbox-hosting.ts";
 
 const read = (path) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 const overlay = read("scripts/stage-voice-uat-config.mjs");
@@ -9,6 +10,13 @@ const relayVerify = read("scripts/verify-razorpay-sandbox-relay-target.mjs");
 const paymentWorkflow = read(".github/workflows/current-main-strict-payment-closure.yml");
 const voiceWorkflow = read(".github/workflows/voice-uat-one-shot-self-test.yml");
 const playwright = read("playwright.config.ts");
+
+test("checkout sandbox guard executes and refuses an unconfirmed invocation", () => {
+  assert.throws(
+    () => checkoutSandboxPlan({}),
+    /requires a confirmed manual run/,
+  );
+});
 
 test("voice UAT activation enables the guarded browser/carrier self-test but not production voice", () => {
   assert.match(overlay, /PAWSPACE_VOICE_ENV: "uat"/);
