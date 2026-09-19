@@ -44,8 +44,13 @@ async function transition(page,button,marker,label,timeout=TIMEOUT){await ready(
 
 async function login(page,context){
  await gotoApp(page);const session=await context.request.get(`${BASE}/api/identity-session`);if(session.ok()){const body=await session.json().catch(()=>({}));if(body?.data?.subjectType==="customer")return`existing customer ${body.data.subjectId}`;}
- await nav(page,"Account");await page.getByPlaceholder("10-digit phone number").fill(PHONE);await page.getByRole("button",{name:"Send OTP"}).click();
- const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({state:"visible",timeout:TIMEOUT});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)die("sandbox OTP not rendered");
+ await nav(page,"Account");await page.getByPlaceholder("10-digit phone number").fill(PHONE);
+ const requested=page.waitForResponse(response=>response.url().includes("/api/customer-otp")&&response.request().method()==="POST"&&response.request().postData()?.includes('"action":"request"'),{timeout:SERVER_TIMEOUT});
+ await page.getByRole("button",{name:"Send OTP"}).click();
+ const otpResponse=await requested,otpBody=await otpResponse.json().catch(()=>({}));
+ if(!otpResponse.ok()||!otpBody?.data?.sandboxCode)die(`sandbox OTP request failed (HTTP ${otpResponse.status()})`);
+ const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)die("sandbox OTP not rendered");
+ if(code!==String(otpBody.data.sandboxCode))die("rendered sandbox OTP did not match the server challenge");
  const codeInput=page.getByPlaceholder("6-digit code");await codeInput.fill(code);await page.getByPlaceholder("Your name (first time only)").fill(CUSTOMER);await page.getByRole("button",{name:"Verify & continue"}).click();await codeInput.waitFor({state:"hidden",timeout:TIMEOUT});
  const verified=await context.request.get(`${BASE}/api/identity-session`),body=await verified.json().catch(()=>({}));if(!verified.ok()||body?.data?.subjectType!=="customer")die(`OTP did not establish customer session (HTTP ${verified.status()})`);return`real OTP -> ${body.data.subjectId}`;
 }
