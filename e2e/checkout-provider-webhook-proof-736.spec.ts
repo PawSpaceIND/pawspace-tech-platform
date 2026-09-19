@@ -11,6 +11,7 @@ const RZP_SECRET = process.env.RAZORPAY_KEY_SECRET_SANDBOX || "";
 const GH_TOKEN = process.env.GITHUB_TOKEN || "";
 const UAT_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
 const PRECHECK_ONLY = process.env.PR736_PRECHECK_ONLY === "true";
+const TARGET_MODE = String(process.env.CHECKOUT_TARGET_MODE || "pr736").trim();
 // Provider/D1 payloads are intentionally schemaless at this external test boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
@@ -133,28 +134,39 @@ async function assertStagingRelayStable(expected: RelayIdentity) {
 }
 
 async function revalidateTarget() {
-  const pr = await fetch(
-    "https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/pulls/736",
-    {
-      headers: {
-        authorization: `Bearer ${GH_TOKEN}`,
-        accept: "application/vnd.github+json",
+  if (TARGET_MODE === "current_main") {
+    const ref = await fetch(
+      "https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/commits/main",
+      {
+        headers: { authorization: `Bearer ${GH_TOKEN}`, accept: "application/vnd.github+json" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(20_000),
       },
-      redirect: "manual",
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  expect(pr.status).toBe(200);
-  const prBody = (await pr.json()) as Json;
-  expect(prBody.state).toBe("closed");
-  expect(prBody.merged).toBe(true);
-  expect(prBody.head?.sha).toBe(CANDIDATE);
-  expect(prBody.head?.ref).toBe(
-    "test/razorpay-recon-untrusted-evidence-20260911",
-  );
-  expect(prBody.head?.repo?.full_name).toBe(
-    "PawSpaceIND/pawspace-tech-platform",
-  );
+    );
+    expect(ref.status).toBe(200);
+    const refBody = (await ref.json()) as Json;
+    expect(refBody.sha).toBe(CANDIDATE);
+  } else {
+    const pr = await fetch(
+      "https://api.github.com/repos/PawSpaceIND/pawspace-tech-platform/pulls/736",
+      {
+        headers: { authorization: `Bearer ${GH_TOKEN}`, accept: "application/vnd.github+json" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    expect(pr.status).toBe(200);
+    const prBody = (await pr.json()) as Json;
+    expect(prBody.state).toBe("closed");
+    expect(prBody.merged).toBe(true);
+    expect(prBody.head?.sha).toBe(CANDIDATE);
+    expect(prBody.head?.ref).toBe(
+      "test/razorpay-recon-untrusted-evidence-20260911",
+    );
+    expect(prBody.head?.repo?.full_name).toBe(
+      "PawSpaceIND/pawspace-tech-platform",
+    );
+  }
 
   const relay = await stagingRelayIdentity();
   ORIGIN = relay.origin;

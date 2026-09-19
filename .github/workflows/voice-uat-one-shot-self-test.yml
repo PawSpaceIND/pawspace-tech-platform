@@ -1,0 +1,153 @@
+name: Voice UAT one-shot carrier self-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type voice-self-test-call to place exactly one allow-listed UAT call'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact current protected main SHA already activated on staging'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  carrier-self-test:
+    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'voice-self-test-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(gh api repos/PawSpaceIND/pawspace-tech-platform/commits/main --jq .sha)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Place one governed allow-listed AI voice self-test call
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          node <<'NODE'
+          const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
+          const access = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
+          const expectedSha = String(process.env.EXPECTED_SHA || "").trim();
+          if (!/^[a-f0-9]{32}$/i.test(account) || !token || !access || !/^[a-f0-9]{40}$/.test(expectedSha)) throw new Error("Self-test prerequisites missing");
+
+          const cf = async (path, init = {}) => {
+            const response = await fetch("https://api.cloudflare.com/client/v4/accounts/" + account + path, {
+              ...init,
+              headers: { authorization: "Bearer " + token, "content-type": "application/json", ...(init.headers || {}) },
+              redirect: "error",
+              signal: AbortSignal.timeout(20_000),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.success !== true) throw new Error("Cloudflare verification failed");
+            return body.result;
+          };
+
+          const [subdomain, settings] = await Promise.all([
+            cf("/workers/subdomain"),
+            cf("/workers/scripts/pawspace-staging/settings"),
+          ]);
+          const workerSubdomain = String(subdomain?.subdomain || "").trim();
+          if (!/^[a-z0-9-]+$/i.test(workerSubdomain)) throw new Error("Workers subdomain unavailable");
+          const origin = "https://pawspace-staging." + workerSubdomain + ".workers.dev";
+          const bindings = Array.isArray(settings?.bindings) ? settings.bindings : [];
+          const plain = Object.fromEntries(bindings.filter(b => b?.type === "plain_text").map(b => [String(b.name), String(b.text ?? b.value ?? "")]));
+          if (plain.PAWSPACE_VOICE_ENV !== "uat" || plain.PAWSPACE_VOICE_UAT_APPROVED !== "true" || plain.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED !== "true") {
+            throw new Error("Staging AI voice self-test gate is not fully activated");
+          }
+          const release = String(plain.PAWSPACE_RELEASE_SHA || plain.PAWSPACE_DEPLOY_SHA || "").trim();
+          if (release && release !== expectedSha) throw new Error("Staging release SHA does not match expected main");
+          const db = bindings.find(b => b?.type === "d1" && b?.name === "DB");
+          if (!db?.id) throw new Error("Staging D1 binding unavailable");
+
+          const login = await fetch(origin + "/api/staging-login", {
+            method: "POST",
+            headers: { "content-type": "application/json", origin },
+            body: JSON.stringify({ email: "founder@pawspace.in", code: access }),
+            redirect: "manual",
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (login.status !== 200) throw new Error("Founder staging sign-in failed");
+          const cookieHeader = login.headers.get("set-cookie") || "";
+          const cookie = cookieHeader.split(";", 1)[0];
+          if (!cookie.startsWith("pawspace_uat=")) throw new Error("Staging login did not issue the UAT session cookie");
+
+          const readyResponse = await fetch(origin + "/api/voice-outbound?scope=ai_self_test", {
+            headers: { cookie },
+            redirect: "error",
+            signal: AbortSignal.timeout(20_000),
+          });
+          const readyBody = await readyResponse.json().catch(() => ({}));
+          if (!readyResponse.ok || readyBody?.data?.enabled !== true) {
+            throw new Error("AI voice self-test readiness is blocked: " + String(readyBody?.data?.reason || readyBody?.error || readyResponse.status));
+          }
+
+          const callResponse = await fetch(origin + "/api/voice-outbound", {
+            method: "POST",
+            headers: { "content-type": "application/json", origin, cookie },
+            body: JSON.stringify({ action: "uat_ai_self_test" }),
+            redirect: "error",
+            signal: AbortSignal.timeout(30_000),
+          });
+          const callBody = await callResponse.json().catch(() => ({}));
+          if (callResponse.status !== 201 || !callBody?.data?.callId || !callBody?.data?.providerCallId) {
+            throw new Error("Exotel self-test dial was not accepted: " + String(callBody?.error || callResponse.status));
+          }
+          const callId = String(callBody.data.callId);
+          console.log("::add-mask::" + callId);
+          console.log("::add-mask::" + String(callBody.data.providerCallId));
+          console.log("Exotel accepted exactly one governed UAT self-test dial; identifiers withheld.");
+
+          let row = null;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            const result = await cf("/d1/database/" + encodeURIComponent(String(db.id)) + "/query", {
+              method: "POST",
+              body: JSON.stringify({
+                sql: "SELECT state,provider_call_id,stream_sid,last_error,turn_count,connected_at,ended_at FROM ai_voice_self_tests WHERE id=?",
+                params: [callId],
+              }),
+            });
+            row = Array.isArray(result) ? result?.[0]?.results?.[0] : result?.results?.[0];
+            if (row && (String(row.state) === "failed" || String(row.state) === "streaming" || String(row.state) === "ended")) break;
+          }
+          if (!row?.provider_call_id) throw new Error("Provider-accepted call was not persisted");
+          if (String(row.state) === "failed") throw new Error("AgentStream self-test failed after provider acceptance: " + String(row.last_error || "unknown"));
+          const state = String(row.state || "unknown");
+          const streamed = Boolean(row.stream_sid || row.connected_at || state === "streaming" || state === "ended");
+          console.log("UAT carrier evidence: providerAccepted=yes state=" + state + " agentStreamObserved=" + (streamed ? "yes" : "not-yet") + " turns=" + Number(row.turn_count || 0));
+          NODE
+      - name: Publish sanitized result
+        if: success()
+        run: |
+          {
+            echo '## Voice UAT one-shot carrier self-test'
+            echo '- exact current main verified: yes'
+            echo '- real staging authentication used: yes'
+            echo '- self-test readiness gate: passed'
+            echo '- allow-listed destination selected server-side: yes'
+            echo '- Exotel accepted one real UAT dial: yes'
+            echo '- production voice mode enabled: no'
+            echo '- recording enabled: no'
+            echo '- no recipient number or provider credential printed: yes'
+          } >> "$GITHUB_STEP_SUMMARY"

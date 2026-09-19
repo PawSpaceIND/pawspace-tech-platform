@@ -37,11 +37,21 @@ const appEventually = async (origin, path, predicate, options = {}) => {
 };
 const check = (name, condition) => { report.checks[name] = Boolean(condition); if (!condition) throw new Error(`Hosted check failed: ${name}`); };
 try {
-  const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/${CHECKOUT_CERTIFICATION_PR}`, {
-    headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000),
-  });
-  if (!prResponse.ok) throw new Error("Unable to revalidate certified checkout PR immediately before provisioning");
-  assertCheckoutCandidate(await prResponse.json(), plan.sha);
+  const targetMode = String(process.env.CHECKOUT_TARGET_MODE || "pr736").trim();
+  if (targetMode === "current_main") {
+    const refResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/commits/main`, {
+      headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000),
+    });
+    if (!refResponse.ok) throw new Error("Unable to revalidate current main immediately before provisioning");
+    const refBody = await refResponse.json();
+    if (String(refBody?.sha || "") !== plan.sha) throw new Error("Current-main checkout SHA changed before provisioning");
+  } else {
+    const prResponse = await fetch(`https://api.github.com/repos/${CHECKOUT_REPOSITORY}/pulls/${CHECKOUT_CERTIFICATION_PR}`, {
+      headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json" }, redirect: "error", signal: AbortSignal.timeout(20_000),
+    });
+    if (!prResponse.ok) throw new Error("Unable to revalidate certified checkout PR immediately before provisioning");
+    assertCheckoutCandidate(await prResponse.json(), plan.sha);
+  }
   const actual = spawnSync("git", ["-C", candidate, "rev-parse", "HEAD"], { encoding: "utf8" });
   if (actual.status !== 0 || actual.stdout.trim() !== plan.sha) throw new Error("Candidate checkout SHA mismatch");
   const dirty = spawnSync("git", ["-C", candidate, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" });
