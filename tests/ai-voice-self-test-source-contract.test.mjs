@@ -79,6 +79,13 @@ test("Exotel success parsing accepts the provider's uppercase Call/Sid response 
   );
 });
 
+test("Exotel Connect XML success responses expose a sanitized Sid fallback", () => {
+  assert.match(voice, /raw\.match\(\/<Sid>\(\[A-Za-z0-9_-\]\{8,128\}\)<\\\/Sid>\//);
+  assert.match(voice, /raw\.match\(\/<Status>\(\[\^<\]\{1,64\}\)<\\\/Status>\//);
+  assert.match(voice, /\|\|\s+xmlSid/);
+  assert.match(voice, /call\.Status\s*\|\|\s*xmlStatus/);
+});
+
 test("a missing Voicebot App id fails closed instead of placing a silent call", () => {
   assert.ok(
     flatVoice.includes("if(!appId){"),
