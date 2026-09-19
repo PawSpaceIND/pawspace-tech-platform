@@ -407,6 +407,7 @@ async function probeControls(page, route) {
     tag: el.tagName.toLowerCase(),
     text: (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100),
     href: el.tagName === "A" ? el.getAttribute("href") : null,
+    cookieConsent: Boolean(el.closest('[role="dialog"][aria-label="Cookie consent"]')),
     disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
     hidden: !(el.getClientRects().length && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none"),
   })), CF_ERROR_SELECTOR).catch(() => []);
@@ -422,6 +423,13 @@ async function probeControls(page, route) {
     const linkResult = linkWiringResult(descriptor, route);
     if (linkResult) { results.push({ ...descriptor, destructive: false, mutationAttempt: null, requestSeen: null, dialogSeen: null, changed: false, ...linkResult }); continue; }
 
+    // Cookie-consent choices are mutually exclusive by design: choosing either stores the
+    // decision and removes the whole dialog, including its sibling choice. Reset only that
+    // product-owned consent key before each consent-control probe so both choices are tested
+    // independently. Every other disappearing control still fails as genuine index_drift.
+    if (descriptor.cookieConsent) {
+      await page.evaluate(() => window.localStorage.removeItem("pawspace.cookie-consent.v1")).catch(() => {});
+    }
     const reload = await loadRouteForProbe(page, route);
     if (!reload.ok) {
       results.push({ ...descriptor, result: CONTROL_RESULT.routeUnavailable, error: `${reload.reason} (after ${reload.attempts} load attempts)` });
