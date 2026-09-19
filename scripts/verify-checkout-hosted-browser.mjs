@@ -29,6 +29,7 @@ try{
    if(login.status()!==200)throw Error(`Hosted UAT sign-in refused with HTTP ${login.status()}`);
    const response=await page.goto(origin+"/mobile-app",{waitUntil:"domcontentloaded"});expect(response.status()).toBe(200);
    const home=page.locator('[data-home-design="pawspace-prototype-converged"]');await expect(home).toBeVisible();
+    const consent=page.getByRole("dialog",{name:"Cookie consent"});if(await consent.isVisible().catch(()=>false)){await consent.getByRole("button",{name:"Essential only",exact:true}).click();await expect(consent).toBeHidden();}
    await expect(page.locator('[data-home-design="option-5-premium-visual"]')).toHaveCount(0);
    const care=page.getByRole("region",{name:"Care services",exact:true});const names=["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"];
    await expect(care.getByRole("button")).toHaveCount(8);await expect(page.locator("html")).toHaveAttribute("data-paw-style","cartoon");
