@@ -42,6 +42,7 @@ export async function POST(request:Request){
  await ensureSecurityTables(db);
  await ensureUatIdentities(db);
  if(!await uatStaffIdentityAllowed(db,email))return json({error:"That email cannot sign in here. UAT sign-in needs an active staff account whose role has a definition — an unknown email, a suspended account, or a role nobody has defined are all refused. Sign in as one of the seeded staff identities in docs/UAT-TESTER-GUIDE.md; UAT sign-in no longer grants an unrecognised email full access."},403);
+ const role=UAT_IDENTITIES.find(identity=>identity.email===email)?.role||"";
  const token=await issueUatToken(env as never,email,TTL);
- return json({ok:true,email},200,uatCookie(token,TTL));
+ return json({ok:true,email,role},200,uatCookie(token,TTL));
 }
