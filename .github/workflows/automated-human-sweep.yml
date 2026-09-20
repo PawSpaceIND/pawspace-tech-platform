@@ -42,7 +42,13 @@ jobs:
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
     steps:
+      # The exact-SHA gate uses merge-base to prove that the deployed V2 commit is
+      # contained in the selected main revision. A shallow checkout contains only
+      # HEAD and would reject every older-but-contained deployed baseline as an
+      # "invalid commit object" before Cloudflare metadata is inspected.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
