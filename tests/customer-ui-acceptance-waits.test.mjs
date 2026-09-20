@@ -115,3 +115,19 @@ test("customer acceptance follows current Fresh Food stages and delivery field",
   assert.match(source, /getByLabel\("Delivery address"\)/);
   assert.match(source, /async function transition\(page,button,marker,label,timeout=TIMEOUT\)/);
 });
+
+
+test("customer pet profile opens the mobile shell before using bottom navigation", () => {
+  assert.match(source, /async function ensurePet\(page\)\{\n await gotoApp\(page\);await nav\(page,"My Pets"\)/);
+});
+
+test("training acceptance resolves care location before waiting for trainer match", () => {
+  assert.match(source, /getByRole\("region",\{name:"Care location"\}\)/);
+  assert.match(source, /Training address coverage/);
+  assert.match(source, /Build session calendar/);
+});
+
+test("taxi acceptance synchronizes on the commercial quote response", () => {
+  assert.match(source, /waitForResponse\(response=>response\.url\(\)\.includes\("\/api\/taxi-commercial"\)/);
+  assert.match(source, /Taxi route quote failed \(HTTP/);
+});
