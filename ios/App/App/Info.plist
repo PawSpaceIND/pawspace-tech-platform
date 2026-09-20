@@ -74,5 +74,7 @@
 	<string>PawSpace shares location during accepted partner jobs while the app is in the background. Tracking stops when the job ends.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>PawSpace requires camera access for pet grooming verification photos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PawSpace uses the microphone when an authorized employee starts an AI Voice session.</string>
 </dict>
 </plist>
