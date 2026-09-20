@@ -23,8 +23,8 @@ test("first-time enrollment enables MFA before establishing the privileged sessi
 });
 
 test("staging finance login is routed through MFA before Team Finance",()=>{
- assert.match(route,/SELECT role_code FROM app_users WHERE email=\?/);
- assert.match(route,/role:text\(user\?\.role_code\)/);
+ assert.match(route,/UAT_IDENTITIES\.find\(identity=>identity\.email===email\)\?\.role/);
+ assert.doesNotMatch(route,/SELECT role_code FROM app_users WHERE email=/);
  assert.match(login,/j\.role==="finance"/);
  assert.match(login,/\/mfa\?next=%2Fteam%2Ffinance/);
  assert.doesNotMatch(login,/j\.role==="finance"[^;]*window\.location\.assign\("\/team\/finance"\)/);
