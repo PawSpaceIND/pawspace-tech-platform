@@ -75,7 +75,10 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /pawspace-staging/);
   assert.match(workflow, /environment: \$\{\{ github\.event\.inputs\.target_environment \}\}/);
   assert.match(workflow, /expected_sha/);
-  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SHA"/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$EXPECTED_SHA" HEAD/);
+  assert.match(workflow, /wrangler deployments status --json --name "\$WORKER_NAME"/);
+  assert.match(workflow, /const marker = `\${process\.env\.MARKER_PREFIX} \${expected}`/);
   assert.match(workflow, /workers\\\.dev/);
   assert.match(workflow, /PAWSPACE_UAT_ACCESS_CODE/);
   assert.match(workflow, /node \.\/node_modules\/playwright\/cli\.js install --with-deps chromium/);
@@ -83,7 +86,7 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /git cat-file blob "\$\{GITHUB_SHA\}:scripts\/customer-ui-acceptance-v2\.mjs"/);
   assert.match(workflow, /ln -s "\$GITHUB_WORKSPACE\/node_modules" "\$TOOL_DIR\/node_modules"/);
   assert.match(workflow, /node "\$TOOL_DIR\/customer-ui-acceptance-v2\.mjs"/);
-  assert.doesNotMatch(workflow, /wrangler deploy/);
+  assert.doesNotMatch(workflow, /wrangler\s+deploy(?:\s|$)/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
 });
 
