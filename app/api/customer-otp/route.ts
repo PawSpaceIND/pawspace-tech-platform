@@ -1,5 +1,5 @@
 import { database } from "../../../lib/server-auth";
-import { discardCustomerOtpChallenge, requestCustomerOtp, verifyCustomerOtp } from "../../../lib/customer-otp";
+import { CustomerOtpVerificationError, discardCustomerOtpChallenge, requestCustomerOtp, verifyCustomerOtp } from "../../../lib/customer-otp";
 import { upsertIdentityBinding } from "../../../lib/identity-binding";
 import { issuePlatformSession, platformSessionCookie } from "../../../lib/platform-session";
 import { verifyIdentityAssertion } from "../../../lib/verified-identity-assertion";
@@ -27,6 +27,7 @@ function sameOriginWrite(request: Request) {
 }
 function failure(error: unknown) {
   if (error instanceof Response) return error;
+  if(error instanceof CustomerOtpVerificationError)return json({error:error.message},error.status,{"cache-control":"no-store"});
   if(error instanceof Error&&/PAWSPACE_IDENTITY_ASSERTION_SECRET/.test(error.message))return unavailable();
   return json({ error: error instanceof Error ? error.message : "Request failed" }, 500);
 }
