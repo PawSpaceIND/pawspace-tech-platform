@@ -222,7 +222,7 @@ test("Customer V2 persona — sandbox OTP → unified shell, account, activity a
 });
 
 test("Customer persona — OTP → grooming booking → real booking ID (+ Razorpay modal probe)", async ({ browser }) => {
-  test.setTimeout(480_000); // two real scheduler reservations on remote D1 (~40 s each) plus the preview
+  test.setTimeout(540_000); // two real scheduler reservations on remote D1 plus the preview; final acceptance has no Playwright retry
   section("Customer persona (mobile app)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -234,12 +234,17 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     await reachReview(page, { line2: "Near the corner park" });
 
     await page.getByRole("button", { name: /^Pay after service/ }).click();
-    // A reservation is a real scheduler evaluation on remote D1 (40 s+ once the roster carries several groomers
-    // per zone), so this wait gets its own budget instead of the 45 s action timeout.
-    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
+    // Confirm first reserves the provider through /api/uat-scheduling and only then creates the canonical booking.
+    // Observe both boundaries separately so a slow scheduler cannot be misreported as a booking-write failure.
+    const confirmStartedAt = Date.now();
+    const reserved = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 180_000 });
+    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 210_000 });
     const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
     await expect(confirm, "Confirm booking enabled once mandatory fields are valid").toBeEnabled();
     await confirm.click();
+    const reservedRes = await reserved;
+    expect(reservedRes.status(), await reservedRes.text()).toBe(200);
+    log(`✅ Scheduler reservation completed on first attempt in ${Date.now() - confirmStartedAt} ms.`);
     const res = await created;
     expect(res.status(), await res.text()).toBe(201);
     const body = await res.json().catch(() => ({})) as { data?: { bookingId?: string; id?: string } };
@@ -270,8 +275,13 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     try {
       await reachReview(p2, { preferGroomer: false });
       await p2.getByRole("button", { name: /^Pay online/ }).click();
-      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
+      const onlineStartedAt = Date.now();
+      const reservedOnline = p2.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 180_000 });
+      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 210_000 });
       await p2.getByRole("button", { name: "Confirm booking", exact: true }).click();
+      const onlineReservedRes = await reservedOnline;
+      expect(onlineReservedRes.status(), await onlineReservedRes.text()).toBe(200);
+      log(`✅ Online-pay scheduler reservation completed in ${Date.now() - onlineStartedAt} ms.`);
       const onlineRes = await createdOnline;
       const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string } };
       log(`${onlineRes.status() === 201 ? "✅" : "⚠️"} 'Pay online' booking request → HTTP ${onlineRes.status()}${onlineBody.data?.bookingId ? ` (${onlineBody.data.bookingId}, payment pending until captured)` : ""}.`);
