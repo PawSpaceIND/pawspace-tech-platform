@@ -329,6 +329,26 @@
  },
  {
   "id": "SW-024",
+  "status": "defect",
+  "title": "/team/customer-experience probes WhatsApp conversation-control for every open thread, including non-WhatsApp ones, and gets 409 on each load",
+  "persona": "founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/customer-experience",
+  "steps": [
+   "Sign in as founder",
+   "open /team/customer-experience",
+   "watch the network panel"
+  ],
+  "expected": "The CX queue only calls WhatsApp control for WhatsApp threads (or tolerates the refusal without an error)",
+  "actual": "GET /api/whatsapp/conversation-control?threadId=… -> 409 {\"error\":\"Conversation is not a WhatsApp thread\"} for 4 thread(s): THREAD-BOOKING-PS-UAT-TAXI-MU9I73T4-1124, UATD-TH-4, UATD-TH-3, UATD-TH-2; console logs a failed resource each time and scripts/screen-sweep.mjs marks the page DATA",
+  "evidence": [
+   "$S/evidence/sweep/team-customer-experience-founder-android.png",
+   "$S/evidence/sweep/team-customer-experience-founder-desktop.png"
+  ],
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-025",
   "status": "pass",
   "title": "Form validation: staging-login: empty code -> Founder button",
   "persona": "anon/desktop",
@@ -343,7 +363,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-025",
+  "id": "SW-026",
   "status": "pass",
   "title": "Form validation: staging-login: wrong code",
   "persona": "anon/desktop",
@@ -358,7 +378,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-026",
+  "id": "SW-027",
   "status": "pass",
   "title": "Form validation: staging-login: right code, unknown email",
   "persona": "anon/desktop",
@@ -373,7 +393,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-027",
+  "id": "SW-028",
   "status": "pass",
   "title": "Form validation: customer OTP: empty phone",
   "persona": "anon/android",
@@ -388,7 +408,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-028",
+  "id": "SW-029",
   "status": "pass",
   "title": "Form validation: customer OTP: invalid phone 123",
   "persona": "anon/android",
@@ -403,7 +423,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-029",
+  "id": "SW-030",
   "status": "pass",
   "title": "Form validation: customer OTP: wrong code",
   "persona": "anon/android",
@@ -418,7 +438,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-030",
+  "id": "SW-031",
   "status": "pass",
   "title": "Form validation: partner OTP: empty phone",
   "persona": "anon/android",
@@ -433,7 +453,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-031",
+  "id": "SW-032",
   "status": "pass",
   "title": "Form validation: partner OTP: invalid phone 123",
   "persona": "anon/android",
@@ -448,7 +468,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-032",
+  "id": "SW-033",
   "status": "pass",
   "title": "Form validation: pet form: submit empty",
   "persona": "customer/android",
@@ -463,7 +483,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-033",
+  "id": "SW-034",
   "status": "observation",
   "title": "Form validation: address form",
   "persona": "customer/android",
@@ -475,7 +495,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-034",
+  "id": "SW-035",
   "status": "defect",
   "title": "Form validation: support case: submit empty",
   "persona": "customer/android",
@@ -488,7 +508,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-035",
+  "id": "SW-036",
   "status": "pass",
   "title": "Form validation: contact form: submit empty",
   "persona": "anon/desktop",
@@ -503,31 +523,31 @@
   "class": "UI"
  },
  {
-  "id": "SW-036",
+  "id": "SW-037",
   "status": "observation",
   "title": "Form validation: relocation enquiry form",
   "persona": "anon/desktop",
   "url": "http://127.0.0.1:8794/mobile-app",
   "steps": [],
   "expected": "Validation message or blocked submit",
-  "actual": "error: no form for anon",
+  "actual": "not verified: no <form> element on the page; an empty submit reaches the server and gets 400 'Customer name is required' (see observations); rendering of that message not checked because the server went away",
   "severity": "P2",
   "class": "UI"
  },
  {
-  "id": "SW-037",
+  "id": "SW-038",
   "status": "observation",
   "title": "Form validation: business lead form",
   "persona": "anon/desktop",
   "url": "http://127.0.0.1:8794/mobile-app",
   "steps": [],
   "expected": "Validation message or blocked submit",
-  "actual": "error: no form on /business",
+  "actual": "n/a: /business is a hub page with no lead form (nothing to validate)",
   "severity": "P2",
   "class": "UI"
  },
  {
-  "id": "SW-038",
+  "id": "SW-039",
   "status": "pass",
   "title": "Form validation: address form: Save address with empty fields",
   "persona": "customer/android",
@@ -540,7 +560,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-039",
+  "id": "SW-040",
   "status": "pass",
   "title": "Form validation: profile form: Save profile with empty name",
   "persona": "customer/android",
@@ -553,7 +573,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-040",
+  "id": "SW-041",
   "status": "pass",
   "title": "Form validation: support: open 24/7 help & support",
   "persona": "customer/android",
@@ -566,7 +586,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-041",
+  "id": "SW-042",
   "status": "defect",
   "title": "Form validation: support case: submit empty",
   "persona": "customer/android",
@@ -579,7 +599,39 @@
   "class": "UI"
  },
  {
-  "id": "SW-212",
+  "id": "SW-224",
+  "status": "observation",
+  "title": "/food: first product card ('Adult Dog Food · UAT 2 kg') produced no effect when clicked — most likely the pre-selected card (the other two cards did switch selection); NOT verified",
+  "persona": "anon/desktop",
+  "url": "http://127.0.0.1:8794/food",
+  "steps": [
+   "open /food",
+   "click the first product card"
+  ],
+  "expected": "pre-selected card: no change is correct",
+  "actual": "No URL/DOM/network effect in 1.5s; sibling cards 'Adult Cat Food' and 'Puppy Food' each mutated the DOM. Re-check in the browser was not possible: the local worker on :8794 was refusing connections (ERR_CONNECTION_REFUSED) at 08:17 UTC when the verification probe ran.",
+  "evidence": "$S/evidence/sweep/dead-food-anon-desktop-Adult-Dog-Food-UAT-2-kg-2-kg-dog-799-29-UAT-units-avail-0.png",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-225",
+  "status": "observation",
+  "title": "/relocation-enquiry: the enquiry inputs are not inside a <form>, so an empty 'submit' goes straight to the server, which answers 400 {\"error\":\"Customer name is required\"}; whether that message is rendered was NOT verified",
+  "persona": "anon/desktop",
+  "url": "http://127.0.0.1:8794/relocation-enquiry",
+  "steps": [
+   "open /relocation-enquiry",
+   "click the submit button with all fields empty"
+  ],
+  "expected": "Client-side required-field validation, or the server message shown inline",
+  "actual": "POST /api/relocation-enquiry -> 400 'Customer name is required' (seen during the dead-button pass); the forms probe found no <form> element (page.locator('form').count() = 0). The server was down (ERR_CONNECTION_REFUSED) when the follow-up probe tried to read the rendered message.",
+  "evidence": "$S/evidence/sweep/relocation-enquiry-anon-desktop.png",
+  "severity": "P2",
+  "class": "UI"
+ },
+ {
+  "id": "SW-226",
   "status": "observation",
   "title": "/me (My workspace) is an empty state for founder@pawspace.in: \"No employee record linked yet\"",
   "persona": "founder/desktop+android",
@@ -595,39 +647,39 @@
   "class": "data"
  },
  {
-  "id": "SW-213",
+  "id": "SW-227",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/identity-session (anon) on 132 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/identity-session (anon) on 278 route(s)",
   "persona": "anon",
   "url": "/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /mobile-app/booking-confirmation, /v2, /v2/account, /v2/activity, /v2/boarding",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/identity-session (anon) on 85 routes (page still renders)",
+  "actual": "401 /api/identity-session (anon) on 177 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-214",
+  "id": "SW-228",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/mobile-employee-ai (anon) on 6 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/mobile-employee-ai (anon) on 7 route(s)",
   "persona": "anon",
-  "url": "/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account",
+  "url": "/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account, /discover",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/mobile-employee-ai (anon) on 6 routes (page still renders)",
+  "actual": "401 /api/mobile-employee-ai (anon) on 7 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-215",
+  "id": "SW-229",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/customer-account (anon) on 17 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/customer-account (anon) on 34 route(s)",
   "persona": "anon",
   "url": "/v2/boarding, /v2/food, /v2/relocation, /v2/sitting, /v2/taxi, /v2/training, /v2/walking, /, /training, /boarding",
   "steps": [
@@ -640,52 +692,52 @@
   "class": "wiring"
  },
  {
-  "id": "SW-216",
+  "id": "SW-230",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/booking-command-center/stream (anon) on 1 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/booking-command-center/stream (anon) on 3 route(s)",
   "persona": "anon",
-  "url": "/v2/control-center",
+  "url": "/v2/control-center, /booking-command-center, /team/operations/bookings",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/booking-command-center/stream (anon) on 1 routes (page still renders)",
+  "actual": "401 /api/booking-command-center/stream (anon) on 3 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-217",
+  "id": "SW-231",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/booking-command-center (anon) on 1 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/booking-command-center (anon) on 3 route(s)",
   "persona": "anon",
-  "url": "/v2/control-center",
+  "url": "/v2/control-center, /booking-command-center, /team/operations/bookings",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/booking-command-center (anon) on 1 routes (page still renders)",
+  "actual": "401 /api/booking-command-center (anon) on 3 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-218",
+  "id": "SW-232",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/crm (anon) on 1 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/crm (anon) on 2 route(s)",
   "persona": "anon",
-  "url": "/v2/crm",
+  "url": "/v2/crm, /crm",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/crm (anon) on 1 routes (page still renders)",
+  "actual": "401 /api/crm (anon) on 2 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-219",
+  "id": "SW-233",
   "status": "observation",
   "title": "Expected-refusal API noise: 401 /api/v2/grooming-catalogue (anon) on 1 route(s)",
   "persona": "anon",
@@ -700,7 +752,7 @@
   "class": "wiring"
  },
  {
-  "id": "SW-220",
+  "id": "SW-234",
   "status": "observation",
   "title": "Expected-refusal API noise: 403 /api/mobile-employee-ai (customer) on 23 route(s)",
   "persona": "customer",
@@ -715,7 +767,22 @@
   "class": "wiring"
  },
  {
-  "id": "SW-221",
+  "id": "SW-235",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/funeral-memorial (anon) on 6 route(s)",
+  "persona": "anon",
+  "url": "/funeral-memorial, /partner/funeral, /team/finance/funeral-memorial, /team/funeral-memorial",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/funeral-memorial (anon) on 4 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-236",
   "status": "observation",
   "title": "Expected-refusal API noise: 401 /api/partner-job-feed (anon) on 1 route(s)",
   "persona": "anon",
@@ -730,7 +797,7 @@
   "class": "wiring"
  },
  {
-  "id": "SW-222",
+  "id": "SW-237",
   "status": "observation",
   "title": "Expected-refusal API noise: 401 /api/provider-workspace (anon) on 1 route(s)",
   "persona": "anon",
@@ -745,7 +812,7 @@
   "class": "wiring"
  },
  {
-  "id": "SW-223",
+  "id": "SW-238",
   "status": "observation",
   "title": "Expected-refusal API noise: 401 /api/provider-service-rates (anon) on 1 route(s)",
   "persona": "anon",
@@ -760,22 +827,7 @@
   "class": "wiring"
  },
  {
-  "id": "SW-224",
-  "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/funeral-memorial (anon) on 1 route(s)",
-  "persona": "anon",
-  "url": "/partner/funeral",
-  "steps": [
-   "load page"
-  ],
-  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/funeral-memorial (anon) on 1 routes (page still renders)",
-  "evidence": "",
-  "severity": "P2",
-  "class": "wiring"
- },
- {
-  "id": "SW-225",
+  "id": "SW-239",
   "status": "observation",
   "title": "Expected-refusal API noise: 401 /api/boarding-stays (anon) on 1 route(s)",
   "persona": "anon",
@@ -790,22 +842,1102 @@
   "class": "wiring"
  },
  {
-  "id": "SW-226",
+  "id": "SW-240",
   "status": "observation",
-  "title": "Expected-refusal API noise: 401 /api/identity-session (founder) on 175 route(s)",
+  "title": "Expected-refusal API noise: 401 /api/me (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/me",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/me (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-241",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/team-overview (anon) on 3 route(s)",
+  "persona": "anon",
+  "url": "/team, /control, /ops",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/team-overview (anon) on 3 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-242",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/control-tower (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/control",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/control-tower (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-243",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/integration-readiness (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/control/integrations",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/integration-readiness (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-244",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/provider-onboarding-configuration (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/control/provider-onboarding",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/provider-onboarding-configuration (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-245",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/operations-overview (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/admin",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/operations-overview (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-246",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/leaderboard (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/leaderboard",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/leaderboard (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-247",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/assisted-orders (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/assisted-booking",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/assisted-orders (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-248",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/acquisition-funnel (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/acquisition-funnel",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/acquisition-funnel (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-249",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ai-intelligence (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/ai",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ai-intelligence (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-250",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ai-analytics (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/ai/analytics",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ai-analytics (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-251",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ai-business-configuration (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/ai/configuration",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ai-business-configuration (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-252",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/conversations (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/ai/handoff, /team/customer-experience",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/conversations (anon) on 2 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-253",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ai-human-handoff (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/ai/handoff",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ai-human-handoff (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-254",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ai-rollout (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/ai/rollout",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ai-rollout (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-255",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/staff-alerts (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/alerts",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/staff-alerts (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-256",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/company-analytics (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/analytics",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/company-analytics (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-257",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/bot-call-outcomes (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/bot-call-outcomes",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/bot-call-outcomes (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-258",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/unified-cases (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/cases",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/unified-cases (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-259",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/catalogue (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/catalogue",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/catalogue (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-260",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/conversations/stream (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/customer-experience",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/conversations/stream (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-261",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/customer-reminders (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/customer-reminders",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/customer-reminders (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-262",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/revenue-crm (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/daily-revenue",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/revenue-crm (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-263",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/grooming-finance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/grooming-finance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-264",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/statutory-compliance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance-compliance",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/statutory-compliance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-265",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/cash-flow-statement (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/cash-flow",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/cash-flow-statement (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-266",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/revenue-recognition (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/cash-flow",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/revenue-recognition (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-267",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/partner-finance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/partners",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/partner-finance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-268",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/gst-accounting (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/statutory",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/gst-accounting (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-269",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/training-finance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/training",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/training-finance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-270",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/training-reconciliation (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/training",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/training-reconciliation (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-271",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/unit-economics (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/finance/unit-economics",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/unit-economics (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-272",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/haptik-outbound (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/haptik",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/haptik-outbound (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-273",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/i18n (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/i18n",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/i18n (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-274",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/lifecycle-reminders (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/lifecycle-reminders",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/lifecycle-reminders (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-275",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/marketing-control (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/marketing",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/marketing-control (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-276",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/content-controls (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/marketing/content",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/content-controls (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-277",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/meet-and-greet (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/meet-and-greet",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/meet-and-greet (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-278",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/boarding-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/boarding",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/boarding-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-279",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/food-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/food",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/food-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-280",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/food-supply-chain (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/food/supply-chain",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/food-supply-chain (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-281",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/sitting-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/sitting",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/sitting-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-282",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/taxi-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/taxi",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/taxi-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-283",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/training-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/training",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/training-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-284",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/walking-ops (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/walking",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/walking-ops (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-285",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/ops-work-queue (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/operations/work-queue",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/ops-work-queue (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-286",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/people-foundation (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/people-foundation (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-287",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/people-finance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/finance",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/people-finance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-288",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/incentives (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/incentives",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/incentives (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-289",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/manager-dashboard (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/manager-dashboard",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/manager-dashboard (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-290",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/payroll (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/people/onboarding, /team/people/payroll",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/payroll (anon) on 2 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-291",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/provider-lms (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/provider-training",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/provider-lms (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-292",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/people-reports (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/reports",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/people-reports (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-293",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/attendance-leave (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/people/time",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/attendance-leave (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-294",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/sales-productivity-governance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/performance",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/sales-productivity-governance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-295",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/employee-performance (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/performance",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/employee-performance (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-296",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/pricing-rules (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/pricing-rules",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/pricing-rules (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-297",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/provider-onboarding (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/provider-onboarding",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/provider-onboarding (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-298",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/provider-verification (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/provider-verification",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/provider-verification (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-299",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/relocation (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/relocation",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/relocation (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-300",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/relocation-enquiry (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/relocation-enquiries",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/relocation-enquiry (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-301",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/revenue-mission-command-center (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/revenue-mission",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/revenue-mission-command-center (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-302",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/customer-360 (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/sales, /team/sales/cross-sell",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/customer-360 (anon) on 2 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-303",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/revenue-intelligence (anon) on 2 route(s)",
+  "persona": "anon",
+  "url": "/team/sales, /team/sales/cross-sell",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/revenue-intelligence (anon) on 2 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-304",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/outbound-orchestrator (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/sales/power-dialler",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/outbound-orchestrator (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-305",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/uat-scheduling (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/scheduling",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/uat-scheduling (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-306",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/subscription-plans (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/subscription-plans",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/subscription-plans (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-307",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/voice-outbound (anon) on 4 route(s)",
+  "persona": "anon",
+  "url": "/team/voice, /team/voice/ai-test",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/voice-outbound (anon) on 2 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-308",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/whatsapp/analytics (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/whatsapp/analytics",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/whatsapp/analytics (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-309",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/whatsapp/automation (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/whatsapp/automation",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/whatsapp/automation (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-310",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/whatsapp/templates (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/team/whatsapp/templates",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/whatsapp/templates (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-311",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/system-integration (anon) on 1 route(s)",
+  "persona": "anon",
+  "url": "/system-integration",
+  "steps": [
+   "load page"
+  ],
+  "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
+  "actual": "401 /api/system-integration (anon) on 1 routes (page still renders)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "wiring"
+ },
+ {
+  "id": "SW-312",
+  "status": "observation",
+  "title": "Expected-refusal API noise: 401 /api/identity-session (founder) on 212 route(s)",
   "persona": "founder",
   "url": "/staging-login, /me, /team, /crm, /control, /control/appearance, /control/integrations, /control/provider-onboarding, /booking-command-center, /ops",
   "steps": [
    "load page"
   ],
   "expected": "Pages should not call APIs the current session cannot use, or should tolerate the refusal silently",
-  "actual": "401 /api/identity-session (founder) on 82 routes (page still renders)",
+  "actual": "401 /api/identity-session (founder) on 92 routes (page still renders)",
   "evidence": "",
   "severity": "P2",
   "class": "wiring"
  },
  {
-  "id": "SW-227",
+  "id": "SW-313",
   "status": "observation",
   "title": "Console error: Failed to load resource 401/403 (expected refusals, see API-noise observations)",
   "persona": "various",
@@ -814,13 +1946,43 @@
    "load page"
   ],
   "expected": "clean console",
-  "actual": "Failed to load resource 401/403 (expected refusals, see API-noise observations) (286 occurrence(s))",
+  "actual": "Failed to load resource 401/403 (expected refusals, see API-noise observations) (453 occurrence(s))",
   "evidence": "",
   "severity": "P2",
   "class": "UI"
  },
  {
-  "id": "SW-228",
+  "id": "SW-314",
+  "status": "observation",
+  "title": "Console error: Failed to load resource: the server responded with a status of # (Bad Request)",
+  "persona": "various",
+  "url": "/relocation-enquiry anon/desktop",
+  "steps": [
+   "load page"
+  ],
+  "expected": "clean console",
+  "actual": "Failed to load resource: the server responded with a status of # (Bad Request) (1 occurrence(s))",
+  "evidence": "",
+  "severity": "P2",
+  "class": "UI"
+ },
+ {
+  "id": "SW-315",
+  "status": "observation",
+  "title": "Console error: Failed to load resource: the server responded with a status of # (Conflict)",
+  "persona": "various",
+  "url": "/team/customer-experience founder/android, /team/customer-experience founder/desktop",
+  "steps": [
+   "load page"
+  ],
+  "expected": "clean console",
+  "actual": "Failed to load resource: the server responded with a status of # (Conflict) (2 occurrence(s))",
+  "evidence": "",
+  "severity": "P2",
+  "class": "UI"
+ },
+ {
+  "id": "SW-316",
   "status": "observation",
   "title": "Console error: Failed to load resource: the server responded with a status of # (Internal Server Error)",
   "persona": "various",
@@ -835,22 +1997,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-229",
-  "status": "observation",
-  "title": "Console error: Failed to load resource: the server responded with a status of # (Conflict)",
-  "persona": "various",
-  "url": "/team/customer-experience founder/desktop",
-  "steps": [
-   "load page"
-  ],
-  "expected": "clean console",
-  "actual": "Failed to load resource: the server responded with a status of # (Conflict) (1 occurrence(s))",
-  "evidence": "",
-  "severity": "P2",
-  "class": "UI"
- },
- {
-  "id": "SW-230",
+  "id": "SW-317",
   "status": "observation",
   "title": "32 control(s) under 44px on phone: /control",
   "persona": "founder/android",
@@ -865,7 +2012,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-231",
+  "id": "SW-318",
   "status": "observation",
   "title": "27 control(s) under 44px on phone: /control/integrations",
   "persona": "founder/android",
@@ -880,7 +2027,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-232",
+  "id": "SW-319",
   "status": "observation",
   "title": "15 control(s) under 44px on phone: /team/customer-experience",
   "persona": "founder/android",
@@ -895,7 +2042,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-233",
+  "id": "SW-320",
   "status": "observation",
   "title": "14 control(s) under 44px on phone: /booking-command-center",
   "persona": "founder/android",
@@ -910,7 +2057,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-234",
+  "id": "SW-321",
   "status": "observation",
   "title": "14 control(s) under 44px on phone: /team/ai",
   "persona": "founder/android",
@@ -925,7 +2072,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-235",
+  "id": "SW-322",
   "status": "observation",
   "title": "14 control(s) under 44px on phone: /team/finance-compliance",
   "persona": "founder/android",
@@ -940,10 +2087,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-236",
+  "id": "SW-323",
   "status": "observation",
   "title": "14 control(s) under 44px on phone: /team/operations/bookings",
-  "persona": "founder/android",
+  "persona": "founder/android, founder/iphone",
   "url": "http://127.0.0.1:8794/team/operations/bookings",
   "steps": [
    "measure visible buttons"
@@ -955,7 +2102,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-237",
+  "id": "SW-324",
   "status": "observation",
   "title": "13 control(s) under 44px on phone: /team/people/service-incentives",
   "persona": "founder/android",
@@ -970,7 +2117,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-238",
+  "id": "SW-325",
   "status": "observation",
   "title": "9 control(s) under 44px on phone: /v2/walking",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -985,7 +2132,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-239",
+  "id": "SW-326",
   "status": "observation",
   "title": "8 control(s) under 44px on phone: /team/haptik",
   "persona": "founder/android",
@@ -1000,10 +2147,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-240",
+  "id": "SW-327",
   "status": "observation",
   "title": "8 control(s) under 44px on phone: /team/operations/work-queue",
-  "persona": "founder/android",
+  "persona": "founder/android, founder/iphone",
   "url": "http://127.0.0.1:8794/team/operations/work-queue",
   "steps": [
    "measure visible buttons"
@@ -1015,7 +2162,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-241",
+  "id": "SW-328",
   "status": "observation",
   "title": "8 control(s) under 44px on phone: /team/people/incentives",
   "persona": "founder/android",
@@ -1030,7 +2177,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-242",
+  "id": "SW-329",
   "status": "observation",
   "title": "8 control(s) under 44px on phone: /team/pricing-rules",
   "persona": "founder/android",
@@ -1045,7 +2192,22 @@
   "class": "UI"
  },
  {
-  "id": "SW-243",
+  "id": "SW-330",
+  "status": "observation",
+  "title": "8 control(s) under 44px on phone: /team/subscription-plans",
+  "persona": "founder/android",
+  "url": "http://127.0.0.1:8794/team/subscription-plans",
+  "steps": [
+   "measure visible buttons"
+  ],
+  "expected": "Primary touch targets >= 44px",
+  "actual": "Add plan (92x36); All services (110x36); grooming (99x38); dog training (119x38); boarding (95x38); pet sitting (105x38)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "UI"
+ },
+ {
+  "id": "SW-331",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /mobile-app#tab=Activity",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -1060,7 +2222,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-244",
+  "id": "SW-332",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /mobile-app#tab=Account",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -1075,10 +2237,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-245",
+  "id": "SW-333",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /walking",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/iphone",
   "url": "http://127.0.0.1:8794/walking",
   "steps": [
    "measure visible buttons"
@@ -1090,7 +2252,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-246",
+  "id": "SW-334",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /team/cases",
   "persona": "founder/android",
@@ -1105,7 +2267,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-247",
+  "id": "SW-335",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /team/i18n",
   "persona": "founder/android",
@@ -1120,7 +2282,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-248",
+  "id": "SW-336",
   "status": "observation",
   "title": "7 control(s) under 44px on phone: /team/performance",
   "persona": "founder/android",
@@ -1135,7 +2297,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-249",
+  "id": "SW-337",
   "status": "observation",
   "title": "6 control(s) under 44px on phone: /v2/boarding",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -1150,7 +2312,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-250",
+  "id": "SW-338",
   "status": "observation",
   "title": "6 control(s) under 44px on phone: /v2/sitting",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -1165,7 +2327,22 @@
   "class": "UI"
  },
  {
-  "id": "SW-251",
+  "id": "SW-339",
+  "status": "observation",
+  "title": "6 control(s) under 44px on phone: /team/whatsapp/templates",
+  "persona": "founder/android",
+  "url": "http://127.0.0.1:8794/team/whatsapp/templates",
+  "steps": [
+   "measure visible buttons"
+  ],
+  "expected": "Primary touch targets >= 44px",
+  "actual": "All 0 (60x36); Draft 0 (81x38); Submitted 0 (119x38); Approved 0 (113x38); Rejected 0 (106x38); Paused 0 (96x38)",
+  "evidence": "",
+  "severity": "P2",
+  "class": "UI"
+ },
+ {
+  "id": "SW-340",
   "status": "observation",
   "title": "5 control(s) under 44px on phone: /mobile-app#tab=My Pets",
   "persona": "anon/android, customer/android, customer/iphone",
@@ -1180,7 +2357,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-252",
+  "id": "SW-341",
   "status": "observation",
   "title": "5 control(s) under 44px on phone: /team/alerts",
   "persona": "founder/android",
@@ -1195,41 +2372,11 @@
   "class": "UI"
  },
  {
-  "id": "SW-253",
-  "status": "observation",
-  "title": "5 control(s) under 44px on phone: /team/customer-reminders",
-  "persona": "founder/android",
-  "url": "http://127.0.0.1:8794/team/customer-reminders",
-  "steps": [
-   "measure visible buttons"
-  ],
-  "expected": "Primary touch targets >= 44px",
-  "actual": "Save cadence policy (174x36); Run sweep now (143x38); All (47x36); Queued (86x38); Suppressed (115x38)",
-  "evidence": "",
-  "severity": "P2",
-  "class": "UI"
- },
- {
-  "id": "SW-254",
-  "status": "observation",
-  "title": "5 control(s) under 44px on phone: /team/finance/training",
-  "persona": "founder/android",
-  "url": "http://127.0.0.1:8794/team/finance/training",
-  "steps": [
-   "measure visible buttons"
-  ],
-  "expected": "Primary touch targets >= 44px",
-  "actual": "Refresh (36x278); Issue UAT invoice (30x322); Approve sandbox instruction (30x524)",
-  "evidence": "",
-  "severity": "P2",
-  "class": "UI"
- },
- {
-  "id": "SW-211",
+  "id": "SW-223",
   "status": "pass",
   "severity": "—",
   "class": "UI",
-  "title": "Dead-button pass: 394 buttons clicked on 62 route/tab states; all but the ones listed under Defects produced a URL/DOM/network/aria effect",
+  "title": "Dead-button pass: 455 buttons clicked on 75 route/tab states; all but the ones listed under Defects produced a URL/DOM/network/aria effect",
   "persona": "customer/android, provider/android, founder/desktop, anon/desktop",
   "url": "app shells, /v2/*, /partner*, staff key modules",
   "steps": [
@@ -1241,7 +2388,7 @@
   "evidence": "$S/evidence/sweep/dead-*.png"
  },
  {
-  "id": "SW-210",
+  "id": "SW-222",
   "status": "pass",
   "severity": "—",
   "class": "UI",
@@ -1258,11 +2405,11 @@
   "evidence": "$S/sweep/crawl/*.json"
  },
  {
-  "id": "SW-209",
+  "id": "SW-221",
   "status": "pass",
   "severity": "—",
   "class": "UI",
-  "title": "Horizontal overflow: none on any of 270 phone loads (Pixel 7 / iPhone 14)",
+  "title": "Horizontal overflow: none on any of 334 phone loads (Pixel 7 / iPhone 14)",
   "persona": "all",
   "url": "all crawled routes",
   "steps": [
@@ -1273,7 +2420,7 @@
   "evidence": "$S/sweep/crawl/*.json (measure.overflow)"
  },
  {
-  "id": "SW-208",
+  "id": "SW-220",
   "status": "pass",
   "severity": "—",
   "class": "UI",
@@ -1289,10 +2436,10 @@
   "evidence": "$S/sweep/crawl/links.json"
  },
  {
-  "id": "SW-042",
+  "id": "SW-043",
   "status": "pass",
   "title": "Rendered with content/controls: /",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1307,10 +2454,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-043",
+  "id": "SW-044",
   "status": "pass",
   "title": "Rendered with content/controls: /about",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/about",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1325,7 +2472,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-044",
+  "id": "SW-045",
   "status": "pass",
   "title": "Rendered with content/controls: /account",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1343,10 +2490,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-045",
+  "id": "SW-046",
   "status": "pass",
   "title": "Rendered with content/controls: /admin",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/admin",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1354,26 +2501,8 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/admin-founder-android.png",
-   "$S/evidence/sweep/admin-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-046",
-  "status": "pass",
-  "title": "Rendered with content/controls: /assisted-booking",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/assisted-booking",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/assisted-booking-founder-android.png",
-   "$S/evidence/sweep/assisted-booking-founder-desktop.png"
+   "$S/evidence/sweep/admin-anon-desktop.png",
+   "$S/evidence/sweep/admin-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1381,8 +2510,26 @@
  {
   "id": "SW-047",
   "status": "pass",
+  "title": "Rendered with content/controls: /assisted-booking",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/assisted-booking",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/assisted-booking-anon-desktop.png",
+   "$S/evidence/sweep/assisted-booking-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-048",
+  "status": "pass",
   "title": "Rendered with content/controls: /boarding",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/boarding",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1390,13 +2537,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/boarding-anon-android.png"
+   "$S/evidence/sweep/boarding-anon-android.png",
+   "$S/evidence/sweep/boarding-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-048",
+  "id": "SW-049",
   "status": "pass",
   "title": "Rendered with content/controls: /boarding/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1413,10 +2561,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-049",
+  "id": "SW-050",
   "status": "pass",
   "title": "Rendered with content/controls: /booking-command-center",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/booking-command-center",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1424,25 +2572,8 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/booking-command-center-founder-android.png",
-   "$S/evidence/sweep/booking-command-center-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-050",
-  "status": "pass",
-  "title": "Rendered with content/controls: /business",
-  "persona": "anon/android",
-  "url": "http://127.0.0.1:8794/business",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/business-anon-android.png"
+   "$S/evidence/sweep/booking-command-center-anon-desktop.png",
+   "$S/evidence/sweep/booking-command-center-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1450,8 +2581,26 @@
  {
   "id": "SW-051",
   "status": "pass",
+  "title": "Rendered with content/controls: /business",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
+  "url": "http://127.0.0.1:8794/business",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/business-anon-android.png",
+   "$S/evidence/sweep/business-anon-desktop.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-052",
+  "status": "pass",
   "title": "Rendered with content/controls: /careers",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/careers",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1466,10 +2615,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-052",
+  "id": "SW-053",
   "status": "pass",
   "title": "Rendered with content/controls: /chat",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/chat",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1477,16 +2626,17 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/chat-anon-android.png"
+   "$S/evidence/sweep/chat-anon-android.png",
+   "$S/evidence/sweep/chat-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-053",
+  "id": "SW-054",
   "status": "pass",
   "title": "Rendered with content/controls: /contact",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/contact",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1501,10 +2651,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-054",
+  "id": "SW-055",
   "status": "pass",
   "title": "Rendered with content/controls: /control",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/control",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1512,26 +2662,8 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/control-founder-android.png",
-   "$S/evidence/sweep/control-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-055",
-  "status": "pass",
-  "title": "Rendered with content/controls: /control/appearance",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/control/appearance",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/control-appearance-founder-android.png",
-   "$S/evidence/sweep/control-appearance-founder-desktop.png"
+   "$S/evidence/sweep/control-anon-desktop.png",
+   "$S/evidence/sweep/control-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1539,17 +2671,17 @@
  {
   "id": "SW-056",
   "status": "pass",
-  "title": "Rendered with content/controls: /control/integrations",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/control/integrations",
+  "title": "Rendered with content/controls: /control/appearance",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/control/appearance",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/control-integrations-founder-android.png",
-   "$S/evidence/sweep/control-integrations-founder-desktop.png"
+   "$S/evidence/sweep/control-appearance-anon-desktop.png",
+   "$S/evidence/sweep/control-appearance-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1557,17 +2689,17 @@
  {
   "id": "SW-057",
   "status": "pass",
-  "title": "Rendered with content/controls: /control/provider-onboarding",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/control/provider-onboarding",
+  "title": "Rendered with content/controls: /control/integrations",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/control/integrations",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/control-provider-onboarding-founder-android.png",
-   "$S/evidence/sweep/control-provider-onboarding-founder-desktop.png"
+   "$S/evidence/sweep/control-integrations-anon-desktop.png",
+   "$S/evidence/sweep/control-integrations-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1575,17 +2707,17 @@
  {
   "id": "SW-058",
   "status": "pass",
-  "title": "Rendered with content/controls: /crm",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/crm",
+  "title": "Rendered with content/controls: /control/provider-onboarding",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/control/provider-onboarding",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/crm-founder-android.png",
-   "$S/evidence/sweep/crm-founder-desktop.png"
+   "$S/evidence/sweep/control-provider-onboarding-anon-desktop.png",
+   "$S/evidence/sweep/control-provider-onboarding-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1593,16 +2725,17 @@
  {
   "id": "SW-059",
   "status": "pass",
-  "title": "Rendered with content/controls: /discover",
-  "persona": "anon/android",
-  "url": "http://127.0.0.1:8794/discover",
+  "title": "Rendered with content/controls: /crm",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/crm",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/discover-anon-android.png"
+   "$S/evidence/sweep/crm-anon-desktop.png",
+   "$S/evidence/sweep/crm-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1610,8 +2743,26 @@
  {
   "id": "SW-060",
   "status": "pass",
+  "title": "Rendered with content/controls: /discover",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
+  "url": "http://127.0.0.1:8794/discover",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/discover-anon-android.png",
+   "$S/evidence/sweep/discover-anon-desktop.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-061",
+  "status": "pass",
   "title": "Rendered with content/controls: /dog-breeds/labrador-retriever",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/dog-breeds/labrador-retriever",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1626,10 +2777,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-061",
+  "id": "SW-062",
   "status": "pass",
   "title": "Rendered with content/controls: /driver",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/driver",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1643,10 +2794,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-062",
+  "id": "SW-063",
   "status": "pass",
   "title": "Rendered with content/controls: /driver/proof",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/driver/proof",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1660,10 +2811,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-063",
+  "id": "SW-064",
   "status": "pass",
   "title": "Rendered with content/controls: /driver/recovery",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/driver/recovery",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1677,10 +2828,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-064",
+  "id": "SW-065",
   "status": "pass",
   "title": "Rendered with content/controls: /food",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/food",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1688,13 +2839,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/food-anon-android.png"
+   "$S/evidence/sweep/food-anon-android.png",
+   "$S/evidence/sweep/food-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-065",
+  "id": "SW-066",
   "status": "pass",
   "title": "Rendered with content/controls: /food/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1711,7 +2863,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-066",
+  "id": "SW-067",
   "status": "pass",
   "title": "Rendered with content/controls: /food/subscriptions",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1728,10 +2880,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-067",
+  "id": "SW-068",
   "status": "pass",
   "title": "Rendered with content/controls: /funeral-memorial",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/funeral-memorial",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1739,16 +2891,17 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/funeral-memorial-anon-android.png"
+   "$S/evidence/sweep/funeral-memorial-anon-android.png",
+   "$S/evidence/sweep/funeral-memorial-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-068",
+  "id": "SW-069",
   "status": "pass",
   "title": "Rendered with content/controls: /groomer",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/groomer",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1757,16 +2910,16 @@
   "actual": "usable",
   "evidence": [
    "$S/evidence/sweep/groomer-anon-android.png",
-   "$S/evidence/sweep/groomer-provider-desktop.png"
+   "$S/evidence/sweep/groomer-provider-android.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-069",
+  "id": "SW-070",
   "status": "pass",
   "title": "Rendered with content/controls: /grooming",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/grooming",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1781,7 +2934,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-070",
+  "id": "SW-071",
   "status": "pass",
   "title": "Rendered with content/controls: /grooming/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1798,10 +2951,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-071",
+  "id": "SW-072",
   "status": "pass",
   "title": "Rendered with content/controls: /host",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/host",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1815,10 +2968,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-072",
+  "id": "SW-073",
   "status": "pass",
   "title": "Rendered with content/controls: /host/proof",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/host/proof",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1832,10 +2985,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-073",
+  "id": "SW-074",
   "status": "pass",
   "title": "Rendered with content/controls: /landing-pages",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/landing-pages",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1843,25 +2996,8 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/landing-pages-anon-android.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-074",
-  "status": "pass",
-  "title": "Rendered with content/controls: /leaderboard",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/leaderboard",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/leaderboard-founder-android.png",
-   "$S/evidence/sweep/leaderboard-founder-desktop.png"
+   "$S/evidence/sweep/landing-pages-anon-android.png",
+   "$S/evidence/sweep/landing-pages-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -1869,8 +3005,26 @@
  {
   "id": "SW-075",
   "status": "pass",
+  "title": "Rendered with content/controls: /leaderboard",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/leaderboard",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/leaderboard-anon-desktop.png",
+   "$S/evidence/sweep/leaderboard-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-076",
+  "status": "pass",
   "title": "Rendered with content/controls: /legal/data-processing",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/legal/data-processing",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1885,10 +3039,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-076",
+  "id": "SW-077",
   "status": "pass",
   "title": "Rendered with content/controls: /legal/privacy",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/legal/privacy",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1903,10 +3057,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-077",
+  "id": "SW-078",
   "status": "pass",
   "title": "Rendered with content/controls: /legal/terms",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/legal/terms",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1921,10 +3075,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-078",
+  "id": "SW-079",
   "status": "pass",
   "title": "Rendered with content/controls: /locations/bengaluru/hsr-layout/pet-grooming",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/locations/bengaluru/hsr-layout/pet-grooming",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1939,10 +3093,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-079",
+  "id": "SW-080",
   "status": "pass",
   "title": "Rendered with content/controls: /me",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/me",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -1950,14 +3104,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/me-founder-android.png",
-   "$S/evidence/sweep/me-founder-desktop.png"
+   "$S/evidence/sweep/me-anon-desktop.png",
+   "$S/evidence/sweep/me-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-080",
+  "id": "SW-081",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1975,7 +3129,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-081",
+  "id": "SW-082",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app/booking-confirmation",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -1993,7 +3147,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-082",
+  "id": "SW-083",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app#tab=Account",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2011,7 +3165,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-083",
+  "id": "SW-084",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app#tab=Activity",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2029,7 +3183,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-084",
+  "id": "SW-085",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app#tab=Book",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2047,7 +3201,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-085",
+  "id": "SW-086",
   "status": "pass",
   "title": "Rendered with content/controls: /mobile-app#tab=My Pets",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2065,10 +3219,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-086",
+  "id": "SW-087",
   "status": "pass",
   "title": "Rendered with content/controls: /ops",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/ops",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2076,14 +3230,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/ops-founder-android.png",
-   "$S/evidence/sweep/ops-founder-desktop.png"
+   "$S/evidence/sweep/ops-anon-desktop.png",
+   "$S/evidence/sweep/ops-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-087",
+  "id": "SW-088",
   "status": "pass",
   "title": "Rendered with content/controls: /partner",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2100,7 +3254,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-088",
+  "id": "SW-089",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-app",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2118,7 +3272,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-089",
+  "id": "SW-090",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-app#tab=Earnings",
   "persona": "provider/android, provider/desktop, provider/iphone",
@@ -2136,7 +3290,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-090",
+  "id": "SW-091",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-app#tab=GPS",
   "persona": "provider/android, provider/desktop, provider/iphone",
@@ -2154,7 +3308,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-091",
+  "id": "SW-092",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-app#tab=Jobs",
   "persona": "provider/android, provider/desktop, provider/iphone",
@@ -2172,7 +3326,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-092",
+  "id": "SW-093",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-app#tab=More",
   "persona": "provider/android, provider/desktop, provider/iphone",
@@ -2190,7 +3344,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-093",
+  "id": "SW-094",
   "status": "pass",
   "title": "Rendered with content/controls: /partner-mobile",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2208,7 +3362,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-094",
+  "id": "SW-095",
   "status": "pass",
   "title": "Rendered with content/controls: /partner/funeral",
   "persona": "anon/android",
@@ -2226,7 +3380,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-095",
+  "id": "SW-096",
   "status": "pass",
   "title": "Rendered with content/controls: /partner/jobs",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2243,7 +3397,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-096",
+  "id": "SW-097",
   "status": "pass",
   "title": "Rendered with content/controls: /partner/onboarding",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2260,7 +3414,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-097",
+  "id": "SW-098",
   "status": "pass",
   "title": "Rendered with content/controls: /partner/rates",
   "persona": "anon/android",
@@ -2278,7 +3432,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-098",
+  "id": "SW-099",
   "status": "pass",
   "title": "Rendered with content/controls: /partner/workspace",
   "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
@@ -2295,35 +3449,19 @@
   "class": "UI"
  },
  {
-  "id": "SW-099",
-  "status": "pass",
-  "title": "Rendered with content/controls: /relocation",
-  "persona": "anon/android",
-  "url": "http://127.0.0.1:8794/relocation",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/relocation-anon-android.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
   "id": "SW-100",
   "status": "pass",
-  "title": "Rendered with content/controls: /relocation-enquiry",
-  "persona": "anon/android",
-  "url": "http://127.0.0.1:8794/relocation-enquiry",
+  "title": "Rendered with content/controls: /platform-api",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/platform-api",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/relocation-enquiry-anon-android.png"
+   "$S/evidence/sweep/platform-api-anon-desktop.png",
+   "$S/evidence/sweep/platform-api-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2331,8 +3469,80 @@
  {
   "id": "SW-101",
   "status": "pass",
+  "title": "Rendered with content/controls: /prelaunch",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/prelaunch",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/prelaunch-anon-desktop.png",
+   "$S/evidence/sweep/prelaunch-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-102",
+  "status": "pass",
+  "title": "Rendered with content/controls: /regression-lab",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/regression-lab",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/regression-lab-anon-desktop.png",
+   "$S/evidence/sweep/regression-lab-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-103",
+  "status": "pass",
+  "title": "Rendered with content/controls: /relocation",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
+  "url": "http://127.0.0.1:8794/relocation",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/relocation-anon-android.png",
+   "$S/evidence/sweep/relocation-anon-desktop.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-104",
+  "status": "pass",
+  "title": "Rendered with content/controls: /relocation-enquiry",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
+  "url": "http://127.0.0.1:8794/relocation-enquiry",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/relocation-enquiry-anon-android.png",
+   "$S/evidence/sweep/relocation-enquiry-anon-desktop.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-105",
+  "status": "pass",
   "title": "Rendered with content/controls: /services",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/services",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2347,10 +3557,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-102",
+  "id": "SW-106",
   "status": "pass",
   "title": "Rendered with content/controls: /services/grooming",
-  "persona": "anon/android, anon/desktop",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/services/grooming",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2365,10 +3575,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-103",
+  "id": "SW-107",
   "status": "pass",
   "title": "Rendered with content/controls: /sitter",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/sitter",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2382,10 +3592,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-104",
+  "id": "SW-108",
   "status": "pass",
   "title": "Rendered with content/controls: /sitter/proof",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/sitter/proof",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2399,10 +3609,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-105",
+  "id": "SW-109",
   "status": "pass",
   "title": "Rendered with content/controls: /sitting",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/sitting",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2410,13 +3620,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/sitting-anon-android.png"
+   "$S/evidence/sweep/sitting-anon-android.png",
+   "$S/evidence/sweep/sitting-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-106",
+  "id": "SW-110",
   "status": "pass",
   "title": "Rendered with content/controls: /sitting/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2433,10 +3644,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-107",
+  "id": "SW-111",
   "status": "pass",
   "title": "Rendered with content/controls: /staging-login",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/staging-login",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2444,17 +3655,35 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/staging-login-founder-android.png",
-   "$S/evidence/sweep/staging-login-founder-desktop.png"
+   "$S/evidence/sweep/staging-login-anon-desktop.png",
+   "$S/evidence/sweep/staging-login-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-108",
+  "id": "SW-112",
+  "status": "pass",
+  "title": "Rendered with content/controls: /system-integration",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/system-integration",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/system-integration-anon-desktop.png",
+   "$S/evidence/sweep/system-integration-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-113",
   "status": "pass",
   "title": "Rendered with content/controls: /taxi",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/taxi",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2462,13 +3691,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/taxi-anon-android.png"
+   "$S/evidence/sweep/taxi-anon-android.png",
+   "$S/evidence/sweep/taxi-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-109",
+  "id": "SW-114",
   "status": "pass",
   "title": "Rendered with content/controls: /taxi/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -2485,10 +3715,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-110",
+  "id": "SW-115",
   "status": "pass",
   "title": "Rendered with content/controls: /team",
-  "persona": "founder/android, founder/desktop",
+  "persona": "anon/desktop, founder/android, founder/desktop",
   "url": "http://127.0.0.1:8794/team",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -2496,98 +3726,8 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-founder-android.png",
-   "$S/evidence/sweep/team-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-111",
-  "status": "pass",
-  "title": "Rendered with content/controls: /team/acquisition-funnel",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/acquisition-funnel",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/team-acquisition-funnel-founder-android.png",
-   "$S/evidence/sweep/team-acquisition-funnel-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-112",
-  "status": "pass",
-  "title": "Rendered with content/controls: /team/ai",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/ai",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/team-ai-founder-android.png",
-   "$S/evidence/sweep/team-ai-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-113",
-  "status": "pass",
-  "title": "Rendered with content/controls: /team/ai/analytics",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/ai/analytics",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/team-ai-analytics-founder-android.png",
-   "$S/evidence/sweep/team-ai-analytics-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-114",
-  "status": "pass",
-  "title": "Rendered with content/controls: /team/ai/configuration",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/ai/configuration",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/team-ai-configuration-founder-android.png",
-   "$S/evidence/sweep/team-ai-configuration-founder-desktop.png"
-  ],
-  "severity": "—",
-  "class": "UI"
- },
- {
-  "id": "SW-115",
-  "status": "pass",
-  "title": "Rendered with content/controls: /team/ai/handoff",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/ai/handoff",
-  "steps": [
-   "load, network idle, measure text/controls/errors"
-  ],
-  "expected": "usable screen",
-  "actual": "usable",
-  "evidence": [
-   "$S/evidence/sweep/team-ai-handoff-founder-android.png",
-   "$S/evidence/sweep/team-ai-handoff-founder-desktop.png"
+   "$S/evidence/sweep/team-anon-desktop.png",
+   "$S/evidence/sweep/team-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2595,17 +3735,17 @@
  {
   "id": "SW-116",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/ai/rollout",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/ai/rollout",
+  "title": "Rendered with content/controls: /team/acquisition-funnel",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/acquisition-funnel",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-ai-rollout-founder-android.png",
-   "$S/evidence/sweep/team-ai-rollout-founder-desktop.png"
+   "$S/evidence/sweep/team-acquisition-funnel-anon-desktop.png",
+   "$S/evidence/sweep/team-acquisition-funnel-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2613,17 +3753,17 @@
  {
   "id": "SW-117",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/alerts",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/alerts",
+  "title": "Rendered with content/controls: /team/ai",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/ai",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-alerts-founder-android.png",
-   "$S/evidence/sweep/team-alerts-founder-desktop.png"
+   "$S/evidence/sweep/team-ai-anon-desktop.png",
+   "$S/evidence/sweep/team-ai-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2631,17 +3771,17 @@
  {
   "id": "SW-118",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/analytics",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/analytics",
+  "title": "Rendered with content/controls: /team/ai/analytics",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/ai/analytics",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-analytics-founder-android.png",
-   "$S/evidence/sweep/team-analytics-founder-desktop.png"
+   "$S/evidence/sweep/team-ai-analytics-anon-desktop.png",
+   "$S/evidence/sweep/team-ai-analytics-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2649,17 +3789,17 @@
  {
   "id": "SW-119",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/bot-call-outcomes",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/bot-call-outcomes",
+  "title": "Rendered with content/controls: /team/ai/configuration",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/ai/configuration",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-bot-call-outcomes-founder-android.png",
-   "$S/evidence/sweep/team-bot-call-outcomes-founder-desktop.png"
+   "$S/evidence/sweep/team-ai-configuration-anon-desktop.png",
+   "$S/evidence/sweep/team-ai-configuration-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2667,17 +3807,17 @@
  {
   "id": "SW-120",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/cases",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/cases",
+  "title": "Rendered with content/controls: /team/ai/handoff",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/ai/handoff",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-cases-founder-android.png",
-   "$S/evidence/sweep/team-cases-founder-desktop.png"
+   "$S/evidence/sweep/team-ai-handoff-anon-desktop.png",
+   "$S/evidence/sweep/team-ai-handoff-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2685,17 +3825,17 @@
  {
   "id": "SW-121",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/catalogue",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/catalogue",
+  "title": "Rendered with content/controls: /team/ai/rollout",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/ai/rollout",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-catalogue-founder-android.png",
-   "$S/evidence/sweep/team-catalogue-founder-desktop.png"
+   "$S/evidence/sweep/team-ai-rollout-anon-desktop.png",
+   "$S/evidence/sweep/team-ai-rollout-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2703,17 +3843,17 @@
  {
   "id": "SW-122",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/customer-experience",
-  "persona": "founder/android",
-  "url": "http://127.0.0.1:8794/team/customer-experience",
+  "title": "Rendered with content/controls: /team/alerts",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/alerts",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-customer-experience-founder-android.png",
-   "$S/evidence/sweep/team-customer-experience-founder-desktop.png"
+   "$S/evidence/sweep/team-alerts-anon-desktop.png",
+   "$S/evidence/sweep/team-alerts-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2721,17 +3861,17 @@
  {
   "id": "SW-123",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/customer-reminders",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/customer-reminders",
+  "title": "Rendered with content/controls: /team/analytics",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/analytics",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-customer-reminders-founder-android.png",
-   "$S/evidence/sweep/team-customer-reminders-founder-desktop.png"
+   "$S/evidence/sweep/team-analytics-anon-desktop.png",
+   "$S/evidence/sweep/team-analytics-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2739,17 +3879,17 @@
  {
   "id": "SW-124",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance",
+  "title": "Rendered with content/controls: /team/bot-call-outcomes",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/bot-call-outcomes",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-founder-android.png",
-   "$S/evidence/sweep/team-finance-founder-desktop.png"
+   "$S/evidence/sweep/team-bot-call-outcomes-anon-desktop.png",
+   "$S/evidence/sweep/team-bot-call-outcomes-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2757,17 +3897,17 @@
  {
   "id": "SW-125",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance-compliance",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance-compliance",
+  "title": "Rendered with content/controls: /team/cases",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/cases",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-compliance-founder-android.png",
-   "$S/evidence/sweep/team-finance-compliance-founder-desktop.png"
+   "$S/evidence/sweep/team-cases-anon-desktop.png",
+   "$S/evidence/sweep/team-cases-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2775,17 +3915,17 @@
  {
   "id": "SW-126",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/cash-flow",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/cash-flow",
+  "title": "Rendered with content/controls: /team/catalogue",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/catalogue",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-cash-flow-founder-android.png",
-   "$S/evidence/sweep/team-finance-cash-flow-founder-desktop.png"
+   "$S/evidence/sweep/team-catalogue-anon-desktop.png",
+   "$S/evidence/sweep/team-catalogue-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2793,17 +3933,17 @@
  {
   "id": "SW-127",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/food",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/food",
+  "title": "Rendered with content/controls: /team/customer-experience",
+  "persona": "anon/desktop",
+  "url": "http://127.0.0.1:8794/team/customer-experience",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-food-founder-android.png",
-   "$S/evidence/sweep/team-finance-food-founder-desktop.png"
+   "$S/evidence/sweep/team-customer-experience-anon-desktop.png",
+   "$S/evidence/sweep/team-customer-experience-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2811,17 +3951,17 @@
  {
   "id": "SW-128",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/funeral-memorial",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/funeral-memorial",
+  "title": "Rendered with content/controls: /team/customer-reminders",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/customer-reminders",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-funeral-memorial-founder-android.png",
-   "$S/evidence/sweep/team-finance-funeral-memorial-founder-desktop.png"
+   "$S/evidence/sweep/team-customer-reminders-anon-desktop.png",
+   "$S/evidence/sweep/team-customer-reminders-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2829,17 +3969,17 @@
  {
   "id": "SW-129",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/partners",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/partners",
+  "title": "Rendered with content/controls: /team/daily-revenue",
+  "persona": "anon/desktop",
+  "url": "http://127.0.0.1:8794/team/daily-revenue",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-partners-founder-android.png",
-   "$S/evidence/sweep/team-finance-partners-founder-desktop.png"
+   "$S/evidence/sweep/team-daily-revenue-anon-desktop.png",
+   "$S/evidence/sweep/team-daily-revenue-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2847,17 +3987,17 @@
  {
   "id": "SW-130",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/relocation",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/relocation",
+  "title": "Rendered with content/controls: /team/finance",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-relocation-founder-android.png",
-   "$S/evidence/sweep/team-finance-relocation-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2865,17 +4005,17 @@
  {
   "id": "SW-131",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/sitting",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/sitting",
+  "title": "Rendered with content/controls: /team/finance-compliance",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance-compliance",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-sitting-founder-android.png",
-   "$S/evidence/sweep/team-finance-sitting-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-compliance-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-compliance-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2883,17 +4023,17 @@
  {
   "id": "SW-132",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/statutory",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/statutory",
+  "title": "Rendered with content/controls: /team/finance/cash-flow",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/cash-flow",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-statutory-founder-android.png",
-   "$S/evidence/sweep/team-finance-statutory-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-cash-flow-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-cash-flow-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2901,17 +4041,17 @@
  {
   "id": "SW-133",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/taxi",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/taxi",
+  "title": "Rendered with content/controls: /team/finance/food",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/food",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-taxi-founder-android.png",
-   "$S/evidence/sweep/team-finance-taxi-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-food-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-food-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2919,17 +4059,17 @@
  {
   "id": "SW-134",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/training",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/training",
+  "title": "Rendered with content/controls: /team/finance/funeral-memorial",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/funeral-memorial",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-training-founder-android.png",
-   "$S/evidence/sweep/team-finance-training-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-funeral-memorial-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-funeral-memorial-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2937,17 +4077,17 @@
  {
   "id": "SW-135",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/unit-economics",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/unit-economics",
+  "title": "Rendered with content/controls: /team/finance/partners",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/partners",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-unit-economics-founder-android.png",
-   "$S/evidence/sweep/team-finance-unit-economics-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-partners-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-partners-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2955,17 +4095,17 @@
  {
   "id": "SW-136",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/finance/walking",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/finance/walking",
+  "title": "Rendered with content/controls: /team/finance/relocation",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/relocation",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-finance-walking-founder-android.png",
-   "$S/evidence/sweep/team-finance-walking-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-relocation-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-relocation-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2973,17 +4113,17 @@
  {
   "id": "SW-137",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/funeral-memorial",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/funeral-memorial",
+  "title": "Rendered with content/controls: /team/finance/sitting",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/sitting",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-funeral-memorial-founder-android.png",
-   "$S/evidence/sweep/team-funeral-memorial-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-sitting-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-sitting-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -2991,17 +4131,17 @@
  {
   "id": "SW-138",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/haptik",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/haptik",
+  "title": "Rendered with content/controls: /team/finance/statutory",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/statutory",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-haptik-founder-android.png",
-   "$S/evidence/sweep/team-haptik-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-statutory-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-statutory-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3009,17 +4149,17 @@
  {
   "id": "SW-139",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/i18n",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/i18n",
+  "title": "Rendered with content/controls: /team/finance/taxi",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/taxi",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-i18n-founder-android.png",
-   "$S/evidence/sweep/team-i18n-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-taxi-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-taxi-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3027,17 +4167,17 @@
  {
   "id": "SW-140",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/lifecycle-reminders",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/lifecycle-reminders",
+  "title": "Rendered with content/controls: /team/finance/training",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/training",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-lifecycle-reminders-founder-android.png",
-   "$S/evidence/sweep/team-lifecycle-reminders-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-training-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-training-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3045,17 +4185,17 @@
  {
   "id": "SW-141",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/marketing",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/marketing",
+  "title": "Rendered with content/controls: /team/finance/unit-economics",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/unit-economics",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-marketing-founder-android.png",
-   "$S/evidence/sweep/team-marketing-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-unit-economics-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-unit-economics-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3063,17 +4203,17 @@
  {
   "id": "SW-142",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/marketing/content",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/marketing/content",
+  "title": "Rendered with content/controls: /team/finance/walking",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/finance/walking",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-marketing-content-founder-android.png",
-   "$S/evidence/sweep/team-marketing-content-founder-desktop.png"
+   "$S/evidence/sweep/team-finance-walking-anon-desktop.png",
+   "$S/evidence/sweep/team-finance-walking-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3081,17 +4221,17 @@
  {
   "id": "SW-143",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/meet-and-greet",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/meet-and-greet",
+  "title": "Rendered with content/controls: /team/funeral-memorial",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/funeral-memorial",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-meet-and-greet-founder-android.png",
-   "$S/evidence/sweep/team-meet-and-greet-founder-desktop.png"
+   "$S/evidence/sweep/team-funeral-memorial-anon-desktop.png",
+   "$S/evidence/sweep/team-funeral-memorial-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3099,17 +4239,17 @@
  {
   "id": "SW-144",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations",
+  "title": "Rendered with content/controls: /team/haptik",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/haptik",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-founder-android.png",
-   "$S/evidence/sweep/team-operations-founder-desktop.png"
+   "$S/evidence/sweep/team-haptik-anon-desktop.png",
+   "$S/evidence/sweep/team-haptik-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3117,17 +4257,17 @@
  {
   "id": "SW-145",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/boarding",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/boarding",
+  "title": "Rendered with content/controls: /team/i18n",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/i18n",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-boarding-founder-android.png",
-   "$S/evidence/sweep/team-operations-boarding-founder-desktop.png"
+   "$S/evidence/sweep/team-i18n-anon-desktop.png",
+   "$S/evidence/sweep/team-i18n-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3135,17 +4275,17 @@
  {
   "id": "SW-146",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/bookings",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/bookings",
+  "title": "Rendered with content/controls: /team/lifecycle-reminders",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/lifecycle-reminders",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-bookings-founder-android.png",
-   "$S/evidence/sweep/team-operations-bookings-founder-desktop.png"
+   "$S/evidence/sweep/team-lifecycle-reminders-anon-desktop.png",
+   "$S/evidence/sweep/team-lifecycle-reminders-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3153,17 +4293,17 @@
  {
   "id": "SW-147",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/food",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/food",
+  "title": "Rendered with content/controls: /team/marketing",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/marketing",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-food-founder-android.png",
-   "$S/evidence/sweep/team-operations-food-founder-desktop.png"
+   "$S/evidence/sweep/team-marketing-anon-desktop.png",
+   "$S/evidence/sweep/team-marketing-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3171,17 +4311,17 @@
  {
   "id": "SW-148",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/food/fulfilment",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/food/fulfilment",
+  "title": "Rendered with content/controls: /team/marketing/content",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/marketing/content",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-food-fulfilment-founder-android.png",
-   "$S/evidence/sweep/team-operations-food-fulfilment-founder-desktop.png"
+   "$S/evidence/sweep/team-marketing-content-anon-desktop.png",
+   "$S/evidence/sweep/team-marketing-content-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3189,17 +4329,17 @@
  {
   "id": "SW-149",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/food/proof",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/food/proof",
+  "title": "Rendered with content/controls: /team/meet-and-greet",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/meet-and-greet",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-food-proof-founder-android.png",
-   "$S/evidence/sweep/team-operations-food-proof-founder-desktop.png"
+   "$S/evidence/sweep/team-meet-and-greet-anon-desktop.png",
+   "$S/evidence/sweep/team-meet-and-greet-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3207,17 +4347,17 @@
  {
   "id": "SW-150",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/food/supply-chain",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/food/supply-chain",
+  "title": "Rendered with content/controls: /team/operations",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-food-supply-chain-founder-android.png",
-   "$S/evidence/sweep/team-operations-food-supply-chain-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3225,17 +4365,17 @@
  {
   "id": "SW-151",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/sitting",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/sitting",
+  "title": "Rendered with content/controls: /team/operations/boarding",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/boarding",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-sitting-founder-android.png",
-   "$S/evidence/sweep/team-operations-sitting-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-boarding-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-boarding-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3243,17 +4383,17 @@
  {
   "id": "SW-152",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/taxi",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/taxi",
+  "title": "Rendered with content/controls: /team/operations/bookings",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/bookings",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-taxi-founder-android.png",
-   "$S/evidence/sweep/team-operations-taxi-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-bookings-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-bookings-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3261,17 +4401,17 @@
  {
   "id": "SW-153",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/training",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/training",
+  "title": "Rendered with content/controls: /team/operations/food",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/food",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-training-founder-android.png",
-   "$S/evidence/sweep/team-operations-training-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-food-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-food-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3279,17 +4419,17 @@
  {
   "id": "SW-154",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/walking",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/walking",
+  "title": "Rendered with content/controls: /team/operations/food/fulfilment",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/food/fulfilment",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-walking-founder-android.png",
-   "$S/evidence/sweep/team-operations-walking-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-food-fulfilment-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-food-fulfilment-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3297,17 +4437,17 @@
  {
   "id": "SW-155",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/operations/work-queue",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/operations/work-queue",
+  "title": "Rendered with content/controls: /team/operations/food/proof",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/food/proof",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-operations-work-queue-founder-android.png",
-   "$S/evidence/sweep/team-operations-work-queue-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-food-proof-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-food-proof-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3315,17 +4455,17 @@
  {
   "id": "SW-156",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people",
+  "title": "Rendered with content/controls: /team/operations/food/supply-chain",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/food/supply-chain",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-founder-android.png",
-   "$S/evidence/sweep/team-people-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-food-supply-chain-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-food-supply-chain-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3333,17 +4473,17 @@
  {
   "id": "SW-157",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/finance",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/finance",
+  "title": "Rendered with content/controls: /team/operations/sitting",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/sitting",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-finance-founder-android.png",
-   "$S/evidence/sweep/team-people-finance-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-sitting-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-sitting-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3351,17 +4491,17 @@
  {
   "id": "SW-158",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/incentives",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/incentives",
+  "title": "Rendered with content/controls: /team/operations/taxi",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/taxi",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-incentives-founder-android.png",
-   "$S/evidence/sweep/team-people-incentives-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-taxi-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-taxi-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3369,17 +4509,17 @@
  {
   "id": "SW-159",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/manager-dashboard",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/manager-dashboard",
+  "title": "Rendered with content/controls: /team/operations/training",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/training",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-manager-dashboard-founder-android.png",
-   "$S/evidence/sweep/team-people-manager-dashboard-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-training-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-training-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3387,17 +4527,17 @@
  {
   "id": "SW-160",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/onboarding",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/onboarding",
+  "title": "Rendered with content/controls: /team/operations/walking",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/walking",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-onboarding-founder-android.png",
-   "$S/evidence/sweep/team-people-onboarding-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-walking-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-walking-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3405,17 +4545,17 @@
  {
   "id": "SW-161",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/payroll",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/payroll",
+  "title": "Rendered with content/controls: /team/operations/work-queue",
+  "persona": "anon/desktop, founder/android, founder/desktop, founder/iphone",
+  "url": "http://127.0.0.1:8794/team/operations/work-queue",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-payroll-founder-android.png",
-   "$S/evidence/sweep/team-people-payroll-founder-desktop.png"
+   "$S/evidence/sweep/team-operations-work-queue-anon-desktop.png",
+   "$S/evidence/sweep/team-operations-work-queue-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3423,17 +4563,17 @@
  {
   "id": "SW-162",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/provider-training",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/provider-training",
+  "title": "Rendered with content/controls: /team/people",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-provider-training-founder-android.png",
-   "$S/evidence/sweep/team-people-provider-training-founder-desktop.png"
+   "$S/evidence/sweep/team-people-anon-desktop.png",
+   "$S/evidence/sweep/team-people-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3441,17 +4581,17 @@
  {
   "id": "SW-163",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/reports",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/reports",
+  "title": "Rendered with content/controls: /team/people/finance",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/finance",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-reports-founder-android.png",
-   "$S/evidence/sweep/team-people-reports-founder-desktop.png"
+   "$S/evidence/sweep/team-people-finance-anon-desktop.png",
+   "$S/evidence/sweep/team-people-finance-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3459,17 +4599,17 @@
  {
   "id": "SW-164",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/service-incentives",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/service-incentives",
+  "title": "Rendered with content/controls: /team/people/incentives",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/incentives",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-service-incentives-founder-android.png",
-   "$S/evidence/sweep/team-people-service-incentives-founder-desktop.png"
+   "$S/evidence/sweep/team-people-incentives-anon-desktop.png",
+   "$S/evidence/sweep/team-people-incentives-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3477,17 +4617,17 @@
  {
   "id": "SW-165",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/people/time",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/people/time",
+  "title": "Rendered with content/controls: /team/people/manager-dashboard",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/manager-dashboard",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-people-time-founder-android.png",
-   "$S/evidence/sweep/team-people-time-founder-desktop.png"
+   "$S/evidence/sweep/team-people-manager-dashboard-anon-desktop.png",
+   "$S/evidence/sweep/team-people-manager-dashboard-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3495,17 +4635,17 @@
  {
   "id": "SW-166",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/performance",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/performance",
+  "title": "Rendered with content/controls: /team/people/onboarding",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/onboarding",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-performance-founder-android.png",
-   "$S/evidence/sweep/team-performance-founder-desktop.png"
+   "$S/evidence/sweep/team-people-onboarding-anon-desktop.png",
+   "$S/evidence/sweep/team-people-onboarding-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3513,17 +4653,17 @@
  {
   "id": "SW-167",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/pricing-rules",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/pricing-rules",
+  "title": "Rendered with content/controls: /team/people/payroll",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/payroll",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-pricing-rules-founder-android.png",
-   "$S/evidence/sweep/team-pricing-rules-founder-desktop.png"
+   "$S/evidence/sweep/team-people-payroll-anon-desktop.png",
+   "$S/evidence/sweep/team-people-payroll-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3531,17 +4671,17 @@
  {
   "id": "SW-168",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/provider-onboarding",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/provider-onboarding",
+  "title": "Rendered with content/controls: /team/people/provider-training",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/provider-training",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-provider-onboarding-founder-android.png",
-   "$S/evidence/sweep/team-provider-onboarding-founder-desktop.png"
+   "$S/evidence/sweep/team-people-provider-training-anon-desktop.png",
+   "$S/evidence/sweep/team-people-provider-training-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3549,17 +4689,17 @@
  {
   "id": "SW-169",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/provider-verification",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/provider-verification",
+  "title": "Rendered with content/controls: /team/people/reports",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/reports",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-provider-verification-founder-android.png",
-   "$S/evidence/sweep/team-provider-verification-founder-desktop.png"
+   "$S/evidence/sweep/team-people-reports-anon-desktop.png",
+   "$S/evidence/sweep/team-people-reports-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3567,17 +4707,17 @@
  {
   "id": "SW-170",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/relocation",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/relocation",
+  "title": "Rendered with content/controls: /team/people/service-incentives",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/service-incentives",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-relocation-founder-android.png",
-   "$S/evidence/sweep/team-relocation-founder-desktop.png"
+   "$S/evidence/sweep/team-people-service-incentives-anon-desktop.png",
+   "$S/evidence/sweep/team-people-service-incentives-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3585,17 +4725,17 @@
  {
   "id": "SW-171",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/relocation-enquiries",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/relocation-enquiries",
+  "title": "Rendered with content/controls: /team/people/time",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/people/time",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-relocation-enquiries-founder-android.png",
-   "$S/evidence/sweep/team-relocation-enquiries-founder-desktop.png"
+   "$S/evidence/sweep/team-people-time-anon-desktop.png",
+   "$S/evidence/sweep/team-people-time-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3603,17 +4743,17 @@
  {
   "id": "SW-172",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/revenue-mission",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/revenue-mission",
+  "title": "Rendered with content/controls: /team/performance",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/performance",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-revenue-mission-founder-android.png",
-   "$S/evidence/sweep/team-revenue-mission-founder-desktop.png"
+   "$S/evidence/sweep/team-performance-anon-desktop.png",
+   "$S/evidence/sweep/team-performance-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3621,17 +4761,17 @@
  {
   "id": "SW-173",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/sales",
-  "persona": "founder/android, founder/desktop",
-  "url": "http://127.0.0.1:8794/team/sales",
+  "title": "Rendered with content/controls: /team/pricing-rules",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/pricing-rules",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-sales-founder-android.png",
-   "$S/evidence/sweep/team-sales-founder-desktop.png"
+   "$S/evidence/sweep/team-pricing-rules-anon-desktop.png",
+   "$S/evidence/sweep/team-pricing-rules-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3639,16 +4779,17 @@
  {
   "id": "SW-174",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/sales/cross-sell",
-  "persona": "founder/desktop",
-  "url": "http://127.0.0.1:8794/team/sales/cross-sell",
+  "title": "Rendered with content/controls: /team/provider-onboarding",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/provider-onboarding",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-sales-cross-sell-founder-desktop.png"
+   "$S/evidence/sweep/team-provider-onboarding-anon-desktop.png",
+   "$S/evidence/sweep/team-provider-onboarding-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3656,16 +4797,17 @@
  {
   "id": "SW-175",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/sales/power-dialler",
-  "persona": "founder/desktop",
-  "url": "http://127.0.0.1:8794/team/sales/power-dialler",
+  "title": "Rendered with content/controls: /team/provider-verification",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/provider-verification",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-sales-power-dialler-founder-desktop.png"
+   "$S/evidence/sweep/team-provider-verification-anon-desktop.png",
+   "$S/evidence/sweep/team-provider-verification-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3673,16 +4815,17 @@
  {
   "id": "SW-176",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/scheduling",
-  "persona": "founder/desktop",
-  "url": "http://127.0.0.1:8794/team/scheduling",
+  "title": "Rendered with content/controls: /team/relocation",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/relocation",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-scheduling-founder-desktop.png"
+   "$S/evidence/sweep/team-relocation-anon-desktop.png",
+   "$S/evidence/sweep/team-relocation-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3690,16 +4833,17 @@
  {
   "id": "SW-177",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/subscription-plans",
-  "persona": "founder/desktop",
-  "url": "http://127.0.0.1:8794/team/subscription-plans",
+  "title": "Rendered with content/controls: /team/relocation-enquiries",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/relocation-enquiries",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-subscription-plans-founder-desktop.png"
+   "$S/evidence/sweep/team-relocation-enquiries-anon-desktop.png",
+   "$S/evidence/sweep/team-relocation-enquiries-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3707,16 +4851,17 @@
  {
   "id": "SW-178",
   "status": "pass",
-  "title": "Rendered with content/controls: /team/subscriptions",
-  "persona": "founder/desktop",
-  "url": "http://127.0.0.1:8794/team/subscriptions",
+  "title": "Rendered with content/controls: /team/revenue-mission",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/revenue-mission",
   "steps": [
    "load, network idle, measure text/controls/errors"
   ],
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/team-subscriptions-founder-desktop.png"
+   "$S/evidence/sweep/team-revenue-mission-anon-desktop.png",
+   "$S/evidence/sweep/team-revenue-mission-founder-android.png"
   ],
   "severity": "—",
   "class": "UI"
@@ -3724,8 +4869,224 @@
  {
   "id": "SW-179",
   "status": "pass",
+  "title": "Rendered with content/controls: /team/sales",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/sales",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-sales-anon-desktop.png",
+   "$S/evidence/sweep/team-sales-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-180",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/sales/cross-sell",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/sales/cross-sell",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-sales-cross-sell-anon-desktop.png",
+   "$S/evidence/sweep/team-sales-cross-sell-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-181",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/sales/power-dialler",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/sales/power-dialler",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-sales-power-dialler-anon-desktop.png",
+   "$S/evidence/sweep/team-sales-power-dialler-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-182",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/scheduling",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/scheduling",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-scheduling-anon-desktop.png",
+   "$S/evidence/sweep/team-scheduling-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-183",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/subscription-plans",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/subscription-plans",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-subscription-plans-anon-desktop.png",
+   "$S/evidence/sweep/team-subscription-plans-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-184",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/subscriptions",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/subscriptions",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-subscriptions-anon-desktop.png",
+   "$S/evidence/sweep/team-subscriptions-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-185",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/voice",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/voice",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-voice-anon-desktop.png",
+   "$S/evidence/sweep/team-voice-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-186",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/voice/ai-test",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/voice/ai-test",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-voice-ai-test-anon-desktop.png",
+   "$S/evidence/sweep/team-voice-ai-test-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-187",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/whatsapp/analytics",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/whatsapp/analytics",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-whatsapp-analytics-anon-desktop.png",
+   "$S/evidence/sweep/team-whatsapp-analytics-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-188",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/whatsapp/automation",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/whatsapp/automation",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-whatsapp-automation-anon-desktop.png",
+   "$S/evidence/sweep/team-whatsapp-automation-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-189",
+  "status": "pass",
+  "title": "Rendered with content/controls: /team/whatsapp/templates",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/team/whatsapp/templates",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/team-whatsapp-templates-anon-desktop.png",
+   "$S/evidence/sweep/team-whatsapp-templates-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-190",
+  "status": "pass",
+  "title": "Rendered with content/controls: /test-lab",
+  "persona": "anon/desktop, founder/android, founder/desktop",
+  "url": "http://127.0.0.1:8794/test-lab",
+  "steps": [
+   "load, network idle, measure text/controls/errors"
+  ],
+  "expected": "usable screen",
+  "actual": "usable",
+  "evidence": [
+   "$S/evidence/sweep/test-lab-anon-desktop.png",
+   "$S/evidence/sweep/test-lab-founder-android.png"
+  ],
+  "severity": "—",
+  "class": "UI"
+ },
+ {
+  "id": "SW-191",
+  "status": "pass",
   "title": "Rendered with content/controls: /trainer",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/trainer",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -3739,10 +5100,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-180",
+  "id": "SW-192",
   "status": "pass",
   "title": "Rendered with content/controls: /training",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/training",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -3750,13 +5111,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/training-anon-android.png"
+   "$S/evidence/sweep/training-anon-android.png",
+   "$S/evidence/sweep/training-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-181",
+  "id": "SW-193",
   "status": "pass",
   "title": "Rendered with content/controls: /v2",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3774,7 +5136,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-182",
+  "id": "SW-194",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/account",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3792,7 +5154,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-183",
+  "id": "SW-195",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/activity",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3810,7 +5172,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-184",
+  "id": "SW-196",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/boarding",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3828,7 +5190,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-185",
+  "id": "SW-197",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/chat",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3846,7 +5208,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-186",
+  "id": "SW-198",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/control-center",
   "persona": "anon/android",
@@ -3864,7 +5226,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-187",
+  "id": "SW-199",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/crm",
   "persona": "anon/android",
@@ -3882,7 +5244,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-188",
+  "id": "SW-200",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/food",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3900,7 +5262,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-189",
+  "id": "SW-201",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/food/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3918,7 +5280,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-190",
+  "id": "SW-202",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/food/subscription-invoice",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3936,7 +5298,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-191",
+  "id": "SW-203",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/food/subscription-payment",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3954,7 +5316,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-192",
+  "id": "SW-204",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/food/subscriptions",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3972,7 +5334,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-193",
+  "id": "SW-205",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/grooming",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -3990,7 +5352,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-194",
+  "id": "SW-206",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/partner",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4008,7 +5370,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-195",
+  "id": "SW-207",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/relocation",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4026,7 +5388,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-196",
+  "id": "SW-208",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/sitting",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4044,7 +5406,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-197",
+  "id": "SW-209",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/taxi",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4062,7 +5424,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-198",
+  "id": "SW-210",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/taxi/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4080,7 +5442,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-199",
+  "id": "SW-211",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/training",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4098,7 +5460,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-200",
+  "id": "SW-212",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/walking",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4116,7 +5478,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-201",
+  "id": "SW-213",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/walking/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4134,7 +5496,7 @@
   "class": "UI"
  },
  {
-  "id": "SW-202",
+  "id": "SW-214",
   "status": "pass",
   "title": "Rendered with content/controls: /v2/workspaces",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",
@@ -4152,10 +5514,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-203",
+  "id": "SW-215",
   "status": "pass",
   "title": "Rendered with content/controls: /walker",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/walker",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -4169,10 +5531,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-204",
+  "id": "SW-216",
   "status": "pass",
   "title": "Rendered with content/controls: /walker/proof",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/walker/proof",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -4186,10 +5548,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-205",
+  "id": "SW-217",
   "status": "pass",
   "title": "Rendered with content/controls: /walker/recovery",
-  "persona": "anon/android, provider/desktop, provider/iphone",
+  "persona": "anon/android, provider/android, provider/desktop, provider/iphone",
   "url": "http://127.0.0.1:8794/walker/recovery",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -4203,10 +5565,10 @@
   "class": "UI"
  },
  {
-  "id": "SW-206",
+  "id": "SW-218",
   "status": "pass",
   "title": "Rendered with content/controls: /walking",
-  "persona": "anon/android",
+  "persona": "anon/android, anon/desktop, anon/iphone, customer/desktop",
   "url": "http://127.0.0.1:8794/walking",
   "steps": [
    "load, network idle, measure text/controls/errors"
@@ -4214,13 +5576,14 @@
   "expected": "usable screen",
   "actual": "usable",
   "evidence": [
-   "$S/evidence/sweep/walking-anon-android.png"
+   "$S/evidence/sweep/walking-anon-android.png",
+   "$S/evidence/sweep/walking-anon-desktop.png"
   ],
   "severity": "—",
   "class": "UI"
  },
  {
-  "id": "SW-207",
+  "id": "SW-219",
   "status": "pass",
   "title": "Rendered with content/controls: /walking/manage",
   "persona": "anon/android, customer/android, customer/desktop, customer/iphone",

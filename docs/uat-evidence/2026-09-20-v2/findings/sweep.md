@@ -1,12 +1,12 @@
 # UI/UX sweep — PawSpace V2 (commit a7124de, local worker http://127.0.0.1:8794)
 
-Generated 2026-09-20T07:40:50.187Z. Evidence under $S/evidence/sweep; raw data under $S/sweep (repo sweep) and $S/sweep/crawl (own crawler). $S = /tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad
+Generated 2026-09-20T08:17:49.790Z. Evidence under $S/evidence/sweep; raw data under $S/sweep (repo sweep) and $S/sweep/crawl (own crawler). $S = /tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad
 
 ## Summary
 
-- Part A (scripts/screen-sweep.mjs): 173 routes discovered from app/; runs: anon 99/173, customer 173/173, provider 173/173, founder 143/173 (a run short of 173 was still in progress at report time — see coverage gaps).
-- Part B (own crawler): 424 route×persona×viewport loads over 167 routes; 62 dead-button passes (394 buttons clicked); 124 unique links checked; 18 form probes.
-- Defects: P0 0 · P1 4 · P2 12; observations 45; passes 183.
+- Part A (scripts/screen-sweep.mjs): 173 routes discovered from app/; runs: anon 173/173, customer 173/173, provider 173/173, founder 173/173 — all four runs completed. Founder: 153 routes rendered but "network never settled" within the 12s timeout (harness load, see coverage gaps), 19 DATA of which 16 are the founder identity hitting customer/provider-scoped APIs (expected).
+- Part B (own crawler): 628 route×persona×viewport loads over 177 routes; 75 dead-button passes (455 buttons clicked); 124 unique links checked; 18 form probes.
+- Defects: P0 0 · P1 4 · P2 13; observations 120; passes 194.
 
 ## Part A — repo screen sweep (scripts/screen-sweep.mjs), verdict per persona
 
@@ -113,86 +113,88 @@ Legend: OK usable · OK* rendered but an expected-refusal API (401 customer-acco
 | /team/funeral-memorial | GATED(403) | GATED(403) | GATED(403) | OK~ |
 | /team/haptik | GATED(403) | GATED(403) | GATED(403) | OK~ |
 | /team/i18n | GATED(403) | GATED(403) | GATED(403) | OK~ |
-| /team/lifecycle-reminders | — | GATED(403) | GATED(403) | OK~ |
-| /team/marketing | — | GATED(403) | GATED(403) | OK~ |
-| /team/marketing/content | — | GATED(403) | GATED(403) | OK~ |
-| /team/meet-and-greet | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations | — | OK | OK | OK~ |
-| /team/operations/boarding | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/bookings | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/food | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/food/fulfilment | — | OK | OK | OK~ |
-| /team/operations/food/proof | — | OK | OK | OK~ |
-| /team/operations/food/supply-chain | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/sitting | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/taxi | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/training | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/walking | — | GATED(403) | GATED(403) | OK~ |
-| /team/operations/work-queue | — | GATED(403) | GATED(403) | OK~ |
-| /team/people | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/finance | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/incentives | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/manager-dashboard | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/onboarding | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/payroll | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/provider-training | — | GATED(403) | OK | OK~ |
-| /team/people/reports | — | GATED(403) | GATED(403) | OK~ |
-| /team/people/service-incentives | — | OK | OK | OK~ |
-| /team/people/time | — | GATED(403) | GATED(403) | OK~ |
-| /team/performance | — | GATED(403) | GATED(403) | OK~ |
-| /team/pricing-rules | — | GATED(403) | GATED(403) | OK~ |
-| /team/provider-onboarding | — | GATED(403) | GATED(403) | OK~ |
-| /team/provider-verification | — | GATED(403) | GATED(403) | OK~ |
-| /team/relocation | — | GATED(403) | GATED(403) | OK~ |
-| /team/relocation-enquiries | — | GATED(403) | GATED(403) | OK~ |
-| /team/revenue-mission | — | GATED(403) | GATED(403) | OK~ |
-| /team/sales | — | GATED(403) | GATED(403) | OK~ |
-| /team/sales/cross-sell | — | GATED(403) | GATED(403) | OK~ |
-| /team/sales/power-dialler | — | GATED(403) | GATED(403) | OK~ |
-| /team/scheduling | — | GATED(403) | GATED(403) | OK~ |
-| /team/subscription-plans | — | GATED(403) | GATED(403) | OK~ |
-| /team/subscriptions | — | OK | OK | OK~ |
-| /team/voice | — | GATED(403) | GATED(403) | OK~ |
-| /team/voice/ai-test | — | GATED(403) | GATED(403) | OK~ |
-| /team/whatsapp/analytics | — | GATED(403) | GATED(403) | OK~ |
-| /team/whatsapp/automation | — | GATED(403) | GATED(403) | OK~ |
-| /team/whatsapp/templates | — | GATED(403) | GATED(403) | OK~ |
-| /test-lab | — | OK | OK | — |
-| /trainer | — | OK | OK | — |
-| /training | — | OK | OK* | — |
-| /v2 | — | OK | OK | — |
-| /v2/account | — | OK | OK | — |
-| /v2/activity | — | OK | OK | — |
-| /v2/boarding | — | OK | GATED(403) | — |
-| /v2/chat | — | OK | OK | — |
-| /v2/control-center | — | GATED(403) | GATED(403) | — |
-| /v2/crm | — | GATED(403) | GATED(403) | — |
-| /v2/food | — | OK | GATED(403) | — |
-| /v2/food/manage | — | OK | OK | — |
-| /v2/food/subscription-invoice | — | OK | OK | — |
-| /v2/food/subscription-payment | — | OK | OK | — |
-| /v2/food/subscriptions | — | OK | OK | — |
-| /v2/grooming | — | OK | GATED(403) | — |
-| /v2/partner | — | OK | OK~ | — |
-| /v2/relocation | — | OK | GATED(403) | — |
-| /v2/sitting | — | OK | GATED(403) | — |
-| /v2/taxi | — | OK | GATED(403) | — |
-| /v2/taxi/manage | — | OK | OK | — |
-| /v2/training | — | OK | GATED(403) | — |
-| /v2/walking | — | OK | GATED(403) | — |
-| /v2/walking/manage | — | OK | OK | — |
-| /v2/workspaces | — | OK | OK | — |
-| /walker | — | OK | OK | — |
-| /walker/proof | — | OK | OK | — |
-| /walker/recovery | — | OK | OK | — |
-| /walking | — | OK | OK* | — |
-| /walking/manage | — | OK | OK | — |
+| /team/lifecycle-reminders | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/marketing | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/marketing/content | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/meet-and-greet | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations | GATED | OK | OK | OK~ |
+| /team/operations/boarding | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/bookings | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/food | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/food/fulfilment | GATED | OK | OK | OK~ |
+| /team/operations/food/proof | GATED | OK | OK | OK~ |
+| /team/operations/food/supply-chain | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/sitting | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/taxi | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/training | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/walking | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/operations/work-queue | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/finance | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/incentives | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/manager-dashboard | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/onboarding | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/payroll | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/provider-training | GATED(403) | GATED(403) | OK | OK~ |
+| /team/people/reports | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/people/service-incentives | GATED | OK | OK | OK~ |
+| /team/people/time | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/performance | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/pricing-rules | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/provider-onboarding | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/provider-verification | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/relocation | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/relocation-enquiries | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/revenue-mission | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/sales | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/sales/cross-sell | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/sales/power-dialler | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/scheduling | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/subscription-plans | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/subscriptions | GATED | OK | OK | OK~ |
+| /team/voice | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/voice/ai-test | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/whatsapp/analytics | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/whatsapp/automation | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /team/whatsapp/templates | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /test-lab | GATED | OK | OK | OK~ |
+| /trainer | GATED | OK | OK | OK~ |
+| /training | OK* | OK | OK* | OK* |
+| /v2 | GATED | OK | OK | OK~ |
+| /v2/account | GATED | OK | OK | OK~ |
+| /v2/activity | GATED | OK | OK | OK~ |
+| /v2/boarding | OK* | OK | GATED(403) | OK* |
+| /v2/chat | GATED | OK | OK | OK~ |
+| /v2/control-center | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /v2/crm | GATED(403) | GATED(403) | GATED(403) | OK~ |
+| /v2/food | OK* | OK | GATED(403) | OK* |
+| /v2/food/manage | GATED | OK | OK | OK~ |
+| /v2/food/subscription-invoice | GATED | OK | OK | OK~ |
+| /v2/food/subscription-payment | GATED | OK | OK | OK~ |
+| /v2/food/subscriptions | GATED | OK | OK | OK~ |
+| /v2/grooming | DATA | OK | GATED(403) | OK~ |
+| /v2/partner | GATED | OK | OK~ | OK~ |
+| /v2/relocation | OK* | OK | GATED(403) | OK* |
+| /v2/sitting | OK* | OK | GATED(403) | OK* |
+| /v2/taxi | OK* | OK | GATED(403) | OK* |
+| /v2/taxi/manage | GATED | OK | OK | OK~ |
+| /v2/training | OK* | OK | GATED(403) | OK* |
+| /v2/walking | OK* | OK | GATED(403) | OK* |
+| /v2/walking/manage | GATED | OK | OK | OK~ |
+| /v2/workspaces | GATED | OK | OK | OK~ |
+| /walker | GATED | OK | OK | OK~ |
+| /walker/proof | GATED | OK | OK | OK~ |
+| /walker/recovery | GATED | OK | OK | OK~ |
+| /walking | OK* | OK | OK* | OK* |
+| /walking/manage | GATED | OK | OK | OK~ |
 
 ### Part A — routes not OK (with excerpt)
 
-**founder** (3 not OK; 0 gated by role as expected; 132 rendered-but-slow)
+Note: a founder is a staff identity with no customer/provider scope, so founder DATA verdicts on /partner/*, /v2/* customer pages and /mobile-app (401/400/403 from customer- or provider-scoped APIs) are expected refusals and are folded into OK*/GATED below; only the remainder is listed.
 
-- DATA /partner/rates — API 400 /api/provider-service-rates
+**founder** (3 not OK; 0 gated by role as expected; 153 rendered-but-slow)
+
+- DATA /partner/rates — API 400 /api/provider-service-rates — "PAWSPACE PARTNER · PRICING Set your Boarding & Sitting rates PawSpace sets the minimum. Eligible commission partners may compete above it. Full-time team member"
 - DATA /team/customer-experience — API 409 /api/whatsapp/conversation-control?threadId=THREAD-BOOKING-PS-UAT-TAXI-MU9I73T4-1124 — "OPERATIONS ⌂ Overview ▦ Operations ▤ Day board ◉ CX queue ◆ Cases ◈ Reminders ⌾ Meet & greet ▣ Subscriptions ▲ Performance ◐ Marketing ☗ People ₹ Finance ◎ Anal"
 - DATA /team/daily-revenue — API 500 /api/revenue-crm — "← Team PAWSPACE · DAILY REVENUE PRIORITY Today's prioritised revenue opportunities Real customer scoring, real open inbound leads and real subscription renewals"
 
@@ -204,10 +206,11 @@ Legend: OK usable · OK* rendered but an expected-refusal API (401 customer-acco
 - DATA /partner/funeral — API 403 /api/funeral-memorial — "Partner FUNERAL / MEMORIAL COORDINATION · UAT Assigned service requests Use confirmed milestones only. Customer calling and external messaging remain dependent "
 - DATA /partner/rates — API 403 /api/provider-service-rates — "PAWSPACE PARTNER · PRICING Set your Boarding & Sitting rates PawSpace sets the minimum. Eligible commission partners may compete above it. Full-time team member"
 
-**anon** (2 not OK; 89 gated by role as expected; 0 rendered-but-slow)
+**anon** (3 not OK; 153 gated by role as expected; 0 rendered-but-slow)
 
-- DATA /account — API 401 /api/mobile-employee-ai
-- DATA /mobile-app — API 401 /api/mobile-employee-ai
+- DATA /account — API 401 /api/mobile-employee-ai — "PawSpace Your Petter half ● Care at · Choose your area Choose your neighbourhood P ⌕ Welcome to your Petter half. Add your pet ＋ ♡ Pet-first care ✓ Clear packag"
+- DATA /mobile-app — API 401 /api/mobile-employee-ai — "PawSpace Your Petter half ● Care at · Choose your area Choose your neighbourhood P ⌕ Welcome to your Petter half. Add your pet ＋ ♡ Pet-first care ✓ Clear packag"
+- DATA /v2/grooming — API 401 /api/v2/grooming-catalogue — "PAWSPACE V2 · GROOMING We can’t begin this booking yet. Your staging sign-in has expired. Open /staging-login to sign in again. Back to PawSpace V2 Try again © "
 
 ## Part B — own crawler, verdict per persona × viewport
 
@@ -215,51 +218,51 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 
 | route | customer D/A/I | provider D/A/I | founder D/A/I | anon D/A/I | flags |
 |---|---|---|---|---|---|
-| / | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /about | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
+| / | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /about | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /account | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /admin | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /assisted-booking | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /boarding | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
+| /admin | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /assisted-booking | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
+| /boarding | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /boarding/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /booking-command-center | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /business | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /careers | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /chat | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /contact | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /control | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· | ERR |
-| /control/appearance | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /control/integrations | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /control/provider-onboarding | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /crm | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· | ERR |
-| /discover | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /dog-breeds/labrador-retriever | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /driver | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /driver/proof | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /driver/recovery | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /food | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
+| /booking-command-center | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /business | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /careers | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /chat | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /contact | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /control | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | ERR |
+| /control/appearance | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /control/integrations | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /control/provider-onboarding | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /crm | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | ERR |
+| /discover | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /dog-breeds/labrador-retriever | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /driver | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /driver/proof | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /driver/recovery | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /food | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /food/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /food/subscriptions | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /funeral-memorial | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /groomer | ·/·/· | OK~/·/OK~ | ·/·/· | ·/OK~/· |  |
-| /grooming | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
+| /funeral-memorial | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /groomer | ·/·/· | OK~/OK~/OK~ | ·/·/· | ·/OK~/· |  |
+| /grooming | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /grooming/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /host | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /host/proof | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /landing-pages | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /leaderboard | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /legal/data-processing | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /legal/privacy | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /legal/terms | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /locations/bengaluru/hsr-layout/pet-grooming | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /me | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
+| /host | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /host/proof | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /landing-pages | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /leaderboard | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /legal/data-processing | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /legal/privacy | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /legal/terms | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /locations/bengaluru/hsr-layout/pet-grooming | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /me | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
 | /mobile-app | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /mobile-app/booking-confirmation | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /mobile-app#tab=Account | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· | A11Y 1 |
 | /mobile-app#tab=Activity | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /mobile-app#tab=Book | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /mobile-app#tab=My Pets | OK~/OK~/OK~ | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /ops | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
+| /ops | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
 | /partner | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
 | /partner-app | ·/·/· | OK~/OK~/OK~ | ·/·/· | ·/OK~/· |  |
 | /partner-app#tab=Earnings | ·/·/· | OK~/OK~/OK~ | ·/·/· | ·/OK~/· |  |
@@ -272,89 +275,99 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 | /partner/onboarding | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
 | /partner/rates | ·/·/· | DATA/DATA/DATA | ·/·/· | ·/OK~/· |  |
 | /partner/workspace | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
-| /relocation | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /relocation-enquiry | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /services | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· |  |
-| /services/grooming | ·/·/· | ·/·/· | ·/·/· | OK~/OK~/· | PH |
-| /sitter | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /sitter/proof | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /sitting | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
+| /platform-api | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /prelaunch | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /regression-lab | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /relocation | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /relocation-enquiry | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ | ERR |
+| /services | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
+| /services/grooming | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ | PH |
+| /sitter | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /sitter/proof | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /sitting | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /sitting/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /staging-login | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /taxi | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· | CTA |
+| /staging-login | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /system-integration | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /taxi | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ | CTA |
 | /taxi/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /team | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/acquisition-funnel | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/ai | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/ai/analytics | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/ai/configuration | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/ai/handoff | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/ai/rollout | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/alerts | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/analytics | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/bot-call-outcomes | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/cases | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/catalogue | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/customer-experience | ·/·/· | ·/·/· | DATA/OK~/· | ·/·/· | ERR |
-| /team/customer-reminders | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/daily-revenue | ·/·/· | ·/·/· | DATA/DATA/· | ·/·/· | ERR |
-| /team/finance | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance-compliance | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/cash-flow | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/food | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/funeral-memorial | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/partners | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/relocation | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/sitting | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/statutory | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/taxi | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/training | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/unit-economics | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/finance/walking | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/funeral-memorial | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/haptik | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/i18n | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/lifecycle-reminders | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/marketing | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/marketing/content | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/meet-and-greet | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/boarding | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/bookings | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/food | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/food/fulfilment | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/food/proof | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/food/supply-chain | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/sitting | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/taxi | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/training | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/walking | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/operations/work-queue | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/finance | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/incentives | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/manager-dashboard | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/onboarding | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/payroll | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/provider-training | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/reports | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/service-incentives | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/people/time | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/performance | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/pricing-rules | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/provider-onboarding | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/provider-verification | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/relocation | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/relocation-enquiries | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/revenue-mission | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· | PH |
-| /team/sales | ·/·/· | ·/·/· | OK~/OK~/· | ·/·/· |  |
-| /team/sales/cross-sell | ·/·/· | ·/·/· | OK~/·/· | ·/·/· |  |
-| /team/sales/power-dialler | ·/·/· | ·/·/· | OK~/·/· | ·/·/· |  |
-| /team/scheduling | ·/·/· | ·/·/· | OK~/·/· | ·/·/· |  |
-| /team/subscription-plans | ·/·/· | ·/·/· | OK~/·/· | ·/·/· |  |
-| /team/subscriptions | ·/·/· | ·/·/· | OK~/·/· | ·/·/· |  |
-| /trainer | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /training | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
+| /team | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
+| /team/acquisition-funnel | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/ai | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/ai/analytics | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/ai/configuration | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
+| /team/ai/handoff | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/ai/rollout | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/alerts | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/analytics | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/bot-call-outcomes | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/cases | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
+| /team/catalogue | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/customer-experience | ·/·/· | ·/·/· | DATA/DATA/· | OK~/·/· | ERR |
+| /team/customer-reminders | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/daily-revenue | ·/·/· | ·/·/· | DATA/DATA/· | OK~/·/· | ERR |
+| /team/finance | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance-compliance | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/cash-flow | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/food | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/funeral-memorial | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/partners | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/relocation | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/sitting | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/statutory | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/taxi | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/training | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/unit-economics | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/finance/walking | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/funeral-memorial | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/haptik | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/i18n | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/lifecycle-reminders | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/marketing | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/marketing/content | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/meet-and-greet | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/operations | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/boarding | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/bookings | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/food | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/food/fulfilment | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/food/proof | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/food/supply-chain | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/sitting | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/taxi | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/training | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/walking | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/operations/work-queue | ·/·/· | ·/·/· | OK~/OK~/OK~ | OK~/·/· |  |
+| /team/people | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/finance | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/incentives | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/manager-dashboard | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/onboarding | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/payroll | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/provider-training | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/reports | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/service-incentives | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/people/time | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/performance | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/pricing-rules | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/provider-onboarding | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/provider-verification | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/relocation | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/relocation-enquiries | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/revenue-mission | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | PH |
+| /team/sales | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/sales/cross-sell | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/sales/power-dialler | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/scheduling | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/subscription-plans | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/subscriptions | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/voice | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· | LOAD |
+| /team/voice/ai-test | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/whatsapp/analytics | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/whatsapp/automation | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /team/whatsapp/templates | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /test-lab | ·/·/· | ·/·/· | OK~/OK~/· | OK~/·/· |  |
+| /trainer | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /training | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /v2 | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /v2/account | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· | CTA |
 | /v2/activity | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
@@ -377,10 +390,10 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 | /v2/walking | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /v2/walking/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 | /v2/workspaces | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
-| /walker | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /walker/proof | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /walker/recovery | ·/·/· | OK/·/OK | ·/·/· | ·/OK~/· |  |
-| /walking | ·/·/· | ·/·/· | ·/·/· | ·/OK~/· |  |
+| /walker | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /walker/proof | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /walker/recovery | ·/·/· | OK/OK/OK | ·/·/· | ·/OK~/· |  |
+| /walking | OK/·/· | ·/·/· | ·/·/· | OK~/OK~/OK~ |  |
 | /walking/manage | OK/OK/OK | ·/·/· | ·/·/· | ·/OK~/· |  |
 
 ## Defects
@@ -403,6 +416,7 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 | SW-021 | P2 | UI | V2 customer shell on phone: the ◇ and ◐ floating buttons sit on top of the bottom navigation and cover the 'Account' tab | customer/android | $S/evidence/sweep/v2-customer-android.png |
 | SW-022 | P2 | UI | /control/integrations on phone: sub-navigation pills overlap ('Integration readiness' drawn over 'Launch essentials' and 'Legacy system'); register cards render in a faded state | founder/android | $S/evidence/sweep/control-integrations-founder-android.png |
 | SW-023 | P2 | backend | OTP verify with a wrong or unknown code answers HTTP 500 (customer and partner) and logs an api_failure error on every mistyped code | anon/android (UI) + curl | $S/evidence/sweep/form-otp-wrongcode.png |
+| SW-024 | P2 | wiring | /team/customer-experience probes WhatsApp conversation-control for every open thread, including non-WhatsApp ones, and gets 409 on each load | founder/android, founder/desktop | $S/evidence/sweep/team-customer-experience-founder-android.png |
 | SW-015 | P2 (obs) | UI | Fixed element covers primary control: <div>Bengaluru East · medium UAT route · ₹0 due now · Maps n | anon/android, customer/android | $S/evidence/sweep/v2-taxi-anon-android.png |
 | SW-016 | P2 (obs) | UI | Fixed element covers primary control: <a href="/v2"><strong>⌂</strong>Home</a> | customer/android | $S/evidence/sweep/v2-account-customer-android.png |
 
@@ -542,6 +556,14 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 - Actual: 500 {"error":"Incorrect OTP code"} and 500 {"error":"OTP challenge not found"} on both endpoints (reproduced 3/3 by curl; first seen from the /mobile-app Account tab during the wrong-code probe at 07:24:05Z, serve.log line 38250). The UI still shows 'Incorrect OTP code', so users are not blocked, but every mistyped OTP is recorded as a server error (lib/customer-otp.ts:59/66 throw plain Errors that the route maps to 500).
 - Evidence: $S/evidence/sweep/form-otp-wrongcode.png, $S/servers/sweep/serve.log:38250
 
+**SW-024 · P2 · wiring · defect** — /team/customer-experience probes WhatsApp conversation-control for every open thread, including non-WhatsApp ones, and gets 409 on each load
+- Persona: founder/android, founder/desktop
+- URL: http://127.0.0.1:8794/team/customer-experience
+- Steps: Sign in as founder → open /team/customer-experience → watch the network panel
+- Expected: The CX queue only calls WhatsApp control for WhatsApp threads (or tolerates the refusal without an error)
+- Actual: GET /api/whatsapp/conversation-control?threadId=… -> 409 {"error":"Conversation is not a WhatsApp thread"} for 4 thread(s): THREAD-BOOKING-PS-UAT-TAXI-MU9I73T4-1124, UATD-TH-4, UATD-TH-3, UATD-TH-2; console logs a failed resource each time and scripts/screen-sweep.mjs marks the page DATA
+- Evidence: $S/evidence/sweep/team-customer-experience-founder-android.png, $S/evidence/sweep/team-customer-experience-founder-desktop.png
+
 **SW-015 · P2 · UI · observation** — Fixed element covers primary control: <div>Bengaluru East · medium UAT route · ₹0 due now · Maps n
 - Persona: anon/android, customer/android
 - URL: /v2/taxi, /v2/taxi, /taxi
@@ -574,8 +596,8 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 | address form | observation | error: no add-address button found on Account tab |  |
 | support case: submit empty | defect | blocked: 'Submit report' could not be clicked — covered by the fixed Privacy choices banner (see defect); button is disabled until fields are filled | $S/evidence/sweep/form-support-empty.png |
 | contact form: submit empty | pass | submit empty: native (Please fill out this field.) (posted 0) | $S/evidence/sweep/form-contact-empty.png |
-| relocation enquiry form | observation | error: no form for anon |  |
-| business lead form | observation | error: no form on /business |  |
+| relocation enquiry form | observation | not verified: no <form> element on the page; an empty submit reaches the server and gets 400 'Customer name is required' (see observations); rendering of that m |  |
+| business lead form | observation | n/a: /business is a hub page with no lead form (nothing to validate) |  |
 | address form: Save address with empty fields | pass | native (Please fill out this field.) | $S/evidence/sweep/form-address-empty.png |
 | profile form: Save profile with empty name | pass | native (Please fill out this field.) | $S/evidence/sweep/form-profile-empty.png |
 | support: open 24/7 help & support | pass | pass: opens 'Report an issue' sheet | $S/evidence/sweep/form-support-open.png |
@@ -583,101 +605,176 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 
 ## Observations
 
-- SW-212 /me (My workspace) is an empty state for founder@pawspace.in: "No employee record linked yet" — Honest empty state (self-explaining), but the founder persona cannot exercise salary/payslips/incentives/leave from /me; use an employee persona (e.g. asha.groomer1) for that module [http://127.0.0.1:8794/me]
-- SW-213 Expected-refusal API noise: 401 /api/identity-session (anon) on 132 route(s) — 401 /api/identity-session (anon) on 85 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /mobile-app/booking-confirmation, /v2, /v2/account, /v2/activity, /v2/boarding]
-- SW-214 Expected-refusal API noise: 401 /api/mobile-employee-ai (anon) on 6 route(s) — 401 /api/mobile-employee-ai (anon) on 6 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account]
-- SW-215 Expected-refusal API noise: 401 /api/customer-account (anon) on 17 route(s) — 401 /api/customer-account (anon) on 16 routes (page still renders) [/v2/boarding, /v2/food, /v2/relocation, /v2/sitting, /v2/taxi, /v2/training, /v2/walking, /, /training, /boarding]
-- SW-216 Expected-refusal API noise: 401 /api/booking-command-center/stream (anon) on 1 route(s) — 401 /api/booking-command-center/stream (anon) on 1 routes (page still renders) [/v2/control-center]
-- SW-217 Expected-refusal API noise: 401 /api/booking-command-center (anon) on 1 route(s) — 401 /api/booking-command-center (anon) on 1 routes (page still renders) [/v2/control-center]
-- SW-218 Expected-refusal API noise: 401 /api/crm (anon) on 1 route(s) — 401 /api/crm (anon) on 1 routes (page still renders) [/v2/crm]
-- SW-219 Expected-refusal API noise: 401 /api/v2/grooming-catalogue (anon) on 1 route(s) — 401 /api/v2/grooming-catalogue (anon) on 1 routes (page still renders) [/v2/grooming]
-- SW-220 Expected-refusal API noise: 403 /api/mobile-employee-ai (customer) on 23 route(s) — 403 /api/mobile-employee-ai (customer) on 6 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account]
-- SW-221 Expected-refusal API noise: 401 /api/partner-job-feed (anon) on 1 route(s) — 401 /api/partner-job-feed (anon) on 1 routes (page still renders) [/partner/jobs]
-- SW-222 Expected-refusal API noise: 401 /api/provider-workspace (anon) on 1 route(s) — 401 /api/provider-workspace (anon) on 1 routes (page still renders) [/partner/workspace]
-- SW-223 Expected-refusal API noise: 401 /api/provider-service-rates (anon) on 1 route(s) — 401 /api/provider-service-rates (anon) on 1 routes (page still renders) [/partner/rates]
-- SW-224 Expected-refusal API noise: 401 /api/funeral-memorial (anon) on 1 route(s) — 401 /api/funeral-memorial (anon) on 1 routes (page still renders) [/partner/funeral]
-- SW-225 Expected-refusal API noise: 401 /api/boarding-stays (anon) on 1 route(s) — 401 /api/boarding-stays (anon) on 1 routes (page still renders) [/host]
-- SW-226 Expected-refusal API noise: 401 /api/identity-session (founder) on 175 route(s) — 401 /api/identity-session (founder) on 82 routes (page still renders) [/staging-login, /me, /team, /crm, /control, /control/appearance, /control/integrations, /control/provider-onboarding, /booking-command-center, /ops]
-- SW-227 Console error: Failed to load resource 401/403 (expected refusals, see API-noise observations) — Failed to load resource 401/403 (expected refusals, see API-noise observations) (286 occurrence(s)) [/mobile-app anon/android, /mobile-app#tab=Book anon/android, /mobile-app#tab=Activity anon/android, /mobile-app#tab=My Pets anon/android, /mobile-app#tab=Account anon/android, /mobile-app/booking-confirmation anon/android]
-- SW-228 Console error: Failed to load resource: the server responded with a status of # (Internal Server Error) — Failed to load resource: the server responded with a status of # (Internal Server Error) (4 occurrence(s)) [/team/daily-revenue founder/android, /crm founder/desktop, /control founder/desktop, /team/daily-revenue founder/desktop]
-- SW-229 Console error: Failed to load resource: the server responded with a status of # (Conflict) — Failed to load resource: the server responded with a status of # (Conflict) (1 occurrence(s)) [/team/customer-experience founder/desktop]
-- SW-230 32 control(s) under 44px on phone: /control — ⌂ (78x38); ◎ (78x38); ⛓ (78x38); ✓ (78x38); ▥ (78x38); ◷ (78x38) [http://127.0.0.1:8794/control]
-- SW-231 27 control(s) under 44px on phone: /control/integrations — Update (12x144) [http://127.0.0.1:8794/control/integrations]
-- SW-232 15 control(s) under 44px on phone: /team/customer-experience — All (47x38); WhatsApp (104x38); Unassigned (114x38); Human owned (133x38); Previous page (131x36); Next page (102x36) [http://127.0.0.1:8794/team/customer-experience]
-- SW-233 14 control(s) under 44px on phone: /booking-command-center — All bookings (106x40); Needs attention (132x40); Payment pending (145x40); Confirmed (94x40); Completed (97x40); ☎ Call (175x33) [http://127.0.0.1:8794/booking-command-center]
-- SW-234 14 control(s) under 44px on phone: /team/ai — Approve (83x40); Reject (69x40) [http://127.0.0.1:8794/team/ai]
-- SW-235 14 control(s) under 44px on phone: /team/finance-compliance — Record filing (122x38) [http://127.0.0.1:8794/team/finance-compliance]
-- SW-236 14 control(s) under 44px on phone: /team/operations/bookings — All bookings (106x40); Needs attention (132x40); Payment pending (145x40); Confirmed (94x40); Completed (97x40); ☎ Call (175x33) [http://127.0.0.1:8794/team/operations/bookings]
-- SW-237 13 control(s) under 44px on phone: /team/people/service-incentives — Groomer (100x40); Trainer (86x40); Sales (73x40); Load groomer breakdown (220x38); Save bracket (127x38); Save target (118x38) [http://127.0.0.1:8794/team/people/service-incentives]
-- SW-238 9 control(s) under 44px on phone: /v2/walking — One-time walk (165x35); Recurring starter schedule (165x35); Mon (40x38); Tue (40x38); Wed (40x38); Thu (40x38) [http://127.0.0.1:8794/v2/walking]
-- SW-239 8 control(s) under 44px on phone: /team/haptik — Refresh (90x42); New lead follow-up (83x40); Grooming due reminder (83x40); Dog training cross-sell (83x40); Dog walking cross-sell (83x40); Pet boarding cross-sell (83x40) [http://127.0.0.1:8794/team/haptik]
-- SW-240 8 control(s) under 44px on phone: /team/operations/work-queue — All (49x40); Operations (111x40); Finance (87x40); Qc (49x40); Sales Relocation (151x40); Retention (102x40) [http://127.0.0.1:8794/team/operations/work-queue]
-- SW-241 8 control(s) under 44px on phone: /team/people/incentives — Reverse (89x40); Submit resolution (161x40); Cancel (79x40); Approve (91x40); Open dispute (128x40) [http://127.0.0.1:8794/team/people/incentives]
-- SW-242 8 control(s) under 44px on phone: /team/pricing-rules — Sun (53x36); Mon (55x36); Tue (50x36); Wed (55x36); Thu (52x36); Fri (45x36) [http://127.0.0.1:8794/team/pricing-rules]
-- SW-243 7 control(s) under 44px on phone: /mobile-app#tab=Activity — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); Active & upcoming (121x37) [http://127.0.0.1:8794/mobile-app#tab=Activity]
-- SW-244 7 control(s) under 44px on phone: /mobile-app#tab=Account — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); ◐ System (109x33) [http://127.0.0.1:8794/mobile-app#tab=Account]
-- SW-245 7 control(s) under 44px on phone: /walking — Mon (40x38); Tue (40x38); Wed (40x38); Thu (40x38); Fri (40x38); Sat (40x38) [http://127.0.0.1:8794/walking]
-- SW-246 7 control(s) under 44px on phone: /team/cases — Open (66x36); Critical (81x38); Unowned (97x38); All (49x38); Sync refunds / SLA / reconcili (274x36); Run escalations (142x36) [http://127.0.0.1:8794/team/cases]
-- SW-247 7 control(s) under 44px on phone: /team/i18n — AI draft (70x36) [http://127.0.0.1:8794/team/i18n]
-- SW-248 7 control(s) under 44px on phone: /team/performance — 7 days (77x38); 30 days (84x36); 90 days (86x38); Refresh (84x36); Remove (86x36); Add to sales team (160x38) [http://127.0.0.1:8794/team/performance]
-- SW-249 6 control(s) under 44px on phone: /v2/boarding — Retry account (99x24); ＋ 24/7 supervision (80x27); ＋ Medication (63x27); ＋ Two daily walks (77x27); ＋ No resident pets (80x27); ＋ Senior care (65x27) [http://127.0.0.1:8794/v2/boarding]
-- SW-250 6 control(s) under 44px on phone: /v2/sitting — Retry account (99x24); ＋ 24/7 supervision (80x27); ＋ Medication (63x27); ＋ Two daily walks (77x27); ＋ No resident pets (80x27); ＋ Senior care (65x27) [http://127.0.0.1:8794/v2/sitting]
-- SW-251 5 control(s) under 44px on phone: /mobile-app#tab=My Pets — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); Edit (61x38) [http://127.0.0.1:8794/mobile-app#tab=My Pets]
-- SW-252 5 control(s) under 44px on phone: /team/alerts — open (66x40); critical (80x40); acknowledged (135x40); all (48x40); Check SLA now (141x40) [http://127.0.0.1:8794/team/alerts]
-- SW-253 5 control(s) under 44px on phone: /team/customer-reminders — Save cadence policy (174x36); Run sweep now (143x38); All (47x36); Queued (86x38); Suppressed (115x38) [http://127.0.0.1:8794/team/customer-reminders]
-- SW-254 5 control(s) under 44px on phone: /team/finance/training — Refresh (36x278); Issue UAT invoice (30x322); Approve sandbox instruction (30x524) [http://127.0.0.1:8794/team/finance/training]
+- SW-224 /food: first product card ('Adult Dog Food · UAT 2 kg') produced no effect when clicked — most likely the pre-selected card (the other two cards did switch selection); NOT verified — No URL/DOM/network effect in 1.5s; sibling cards 'Adult Cat Food' and 'Puppy Food' each mutated the DOM. Re-check in the browser was not possible: the local worker on :8794 was refusing connections (E [http://127.0.0.1:8794/food]
+- SW-225 /relocation-enquiry: the enquiry inputs are not inside a <form>, so an empty 'submit' goes straight to the server, which answers 400 {"error":"Customer name is required"}; whether that message is rendered was NOT verified — POST /api/relocation-enquiry -> 400 'Customer name is required' (seen during the dead-button pass); the forms probe found no <form> element (page.locator('form').count() = 0). The server was down (ERR [http://127.0.0.1:8794/relocation-enquiry]
+- SW-226 /me (My workspace) is an empty state for founder@pawspace.in: "No employee record linked yet" — Honest empty state (self-explaining), but the founder persona cannot exercise salary/payslips/incentives/leave from /me; use an employee persona (e.g. asha.groomer1) for that module [http://127.0.0.1:8794/me]
+- SW-227 Expected-refusal API noise: 401 /api/identity-session (anon) on 278 route(s) — 401 /api/identity-session (anon) on 177 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /mobile-app/booking-confirmation, /v2, /v2/account, /v2/activity, /v2/boarding]
+- SW-228 Expected-refusal API noise: 401 /api/mobile-employee-ai (anon) on 7 route(s) — 401 /api/mobile-employee-ai (anon) on 7 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account, /discover]
+- SW-229 Expected-refusal API noise: 401 /api/customer-account (anon) on 34 route(s) — 401 /api/customer-account (anon) on 16 routes (page still renders) [/v2/boarding, /v2/food, /v2/relocation, /v2/sitting, /v2/taxi, /v2/training, /v2/walking, /, /training, /boarding]
+- SW-230 Expected-refusal API noise: 401 /api/booking-command-center/stream (anon) on 3 route(s) — 401 /api/booking-command-center/stream (anon) on 3 routes (page still renders) [/v2/control-center, /booking-command-center, /team/operations/bookings]
+- SW-231 Expected-refusal API noise: 401 /api/booking-command-center (anon) on 3 route(s) — 401 /api/booking-command-center (anon) on 3 routes (page still renders) [/v2/control-center, /booking-command-center, /team/operations/bookings]
+- SW-232 Expected-refusal API noise: 401 /api/crm (anon) on 2 route(s) — 401 /api/crm (anon) on 2 routes (page still renders) [/v2/crm, /crm]
+- SW-233 Expected-refusal API noise: 401 /api/v2/grooming-catalogue (anon) on 1 route(s) — 401 /api/v2/grooming-catalogue (anon) on 1 routes (page still renders) [/v2/grooming]
+- SW-234 Expected-refusal API noise: 403 /api/mobile-employee-ai (customer) on 23 route(s) — 403 /api/mobile-employee-ai (customer) on 6 routes (page still renders) [/mobile-app, /mobile-app#tab=Book, /mobile-app#tab=Activity, /mobile-app#tab=My Pets, /mobile-app#tab=Account, /account]
+- SW-235 Expected-refusal API noise: 401 /api/funeral-memorial (anon) on 6 route(s) — 401 /api/funeral-memorial (anon) on 4 routes (page still renders) [/funeral-memorial, /partner/funeral, /team/finance/funeral-memorial, /team/funeral-memorial]
+- SW-236 Expected-refusal API noise: 401 /api/partner-job-feed (anon) on 1 route(s) — 401 /api/partner-job-feed (anon) on 1 routes (page still renders) [/partner/jobs]
+- SW-237 Expected-refusal API noise: 401 /api/provider-workspace (anon) on 1 route(s) — 401 /api/provider-workspace (anon) on 1 routes (page still renders) [/partner/workspace]
+- SW-238 Expected-refusal API noise: 401 /api/provider-service-rates (anon) on 1 route(s) — 401 /api/provider-service-rates (anon) on 1 routes (page still renders) [/partner/rates]
+- SW-239 Expected-refusal API noise: 401 /api/boarding-stays (anon) on 1 route(s) — 401 /api/boarding-stays (anon) on 1 routes (page still renders) [/host]
+- SW-240 Expected-refusal API noise: 401 /api/me (anon) on 1 route(s) — 401 /api/me (anon) on 1 routes (page still renders) [/me]
+- SW-241 Expected-refusal API noise: 401 /api/team-overview (anon) on 3 route(s) — 401 /api/team-overview (anon) on 3 routes (page still renders) [/team, /control, /ops]
+- SW-242 Expected-refusal API noise: 401 /api/control-tower (anon) on 1 route(s) — 401 /api/control-tower (anon) on 1 routes (page still renders) [/control]
+- SW-243 Expected-refusal API noise: 401 /api/integration-readiness (anon) on 1 route(s) — 401 /api/integration-readiness (anon) on 1 routes (page still renders) [/control/integrations]
+- SW-244 Expected-refusal API noise: 401 /api/provider-onboarding-configuration (anon) on 1 route(s) — 401 /api/provider-onboarding-configuration (anon) on 1 routes (page still renders) [/control/provider-onboarding]
+- SW-245 Expected-refusal API noise: 401 /api/operations-overview (anon) on 1 route(s) — 401 /api/operations-overview (anon) on 1 routes (page still renders) [/admin]
+- SW-246 Expected-refusal API noise: 401 /api/leaderboard (anon) on 1 route(s) — 401 /api/leaderboard (anon) on 1 routes (page still renders) [/leaderboard]
+- SW-247 Expected-refusal API noise: 401 /api/assisted-orders (anon) on 1 route(s) — 401 /api/assisted-orders (anon) on 1 routes (page still renders) [/assisted-booking]
+- SW-248 Expected-refusal API noise: 401 /api/acquisition-funnel (anon) on 1 route(s) — 401 /api/acquisition-funnel (anon) on 1 routes (page still renders) [/team/acquisition-funnel]
+- SW-249 Expected-refusal API noise: 401 /api/ai-intelligence (anon) on 2 route(s) — 401 /api/ai-intelligence (anon) on 1 routes (page still renders) [/team/ai]
+- SW-250 Expected-refusal API noise: 401 /api/ai-analytics (anon) on 1 route(s) — 401 /api/ai-analytics (anon) on 1 routes (page still renders) [/team/ai/analytics]
+- SW-251 Expected-refusal API noise: 401 /api/ai-business-configuration (anon) on 2 route(s) — 401 /api/ai-business-configuration (anon) on 1 routes (page still renders) [/team/ai/configuration]
+- SW-252 Expected-refusal API noise: 401 /api/conversations (anon) on 2 route(s) — 401 /api/conversations (anon) on 2 routes (page still renders) [/team/ai/handoff, /team/customer-experience]
+- SW-253 Expected-refusal API noise: 401 /api/ai-human-handoff (anon) on 1 route(s) — 401 /api/ai-human-handoff (anon) on 1 routes (page still renders) [/team/ai/handoff]
+- SW-254 Expected-refusal API noise: 401 /api/ai-rollout (anon) on 1 route(s) — 401 /api/ai-rollout (anon) on 1 routes (page still renders) [/team/ai/rollout]
+- SW-255 Expected-refusal API noise: 401 /api/staff-alerts (anon) on 1 route(s) — 401 /api/staff-alerts (anon) on 1 routes (page still renders) [/team/alerts]
+- SW-256 Expected-refusal API noise: 401 /api/company-analytics (anon) on 1 route(s) — 401 /api/company-analytics (anon) on 1 routes (page still renders) [/team/analytics]
+- SW-257 Expected-refusal API noise: 401 /api/bot-call-outcomes (anon) on 2 route(s) — 401 /api/bot-call-outcomes (anon) on 1 routes (page still renders) [/team/bot-call-outcomes]
+- SW-258 Expected-refusal API noise: 401 /api/unified-cases (anon) on 1 route(s) — 401 /api/unified-cases (anon) on 1 routes (page still renders) [/team/cases]
+- SW-259 Expected-refusal API noise: 401 /api/catalogue (anon) on 1 route(s) — 401 /api/catalogue (anon) on 1 routes (page still renders) [/team/catalogue]
+- SW-260 Expected-refusal API noise: 401 /api/conversations/stream (anon) on 1 route(s) — 401 /api/conversations/stream (anon) on 1 routes (page still renders) [/team/customer-experience]
+- SW-261 Expected-refusal API noise: 401 /api/customer-reminders (anon) on 1 route(s) — 401 /api/customer-reminders (anon) on 1 routes (page still renders) [/team/customer-reminders]
+- SW-262 Expected-refusal API noise: 401 /api/revenue-crm (anon) on 1 route(s) — 401 /api/revenue-crm (anon) on 1 routes (page still renders) [/team/daily-revenue]
+- SW-263 Expected-refusal API noise: 401 /api/grooming-finance (anon) on 1 route(s) — 401 /api/grooming-finance (anon) on 1 routes (page still renders) [/team/finance]
+- SW-264 Expected-refusal API noise: 401 /api/statutory-compliance (anon) on 1 route(s) — 401 /api/statutory-compliance (anon) on 1 routes (page still renders) [/team/finance-compliance]
+- SW-265 Expected-refusal API noise: 401 /api/cash-flow-statement (anon) on 1 route(s) — 401 /api/cash-flow-statement (anon) on 1 routes (page still renders) [/team/finance/cash-flow]
+- SW-266 Expected-refusal API noise: 401 /api/revenue-recognition (anon) on 1 route(s) — 401 /api/revenue-recognition (anon) on 1 routes (page still renders) [/team/finance/cash-flow]
+- SW-267 Expected-refusal API noise: 401 /api/partner-finance (anon) on 1 route(s) — 401 /api/partner-finance (anon) on 1 routes (page still renders) [/team/finance/partners]
+- SW-268 Expected-refusal API noise: 401 /api/gst-accounting (anon) on 1 route(s) — 401 /api/gst-accounting (anon) on 1 routes (page still renders) [/team/finance/statutory]
+- SW-269 Expected-refusal API noise: 401 /api/training-finance (anon) on 1 route(s) — 401 /api/training-finance (anon) on 1 routes (page still renders) [/team/finance/training]
+- SW-270 Expected-refusal API noise: 401 /api/training-reconciliation (anon) on 1 route(s) — 401 /api/training-reconciliation (anon) on 1 routes (page still renders) [/team/finance/training]
+- SW-271 Expected-refusal API noise: 401 /api/unit-economics (anon) on 1 route(s) — 401 /api/unit-economics (anon) on 1 routes (page still renders) [/team/finance/unit-economics]
+- SW-272 Expected-refusal API noise: 401 /api/haptik-outbound (anon) on 2 route(s) — 401 /api/haptik-outbound (anon) on 1 routes (page still renders) [/team/haptik]
+- SW-273 Expected-refusal API noise: 401 /api/i18n (anon) on 1 route(s) — 401 /api/i18n (anon) on 1 routes (page still renders) [/team/i18n]
+- SW-274 Expected-refusal API noise: 401 /api/lifecycle-reminders (anon) on 1 route(s) — 401 /api/lifecycle-reminders (anon) on 1 routes (page still renders) [/team/lifecycle-reminders]
+- SW-275 Expected-refusal API noise: 401 /api/marketing-control (anon) on 1 route(s) — 401 /api/marketing-control (anon) on 1 routes (page still renders) [/team/marketing]
+- SW-276 Expected-refusal API noise: 401 /api/content-controls (anon) on 1 route(s) — 401 /api/content-controls (anon) on 1 routes (page still renders) [/team/marketing/content]
+- SW-277 Expected-refusal API noise: 401 /api/meet-and-greet (anon) on 1 route(s) — 401 /api/meet-and-greet (anon) on 1 routes (page still renders) [/team/meet-and-greet]
+- SW-278 Expected-refusal API noise: 401 /api/boarding-ops (anon) on 1 route(s) — 401 /api/boarding-ops (anon) on 1 routes (page still renders) [/team/operations/boarding]
+- SW-279 Expected-refusal API noise: 401 /api/food-ops (anon) on 1 route(s) — 401 /api/food-ops (anon) on 1 routes (page still renders) [/team/operations/food]
+- SW-280 Expected-refusal API noise: 401 /api/food-supply-chain (anon) on 1 route(s) — 401 /api/food-supply-chain (anon) on 1 routes (page still renders) [/team/operations/food/supply-chain]
+- SW-281 Expected-refusal API noise: 401 /api/sitting-ops (anon) on 1 route(s) — 401 /api/sitting-ops (anon) on 1 routes (page still renders) [/team/operations/sitting]
+- SW-282 Expected-refusal API noise: 401 /api/taxi-ops (anon) on 1 route(s) — 401 /api/taxi-ops (anon) on 1 routes (page still renders) [/team/operations/taxi]
+- SW-283 Expected-refusal API noise: 401 /api/training-ops (anon) on 1 route(s) — 401 /api/training-ops (anon) on 1 routes (page still renders) [/team/operations/training]
+- SW-284 Expected-refusal API noise: 401 /api/walking-ops (anon) on 1 route(s) — 401 /api/walking-ops (anon) on 1 routes (page still renders) [/team/operations/walking]
+- SW-285 Expected-refusal API noise: 401 /api/ops-work-queue (anon) on 1 route(s) — 401 /api/ops-work-queue (anon) on 1 routes (page still renders) [/team/operations/work-queue]
+- SW-286 Expected-refusal API noise: 401 /api/people-foundation (anon) on 1 route(s) — 401 /api/people-foundation (anon) on 1 routes (page still renders) [/team/people]
+- SW-287 Expected-refusal API noise: 401 /api/people-finance (anon) on 1 route(s) — 401 /api/people-finance (anon) on 1 routes (page still renders) [/team/people/finance]
+- SW-288 Expected-refusal API noise: 401 /api/incentives (anon) on 1 route(s) — 401 /api/incentives (anon) on 1 routes (page still renders) [/team/people/incentives]
+- SW-289 Expected-refusal API noise: 401 /api/manager-dashboard (anon) on 1 route(s) — 401 /api/manager-dashboard (anon) on 1 routes (page still renders) [/team/people/manager-dashboard]
+- SW-290 Expected-refusal API noise: 401 /api/payroll (anon) on 2 route(s) — 401 /api/payroll (anon) on 2 routes (page still renders) [/team/people/onboarding, /team/people/payroll]
+- SW-291 Expected-refusal API noise: 401 /api/provider-lms (anon) on 1 route(s) — 401 /api/provider-lms (anon) on 1 routes (page still renders) [/team/people/provider-training]
+- SW-292 Expected-refusal API noise: 401 /api/people-reports (anon) on 1 route(s) — 401 /api/people-reports (anon) on 1 routes (page still renders) [/team/people/reports]
+- SW-293 Expected-refusal API noise: 401 /api/attendance-leave (anon) on 1 route(s) — 401 /api/attendance-leave (anon) on 1 routes (page still renders) [/team/people/time]
+- SW-294 Expected-refusal API noise: 401 /api/sales-productivity-governance (anon) on 1 route(s) — 401 /api/sales-productivity-governance (anon) on 1 routes (page still renders) [/team/performance]
+- SW-295 Expected-refusal API noise: 401 /api/employee-performance (anon) on 1 route(s) — 401 /api/employee-performance (anon) on 1 routes (page still renders) [/team/performance]
+- SW-296 Expected-refusal API noise: 401 /api/pricing-rules (anon) on 2 route(s) — 401 /api/pricing-rules (anon) on 1 routes (page still renders) [/team/pricing-rules]
+- SW-297 Expected-refusal API noise: 401 /api/provider-onboarding (anon) on 1 route(s) — 401 /api/provider-onboarding (anon) on 1 routes (page still renders) [/team/provider-onboarding]
+- SW-298 Expected-refusal API noise: 401 /api/provider-verification (anon) on 1 route(s) — 401 /api/provider-verification (anon) on 1 routes (page still renders) [/team/provider-verification]
+- SW-299 Expected-refusal API noise: 401 /api/relocation (anon) on 1 route(s) — 401 /api/relocation (anon) on 1 routes (page still renders) [/team/relocation]
+- SW-300 Expected-refusal API noise: 401 /api/relocation-enquiry (anon) on 1 route(s) — 401 /api/relocation-enquiry (anon) on 1 routes (page still renders) [/team/relocation-enquiries]
+- SW-301 Expected-refusal API noise: 401 /api/revenue-mission-command-center (anon) on 1 route(s) — 401 /api/revenue-mission-command-center (anon) on 1 routes (page still renders) [/team/revenue-mission]
+- SW-302 Expected-refusal API noise: 401 /api/customer-360 (anon) on 2 route(s) — 401 /api/customer-360 (anon) on 2 routes (page still renders) [/team/sales, /team/sales/cross-sell]
+- SW-303 Expected-refusal API noise: 401 /api/revenue-intelligence (anon) on 2 route(s) — 401 /api/revenue-intelligence (anon) on 2 routes (page still renders) [/team/sales, /team/sales/cross-sell]
+- SW-304 Expected-refusal API noise: 401 /api/outbound-orchestrator (anon) on 1 route(s) — 401 /api/outbound-orchestrator (anon) on 1 routes (page still renders) [/team/sales/power-dialler]
+- SW-305 Expected-refusal API noise: 401 /api/uat-scheduling (anon) on 1 route(s) — 401 /api/uat-scheduling (anon) on 1 routes (page still renders) [/team/scheduling]
+- SW-306 Expected-refusal API noise: 401 /api/subscription-plans (anon) on 1 route(s) — 401 /api/subscription-plans (anon) on 1 routes (page still renders) [/team/subscription-plans]
+- SW-307 Expected-refusal API noise: 401 /api/voice-outbound (anon) on 4 route(s) — 401 /api/voice-outbound (anon) on 2 routes (page still renders) [/team/voice, /team/voice/ai-test]
+- SW-308 Expected-refusal API noise: 401 /api/whatsapp/analytics (anon) on 1 route(s) — 401 /api/whatsapp/analytics (anon) on 1 routes (page still renders) [/team/whatsapp/analytics]
+- SW-309 Expected-refusal API noise: 401 /api/whatsapp/automation (anon) on 1 route(s) — 401 /api/whatsapp/automation (anon) on 1 routes (page still renders) [/team/whatsapp/automation]
+- SW-310 Expected-refusal API noise: 401 /api/whatsapp/templates (anon) on 1 route(s) — 401 /api/whatsapp/templates (anon) on 1 routes (page still renders) [/team/whatsapp/templates]
+- SW-311 Expected-refusal API noise: 401 /api/system-integration (anon) on 1 route(s) — 401 /api/system-integration (anon) on 1 routes (page still renders) [/system-integration]
+- SW-312 Expected-refusal API noise: 401 /api/identity-session (founder) on 212 route(s) — 401 /api/identity-session (founder) on 92 routes (page still renders) [/staging-login, /me, /team, /crm, /control, /control/appearance, /control/integrations, /control/provider-onboarding, /booking-command-center, /ops]
+- SW-313 Console error: Failed to load resource 401/403 (expected refusals, see API-noise observations) — Failed to load resource 401/403 (expected refusals, see API-noise observations) (453 occurrence(s)) [/mobile-app anon/android, /mobile-app#tab=Book anon/android, /mobile-app#tab=Activity anon/android, /mobile-app#tab=My Pets anon/android, /mobile-app#tab=Account anon/android, /mobile-app/booking-confirmation anon/android]
+- SW-314 Console error: Failed to load resource: the server responded with a status of # (Bad Request) — Failed to load resource: the server responded with a status of # (Bad Request) (1 occurrence(s)) [/relocation-enquiry anon/desktop]
+- SW-315 Console error: Failed to load resource: the server responded with a status of # (Conflict) — Failed to load resource: the server responded with a status of # (Conflict) (2 occurrence(s)) [/team/customer-experience founder/android, /team/customer-experience founder/desktop]
+- SW-316 Console error: Failed to load resource: the server responded with a status of # (Internal Server Error) — Failed to load resource: the server responded with a status of # (Internal Server Error) (4 occurrence(s)) [/team/daily-revenue founder/android, /crm founder/desktop, /control founder/desktop, /team/daily-revenue founder/desktop]
+- SW-317 32 control(s) under 44px on phone: /control — ⌂ (78x38); ◎ (78x38); ⛓ (78x38); ✓ (78x38); ▥ (78x38); ◷ (78x38) [http://127.0.0.1:8794/control]
+- SW-318 27 control(s) under 44px on phone: /control/integrations — Update (12x144) [http://127.0.0.1:8794/control/integrations]
+- SW-319 15 control(s) under 44px on phone: /team/customer-experience — All (47x38); WhatsApp (104x38); Unassigned (114x38); Human owned (133x38); Previous page (131x36); Next page (102x36) [http://127.0.0.1:8794/team/customer-experience]
+- SW-320 14 control(s) under 44px on phone: /booking-command-center — All bookings (106x40); Needs attention (132x40); Payment pending (145x40); Confirmed (94x40); Completed (97x40); ☎ Call (175x33) [http://127.0.0.1:8794/booking-command-center]
+- SW-321 14 control(s) under 44px on phone: /team/ai — Approve (83x40); Reject (69x40) [http://127.0.0.1:8794/team/ai]
+- SW-322 14 control(s) under 44px on phone: /team/finance-compliance — Record filing (122x38) [http://127.0.0.1:8794/team/finance-compliance]
+- SW-323 14 control(s) under 44px on phone: /team/operations/bookings — All bookings (106x40); Needs attention (132x40); Payment pending (145x40); Confirmed (94x40); Completed (97x40); ☎ Call (175x33) [http://127.0.0.1:8794/team/operations/bookings]
+- SW-324 13 control(s) under 44px on phone: /team/people/service-incentives — Groomer (100x40); Trainer (86x40); Sales (73x40); Load groomer breakdown (220x38); Save bracket (127x38); Save target (118x38) [http://127.0.0.1:8794/team/people/service-incentives]
+- SW-325 9 control(s) under 44px on phone: /v2/walking — One-time walk (165x35); Recurring starter schedule (165x35); Mon (40x38); Tue (40x38); Wed (40x38); Thu (40x38) [http://127.0.0.1:8794/v2/walking]
+- SW-326 8 control(s) under 44px on phone: /team/haptik — Refresh (90x42); New lead follow-up (83x40); Grooming due reminder (83x40); Dog training cross-sell (83x40); Dog walking cross-sell (83x40); Pet boarding cross-sell (83x40) [http://127.0.0.1:8794/team/haptik]
+- SW-327 8 control(s) under 44px on phone: /team/operations/work-queue — All (49x40); Operations (111x40); Finance (87x40); Qc (49x40); Sales Relocation (151x40); Retention (102x40) [http://127.0.0.1:8794/team/operations/work-queue]
+- SW-328 8 control(s) under 44px on phone: /team/people/incentives — Reverse (89x40); Submit resolution (161x40); Cancel (79x40); Approve (91x40); Open dispute (128x40) [http://127.0.0.1:8794/team/people/incentives]
+- SW-329 8 control(s) under 44px on phone: /team/pricing-rules — Sun (53x36); Mon (55x36); Tue (50x36); Wed (55x36); Thu (52x36); Fri (45x36) [http://127.0.0.1:8794/team/pricing-rules]
+- SW-330 8 control(s) under 44px on phone: /team/subscription-plans — Add plan (92x36); All services (110x36); grooming (99x38); dog training (119x38); boarding (95x38); pet sitting (105x38) [http://127.0.0.1:8794/team/subscription-plans]
+- SW-331 7 control(s) under 44px on phone: /mobile-app#tab=Activity — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); Active & upcoming (121x37) [http://127.0.0.1:8794/mobile-app#tab=Activity]
+- SW-332 7 control(s) under 44px on phone: /mobile-app#tab=Account — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); ◐ System (109x33) [http://127.0.0.1:8794/mobile-app#tab=Account]
+- SW-333 7 control(s) under 44px on phone: /walking — Mon (40x38); Tue (40x38); Wed (40x38); Thu (40x38); Fri (40x38); Sat (40x38) [http://127.0.0.1:8794/walking]
+- SW-334 7 control(s) under 44px on phone: /team/cases — Open (66x36); Critical (81x38); Unowned (97x38); All (49x38); Sync refunds / SLA / reconcili (274x36); Run escalations (142x36) [http://127.0.0.1:8794/team/cases]
+- SW-335 7 control(s) under 44px on phone: /team/i18n — AI draft (70x36) [http://127.0.0.1:8794/team/i18n]
+- SW-336 7 control(s) under 44px on phone: /team/performance — 7 days (77x38); 30 days (84x36); 90 days (86x38); Refresh (84x36); Remove (86x36); Add to sales team (160x38) [http://127.0.0.1:8794/team/performance]
+- SW-337 6 control(s) under 44px on phone: /v2/boarding — Retry account (99x24); ＋ 24/7 supervision (80x27); ＋ Medication (63x27); ＋ Two daily walks (77x27); ＋ No resident pets (80x27); ＋ Senior care (65x27) [http://127.0.0.1:8794/v2/boarding]
+- SW-338 6 control(s) under 44px on phone: /v2/sitting — Retry account (99x24); ＋ 24/7 supervision (80x27); ＋ Medication (63x27); ＋ Two daily walks (77x27); ＋ No resident pets (80x27); ＋ Senior care (65x27) [http://127.0.0.1:8794/v2/sitting]
+- SW-339 6 control(s) under 44px on phone: /team/whatsapp/templates — All 0 (60x36); Draft 0 (81x38); Submitted 0 (119x38); Approved 0 (113x38); Rejected 0 (106x38); Paused 0 (96x38) [http://127.0.0.1:8794/team/whatsapp/templates]
+- SW-340 5 control(s) under 44px on phone: /mobile-app#tab=My Pets — Doorstep care Choose service a (126x35); ♢ (35x35); PS (40x40); Sign out (83x40); EU (40x40); Edit (61x38) [http://127.0.0.1:8794/mobile-app#tab=My Pets]
+- SW-341 5 control(s) under 44px on phone: /team/alerts — open (66x40); critical (80x40); acknowledged (135x40); all (48x40); Check SLA now (141x40) [http://127.0.0.1:8794/team/alerts]
 
 ## Passed
 
-- Dead-button pass: 394 buttons clicked on 62 route/tab states; all but the ones listed under Defects produced a URL/DOM/network/aria effect — customer/android, provider/android, founder/desktop, anon/desktop
+- Dead-button pass: 455 buttons clicked on 75 route/tab states; all but the ones listed under Defects produced a URL/DOM/network/aria effect — customer/android, provider/android, founder/desktop, anon/desktop
 - Uncaught page errors: none on any crawled load; still-loading-after-10s: none; placeholder/lorem/coming-soon copy: none (one false positive, marketing sentence 'not a placeholder calendar') — all
-- Horizontal overflow: none on any of 270 phone loads (Pixel 7 / iPhone 14) — all
+- Horizontal overflow: none on any of 334 phone loads (Pixel 7 / iPhone 14) — all
 - Broken-link check: 124 unique same-origin links fetched once (founder session), 0 returned 404/5xx — founder/desktop (in-page fetch)
-- Rendered with content/controls: / — anon/android, anon/desktop
-- Rendered with content/controls: /about — anon/android, anon/desktop
+- Rendered with content/controls: / — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /about — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /account — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /admin — founder/android, founder/desktop
-- Rendered with content/controls: /assisted-booking — founder/android, founder/desktop
-- Rendered with content/controls: /boarding — anon/android
+- Rendered with content/controls: /admin — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /assisted-booking — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /boarding — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /boarding/manage — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /booking-command-center — founder/android, founder/desktop
-- Rendered with content/controls: /business — anon/android
-- Rendered with content/controls: /careers — anon/android, anon/desktop
-- Rendered with content/controls: /chat — anon/android
-- Rendered with content/controls: /contact — anon/android, anon/desktop
-- Rendered with content/controls: /control — founder/android, founder/desktop
-- Rendered with content/controls: /control/appearance — founder/android, founder/desktop
-- Rendered with content/controls: /control/integrations — founder/android, founder/desktop
-- Rendered with content/controls: /control/provider-onboarding — founder/android, founder/desktop
-- Rendered with content/controls: /crm — founder/android, founder/desktop
-- Rendered with content/controls: /discover — anon/android
-- Rendered with content/controls: /dog-breeds/labrador-retriever — anon/android, anon/desktop
-- Rendered with content/controls: /driver — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /driver/proof — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /driver/recovery — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /food — anon/android
+- Rendered with content/controls: /booking-command-center — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /business — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /careers — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /chat — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /contact — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /control — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /control/appearance — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /control/integrations — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /control/provider-onboarding — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /crm — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /discover — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /dog-breeds/labrador-retriever — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /driver — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /driver/proof — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /driver/recovery — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /food — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /food/manage — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /food/subscriptions — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /funeral-memorial — anon/android
-- Rendered with content/controls: /groomer — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /grooming — anon/android, anon/desktop
+- Rendered with content/controls: /funeral-memorial — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /groomer — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /grooming — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /grooming/manage — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /host — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /host/proof — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /landing-pages — anon/android
-- Rendered with content/controls: /leaderboard — founder/android, founder/desktop
-- Rendered with content/controls: /legal/data-processing — anon/android, anon/desktop
-- Rendered with content/controls: /legal/privacy — anon/android, anon/desktop
-- Rendered with content/controls: /legal/terms — anon/android, anon/desktop
-- Rendered with content/controls: /locations/bengaluru/hsr-layout/pet-grooming — anon/android, anon/desktop
-- Rendered with content/controls: /me — founder/android, founder/desktop
+- Rendered with content/controls: /host — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /host/proof — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /landing-pages — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /leaderboard — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /legal/data-processing — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /legal/privacy — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /legal/terms — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /locations/bengaluru/hsr-layout/pet-grooming — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /me — anon/desktop, founder/android, founder/desktop
 - Rendered with content/controls: /mobile-app — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /mobile-app/booking-confirmation — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /mobile-app#tab=Account — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /mobile-app#tab=Activity — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /mobile-app#tab=Book — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /mobile-app#tab=My Pets — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /ops — founder/android, founder/desktop
+- Rendered with content/controls: /ops — anon/desktop, founder/android, founder/desktop
 - Rendered with content/controls: /partner — anon/android, provider/android, provider/desktop, provider/iphone
 - Rendered with content/controls: /partner-app — anon/android, provider/android, provider/desktop, provider/iphone
 - Rendered with content/controls: /partner-app#tab=Earnings — provider/android, provider/desktop, provider/iphone
@@ -690,88 +787,99 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 - Rendered with content/controls: /partner/onboarding — anon/android, provider/android, provider/desktop, provider/iphone
 - Rendered with content/controls: /partner/rates — anon/android
 - Rendered with content/controls: /partner/workspace — anon/android, provider/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /relocation — anon/android
-- Rendered with content/controls: /relocation-enquiry — anon/android
-- Rendered with content/controls: /services — anon/android, anon/desktop
-- Rendered with content/controls: /services/grooming — anon/android, anon/desktop
-- Rendered with content/controls: /sitter — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /sitter/proof — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /sitting — anon/android
+- Rendered with content/controls: /platform-api — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /prelaunch — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /regression-lab — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /relocation — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /relocation-enquiry — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /services — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /services/grooming — anon/android, anon/desktop, anon/iphone, customer/desktop
+- Rendered with content/controls: /sitter — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /sitter/proof — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /sitting — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /sitting/manage — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /staging-login — founder/android, founder/desktop
-- Rendered with content/controls: /taxi — anon/android
+- Rendered with content/controls: /staging-login — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /system-integration — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /taxi — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /taxi/manage — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /team — founder/android, founder/desktop
-- Rendered with content/controls: /team/acquisition-funnel — founder/android, founder/desktop
-- Rendered with content/controls: /team/ai — founder/android, founder/desktop
-- Rendered with content/controls: /team/ai/analytics — founder/android, founder/desktop
-- Rendered with content/controls: /team/ai/configuration — founder/android, founder/desktop
-- Rendered with content/controls: /team/ai/handoff — founder/android, founder/desktop
-- Rendered with content/controls: /team/ai/rollout — founder/android, founder/desktop
-- Rendered with content/controls: /team/alerts — founder/android, founder/desktop
-- Rendered with content/controls: /team/analytics — founder/android, founder/desktop
-- Rendered with content/controls: /team/bot-call-outcomes — founder/android, founder/desktop
-- Rendered with content/controls: /team/cases — founder/android, founder/desktop
-- Rendered with content/controls: /team/catalogue — founder/android, founder/desktop
-- Rendered with content/controls: /team/customer-experience — founder/android
-- Rendered with content/controls: /team/customer-reminders — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance-compliance — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/cash-flow — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/food — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/funeral-memorial — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/partners — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/relocation — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/sitting — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/statutory — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/taxi — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/training — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/unit-economics — founder/android, founder/desktop
-- Rendered with content/controls: /team/finance/walking — founder/android, founder/desktop
-- Rendered with content/controls: /team/funeral-memorial — founder/android, founder/desktop
-- Rendered with content/controls: /team/haptik — founder/android, founder/desktop
-- Rendered with content/controls: /team/i18n — founder/android, founder/desktop
-- Rendered with content/controls: /team/lifecycle-reminders — founder/android, founder/desktop
-- Rendered with content/controls: /team/marketing — founder/android, founder/desktop
-- Rendered with content/controls: /team/marketing/content — founder/android, founder/desktop
-- Rendered with content/controls: /team/meet-and-greet — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/boarding — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/bookings — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/food — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/food/fulfilment — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/food/proof — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/food/supply-chain — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/sitting — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/taxi — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/training — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/walking — founder/android, founder/desktop
-- Rendered with content/controls: /team/operations/work-queue — founder/android, founder/desktop
-- Rendered with content/controls: /team/people — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/finance — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/incentives — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/manager-dashboard — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/onboarding — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/payroll — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/provider-training — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/reports — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/service-incentives — founder/android, founder/desktop
-- Rendered with content/controls: /team/people/time — founder/android, founder/desktop
-- Rendered with content/controls: /team/performance — founder/android, founder/desktop
-- Rendered with content/controls: /team/pricing-rules — founder/android, founder/desktop
-- Rendered with content/controls: /team/provider-onboarding — founder/android, founder/desktop
-- Rendered with content/controls: /team/provider-verification — founder/android, founder/desktop
-- Rendered with content/controls: /team/relocation — founder/android, founder/desktop
-- Rendered with content/controls: /team/relocation-enquiries — founder/android, founder/desktop
-- Rendered with content/controls: /team/revenue-mission — founder/android, founder/desktop
-- Rendered with content/controls: /team/sales — founder/android, founder/desktop
-- Rendered with content/controls: /team/sales/cross-sell — founder/desktop
-- Rendered with content/controls: /team/sales/power-dialler — founder/desktop
-- Rendered with content/controls: /team/scheduling — founder/desktop
-- Rendered with content/controls: /team/subscription-plans — founder/desktop
-- Rendered with content/controls: /team/subscriptions — founder/desktop
-- Rendered with content/controls: /trainer — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /training — anon/android
+- Rendered with content/controls: /team — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/acquisition-funnel — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/ai — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/ai/analytics — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/ai/configuration — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/ai/handoff — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/ai/rollout — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/alerts — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/analytics — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/bot-call-outcomes — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/cases — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/catalogue — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/customer-experience — anon/desktop
+- Rendered with content/controls: /team/customer-reminders — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/daily-revenue — anon/desktop
+- Rendered with content/controls: /team/finance — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance-compliance — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/cash-flow — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/food — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/funeral-memorial — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/partners — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/relocation — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/sitting — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/statutory — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/taxi — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/training — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/unit-economics — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/finance/walking — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/funeral-memorial — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/haptik — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/i18n — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/lifecycle-reminders — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/marketing — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/marketing/content — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/meet-and-greet — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/operations — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/boarding — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/bookings — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/food — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/food/fulfilment — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/food/proof — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/food/supply-chain — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/sitting — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/taxi — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/training — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/walking — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/operations/work-queue — anon/desktop, founder/android, founder/desktop, founder/iphone
+- Rendered with content/controls: /team/people — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/finance — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/incentives — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/manager-dashboard — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/onboarding — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/payroll — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/provider-training — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/reports — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/service-incentives — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/people/time — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/performance — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/pricing-rules — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/provider-onboarding — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/provider-verification — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/relocation — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/relocation-enquiries — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/revenue-mission — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/sales — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/sales/cross-sell — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/sales/power-dialler — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/scheduling — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/subscription-plans — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/subscriptions — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/voice — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/voice/ai-test — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/whatsapp/analytics — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/whatsapp/automation — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /team/whatsapp/templates — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /test-lab — anon/desktop, founder/android, founder/desktop
+- Rendered with content/controls: /trainer — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /training — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /v2 — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /v2/account — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /v2/activity — anon/android, customer/android, customer/desktop, customer/iphone
@@ -794,14 +902,15 @@ Columns: D desktop 1366×900 · A Pixel 7 · I iPhone 14. Flags: OVF horizontal 
 - Rendered with content/controls: /v2/walking — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /v2/walking/manage — anon/android, customer/android, customer/desktop, customer/iphone
 - Rendered with content/controls: /v2/workspaces — anon/android, customer/android, customer/desktop, customer/iphone
-- Rendered with content/controls: /walker — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /walker/proof — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /walker/recovery — anon/android, provider/desktop, provider/iphone
-- Rendered with content/controls: /walking — anon/android
+- Rendered with content/controls: /walker — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /walker/proof — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /walker/recovery — anon/android, provider/android, provider/desktop, provider/iphone
+- Rendered with content/controls: /walking — anon/android, anon/desktop, anon/iphone, customer/desktop
 - Rendered with content/controls: /walking/manage — anon/android, customer/android, customer/desktop, customer/iphone
 
 ## Coverage gaps / environment
 
 - Part A founder/anon repo runs were CPU-starved on the shared box (5 wrangler servers + ~10 browsers): the sweep's networkidle wait timed out on most routes (verdict SLOW). A separate probe (sweep-poll-probe.mjs) showed the founder session makes no polling requests on /about — SLOW here is harness load, not the app.
 - Secure cookies: Playwright's request context does not send Secure cookies over http://127.0.0.1; all authenticated checks were driven from the browser page (storageState + in-page fetch), as the coordinator advised.
+- At 08:17 UTC (after all crawl chains and all four repo sweeps had completed) the local worker on :8794 stopped accepting connections, so two late re-verifications (the /food first-card click and the relocation-enquiry error rendering) could not be driven and are reported as observations, not defects.
 - Payments (Razorpay), Workers AI, maps and real SMS are environment-gated locally; pages depending on them were judged on what they render, not on completing those flows.
