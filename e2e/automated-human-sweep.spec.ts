@@ -435,8 +435,8 @@ test("Employee AI V2 — unauthorized customer blocked; authorized staff chat pe
     expect(bootstrap.status(), await bootstrap.text()).toBe(200);
     const bootstrapBody = await bootstrap.json() as { data?: { capabilities?: { chat?: boolean; voice?: boolean }; customers?: Array<{ id?: string }> } };
     expect(bootstrapBody.data?.capabilities?.chat).toBe(true);
-    const customerId = String(bootstrapBody.data?.customers?.[0]?.id || "");
-    expect(customerId, "Employee AI requires at least one governed customer context").not.toEqual("");
+    const governedCustomers = bootstrapBody.data?.customers ?? [];
+    expect(governedCustomers.length, "Employee AI requires at least one governed customer context").toBeGreaterThan(0);
 
     await page.goto("/mobile-app");
     const aiNav = page.getByRole("button", { name: /^AI$/ });
@@ -445,28 +445,49 @@ test("Employee AI V2 — unauthorized customer blocked; authorized staff chat pe
     await expect(page.getByRole("region", { name: "Employee AI mobile workspace" })).toBeVisible();
     await expect(page.getByLabel("Employee AI message")).toBeEnabled();
 
-    const idempotencyKey = `uat-employee-ai:${EXPECTED_SHA}:${Date.now()}`;
-    const payload = { action: "chat", customerId, message: "Summarise this customer's current PawSpace context and recommend the next customer-safe step.", idempotencyKey };
-    const first = await staffContext.request.post("/api/mobile-employee-ai", { data: payload });
-    expect(first.status(), await first.text()).toBe(200);
-    const firstBody = await first.json() as { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean; ai?: { turn?: { output?: string } } } };
-    expect(firstBody.data?.duplicatePrevented).toBe(false);
-    expect(firstBody.data?.messageId).toBeTruthy();
-    expect(firstBody.data?.threadId).toBeTruthy();
-    expect(firstBody.data?.autonomousExecution).toBe(false);
-    expect(firstBody.data?.ai?.turn?.output, "real governed AI turn should return displayable output").toBeTruthy();
+    type ChatResult = { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean; ai?: { turn?: { output?: string } } }; error?: string };
+    let customerId = "";
+    let idempotencyKey = "";
+    let payload: { action: "chat"; customerId: string; message: string; idempotencyKey: string } | null = null;
+    let firstBody: ChatResult | null = null;
+    for (const candidate of governedCustomers) {
+      const candidateId = String(candidate.id || "");
+      if (!candidateId) continue;
+      const candidateKey = `uat-employee-ai:${EXPECTED_SHA}:${candidateId}:${Date.now()}`;
+      const candidatePayload = { action: "chat" as const, customerId: candidateId, message: "Summarise this customer's current PawSpace context and recommend the next customer-safe step.", idempotencyKey: candidateKey };
+      const response = await staffContext.request.post("/api/mobile-employee-ai", { data: candidatePayload });
+      const body = await response.json().catch(() => ({})) as ChatResult;
+      if (response.status() === 409 && /owned by staff/i.test(String(body.error || ""))) {
+        log(`ℹ️ Employee AI correctly paused customer ${candidateId} because the conversation is staff-owned; trying the next governed customer context.`);
+        continue;
+      }
+      expect(response.status(), JSON.stringify(body)).toBe(200);
+      customerId = candidateId;
+      idempotencyKey = candidateKey;
+      payload = candidatePayload;
+      firstBody = body;
+      break;
+    }
+    expect(customerId, "Employee AI requires at least one governed customer context that is not currently staff-owned").not.toEqual("");
+    expect(payload).not.toBeNull();
+    expect(firstBody).not.toBeNull();
+    expect(firstBody!.data?.duplicatePrevented).toBe(false);
+    expect(firstBody!.data?.messageId).toBeTruthy();
+    expect(firstBody!.data?.threadId).toBeTruthy();
+    expect(firstBody!.data?.autonomousExecution).toBe(false);
+    expect(firstBody!.data?.ai?.turn?.output, "real governed AI turn should return displayable output").toBeTruthy();
 
-    const replay = await staffContext.request.post("/api/mobile-employee-ai", { data: payload });
+    const replay = await staffContext.request.post("/api/mobile-employee-ai", { data: payload! });
     expect(replay.status(), await replay.text()).toBe(200);
     const replayBody = await replay.json() as { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean } };
     expect(replayBody.data?.duplicatePrevented).toBe(true);
-    expect(replayBody.data?.messageId).toBe(firstBody.data?.messageId);
-    expect(replayBody.data?.threadId).toBe(firstBody.data?.threadId);
+    expect(replayBody.data?.messageId).toBe(firstBody!.data?.messageId);
+    expect(replayBody.data?.threadId).toBe(firstBody!.data?.threadId);
     expect(replayBody.data?.autonomousExecution).toBe(false);
 
-    const snapshot = await staffContext.request.get(`/api/ai-conversation?threadId=${encodeURIComponent(firstBody.data!.threadId!)}&customerId=${encodeURIComponent(customerId)}`);
+    const snapshot = await staffContext.request.get(`/api/ai-conversation?threadId=${encodeURIComponent(firstBody!.data!.threadId!)}&customerId=${encodeURIComponent(customerId)}`);
     expect(snapshot.status(), await snapshot.text()).toBe(200);
-    log(`✅ Authorized Employee AI returned a governed real chat turn for customer ${customerId}; canonical thread ${firstBody.data?.threadId} persisted and an identical replay was deduplicated with autonomousExecution=false.`);
+    log(`✅ Authorized Employee AI returned a governed real chat turn for customer ${customerId}; canonical thread ${firstBody!.data?.threadId} persisted and an identical replay was deduplicated with autonomousExecution=false.`);
     log(`${bootstrapBody.data?.capabilities?.voice ? "✅" : "⚠️"} Employee AI voice capability is ${bootstrapBody.data?.capabilities?.voice ? "authorized for this staff identity" : "not authorized for this staff identity"}.`);
     await shot(page, "employee-ai-authorized");
   } finally { await staffContext.close(); }
