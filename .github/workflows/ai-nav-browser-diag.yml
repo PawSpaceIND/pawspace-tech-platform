@@ -1,0 +1,67 @@
+name: Employee AI exact acceptance proof
+on:
+  push:
+    branches:
+      - ops/ai-nav-browser-diag
+permissions:
+  contents: read
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    env:
+      BASE: https://pawspace-staging.karthik-fce.workers.dev
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run install:ci
+      - run: ./node_modules/.bin/playwright install --with-deps chromium
+      - name: Prove exact Employee AI acceptance
+        shell: bash
+        run: |
+          CHROME="$(find "$HOME/.cache/ms-playwright" -type f \( -name chrome -o -name chrome-headless-shell \) | head -1)"
+          test -x "$CHROME"
+          CHROME="$CHROME" node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME});
+          const context=await browser.newContext({baseURL:process.env.BASE});
+          const page=await context.newPage();
+          await page.goto('/staging-login');
+          await page.getByPlaceholder('shared UAT access code').fill(process.env.PAWSPACE_UAT_ACCESS_CODE);
+          await page.getByPlaceholder(/seeded staff email/i).fill('founder@pawspace.in');
+          const loginP=page.waitForResponse(r=>r.url().endsWith('/api/staging-login')&&r.request().method()==='POST');
+          await page.getByRole('button',{name:'Sign in',exact:true}).click();
+          const login=await loginP; await page.waitForURL('**/me');
+          if(login.status()!==200) throw new Error('staff login '+login.status());
+          const bootstrap=await context.request.get('/api/mobile-employee-ai');
+          if(bootstrap.status()!==200) throw new Error('bootstrap '+bootstrap.status());
+          const body=await bootstrap.json();
+          const customerId=String(body?.data?.customers?.[0]?.id||'');
+          if(!customerId) throw new Error('no governed customer context');
+          console.log('voice_capability='+(body?.data?.capabilities?.voice===true));
+          await page.goto('/mobile-app');
+          const ai=page.getByRole('button',{name:/^AI$/});
+          await ai.waitFor({state:'visible',timeout:20000});
+          console.log('exact_ai_button_visible=true');
+          await ai.click();
+          await page.getByRole('region',{name:'Employee AI mobile workspace'}).waitFor({state:'visible',timeout:10000});
+          console.log('employee_ai_workspace_visible=true');
+          const key='exact-ai-proof:'+Date.now();
+          const payload={action:'chat',customerId,message:'Summarise this customer context and recommend one customer-safe next step.',idempotencyKey:key};
+          const first=await context.request.post('/api/mobile-employee-ai',{data:payload});
+          const firstBody=await first.json().catch(()=>({}));
+          console.log('chat_status='+first.status());
+          console.log('chat_duplicate_first='+(firstBody?.data?.duplicatePrevented===true));
+          console.log('chat_thread='+(Boolean(firstBody?.data?.threadId)));
+          console.log('autonomous_execution='+(firstBody?.data?.autonomousExecution===true));
+          if(first.status()!==200||firstBody?.data?.duplicatePrevented!==false||!firstBody?.data?.threadId||firstBody?.data?.autonomousExecution!==false) throw new Error('first chat contract failed');
+          const replay=await context.request.post('/api/mobile-employee-ai',{data:payload});
+          const replayBody=await replay.json().catch(()=>({}));
+          console.log('replay_status='+replay.status());
+          console.log('replay_duplicate='+(replayBody?.data?.duplicatePrevented===true));
+          if(replay.status()!==200||replayBody?.data?.duplicatePrevented!==true||replayBody?.data?.threadId!==firstBody?.data?.threadId) throw new Error('idempotency replay failed');
+          await browser.close();
+          NODE
