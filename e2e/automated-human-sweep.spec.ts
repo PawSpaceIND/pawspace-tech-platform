@@ -170,13 +170,28 @@ async function partnerOtpLogin(context: BrowserContext, phone: string): Promise<
   const page = await context.newPage();
   await page.goto("/partner/onboarding");
   await page.getByPlaceholder("10-digit phone number").fill(phone);
+
+  const requested = page.waitForResponse(
+    r => r.url().includes("/api/partner-otp") && r.request().method() === "POST" && (r.request().postData() || "").includes("\"action\":\"request\""),
+    { timeout: 90_000 },
+  );
   await page.getByRole("button", { name: "Send OTP" }).click();
+  const requestRes = await requested;
+  const requestBody = await requestRes.json().catch(() => ({})) as { data?: { challengeId?: string; sandboxCode?: string }; error?: string };
+  expect(requestRes.status(), `partner OTP request failed: ${JSON.stringify(requestBody).slice(0, 200)}`).toBe(200);
+  expect(requestBody.data?.challengeId, "partner OTP request must return a challenge id").toBeTruthy();
+  expect(requestBody.data?.sandboxCode, "partner OTP request must return a sandbox code in UAT").toMatch(/^\d{6}$/);
+
   const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
-  await expect(sandbox, "partner sandbox OTP must be shown on screen").toBeVisible({ timeout: 20_000 });
+  await expect(sandbox, "partner sandbox OTP must be shown on screen after the request succeeds").toBeVisible({ timeout: 30_000 });
   const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
-  expect(code, "a 6-digit partner OTP must render").toMatch(/^\d{6}$/);
+  expect(code, "the UI must render the 6-digit sandbox OTP").toBe(requestBody.data?.sandboxCode);
   await page.getByPlaceholder("6-digit code").fill(code!);
-  const verified = page.waitForResponse(r => r.url().includes("/api/partner-otp") && r.request().method() === "POST");
+
+  const verified = page.waitForResponse(
+    r => r.url().includes("/api/partner-otp") && r.request().method() === "POST" && (r.request().postData() || "").includes("\"action\":\"verify\""),
+    { timeout: 90_000 },
+  );
   await page.getByRole("button", { name: "Verify & continue" }).click();
   const res = await verified;
   const body = await res.json().catch(() => ({})) as { data?: { providerId?: string; providerName?: string }; error?: string };
