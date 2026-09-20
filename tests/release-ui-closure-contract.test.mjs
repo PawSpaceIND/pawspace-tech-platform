@@ -95,3 +95,19 @@ test("release UI closure waits for a bounded stable UI before snapshotting contr
   assert.match(loader, /const stable = await waitForStableUi\(page\)/);
   assert.match(loader, /UI did not settle after route load/);
 });
+
+
+test("release UI visual phase retries only transient background API 5xx and still fails persistent errors", () => {
+  assert.match(script, /const VISUAL_API_ATTEMPTS = 3/);
+  assert.match(script, /function transientApiOnly/);
+  assert.match(script, /result\.status > 0 && result\.status < 500/);
+  assert.match(script, /!result\.pageErrors\.length/);
+  assert.match(script, /!result\.horizontalOverflow/);
+  assert.match(script, /!result\.brokenImages\.length/);
+  assert.match(script, /!result\.clippedControls\.length/);
+  assert.match(script, /result\.apiFailures\.length > 0/);
+  assert.match(script, /attempt === VISUAL_API_ATTEMPTS/);
+  assert.match(script, /recoveredApiFailures/);
+  assert.match(script, /visualRoutesRetriedForApi5xx/);
+  assert.match(script, /transientApiFailuresRecovered/);
+});
