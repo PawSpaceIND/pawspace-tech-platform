@@ -606,3 +606,6 @@ test("consolidates PawSpace into four role-based entry points", async () => {
   assert.match(team, /Showing what your role can open/);
   assert.match(team, /visibleWorkspaces\s*=\s*data\s*\?\s*workspaces\.filter/);
 });
+
+
+test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel]){assert.doesNotMatch(src,/Payment is captured/);assert.match(src,/Payment status is tracked separately/);}});
