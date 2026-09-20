@@ -1,0 +1,53 @@
+  ✘   1 [chromium] › e2e/boarding-persistent-closure.spec.ts:26:1 › boarding: persisted customer → host → Ops replacement → replacement host keeps one booking (2.2s)
+  ✘   3 [chromium] › e2e/customer-booking.spec.ts:80:1 › customer: sandbox sign-in -> grooming checkout -> persisted booking (11.0s)
+  ✓   4 [chromium] › e2e/customer-notifications.spec.ts:23:1 › customer notifications: authenticated empty inbox and recoverable UI delivery states (11.7s)
+  ✘   5 [chromium] › e2e/customer-booking.spec.ts:224:1 › customer can select next month when grooming opens on the last evening of this month (11.9s)
+  ✓   6 [chromium] › e2e/customer-notifications.spec.ts:43:1 › order inbox appears after sign-in without reload and pages older updates (10.6s)
+  ✓   7 [chromium] › e2e/frontend-hydration-state-alignment.spec.ts:3:1 › customer confirmation polls until the owned canonical projection is complete (6.6s)
+  ✓   9 [chromium] › e2e/frontend-hydration-state-alignment.spec.ts:26:1 › Founder activity shows a future service updated today without changing today's schedule metrics (1.3s)
+  ✓  10 [chromium] › e2e/frontend-resilience.spec.ts:16:1 › resilience: 429 rate limit surfaces fallback and explicit retry succeeds (1.4s)
+  ✓  11 [chromium] › e2e/frontend-resilience.spec.ts:39:1 › resilience: malformed HTML gateway response never blanks the page and retry recovers (1.8s)
+  ✓  12 [chromium] › e2e/frontend-resilience.spec.ts:58:1 › resilience: timed-out/dropped API request shows recoverable state (2.3s)
+  ✘   8 [chromium] › e2e/customer-booking.spec.ts:245:1 › address choice: customer can recover from a wrong map match and editing clears verification (11.9s)
+  ✓  13 [chromium] › e2e/frontend-resilience.spec.ts:76:1 › resilience: offline -> online switch preserves UI and retry restores data path (1.2s)
+  ✓  14 [chromium] › e2e/frontend-resilience.spec.ts:93:1 › resilience: render failure reaches route error boundary and reset recovers (1.4s)
+  ✓  16 [chromium] › e2e/journeys/05-voice-human-readiness.spec.ts:65:1 › real voice API boundary serves governed readiness and rejects unknown actions safely (309ms)
+  ✓  17 [chromium] › e2e/journeys/05-voice-human-readiness.spec.ts:103:1 › voice operator console exercises every governed control without a live dial (3.7s)
+  ✓  18 [chromium] › e2e/journeys/05-voice-human-readiness.spec.ts:247:1 › AI voice UAT invokes browser mic lifecycle and carrier self-test without external providers (1.9s)
+  ✘  15 [chromium] › e2e/customer-booking.spec.ts:289:51 › boarding: customer-selected afternoon and evening times reach the real quote (12.9s)
+  ✘  20 [chromium] › e2e/customer-booking.spec.ts:289:51 › sitting: customer-selected afternoon and evening times reach the real quote (10.9s)
+  ✘  19 [chromium] › e2e/mission-01.spec.ts:3:1 › Mission 06: full autonomous login (19.6s)
+  ✓  22 [chromium] › e2e/partner-journey.spec.ts:38:1 › partner: verified OTP login -> authenticated queue surface (4.7s)
+  ✓  23 [chromium] › e2e/staff-login.spec.ts:3:1 › staff: deterministic UAT login renders and issues Founder session (1.6s)
+  ✘  24 [chromium] › e2e/uat-cross-module-wiring.spec.ts:102:1 › grooming sandbox checkout propagates to Admin and CRM (2.3s)
+  ✘  21 [chromium] › e2e/customer-booking.spec.ts:421:1 › grooming truth test exposes Pay securely before mounting Razorpay from payment_pending (11.1s)
+  ✘  25 [chromium] › e2e/uat-grooming-checkout-ui.spec.ts:117:1 › optional address line 2, alternative phone and special instructions are present, optional, and persist through checkout (13.2s)
+  ✘  26 [chromium] › e2e/customer-booking.spec.ts:438:1 › grooming: Cat selects saved cat and package empty state can select it directly (13.9s)
+  ✓  28 [chromium] › e2e/uat-phase3-partner-training.spec.ts:6:1 › active job dominates home; safety gate and offline replay survive page reload (5.0s)
+  ✓  29 [chromium] › e2e/uat-phase3-partner-training.spec.ts:40:1 › training pet cards and requirement chips fit mobile; saved address replaces PIN entry (4.9s)
+  ✘  27 [chromium] › e2e/uat-grooming-checkout-ui.spec.ts:139:1 › leaving every optional field empty never blocks grooming checkout (12.2s)
+  ✘  30 [chromium] › e2e/visual-uat-sweep.spec.ts:141:1 › live staging visual UAT sweep: Customer -> Partner -> Admin -> CRM (267ms)
+  ✓  31 [chromium] › e2e/voice-console-human-readiness.spec.ts:31:1 › voice operator console exercises every governed action without a live dial (4.0s)
+  ✓  32 [chromium] › e2e/voice-console-human-readiness.spec.ts:121:1 › AI voice UAT page exposes browser-mic and carrier controls with safe readiness truth (1.7s)
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-boarding-persistent-cl-1e075-ment-host-keeps-one-booking-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-custo-de37e-heckout---persisted-booking-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-custo-4476c--last-evening-of-this-month-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-addre-34028-editing-clears-verification-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-board-cdb06--times-reach-the-real-quote-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-sitti-4c4db--times-reach-the-real-quote-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-groom-ffc52-zorpay-from-payment-pending-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-customer-booking-groom-e9ae5-tate-can-select-it-directly-chromium/test-failed-1.png
+    Error: expect(locator).toBeVisible() failed
+      43 |   expect(verifyResponse.ok(), `OTP verify failed (${verifyResponse.status()}): ${verifyBody}`).toBeTruthy();
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-mission-01-Mission-06-full-autonomous-login-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-uat-cross-module-wirin-7378f-propagates-to-Admin-and-CRM-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-uat-cross-module-wirin-7378f-propagates-to-Admin-and-CRM-chromium/test-failed-2.png
+      43 |   if (!create.ok()) throw new Error(`pet seed failed (${create.status()}): ${await create.text()}`);
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-uat-grooming-checkout--ce39a-nd-persist-through-checkout-chromium/test-failed-1.png
+      43 |   if (!create.ok()) throw new Error(`pet seed failed (${create.status()}): ${await create.text()}`);
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-uat-grooming-checkout--4848c-er-blocks-grooming-checkout-chromium/test-failed-1.png
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main/e2e-visual-uat-sweep-live--26a81-mer---Partner---Admin---CRM-chromium/test-failed-1.png
+  13 failed
+  1 skipped
+  18 passed (2.0m)
+EXIT=1
