@@ -1,4 +1,6 @@
 import { runAuthenticatedAiWebChat } from "../../../lib/ai-web-chat-adapter";
+import { ensureConversationAccessTables } from "../../../lib/conversation-access";
+import { ensureCustomerAccountTables } from "../../../lib/customer-account";
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -9,6 +11,7 @@ function requireEmployeeAi(actor:Awaited<ReturnType<typeof resolveActor>>){requi
 export async function GET(request:Request){
  try{
   const actor=requireEmployeeAi(await resolveActor(request)),db=await database();
+  await ensureConversationAccessTables(db);await ensureCustomerAccountTables(db);
   let customers:{results:Record<string,unknown>[]};
   try{customers=await db.prepare("SELECT id,name,area FROM crm_contacts ORDER BY updated_at DESC LIMIT 24").all<Record<string,unknown>>();}
   catch{customers=await db.prepare("SELECT id,name,city_id area FROM canonical_customers ORDER BY updated_at DESC LIMIT 24").all<Record<string,unknown>>();}
