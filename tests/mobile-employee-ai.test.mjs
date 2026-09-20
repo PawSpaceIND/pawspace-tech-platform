@@ -1,10 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { d1 } from "./helpers/execution-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
+installWorkersHooks("__MOBILE_EMPLOYEE_AI_DB__", "__MOBILE_EMPLOYEE_AI_ENV__");
+const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
 const source = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("mobile employee AI is server-authorized and defense-in-depth gated", () => {
+test("mobile employee AI is server-authorized and defense-in-depth gated", async t => {
+  const sqlite = new DatabaseSync(":memory:");
+  t.after(() => sqlite.close());
+  const db = d1(sqlite);
+  globalThis.__MOBILE_EMPLOYEE_AI_DB__ = db;
+  globalThis.__MOBILE_EMPLOYEE_AI_ENV__ = {};
+  const denied = await authorizeApiRequest(new Request("https://uat.pawspace.in/api/mobile-employee-ai"), { DB: db });
+  assert.ok(denied instanceof Response);
+  assert.equal(denied.status, 401);
   const route = source("app/api/mobile-employee-ai/route.ts");
   const gateway = source("lib/api-gateway.ts");
   assert.match(route, /requirePermission\(actor,"customers\.manage"\)/);
