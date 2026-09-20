@@ -37,6 +37,8 @@ test("mobile shell exposes Employee AI only after server authorization", () => {
   assert.match(page, /employeeAiAvailable&&<EmployeeAiMobile\/>/);
   assert.match(page, /employeeAiAvailable\?\[\["employee_ai","✦","AI"\]\]:\[\]/);
   assert.match(page, /data-employee-ai=\{employeeAiAvailable\?"enabled":"disabled"\}/);
+  assert.match(page, /aria-label=\{item\[2\]\}/);
+  assert.match(page, /<i aria-hidden="true">\{item\[1\]\}<\/i>/);
   assert.match(css, /\.phone>nav\[data-employee-ai="enabled"\]\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}/);
   assert.match(css, /\.phone>nav\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
   const convergence = source("app/prototype-convergence.css");
