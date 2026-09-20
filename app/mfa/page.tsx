@@ -1,21 +1,21 @@
 "use client";
 
 import Link from"next/link";
-import{useEffect,useMemo,useState}from"react";
+import{useEffect,useState}from"react";
+import{useQueryParameter}from"../../lib/use-query-parameter";
 
 type Enrollment={secret:string;otpauthUri:string;enabled:boolean};
 type Phase="checking"|"enroll"|"verify"|"done"|"error";
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
 
-function safeNext(){
- if(typeof window==="undefined")return"/team";
- const value=new URLSearchParams(window.location.search).get("next")||"/team";
- return value.startsWith("/")&&!value.startsWith("//")?value:"/team";
+function safeNext(value:string){
+ const target=value||"/team";
+ return target.startsWith("/")&&!target.startsWith("//")?target:"/team";
 }
 
 export default function MfaPage(){
  const[phase,setPhase]=useState<Phase>("checking"),[enrollment,setEnrollment]=useState<Enrollment|null>(null),[code,setCode]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
- const next=useMemo(()=>safeNext(),[]);
+ const next=safeNext(useQueryParameter("next"));
  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:18,padding:24,maxWidth:620,margin:"0 auto"};
  const input:React.CSSProperties={display:"block",width:"100%",padding:12,marginTop:7,borderRadius:10,border:`1px solid ${C.line}`,background:C.ground,color:C.ink,boxSizing:"border-box",fontSize:18,letterSpacing:4};
  const button:React.CSSProperties={padding:"11px 16px",borderRadius:10,border:"none",background:C.orange,color:C.ground,fontWeight:800,cursor:"pointer"};

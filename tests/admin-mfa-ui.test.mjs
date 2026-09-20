@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { importLibModule } from "./helpers/ts-module-loader.mjs";
 
 const page=fs.readFileSync("app/mfa/page.tsx","utf8");
 const login=fs.readFileSync("app/staging-login/page.tsx","utf8");
@@ -31,5 +32,18 @@ test("staging finance login is routed through MFA before Team Finance",()=>{
 });
 
 test("MFA return path rejects protocol-relative navigation",()=>{
- assert.match(page,/value\.startsWith\("\/"\)&&!value\.startsWith\("\/\/"\)/);
+ assert.match(page,/target\.startsWith\("\/"\)&&!target\.startsWith\("\/\/"\)/);
+});
+
+
+test("real TOTP implementation accepts its current code and rejects a different code",async()=>{
+ const {newTotpSecret,totpCode,verifyTotp}=await importLibModule("admin-mfa");
+ const secret=newTotpSecret();
+ assert.match(secret,/^[A-Z2-7]+$/);
+ const now=Date.now();
+ const code=await totpCode(secret,now);
+ assert.match(code,/^\d{6}$/);
+ assert.equal(await verifyTotp(secret,code,now),true);
+ const other=code==="000000"?"000001":"000000";
+ assert.equal(await verifyTotp(secret,other,now),false);
 });
