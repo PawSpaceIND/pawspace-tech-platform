@@ -39,6 +39,9 @@ test("mobile shell exposes Employee AI only after server authorization", () => {
   assert.match(page, /data-employee-ai=\{employeeAiAvailable\?"enabled":"disabled"\}/);
   assert.match(css, /\.phone>nav\[data-employee-ai="enabled"\]\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}/);
   assert.match(css, /\.phone>nav\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  const convergence = source("app/prototype-convergence.css");
+  assert.match(convergence, /:has\(\[data-location-welcome\]\)>nav:not\(\[data-employee-ai="enabled"\]\)\{display:none!important\}/);
+  assert.doesNotMatch(convergence, /:has\(\[data-location-welcome\]\)>nav\{display:none!important\}/);
 });
 
 test("employee AI mobile chat stays canonical and idempotent", () => {
