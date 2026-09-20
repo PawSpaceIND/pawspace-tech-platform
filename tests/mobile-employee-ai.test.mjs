@@ -31,10 +31,14 @@ test("mobile employee AI is server-authorized and defense-in-depth gated", async
 
 test("mobile shell exposes Employee AI only after server authorization", () => {
   const page = source("app/mobile-app/page.tsx");
+  const css = source("app/mobile-app/mobile.module.css");
   assert.match(page, /fetch\("\/api\/mobile-employee-ai"/);
   assert.match(page, /setEmployeeAiAvailable\(response\.ok\)/);
   assert.match(page, /employeeAiAvailable&&<EmployeeAiMobile\/>/);
   assert.match(page, /employeeAiAvailable\?\[\["employee_ai","✦","AI"\]\]:\[\]/);
+  assert.match(page, /data-employee-ai=\{employeeAiAvailable\?"enabled":"disabled"\}/);
+  assert.match(css, /\.phone>nav\[data-employee-ai="enabled"\]\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}/);
+  assert.match(css, /\.phone>nav\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
 });
 
 test("employee AI mobile chat stays canonical and idempotent", () => {
