@@ -49,6 +49,21 @@ async function shot(page: Page, name: string) { try { await page.screenshot({ pa
 
 let bookingId = "";
 let assignedGroomer = "";
+let assignedProviderId = "";
+const PROVIDER_PHONES: Record<string, string> = {
+  uatcap_groom_ft: "9000000901", uatcap_groom_cm: "9000000902", uatcap_groom_east: "9000000903",
+  uatcap_groom_south: "9000000904", uatcap_groom_north: "9000000905", uatcap_groom_west: "9000000906", uatcap_groom_central: "9000000907",
+  uatcap_groom_east_2: "9000000911", uatcap_groom_east_3: "9000000912", uatcap_groom_south_2: "9000000913", uatcap_groom_south_3: "9000000914",
+  uatcap_groom_north_2: "9000000915", uatcap_groom_north_3: "9000000916", uatcap_groom_west_2: "9000000917", uatcap_groom_west_3: "9000000918",
+  uatcap_groom_central_2: "9000000919", uatcap_groom_central_3: "9000000920",
+  uatcap_groom_east_4: "9000000921", uatcap_groom_east_5: "9000000922", uatcap_groom_south_4: "9000000923", uatcap_groom_south_5: "9000000924",
+  uatcap_groom_north_4: "9000000925", uatcap_groom_north_5: "9000000926", uatcap_groom_west_4: "9000000927", uatcap_groom_west_5: "9000000928",
+  uatcap_groom_central_4: "9000000929", uatcap_groom_central_5: "9000000930",
+  uatcap_groom_east_6: "9000000951", uatcap_groom_east_7: "9000000952", uatcap_groom_east_8: "9000000953", uatcap_groom_south_6: "9000000954",
+  uatcap_groom_south_7: "9000000955", uatcap_groom_south_8: "9000000956", uatcap_groom_north_6: "9000000957", uatcap_groom_north_7: "9000000958",
+  uatcap_groom_north_8: "9000000959", uatcap_groom_west_6: "9000000960", uatcap_groom_west_7: "9000000961", uatcap_groom_west_8: "9000000962",
+  uatcap_groom_central_6: "9000000963", uatcap_groom_central_7: "9000000964", uatcap_groom_central_8: "9000000965",
+};
 
 test.describe.configure({ mode: "serial" });
 
@@ -151,6 +166,27 @@ async function reachReview(page: Page, opts: { line2?: string; preferGroomer?: b
   log("✅ Review step: mandatory Customer Name / Phone / Alternative Phone + optional instructions filled.");
 }
 
+async function partnerOtpLogin(context: BrowserContext, phone: string): Promise<Page> {
+  const page = await context.newPage();
+  await page.goto("/partner/onboarding");
+  await page.getByPlaceholder("10-digit phone number").fill(phone);
+  await page.getByRole("button", { name: "Send OTP" }).click();
+  const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+  await expect(sandbox, "partner sandbox OTP must be shown on screen").toBeVisible({ timeout: 20_000 });
+  const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+  expect(code, "a 6-digit partner OTP must render").toMatch(/^\d{6}$/);
+  await page.getByPlaceholder("6-digit code").fill(code!);
+  const verified = page.waitForResponse(r => r.url().includes("/api/partner-otp") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  const res = await verified;
+  const body = await res.json().catch(() => ({})) as { data?: { providerId?: string; providerName?: string }; error?: string };
+  expect(res.status(), `partner OTP verify failed: ${JSON.stringify(body).slice(0, 200)}`).toBe(200);
+  expect(body.data?.providerId, "partner OTP must resolve a provider identity").toBeTruthy();
+  expect(body.data?.providerId, "partner OTP provider must match the booking assignment").toBe(assignedProviderId);
+  log(`✅ Partner OTP login resolved assigned provider ${body.data?.providerName || assignedGroomer} (${body.data?.providerId}).`);
+  return page;
+}
+
 async function staffSignIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
   await page.goto("/staging-login");
@@ -244,7 +280,11 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     await confirm.click();
     const reservedRes = await reserved;
     expect(reservedRes.status(), await reservedRes.text()).toBe(200);
-    log(`✅ Scheduler reservation completed on first attempt in ${Date.now() - confirmStartedAt} ms.`);
+    const reservedBody = await reservedRes.json().catch(() => ({})) as { data?: { provider?: { id?: string; name?: string } } };
+    assignedProviderId = String(reservedBody.data?.provider?.id || "");
+    if (reservedBody.data?.provider?.name) assignedGroomer = String(reservedBody.data.provider.name);
+    expect(assignedProviderId, "scheduler reservation must expose the assigned provider id").toBeTruthy();
+    log(`✅ Scheduler reservation completed on first attempt in ${Date.now() - confirmStartedAt} ms; assigned ${assignedGroomer || assignedProviderId} (${assignedProviderId}).`);
     const res = await created;
     expect(res.status(), await res.text()).toBe(201);
     const body = await res.json().catch(() => ({})) as { data?: { bookingId?: string; id?: string } };
@@ -302,43 +342,29 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
   } finally { await context.close(); }
 });
 
-test("Partner persona — groomer sees the incoming job card in /partner/jobs", async ({ browser }) => {
+test("Partner persona — assigned groomer sees the exact incoming job in /partner/jobs", async ({ browser }) => {
   test.setTimeout(120_000);
   section("Partner persona (/partner/jobs)");
-  expect(ACCESS_CODE, "PAWSPACE_UAT_ACCESS_CODE must be provided (CI secret)").not.toEqual("");
+  expect(bookingId, "customer step must produce a canonical booking id").toBeTruthy();
+  expect(assignedProviderId, "customer step must capture the assigned provider id").toBeTruthy();
+  const phone = PROVIDER_PHONES[assignedProviderId];
+  expect(phone, `seeded sandbox Partner OTP phone must exist for ${assignedProviderId}`).toBeTruthy();
   const context = await browser.newContext();
   try {
-    const page = await staffSignIn(context, GROOMER_EMAIL);
-    log(`✅ Login: staff sign-in as ${GROOMER_EMAIL} (redirected to /me).`);
+    const page = await partnerOtpLogin(context, phone);
     await page.goto("/partner/jobs");
     await expect(page.getByRole("heading", { name: "Your jobs" })).toBeVisible({ timeout: 20_000 });
     await expect.poll(() => page.evaluate(async () => (await fetch("/api/partner-job-feed", { cache: "no-store", credentials: "include" })).status)).toBe(200);
     const feed = await page.evaluate(async () => (await (await fetch("/api/partner-job-feed", { cache: "no-store", credentials: "include" })).json()));
-    const counts = feed?.data?.counts ?? {};
-    log(`✅ Partner job feed loaded. Counts — needsAction:${counts.needsAction ?? "?"}, today:${counts.today ?? "?"}, upcoming:${counts.upcoming ?? "?"}, completed:${counts.completed ?? "?"}, total:${counts.total ?? "?"}.`);
-    if (bookingId) {
-      type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
-      const sections = (["needsAction", "today", "upcoming"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
-      const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
-      if (hit) {
-        log(`✅ Booking ${bookingId} is in ${GROOMER_EMAIL}'s job feed (${hit.section}: ${hit.job.serviceCode} · ${hit.job.packageName} · status ${hit.job.status} · ${hit.job.scheduledStart}).`);
-        // The card prints "<service> · <package> for <first name>" and the window — never the raw id — so match on those.
-        const firstName = hit.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
-        const cards = page.getByText(new RegExp(`^for ${rx(firstName)}$`));
-        const cardVisible = await cards.first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
-        if (cardVisible) await cards.first().scrollIntoViewIfNeeded().catch(() => {});
-        const cardCount = cardVisible ? await cards.count().catch(() => 1) : 0;
-        const workspaceLink = await page.locator(`[data-testid="partner-workspace-${bookingId}"]`).isVisible().catch(() => false);
-        log(cardVisible
-          ? `✅ Job card rendered on /partner/jobs under "${hit.section}" (${hit.job.serviceCode} · ${hit.job.packageName} for ${firstName}; ${cardCount} card${cardCount === 1 ? "" : "s"} for this sweep customer)${workspaceLink ? " with the 'Open assigned workspace →' link" : "; the workspace link appears once the job is actionable"}.`
-          : "⚠️ Job is in the feed API but its card was not located in the DOM within 20 s — check the screenshot.");
-      } else {
-        const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
-        log(`⚠️ Booking ${bookingId} not in this groomer's feed — it was assigned to ${assignedGroomer || "an unlinked provider"}, not the provider linked to ${GROOMER_EMAIL}. Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
-      }
-    } else {
-      log("ℹ️ No booking ID captured from the customer step; asserting the feed structure only.");
-    }
+    type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
+    const sections = (["needsAction", "today", "upcoming", "completed"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
+    const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
+    expect(hit, `exact booking ${bookingId} must be visible to assigned provider ${assignedProviderId}`).toBeTruthy();
+    log(`✅ Exact booking ${bookingId} is visible to assigned provider ${assignedProviderId} in ${hit!.section} (${hit!.job.serviceCode} · ${hit!.job.packageName} · ${hit!.job.status} · ${hit!.job.scheduledStart}).`);
+    const firstName = hit!.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
+    const card = page.getByText(new RegExp(`^for ${rx(firstName)}$`)).first();
+    await expect(card, "assigned partner job card must render in the DOM").toBeVisible({ timeout: 20_000 });
+    log(`✅ Assigned-provider job card rendered on /partner/jobs for ${firstName}.`);
     expect(await page.getByRole("heading", { name: /Needs action|Today|Upcoming/ }).first().isVisible()).toBeTruthy();
     log("✅ Provider dashboard structure (Needs action / Today / Upcoming / Completed) rendered.");
     await shot(page, "partner-jobs");
