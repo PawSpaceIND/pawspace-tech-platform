@@ -14,6 +14,7 @@ const JSON_OUT = arg("json", "release-ui-closure-report.json");
 const TIMEOUT = Number(arg("timeout", "12000"));
 const SETTLE_MS = Number(arg("settle-ms", "300"));
 const MAX_CONTROLS_PER_ROUTE = Number(arg("max-controls", "40"));
+const VISUAL_API_ATTEMPTS = 3; // one initial visual load plus at most two retries for transient background 5xx
 
 if (!BASE) throw new Error("--base or PREVIEW_URL is required");
 if (!ACCESS_CODE) throw new Error("PAWSPACE_UAT_ACCESS_CODE is required for role coverage");
@@ -67,7 +68,7 @@ async function gotoSettled(page, url) {
   return response;
 }
 
-async function collectVisual(page, route, viewport) {
+async function collectVisualAttempt(page, route, viewport) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   const apiFailures = [], consoleErrors = [], pageErrors = [];
   const onResponse = (response) => {
@@ -125,6 +126,30 @@ async function collectVisual(page, route, viewport) {
   if (measured.brokenImages.length) failures.push(`broken images: ${measured.brokenImages.join(", ")}`);
   if (measured.clippedControls.length) failures.push(`controls outside viewport: ${measured.clippedControls.join(" | ")}`);
   return { route, viewport: viewport.name, status, consoleErrors: [...new Set(consoleErrors)], pageErrors: [...new Set(pageErrors)], apiFailures: [...new Set(apiFailures)], ...measured, failures };
+}
+
+function transientApiOnly(result) {
+  return result.status > 0 && result.status < 500
+    && !result.pageErrors.length
+    && !result.horizontalOverflow
+    && !result.brokenImages.length
+    && !result.clippedControls.length
+    && result.apiFailures.length > 0
+    && result.failures.length === 1
+    && result.failures[0].startsWith("5xx API:");
+}
+
+async function collectVisual(page, route, viewport) {
+  const recoveredApiFailures = [];
+  let result = null;
+  for (let attempt = 1; attempt <= VISUAL_API_ATTEMPTS; attempt += 1) {
+    result = await collectVisualAttempt(page, route, viewport);
+    if (!transientApiOnly(result)) return { ...result, visualLoadAttempts: attempt, recoveredApiFailures };
+    if (attempt === VISUAL_API_ATTEMPTS) return { ...result, visualLoadAttempts: attempt, recoveredApiFailures };
+    recoveredApiFailures.push(...result.apiFailures.map((failure) => `attempt ${attempt}: ${failure}`));
+    await sleep(400 * attempt);
+  }
+  return { ...result, visualLoadAttempts: VISUAL_API_ATTEMPTS, recoveredApiFailures };
 }
 
 function linkWiringResult(target, route) {
@@ -489,6 +514,8 @@ async function main() {
       discoveredRoutes: routes.length,
       visualChecks: visual.length + roleCoverage.length,
       visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length).length,
+      visualRoutesRetriedForApi5xx: [...visual, ...roleCoverage].filter((r) => (r.visualLoadAttempts || 1) > 1).map((r) => `${r.actor} ${r.route} ${r.viewport} (${r.visualLoadAttempts} attempts)`),
+      transientApiFailuresRecovered: [...visual, ...roleCoverage].reduce((n, r) => n + (r.recoveredApiFailures?.length || 0), 0),
       controlsProbed: controls.reduce((n, r) => n + r.controls.length, 0),
       controlFailures: controls.flatMap((r) => r.controls).filter((c) => isControlFailure(c.result)).length,
       // Every non-plain wiring verdict is counted here so a growing exemption surface is visible in
