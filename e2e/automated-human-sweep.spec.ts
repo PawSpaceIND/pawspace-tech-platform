@@ -17,6 +17,7 @@ import { dirname } from "node:path";
 
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
+const EXPECTED_SHA = process.env.PW_EXPECTED_SHA || "unverified";
 const PHONE = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
 const ALT_PHONE = "9123456780";
 const CUSTOMER_NAME = "UAT Sweep Customer";
@@ -41,7 +42,7 @@ const SERVICE_DATE_LABEL = `${ist("en-IN", { day: "numeric" })} ${ist("en-IN", {
 const SERVICE_DATE_ISO = ist("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" });
 const rx = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const report: string[] = ["# PawSpace staging — automated multi-persona sweep", "", `- Origin: ${BASE}`, `- Run: ${new Date().toISOString()}`, ""];
+const report: string[] = ["# PawSpace staging — automated multi-persona sweep", "", `- Origin: ${BASE}`, `- Exact deployed SHA: ${EXPECTED_SHA}`, `- Run: ${new Date().toISOString()}`, ""];
 function log(line: string) { report.push(line); console.log(`[sweep] ${line}`); }
 function section(title: string) { report.push("", `## ${title}`, ""); console.log(`\n[sweep] === ${title} ===`); }
 async function shot(page: Page, name: string) { try { await page.screenshot({ path: `test-results/sweep-${name}.png`, fullPage: true }); report.push(`  ↳ screenshot: test-results/sweep-${name}.png`); } catch { /* best effort */ } }
@@ -408,4 +409,65 @@ test("Founder persona — /admin + /crm render, tables load, booking ID visible"
       log("ℹ️ No booking ID captured; skipped the booking-ID visibility assertion.");
     }
   } finally { await context.close(); }
+});
+
+test("Employee AI V2 — unauthorized customer blocked; authorized staff chat persists once", async ({ browser }) => {
+  test.setTimeout(180_000);
+  section("Employee AI V2 — mobile chat authorization and persistence");
+  expect(ACCESS_CODE, "PAWSPACE_UAT_ACCESS_CODE must be provided (CI secret)").not.toEqual("");
+
+  const customerContext = await browser.newContext();
+  try {
+    const customerPage = await customerContext.newPage();
+    await customerOtpLogin(customerPage);
+    const denied = await customerContext.request.get("/api/mobile-employee-ai");
+    expect(denied.status(), "customer identities must not receive employee AI access").toBe(403);
+    await customerPage.goto("/mobile-app");
+    await expect(customerPage.getByRole("button", { name: /^AI$/ })).toHaveCount(0);
+    log("✅ Customer identity received HTTP 403 and no Employee AI navigation item.");
+    await shot(customerPage, "employee-ai-customer-denied");
+  } finally { await customerContext.close(); }
+
+  const staffContext = await browser.newContext();
+  try {
+    const page = await staffSignIn(staffContext, FOUNDER_EMAIL);
+    const bootstrap = await staffContext.request.get("/api/mobile-employee-ai");
+    expect(bootstrap.status(), await bootstrap.text()).toBe(200);
+    const bootstrapBody = await bootstrap.json() as { data?: { capabilities?: { chat?: boolean; voice?: boolean }; customers?: Array<{ id?: string }> } };
+    expect(bootstrapBody.data?.capabilities?.chat).toBe(true);
+    const customerId = String(bootstrapBody.data?.customers?.[0]?.id || "");
+    expect(customerId, "Employee AI requires at least one governed customer context").not.toEqual("");
+
+    await page.goto("/mobile-app");
+    const aiNav = page.getByRole("button", { name: /^AI$/ });
+    await expect(aiNav, "authorized staff should receive the Employee AI navigation item").toBeVisible({ timeout: 20_000 });
+    await aiNav.click();
+    await expect(page.getByRole("region", { name: "Employee AI mobile workspace" })).toBeVisible();
+    await expect(page.getByLabel("Employee AI message")).toBeEnabled();
+
+    const idempotencyKey = `uat-employee-ai:${EXPECTED_SHA}:${Date.now()}`;
+    const payload = { action: "chat", customerId, message: "Summarise this customer's current PawSpace context and recommend the next customer-safe step.", idempotencyKey };
+    const first = await staffContext.request.post("/api/mobile-employee-ai", { data: payload });
+    expect(first.status(), await first.text()).toBe(200);
+    const firstBody = await first.json() as { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean; ai?: { turn?: { output?: string } } } };
+    expect(firstBody.data?.duplicatePrevented).toBe(false);
+    expect(firstBody.data?.messageId).toBeTruthy();
+    expect(firstBody.data?.threadId).toBeTruthy();
+    expect(firstBody.data?.autonomousExecution).toBe(false);
+    expect(firstBody.data?.ai?.turn?.output, "real governed AI turn should return displayable output").toBeTruthy();
+
+    const replay = await staffContext.request.post("/api/mobile-employee-ai", { data: payload });
+    expect(replay.status(), await replay.text()).toBe(200);
+    const replayBody = await replay.json() as { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean } };
+    expect(replayBody.data?.duplicatePrevented).toBe(true);
+    expect(replayBody.data?.messageId).toBe(firstBody.data?.messageId);
+    expect(replayBody.data?.threadId).toBe(firstBody.data?.threadId);
+    expect(replayBody.data?.autonomousExecution).toBe(false);
+
+    const snapshot = await staffContext.request.get(`/api/ai-conversation?threadId=${encodeURIComponent(firstBody.data!.threadId!)}&customerId=${encodeURIComponent(customerId)}`);
+    expect(snapshot.status(), await snapshot.text()).toBe(200);
+    log(`✅ Authorized Employee AI returned a governed real chat turn for customer ${customerId}; canonical thread ${firstBody.data?.threadId} persisted and an identical replay was deduplicated with autonomousExecution=false.`);
+    log(`${bootstrapBody.data?.capabilities?.voice ? "✅" : "⚠️"} Employee AI voice capability is ${bootstrapBody.data?.capabilities?.voice ? "authorized for this staff identity" : "not authorized for this staff identity"}.`);
+    await shot(page, "employee-ai-authorized");
+  } finally { await staffContext.close(); }
 });
