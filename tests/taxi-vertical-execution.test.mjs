@@ -229,6 +229,9 @@ test("TXI-04 custody: pickup and drop-off are governed handovers, in order", asy
   assert.equal(skipArrival.ok, false, "a pet cannot be handed over before the vehicle has arrived");
   assert.match(String(skipArrival.body ?? ""), /Drop-off arrival is required/i);
 
+  /* Arrival carries the route evidence completion needs — TXI-05 owns that gate; record it here so
+   * this test stays about custody ORDER rather than about evidence. */
+  await taxiRouteSamples(db, 2);
   await drive(life, db, "arrive_dropoff", { idempotencyKey: "txi-c-arrive" });
   const dropoff = await drive(life, db, "confirm_dropoff", { idempotencyKey: "txi-c-drop" });
   assert.equal(dropoff.ok, true, `the drop-off handover must be recordable: ${String(dropoff.body ?? "").slice(0, 200)}`);
@@ -266,19 +269,25 @@ async function seedCommercialTerm(db) {
 }
 
 test("TXI-05 route proof: a trip cannot be completed without real sandbox route evidence", async () => {
-  const { db, life } = await taxiAtDropoff();
+  const { db, sqlite, life } = await taxiAtDropoff();
   const proof = await import("../lib/taxi-proof-governance.ts");
 
-  await drive(life, db, "arrive_dropoff", { idempotencyKey: "txi-r-arr" });
-  await drive(life, db, "confirm_dropoff", { idempotencyKey: "txi-r-drop" });
-
-  const none = await drive(life, db, "complete_trip", {});
-  assert.equal(none.ok, false, "a trip with no route proof must not be completable");
-  assert.match(String(none.body ?? ""), /at least two canonical sandbox route samples/i);
+  /* A trip with no route proof cannot reach drop-off at all. Samples are only accepted while the
+   * trip is in_progress, so the evidence gate sits where the evidence can still be produced: arrival
+   * is refused, the trip stays in_progress, and the refusal says what to record. [LP-N04] */
+  const noProofArrival = await drive(life, db, "arrive_dropoff", { idempotencyKey: "txi-r-arr" });
+  assert.equal(noProofArrival.ok, false, "a trip with no route proof must not reach drop-off");
+  assert.match(String(noProofArrival.body ?? ""), /route samples under Route . proof before marking arrival/i);
+  assert.equal(sqlite.prepare("SELECT status FROM taxi_trips WHERE booking_id=?").get(BOOKING).status, "in_progress");
+  const noProofComplete = await drive(life, db, "complete_trip", {});
+  assert.equal(noProofComplete.ok, false, "and it certainly cannot be completed");
 
   /* Samples are validated, so a driver cannot pad the count with nonsense. Note these are recorded
    * DURING the trip - the module refuses them once the trip is no longer in progress, which is
-   * itself the right rule and is asserted here. */
+   * itself the right rule and is asserted here, against a trip driven to a confirmed handover. */
+  await taxiRouteSamples(db, 2);
+  await drive(life, db, "arrive_dropoff", { idempotencyKey: "txi-r-arr2" });
+  await drive(life, db, "confirm_dropoff", { idempotencyKey: "txi-r-drop" });
   const late = await attempt(() => proof.mutateTaxiProof(db, {
     bookingId: BOOKING, action: "record_location_sample", actorId: DRIVER,
     idempotencyKey: "txi-late", latitude: 12.97, longitude: 77.64, accuracyMeters: 10,
@@ -305,10 +314,9 @@ test("TXI-05 route proof: a trip cannot be completed without real sandbox route 
   }
 
   await taxiRouteSamples(w2.db, 1);
-  await drive(w2.life, w2.db, "arrive_dropoff", { idempotencyKey: "txi-r2-arr" });
-  await drive(w2.life, w2.db, "confirm_dropoff", { idempotencyKey: "txi-r2-drop" });
-  const one = await drive(w2.life, w2.db, "complete_trip", {});
+  const one = await drive(w2.life, w2.db, "arrive_dropoff", { idempotencyKey: "txi-r2-arr" });
   assert.equal(one.ok, false, "a single sample is a point, not a route");
+  assert.match(String(one.body ?? ""), /route samples under Route . proof before marking arrival/i);
   stage("Route proof", "PASS", "no samples and one sample refused; five malformed samples rejected; back-filling after the trip refused");
 });
 
