@@ -14,7 +14,6 @@ export async function POST(request: Request) {
     await requireCustomerOwnership(db, actor, session.subjectId);
     const { env } = await import("cloudflare:workers");
     const runtime = env as unknown as Record<string, unknown>;
-    const locks = customerCheckoutEnvironment(runtime);
     // Stream-limit the JSON body, including requests without Content-Length.
     if ((request.headers.get("content-type") || "").split(";")[0].trim().toLowerCase() !== "application/json") return json({ error: "JSON is required." }, 415);
     const reader = request.body?.getReader();
@@ -36,6 +35,13 @@ export async function POST(request: Request) {
     catch { return json({ error: "Invalid payment request." }, 400); }
     const bookingId = typeof body.bookingId === "string" ? body.bookingId : "";
     if (body.action === "start") {
+      // The Razorpay sandbox-configuration gate belongs here, not above: it protects only the action
+      // that opens a gateway order. "status" is a read of PawSpace's own booking/payment record and
+      // "confirm" re-checks this same gate itself (verifyCustomerCheckoutReceipt), so gating every
+      // action behind it hid the whole booking record behind a gateway outage (CUST-L-D04/D11): the
+      // V2 "View booking & payment" page and the training recovery screen both read this via
+      // loadCustomerConfirmationProjection({action:"status"}) and got a 503 instead of the booking.
+      const locks = customerCheckoutEnvironment(runtime);
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);
       const stage = await paymentStageAmount(db, bookingId);
       if (!stage) return json({ error: "Payment record was not found." }, 404);
