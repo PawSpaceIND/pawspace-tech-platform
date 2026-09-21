@@ -88,13 +88,31 @@ async function training(page){
 
 async function address(page){const line1=await enabled(page.getByLabel(/Address Line 1/),"Service address",SERVER_TIMEOUT);await line1.fill(ADDRESS);const verify=await enabled(page.getByRole("button",{name:"Verify service address",exact:true}),"Service address verification",SERVER_TIMEOUT);await verify.click();await page.getByText("Verified service doorstep",{exact:true}).waitFor({state:"visible",timeout:SERVER_TIMEOUT});}
 async function sittingRates(page){
- const rateButtons=page.locator("button").filter({hasText:"/ night"}),first=rateButtons.first();
- try{await first.waitFor({state:"visible",timeout:20000});}
- catch(firstFailure){const retry=page.getByRole("button",{name:"Retry sitter search",exact:true});if(!await retry.isVisible().catch(()=>false)){const alerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);die(`Sitting profile rates unavailable${alerts.length?`: ${alerts.join(" | ")}`:""} (${firstFailure instanceof Error?firstFailure.message.split("\n")[0]:String(firstFailure)})`);}report.sittingDiscoveryRetries+=1;await retry.click();await first.waitFor({state:"visible",timeout:SERVER_TIMEOUT});}
+ const rateButtons=page.locator("button").filter({hasText:"/ night"}),first=rateButtons.first(),retry=page.getByRole("button",{name:"Retry sitter search",exact:true}),status=page.getByRole("status").filter({hasText:/Checking sitter availability/i});
+ const deadline=Date.now()+SERVER_TIMEOUT*2;let attempts=0,lastAlerts=[];
+ while(Date.now()<deadline){
+  if(await first.isVisible().catch(()=>false))break;
+  lastAlerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);
+  if(await retry.isVisible().catch(()=>false)&&attempts<2){attempts+=1;report.sittingDiscoveryRetries+=1;await retry.click();await status.waitFor({state:"visible",timeout:3000}).catch(()=>undefined);await status.waitFor({state:"hidden",timeout:SERVER_TIMEOUT}).catch(()=>undefined);continue;}
+  await page.waitForTimeout(200);
+ }
+ if(!await first.isVisible().catch(()=>false))die(`Sitting profile rates unavailable after ${attempts} governed retr${attempts===1?"y":"ies"}${lastAlerts.length?`: ${lastAlerts.join(" | ")}`:""}`);
  const rates=await rateButtons.allTextContents();report.sittingProfileRateEvidence=rates.slice(0,3).map(x=>x.replace(/\s+/g," ").trim());if(!rates.length)die("Sitting profile rates not rendered for checkout-vs-card review");return rates;
 }
+async function resolveStayLocation(page,available,name){
+ const region=page.getByRole("region",{name:"Care location"});await region.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const manual=region.getByLabel("Complete doorstep address",{exact:true}),change=region.getByRole("button",{name:"Change Address",exact:true}),retry=region.getByRole("button",{name:"Retry address check",exact:true});
+ const deadline=Date.now()+SERVER_TIMEOUT;let retryUsed=false;
+ while(Date.now()<deadline){
+  if(await available.isVisible().catch(()=>false)&&await available.isEnabled().catch(()=>false))return;
+  if(await manual.isVisible().catch(()=>false)){await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);return;}
+  if(await change.isVisible().catch(()=>false)&&await change.isEnabled().catch(()=>false)){await change.click();await manual.waitFor({state:"visible",timeout:TIMEOUT});await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);return;}
+  if(!retryUsed&&await retry.isVisible().catch(()=>false)){retryUsed=true;await retry.click();}
+  await page.waitForTimeout(150);
+ }
+ const alerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);die(`${name} address resolution did not become usable${alerts.length?`: ${alerts.join(" | ")}`:""}`);
+}
 async function stay(page,sitting){
- const name=sitting?"Pet Sitting":"Boarding";await openService(page,name);await text(page,sitting?"Care at home, around their routine.":"A stay that feels like home.");await petsReady(page);const available=page.getByRole("button",{name:sitting?/See available sitters/i:/See available homes/i});const pet=petButton(page);if(await pet.count())await pet.click();try{await ready(page,available,`${name} saved-address trip details`,8000);}catch{const manual=page.getByLabel("Complete doorstep address",{exact:true});if(!await manual.count())throw new Error(`${name} did not resolve a saved address and did not expose the manual address editor`);await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);}await available.click();await text(page,sitting?"Choose your sitter":"Choose your host");if(sitting)await sittingRates(page);
+ const name=sitting?"Pet Sitting":"Boarding";await openService(page,name);await text(page,sitting?"Care at home, around their routine.":"A stay that feels like home.");await petsReady(page);const available=page.getByRole("button",{name:sitting?/See available sitters/i:/See available homes/i});const pet=petButton(page);if(await pet.count())await pet.click();await resolveStayLocation(page,available,name);await available.click();await text(page,sitting?"Choose your sitter":"Choose your host");if(sitting)await sittingRates(page);
  const next=page.getByRole("button",{name:/Continue with|Choose an available host/i});await ready(page,next,`${name} caregiver match`,SERVER_TIMEOUT);await next.click();await text(page,"Build the Care Card");await page.getByLabel("Vet contact").fill("UAT Vet contact");await page.getByLabel("Emergency contact").fill("UAT emergency contact");if(sitting)await page.getByLabel("Home access instructions").fill("UAT home access instructions");await page.getByRole("button",{name:"Review protected booking"}).click();await text(page,"Review and confirm");await page.getByRole("checkbox",{name:/I agree to care/i}).check();const final=page.getByRole("button",{name:/create canonical stay|request final partner approval/i});await ready(page,final,`${name} server quote`,SERVER_TIMEOUT);const seen=await observeFinal(page,final,sitting?/POST \/api\/(sitting-payment|uat-scheduling|canonical-bookings)/:/POST \/api\/uat-scheduling/,[/POST \/api\/(boarding|sitting)-commercial/,/POST \/api\/(boarding|sitting).*quote/,/POST \/api\/live-price-quote/]);return`4 stages + caregiver + final wiring (${seen})`;
 }
 
