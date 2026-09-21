@@ -121,3 +121,12 @@ test("CUST-L-D07 wiring: the mobile OTP screen only renders/sends the name field
   assert.match(source, /!existingCustomer\s*&&/, "the name field must be conditionally rendered only for a new account");
   assert.match(source, /existingCustomer\s*\?\s*undefined\s*:\s*\(name \|\| undefined\)/, "verify must never send a typed name for a returning customer");
 });
+
+test('CUST-L-D17: the V2 sign-in modal hides the name field for a returning customer and labels the code for customers', () => {
+  const page = fs.readFileSync(new URL('../app/v2/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /\{!challenge\?\.existingCustomer && <label className=\{styles\.field\}><span>Your name/, 'the name field must render only for a new account');
+  assert.ok(!page.includes('<span>UAT CODE</span>'), 'customers must not be shown an internal label');
+  assert.match(page, /<span>Sandbox code \(no real SMS yet\)<\/span>/, 'the code label must match the mobile app wording');
+  const client = fs.readFileSync(new URL('../lib/v2/customer-experience-client.ts', import.meta.url), 'utf8');
+  assert.match(client, /existingCustomer\?: boolean;/, 'the challenge type must carry the boolean the modal branches on');
+});

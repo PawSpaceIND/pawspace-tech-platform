@@ -29,6 +29,8 @@ export type V2OtpChallenge = {
   expiresInSeconds?: number;
   sandboxDelivery?: boolean;
   liveSmsDelivered?: boolean;
+  /** Whether this phone already has a PawSpace account. A boolean only, so no identity crosses the boundary. */
+  existingCustomer?: boolean;
 };
 
 function envelope<T>(body: unknown): { data?: T; error?: string } {
