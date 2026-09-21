@@ -37,6 +37,8 @@ follows the 2026-09-20 V2 end-to-end test report.
 | Frozen full suite | `b1f4d39` | 6,547 tests, 0 failures, 0 skipped, 925 s |
 | Browser E2E personas (CI) | `b1f4d39` | Run 35647702969 **success** — the red case above passes |
 | Staging deploy + certification | `b1f4d39` | Run 35649768568 **success** — exact-SHA checkout verified clean, D1 migrations applied, isolation certified before any D1 write, PII-safe Sentry delivery verified, staff directory and human-UAT provider roster loaded, deploy certified; every live-SMS and live-OTP step skipped as required by `sms_smoke=disabled`. Evidence artifact 10660889872. |
+| Frozen full suite | `32ae834` | 6,553 tests, 0 failures, 0 skipped, 928 s |
+| CodeQL | `32ae834` | **Still 1 new high alert.** The js/code-injection sink removed at `32ae834` was not it. Rule unreadable from this sandbox — see OPEN_ITEMS.md. |
 
 ## Boundaries
 

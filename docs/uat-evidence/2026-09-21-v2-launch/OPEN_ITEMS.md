@@ -43,5 +43,31 @@ Nothing here is a guess: each line names what was actually observed and who has 
   key-shaped literals, but the historical commits in the range still do. The repo's convention for exactly this case
   is to list the exact fingerprints in `.gitleaksignore`; that file was deliberately **not** touched here because it
   is a security-policy gate. A maintainer should decide.
-- **CodeQL** reports one new high-severity alert on this PR. The session's integration token cannot read the
-  code-scanning API (403), so the alert could not be inspected or triaged. A maintainer needs to look.
+- **CodeQL** reports one new high-severity alert on this PR, and it is the only red check left. A maintainer
+  needs to read it; it takes seconds with repo access:
+  <https://github.com/PawSpaceIND/pawspace-tech-platform/security/code-scanning?query=pr%3A960+tool%3ACodeQL+is%3Aopen>
+
+  What was tried from here, so nobody repeats it. The alert's rule, file and line live in the check run's
+  *annotations*. The GitHub MCP toolset exposes no code-scanning or annotations method; the check run's own
+  `output.text` is empty and its summary gives only the count; the CodeQL action uploads its SARIF to the
+  code-scanning API rather than as a workflow artifact, so there is nothing to download; the CodeQL bundle
+  cannot be fetched to re-run the analysis locally because the egress proxy does not allow that repository;
+  and a direct API call is refused (403) without credentials this session was not granted.
+
+  What was ruled out by auditing the diff against what `security-extended` rates high:
+  - `js/code-injection` — `tests/lp-d06-handling-requirements-labels.test.mjs`, new on this branch, sliced
+    function bodies out of `app/partner-app/job-notes.tsx` and passed them to `new Function`. That was a real
+    sink and was removed (the tests render the component instead), but **CodeQL stayed red afterwards**, so
+    it was not this alert. The change is kept on its own merits. The repository's two other `new Function`
+    uses both predate this branch.
+  - `js/sql-injection` — the only interpolated SQL identifier added here, `${field}` in `lib/lead-attempt.ts`,
+    is a ternary over two hardcoded column names and cannot carry user input.
+  - `js/redos` — the one added regex with a quantified group, the email check, cannot backtrack ambiguously
+    (its repeated group must start with a literal `.`, which its character class excludes) and its input is
+    length-capped at 254 first.
+  - `js/insecure-randomness` — the two added `Math.random()` uses are test-fixture invoice numbers, not
+    secrets, tokens or keys.
+
+  Note the check's own caveat: *"Alerts not introduced by this pull request might have been detected because
+  the code changes were too large."* This PR is 285 files, so a pre-existing alert surfacing here is a real
+  possibility and should be considered before anyone treats it as a regression.
