@@ -359,5 +359,60 @@
   "fix": "e7487ec — a repeat returns the existing batch, another state is refused with a 409 naming it, a missing run is a 404",
   "verification": "tests/payroll-payment-preparation-repeat.test.mjs",
   "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-077",
+  "priorId": "LP-D01 / PARTNER-D01",
+  "title": "The gateway permission was fixed earlier, but the handler then died with an unhandled error when the Razorpay sandbox credentials were absent: 500, no row, raw error in the app",
+  "severity": "P1",
+  "class": "payment",
+  "persona": "Groomer · pay-after-service payment request",
+  "fix": "c8dd694 — the missing-credentials case is a governed 503 in plain words, checked after ownership and before any write",
+  "verification": "tests/launch-partner-grooming-repairs.test.mjs (also asserts no post_service_payment_requests row after two taps)",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-078",
+  "priorId": "LP-N04",
+  "title": "A trip could be driven to drop-off before any route sample existed; samples were then refused and completion never appeared, stranding the trip in progress",
+  "severity": "P1",
+  "class": "partner",
+  "persona": "Taxi driver · /driver",
+  "fix": "c8dd694 — drop-off is refused until the route evidence the completion rule needs exists, while the driver is still in the state where samples are accepted. The evidence rule itself was not relaxed",
+  "verification": "tests/launch-partner-lifecycle-refusals.test.mjs, reworked taxi-closure and taxi-vertical-execution cases",
+  "status": "fixed; trips already stranded at drop-off need an operations data fix"
+ },
+ {
+  "id": "V2-079",
+  "priorId": "LP-N01 / LP-N02 / LP-N03",
+  "title": "Declining an already-declined order crashed with a 500; the job list still showed it Confirmed with Accept and Decline offered; the customer summary still named the provider who had declined",
+  "severity": "P2",
+  "class": "backend/wiring",
+  "persona": "Groomer and customer · declined grooming assignment",
+  "fix": "c8dd694 — the repeat is a governed refusal, the provider job list and the customer summary both report awaiting reassignment with no provider claimed",
+  "verification": "tests/launch-partner-grooming-repairs.test.mjs, tests/customer-grooming-summary.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-080",
+  "priorId": "LP-N05",
+  "title": "Governed refusals reached providers as a generic \"Unable to update …\", so the provider could not tell what to do",
+  "severity": "P2",
+  "class": "UI/backend",
+  "persona": "Providers · sitting, taxi, training refusals",
+  "fix": "c8dd694 — expired sitter offer, check-in outside the care window, samples after drop-off, missing handover, report or evidence now keep their own wording and status",
+  "verification": "tests/launch-partner-lifecycle-refusals.test.mjs, tests/launch-partner-training-refusals.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-081",
+  "priorId": "LP-N19",
+  "title": "POST /api/canonical-bookings returned the COMPLETED booking for a re-booked slot, so the app said the groomer was reserved for a finished job",
+  "severity": "P2",
+  "class": "data",
+  "persona": "Customer · re-booking a finished slot",
+  "fix": "c8dd694 — a closed booking no longer satisfies a replay; the request is refused with the booking id and status and the customer is asked to choose another time",
+  "verification": "tests/launch-partner-lifecycle-refusals.test.mjs (with a control proving an open booking still replays)",
+  "status": "fixed; creating a second booking for the identical slot would require changing the idempotency fingerprint, which is the double-submit guard — recorded as a limit"
  }
 ]
