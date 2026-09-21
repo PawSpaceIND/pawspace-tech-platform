@@ -42,13 +42,17 @@ export async function ensureCustomerOtpTables(db:Db){await db.batch([
 ]);await ensureVerifierColumns(db);}
 
 export async function requestCustomerOtp(db:Db,input:{phone:string}){
- await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);
+ await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);await ensureCustomerAccountTables(db);
  const phone=normalizePhone(input.phone);
  if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");
  const now=Date.now(),code=secureSixDigitOtp(),id=uid("OTP"),salt=randomVerifierSalt(),verifier=await otpVerifier(id,salt,code);
  await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at,verifier_salt,verifier_hash) VALUES (?,?,?,0,0,?,?,?,?)")
   .bind(id,phone,HASHED_MARKER,now,now+5*60000,salt,verifier).run();
- return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
+ // CUST-L-D07/D17: the caller needs to know whether to show the "your name" field at all - asking a
+ // returning customer for a name they already have (and then ignoring what they type) is the defect.
+ // The canonical lookup itself carries PII (name, city); only the boolean crosses this boundary.
+ const existingCustomer=Boolean(await resolveOtpCustomer(db,phone));
+ return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false,existingCustomer};
 }
 
 export async function discardCustomerOtpChallenge(db:Db,challengeId:string){await db.prepare("DELETE FROM customer_otp_challenges WHERE id=?").bind(challengeId).run();}

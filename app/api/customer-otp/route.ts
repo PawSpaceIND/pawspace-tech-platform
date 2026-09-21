@@ -62,7 +62,7 @@ export async function POST(request: Request) {
         await discardCustomerOtpChallenge(db,result.challengeId);
         return deliveryFailed();
       }
-      return json({data:{challengeId:result.challengeId,phone:result.phone,expiresInSeconds:result.expiresInSeconds,sandboxDelivery:false,liveSmsDelivered:true}},200,{"cache-control":"no-store"});
+      return json({data:{challengeId:result.challengeId,phone:result.phone,expiresInSeconds:result.expiresInSeconds,sandboxDelivery:false,liveSmsDelivered:true,existingCustomer:result.existingCustomer}},200,{"cache-control":"no-store"});
     }
     if (body.action === "verify") {
       if (!body.challengeId || !body.code) return json({ error: "Challenge and code are required" }, 400);
