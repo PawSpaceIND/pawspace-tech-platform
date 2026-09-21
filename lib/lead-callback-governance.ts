@@ -1,3 +1,4 @@
+import {governedRefusal} from "./governed-http-error";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -30,7 +31,9 @@ async function repairLegacyLeadCallbacksShape(db:Db){
  const table=await db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='lead_callbacks'").first<Row>();
  if(!table)return;
  const columns=new Set((await db.prepare("PRAGMA table_info(lead_callbacks)").all<Row>()).results.map(row=>text(row.name)));
- const missing:Array<[string,string]>=[["requested_at","INTEGER"],["scheduled_by","TEXT"],["completed_at","INTEGER"],["completed_outcome","TEXT"],["missed_at","INTEGER"]].filter(([name])=>!columns.has(name)) as Array<[string,string]>;
+ // Both shapes end up with the union of columns: the governed ones (drizzle 0021 lacks them) and the
+ // intake ones (a governed-only table lacks them), all nullable so neither writer is blocked.
+ const missing:Array<[string,string]>=[["requested_at","INTEGER"],["scheduled_by","TEXT"],["completed_at","INTEGER"],["completed_outcome","TEXT"],["missed_at","INTEGER"],["phone","TEXT"],["name","TEXT"],["preferred_at","INTEGER"],["source","TEXT"],["requested_by","TEXT"]].filter(([name])=>!columns.has(name)) as Array<[string,string]>;
  if(!missing.length)return;
  for(const [name,type] of missing)await db.prepare(`ALTER TABLE lead_callbacks ADD COLUMN ${name} ${type}`).run();
  if(missing.some(([name])=>name==="requested_at"))await db.prepare(`UPDATE lead_callbacks SET requested_at=COALESCE(${columns.has("preferred_at")?"preferred_at,":""}created_at) WHERE requested_at IS NULL`).run();
@@ -41,7 +44,7 @@ export async function ensureLeadCallbackTables(db:Db){await repairLegacyLeadCall
  // Explicit, governed record: every scheduled callback is a real, separate row - never just an
  // overwrite of a single "next action" field, so a lead's full callback history stays visible and
  // a rep who reschedules can't quietly lose the trail of promises already made to the customer.
- db.prepare("CREATE TABLE IF NOT EXISTS lead_callbacks (id TEXT PRIMARY KEY,lead_id TEXT NOT NULL,requested_at INTEGER NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'scheduled',completed_at INTEGER,completed_outcome TEXT,missed_at INTEGER,scheduled_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS lead_callbacks (id TEXT PRIMARY KEY,lead_id TEXT NOT NULL,requested_at INTEGER NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'scheduled',completed_at INTEGER,completed_outcome TEXT,missed_at INTEGER,scheduled_by TEXT NOT NULL,phone TEXT,name TEXT,preferred_at INTEGER,source TEXT,requested_by TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_callbacks_lead ON lead_callbacks(lead_id,status)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_callbacks_due ON lead_callbacks(status,requested_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_callback_events (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,callback_id TEXT NOT NULL,lead_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
@@ -64,16 +67,22 @@ async function emit(db:Db,input:{callbackId:string;leadId:string;eventType:strin
 export async function scheduleLeadCallback(db:Db,input:{leadId:string;requestedAt:number;reason:string;actorId:string;idempotencyKey?:string}){
  await ensureLeadCallbackTables(db);
  const leadId=text(input.leadId),reason=input.reason.trim(),actorId=text(input.actorId);
- if(!leadId)throw new Error("Lead is required");
- if(!Number.isFinite(input.requestedAt)||input.requestedAt<=Date.now())throw new Error("Callback time must be a real, future time - not a placeholder");
- if(reason.length<8)throw new Error("A real reason (what the customer actually asked for) is required to schedule a callback");
- const lead=await db.prepare("SELECT id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>();
- if(!lead)throw new Error("Lead not found");
+ if(!leadId)throw governedRefusal("Lead is required");
+ if(!Number.isFinite(input.requestedAt)||input.requestedAt<=Date.now())throw governedRefusal("Callback time must be a real, future time - not a placeholder");
+ if(reason.length<8)throw governedRefusal("A real reason (what the customer actually asked for) is required to schedule a callback");
+ const lead=await db.prepare("SELECT id,customer_id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>();
+ if(!lead)throw governedRefusal("Lead not found");
+ // The intake shape (drizzle 0021, applied on staging) requires the callback phone, source and requester;
+ // they are real facts about this callback, so they are written on every shape rather than defaulted.
+ let contact:Row|null=null;
+ try{contact=await db.prepare("SELECT primary_phone,name FROM crm_contacts WHERE id=?").bind(text(lead.customer_id)).first<Row>();}catch{contact=null;}
+ const phone=text(contact?.primary_phone),contactName=text(contact?.name)||null;
+ if(!phone)throw governedRefusal("This lead has no phone number on file; add one to the CRM contact before scheduling a callback");
  const requestKey=text(input.idempotencyKey)||`schedule:${leadId}:${input.requestedAt}:${actorId}:${reason}`;
  const priorEvent=await db.prepare("SELECT callback_id FROM lead_callback_events WHERE idempotency_key=? AND event_type='scheduled'").bind(requestKey).first<Row>();
  if(priorEvent){
    const prior=await db.prepare("SELECT * FROM lead_callbacks WHERE id=?").bind(priorEvent.callback_id).first<Row>();
-   if(!prior)throw new Error("Callback replay record is missing its callback");
+   if(!prior)throw governedRefusal("Callback replay record is missing its callback");
    return{id:text(prior.id),leadId:text(prior.lead_id),requestedAt:Number(prior.requested_at),reason:text(prior.reason),status:text(prior.status),duplicatePrevented:true};
  }
  // Superseding a still-open callback for the same lead, rather than letting two live promises
@@ -81,22 +90,22 @@ export async function scheduleLeadCallback(db:Db,input:{leadId:string;requestedA
  const now=Date.now();
  await db.prepare("UPDATE lead_callbacks SET status='superseded',updated_at=? WHERE lead_id=? AND status='scheduled'").bind(now,leadId).run();
  const id=uid("LCB");
- await db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,created_at,updated_at) VALUES (?,?,?,?,'scheduled',?,?,?)")
-   .bind(id,leadId,input.requestedAt,reason,actorId,now,now).run();
+ await db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,phone,name,preferred_at,source,requested_by,created_at,updated_at) VALUES (?,?,?,?,'scheduled',?,?,?,?,'crm_governed',?,?,?)")
+   .bind(id,leadId,input.requestedAt,reason,actorId,phone,contactName,input.requestedAt,actorId,now,now).run();
  await db.prepare("UPDATE lead_work_items SET next_action_at=?,updated_at=? WHERE id=?").bind(input.requestedAt,now,leadId).run();
  const emitted=await emit(db,{callbackId:id,leadId,eventType:"scheduled",actorId,idempotencyKey:requestKey,detail:{requestedAt:input.requestedAt,reason}});
- if(!emitted)throw new Error("Callback schedule idempotency key was already consumed");
+ if(!emitted)throw governedRefusal("Callback schedule idempotency key was already consumed");
  return{id,leadId,requestedAt:input.requestedAt,reason,status:"scheduled",duplicatePrevented:false};
 }
 
 /** A rep genuinely made the call - completes the real, open callback for this lead, real outcome required. */
 export async function completeLeadCallback(db:Db,input:{callbackId:string;outcome:string;actorId:string}){
  await ensureLeadCallbackTables(db);
- if(!text(input.outcome))throw new Error("A real call outcome is required to complete a callback");
+ if(!text(input.outcome))throw governedRefusal("A real call outcome is required to complete a callback");
  const callback=await db.prepare("SELECT * FROM lead_callbacks WHERE id=?").bind(input.callbackId).first<Row>();
- if(!callback)throw new Error("Callback not found");
+ if(!callback)throw governedRefusal("Callback not found");
  if(text(callback.status)==="completed")return{id:input.callbackId,status:"completed",duplicatePrevented:true};
- if(text(callback.status)!=="scheduled"&&text(callback.status)!=="missed")throw new Error(`Callback status ${text(callback.status)} cannot be completed`);
+ if(text(callback.status)!=="scheduled"&&text(callback.status)!=="missed")throw governedRefusal(`Callback status ${text(callback.status)} cannot be completed`);
  const now=Date.now();
  await db.prepare("UPDATE lead_callbacks SET status='completed',completed_at=?,completed_outcome=?,updated_at=? WHERE id=?").bind(now,input.outcome.trim(),now,input.callbackId).run();
  await emit(db,{callbackId:input.callbackId,leadId:text(callback.lead_id),eventType:"completed",actorId:input.actorId,idempotencyKey:`complete:${input.callbackId}`,detail:{outcome:input.outcome.trim(),wasMissed:text(callback.status)==="missed"}});

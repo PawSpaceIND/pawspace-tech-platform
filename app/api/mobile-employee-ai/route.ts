@@ -23,14 +23,24 @@ export async function GET(request:Request){
 
 type Body={action?:"chat";customerId?:string;message?:string;idempotencyKey?:string};
 export async function POST(request:Request){
+ let audited:{actor:ReturnType<typeof requireEmployeeAi>;db:Awaited<ReturnType<typeof database>>;customerId:string}|null=null;
  try{
   sameOrigin(request);
   const actor=requireEmployeeAi(await resolveActor(request)),db=await database(),body=await request.json() as Body;
   if(body.action!=="chat")return json({error:"Unsupported employee AI mobile action"},400);
   const customerId=text(body.customerId),message=text(body.message),idempotencyKey=text(body.idempotencyKey);
+  audited={actor,db,customerId};
   if(!customerId||!message||!idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
   const result=await runAuthenticatedAiWebChat(db,{actor,customerId,text:message,idempotencyKey});
   await securityAudit(db,actor,"mobile.employee_ai.chat","communication_thread",result.threadId,"completed",{customerId,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
   return json({data:result});
- }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to process employee AI mobile chat");}
+ }catch(error){
+  if(error instanceof Response){
+   const detail=await error.text();
+   // A governed refusal (409 while staff own the thread) is still an employee-AI chat attempt: audit it as blocked.
+   if(audited&&error.status===409)await securityAudit(audited.db,audited.actor,"mobile.employee_ai.chat","communication_thread",null,"blocked",{customerId:audited.customerId,status:error.status,detail}).catch(()=>{});
+   return json({error:detail},error.status);
+  }
+  return authError(error,"Unable to process employee AI mobile chat");
+ }
 }
