@@ -19,6 +19,15 @@ test("customer acceptance targets each premium service card before its generic C
   assert.doesNotMatch(source, /care\(page\)\.getByRole\("button",\{name:new RegExp\(name,"i"\)\}\)/);
 });
 
+
+
+test("customer acceptance synchronizes OTP request with the live staging response", () => {
+  assert.match(source, /waitForResponse\(response=>response\.url\(\)\.includes\("\/api\/customer-otp"\)/);
+  assert.match(source, /timeout:SERVER_TIMEOUT/);
+  assert.match(source, /sandbox OTP request failed/);
+  assert.match(source, /rendered sandbox OTP did not match the server challenge/);
+  assert.match(source, /sandbox\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
+});
 test("customer acceptance waits for OTP verification to replace the login UI", () => {
   assert.match(source, /codeInput\.waitFor\(\{state:"hidden",timeout:TIMEOUT\}\)/);
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
@@ -55,24 +64,36 @@ test("customer acceptance observes async final mutations through the server time
   assert.match(source, /while\(!seen\.length&&!unexpected\.length&&Date\.now\(\)<deadline\)await page\.waitForTimeout\(100\)/);
 });
 
-test("customer acceptance uses the governed east-zone UAT location for Training", () => {
+test("customer acceptance uses the governed east-zone UAT location and current address verification", () => {
   assert.match(source, /PIN="560038"/);
   assert.match(source, /ADDRESS="42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru"/);
   assert.doesNotMatch(source, /PIN="560034"/);
-  assert.match(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
-  assert.match(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Check area",exact:true\}\)/);
+  assert.match(source, /getByRole\("button",\{name:\/Continue in Bengaluru\/i\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Verify service address",exact:true\}\)/);
   assert.match(source, /getByText\("Verified service doorstep",\{exact:true\}\)/);
-  assert.doesNotMatch(source, /getByRole\("button",\{name:"Check",exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("button",\{name:"Verify map",exact:true\}\)/);
+  assert.doesNotMatch(source, /getByRole\("region",\{name:"Matching map addresses",exact:true\}\)/);
 });
 
-test("customer acceptance retries one governed Sitting search before failing closed", () => {
+test("customer acceptance bounds governed Sitting recovery and records every retry", () => {
   assert.match(source, /async function sittingRates\(page\)/);
-  assert.match(source, /first\.waitFor\(\{state:"visible",timeout:20000\}\)/);
+  assert.match(source, /const deadline=Date\.now\(\)\+SERVER_TIMEOUT\*2/);
   assert.match(source, /getByRole\("button",\{name:"Retry sitter search",exact:true\}\)/);
+  assert.match(source, /attempts<2/);
   assert.match(source, /sittingDiscoveryRetries\+=1/);
-  assert.match(source, /retry\.click\(\);await first\.waitFor\(\{state:"visible",timeout:SERVER_TIMEOUT\}\)/);
-  assert.match(source, /Sitting profile rates unavailable/);
-  assert.doesNotMatch(source, /while\(.*Retry sitter search/);
+  assert.match(source, /Checking sitter availability/);
+  assert.match(source, /Sitting profile rates unavailable after/);
+});
+
+test("customer acceptance gives saved stay-address validation a bounded recovery path", () => {
+  assert.match(source, /async function resolveStayLocation\(page,available,name\)/);
+  assert.match(source, /getByRole\("region",\{name:"Care location"\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Change Address",exact:true\}\)/);
+  assert.match(source, /getByRole\("button",\{name:"Retry address check",exact:true\}\)/);
+  assert.match(source, /Date\.now\(\)\+SERVER_TIMEOUT/);
+  assert.match(source, /await resolveStayLocation\(page,available,name\)/);
+  assert.doesNotMatch(source, /saved-address trip details`,8000/);
 });
 
 test("customer acceptance completes required stay consent fields", () => {
@@ -103,4 +124,25 @@ test("customer acceptance follows current Fresh Food stages and delivery field",
   assert.match(source, /"Where and when\?"/);
   assert.match(source, /getByLabel\("Delivery address"\)/);
   assert.match(source, /async function transition\(page,button,marker,label,timeout=TIMEOUT\)/);
+});
+
+
+test("customer pet profile opens the mobile shell before using bottom navigation", () => {
+  assert.match(source, /async function ensurePet\(page\)\{\n await gotoApp\(page\);await nav\(page,"My Pets"\)/);
+});
+
+test("training acceptance resolves care location before waiting for trainer match", () => {
+  assert.match(source, /getByRole\("region",\{name:"Care location"\}\)/);
+  assert.match(source, /Training address coverage/);
+  assert.match(source, /Build session calendar/);
+});
+
+test("taxi acceptance synchronizes on the commercial quote response", () => {
+  assert.match(source, /waitForResponse\(response=>response\.url\(\)\.includes\("\/api\/taxi-commercial"\)/);
+  assert.match(source, /Taxi route quote failed \(HTTP/);
+});
+
+test("Pet Sitting provider discovery uses the same bounded 60-second preview budget as Training", () => {
+  const client = fs.readFileSync(new URL("../lib/uat-scheduling-client.ts", import.meta.url), "utf8");
+  assert.match(client, /previewSitters\(input:UatScheduleRequest\).*previewUatProviders\(\{\.\.\.input,serviceCode:"pet_sitting"\},\{timeoutMs:60_000\}\)/);
 });

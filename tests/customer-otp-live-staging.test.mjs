@@ -38,3 +38,11 @@ test("live staging OTP cannot be activated by the flag alone outside the staging
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);globalThis.__PAWSPACE_TEST_DB__=db;globalThis.__PAWSPACE_TEST_ENV=envFor(db,{PAWSPACE_UAT_LOGIN:"off",PAWSPACE_DEPLOYMENT_ENV:"production"});
  const route=await import("../app/api/customer-otp/route.ts");const response=await route.POST(new Request("https://app.pawspace.in/api/customer-otp",{method:"POST",headers:{"content-type":"application/json",origin:"https://app.pawspace.in"},body:JSON.stringify({action:"request",phone:APPROVED})}));assert.equal(response.status,503);const body=await response.json();assert.equal(JSON.stringify(body).includes("sandboxCode"),false);
 });
+
+
+test("wrong customer OTP is a normal authentication error, never a server 500",async()=>{
+ const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);globalThis.__PAWSPACE_TEST_DB__=db;globalThis.__PAWSPACE_TEST_ENV=envFor(db,{PAWSPACE_STAGING_LIVE_CUSTOMER_OTP:"false"});
+ const route=await import("../app/api/customer-otp/route.ts");
+ const issued=await route.POST(request({action:"request",phone:APPROVED}));assert.equal(issued.status,200);const body=await issued.json();
+ const wrong=await route.POST(request({action:"verify",challengeId:body.data.challengeId,code:"000000"}));assert.equal(wrong.status,401);assert.deepEqual(await wrong.json(),{error:"Incorrect OTP code"});
+});

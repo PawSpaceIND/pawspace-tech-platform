@@ -55,6 +55,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
     return String(body.mode||"public")==="authenticated"?"scheduling.book":null;
   }
+  if(url.pathname==="/api/mobile-employee-ai")return "customers.manage";
   if(url.pathname==="/api/voice-outbound")return "customers.manage";
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";

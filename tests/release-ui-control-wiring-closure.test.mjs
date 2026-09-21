@@ -335,14 +335,65 @@ test("Case Center disables Refresh while canonical case data is already loading"
   assert.match(source, /disabled=\{loading\}[\s\S]*?loading\?"Refreshing…":"Refresh"/);
 });
 
-test("signed-in customer acceptance tracks the current discovery and service flows", () => {
+test("signed-in customer acceptance follows the current discovery location editor", () => {
   const source = read("../scripts/customer-ui-acceptance-v2.mjs");
-  for (const token of ["Choose your service area","6-digit PIN code","Book a Meet & Greet","Address Line 1","Verify service address","Continue to payment","Who is travelling?","Pickup address","Drop address / Point 1","Review payment"]) assert.equal(source.includes(token), true, token);
-  for (const retired of ["e.g. HSR Layout, Bengaluru","Save location","Choose a route class","e.g. Indiranagar, 100 Feet Road"]) assert.equal(source.includes(retired), false, retired);
+  assert.match(source, /dialog.*Choose your service area/);
+  assert.match(source, /6-digit PIN code/);
+  assert.match(source, /Check area/);
+  assert.match(source, /Continue in Bengaluru/);
+  assert.doesNotMatch(source, /e\.g\. HSR Layout, Bengaluru/);
+  assert.doesNotMatch(source, /Save location/);
 });
 
-test("Taxi address controls expose stable accessible names for customer acceptance", () => {
+test("signed-in customer acceptance follows current service progression and payment review", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.doesNotMatch(source, /Who needs grooming\?/);
+  assert.match(source, /Training assessment progression/);
+  assert.match(source, /Book a Meet & Greet/);
+  assert.match(source, /Training programme progression/);
+  assert.match(source, /async function resolveStayLocation\(page,available,name\)/);
+  assert.match(source, /address resolution did not become usable/);
+  assert.doesNotMatch(source, /saved-address trip details`,8000/);
+  assert.match(source, /Who is travelling\?/);
+  assert.match(source, /Calculate Citroën & XUV fares/);
+  assert.match(source, /Walking payment review/);
+  assert.match(source, /Food payment review/);
+  assert.match(source, /Accept pay-after-service & confirm booking/);
+});
+
+test("customer acceptance uses the current shared address picker and waits for Taxi pets", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.match(source, /Loading pets…/);
+  const addressHelper = source.slice(source.indexOf("async function address(page)"), source.indexOf("async function sittingRates"));
+  assert.match(addressHelper, /Address Line 1/);
+  assert.match(addressHelper, /Verify service address/);
+  assert.doesNotMatch(addressHelper, /Complete doorstep address/);
+  assert.doesNotMatch(addressHelper, /Verify map/);
+});
+
+test("Pet Taxi pickup and drop inputs keep accessible names", () => {
   const source = read("../app/mobile-app/taxi-flow.tsx");
   assert.match(source, /aria-label="Pickup address"/);
   assert.match(source, /aria-label="Drop address \/ Point 1"/);
+});
+
+test("signed-in customer acceptance isolates each journey in a fresh page while preserving one authenticated context", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.match(source, /const withPage=async\(fn\)=>\{const page=await context\.newPage\(\)/);
+  assert.match(source, /Grooming journey.*withPage/);
+  assert.match(source, /Fresh Food journey.*withPage/);
+});
+
+test("customer acceptance launches the Chromium this container actually ships", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.match(source, /const chromiumExecutable=\(\)=>/);
+  assert.match(source, /process\.env\.PLAYWRIGHT_CHROMIUM/);
+  assert.match(source, /const executablePath=chromiumExecutable\(\),browser=await chromium\.launch\(executablePath\?\{headless:true,executablePath\}:\{headless:true\}\)/);
+});
+
+test("signed-in customer acceptance waits for quote-gated service address controls to enable", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.match(source, /async function enabled\(locator,label,timeout=SERVER_TIMEOUT\)/);
+  assert.match(source, /Service address/);
+  assert.match(source, /Service address verification/);
 });

@@ -9,6 +9,10 @@ const TIMEOUT=Number(readArg("timeout","18000"));
 const SERVER_TIMEOUT=Number(readArg("server-timeout","60000"));
 if(!BASE)throw new Error("--base or PREVIEW_URL is required");
 
+// This container ships Chromium at a pinned revision the installed playwright package will not match,
+// and it forbids downloading another. Launch the binary that is actually here.
+const chromiumExecutable=()=>[process.env.PLAYWRIGHT_CHROMIUM,"/opt/pw-browsers/chromium-1194/chrome-linux/chrome",...fs.existsSync("/opt/pw-browsers")?fs.readdirSync("/opt/pw-browsers").filter(name=>name.startsWith("chromium")).map(name=>`/opt/pw-browsers/${name}/chrome-linux/chrome`):[]].filter(Boolean).find(candidate=>fs.existsSync(candidate));
+
 const report={generatedAt:new Date().toISOString(),base:BASE,pincode:PIN,cases:[],failures:[],sittingProfileRateEvidence:[],sittingDiscoveryRetries:0};
 const persist=()=>{report.summary={total:report.cases.length,passed:report.cases.filter(x=>x.ok).length,failed:report.cases.filter(x=>!x.ok).length};fs.writeFileSync(OUT,`${JSON.stringify(report,null,2)}\n`);};
 const die=(message)=>{throw new Error(message);};
@@ -24,6 +28,13 @@ async function ready(page,button,label,timeout=TIMEOUT){
  catch(error){const alerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);die(`${label} did not become available${alerts.length?`: ${alerts.join(" | ")}`:""} (${error instanceof Error?error.message.split("\n")[0]:String(error)})`);}
  return button;
 }
+async function enabled(locator,label,timeout=SERVER_TIMEOUT){
+ await locator.waitFor({state:"visible",timeout});
+ const deadline=Date.now()+timeout;
+ while(!(await locator.isEnabled().catch(()=>false))&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,120));
+ if(!(await locator.isEnabled().catch(()=>false)))die(`${label} did not become enabled within ${timeout}ms`);
+ return locator;
+}
 async function petsReady(page){for(const label of["Loading your pets…","Loading pets…"]){const loading=page.getByText(label,{exact:true}).first();if(await loading.count())await loading.waitFor({state:"hidden",timeout:SERVER_TIMEOUT});}}
 const petButton=(page)=>page.getByRole("button",{name:new RegExp(PET.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"i")}).first();
 async function ensurePetProgress(page,continueButton,label){
@@ -37,14 +48,19 @@ async function transition(page,button,marker,label,timeout=TIMEOUT){await ready(
 
 async function login(page,context){
  await gotoApp(page);const session=await context.request.get(`${BASE}/api/identity-session`);if(session.ok()){const body=await session.json().catch(()=>({}));if(body?.data?.subjectType==="customer")return`existing customer ${body.data.subjectId}`;}
- await nav(page,"Account");await page.getByPlaceholder("10-digit phone number").fill(PHONE);await page.getByRole("button",{name:"Send OTP"}).click();
- const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({state:"visible",timeout:TIMEOUT});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)die("sandbox OTP not rendered");
+ await nav(page,"Account");await page.getByPlaceholder("10-digit phone number").fill(PHONE);
+ const requested=page.waitForResponse(response=>response.url().includes("/api/customer-otp")&&response.request().method()==="POST"&&response.request().postData()?.includes('"action":"request"'),{timeout:SERVER_TIMEOUT});
+ await page.getByRole("button",{name:"Send OTP"}).click();
+ const otpResponse=await requested,otpBody=await otpResponse.json().catch(()=>({}));
+ if(!otpResponse.ok()||!otpBody?.data?.sandboxCode)die(`sandbox OTP request failed (HTTP ${otpResponse.status()})`);
+ const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)die("sandbox OTP not rendered");
+ if(code!==String(otpBody.data.sandboxCode))die("rendered sandbox OTP did not match the server challenge");
  const codeInput=page.getByPlaceholder("6-digit code");await codeInput.fill(code);await page.getByPlaceholder("Your name (first time only)").fill(CUSTOMER);await page.getByRole("button",{name:"Verify & continue"}).click();await codeInput.waitFor({state:"hidden",timeout:TIMEOUT});
  const verified=await context.request.get(`${BASE}/api/identity-session`),body=await verified.json().catch(()=>({}));if(!verified.ok()||body?.data?.subjectType!=="customer")die(`OTP did not establish customer session (HTTP ${verified.status()})`);return`real OTP -> ${body.data.subjectId}`;
 }
 
 async function ensurePet(page){
- await nav(page,"My Pets");await petsReady(page);if(await page.getByText(PET,{exact:true}).count())return`${PET} reused`;
+ await gotoApp(page);await nav(page,"My Pets");await petsReady(page);if(await page.getByText(PET,{exact:true}).count())return`${PET} reused`;
  const add=page.getByRole("button",{name:/Add pet/i}).first();await add.waitFor({state:"visible",timeout:TIMEOUT});await add.click();await page.getByPlaceholder("Pet name").fill(PET);
  await page.getByLabel("Breed").selectOption({index:1});await page.getByLabel("Age").selectOption({index:1});await page.getByLabel("Weight").selectOption({index:1});await page.getByLabel("Temperament").selectOption({index:1});await page.getByLabel("Vaccinated?").selectOption("yes");
  const gender=page.getByLabel("Gender (optional)");if(await gender.count())await gender.selectOption({index:1});await page.getByRole("button",{name:"Add pet",exact:true}).click();await page.getByText(PET,{exact:true}).first().waitFor({state:"visible",timeout:TIMEOUT});return`${PET} created through UI`;
@@ -71,19 +87,36 @@ async function homeControls(page){
 async function grooming(page){await openService(page,"Grooming");const next=page.getByRole("button",{name:/Choose a package/i});await ensurePetProgress(page,next,"Grooming package progression");await next.click();for(const label of["Essential Bath","Bath & Basic","Complete Makeover","Just Trim"])await text(page,label);return"pet -> package stage + legacy packages";}
 
 async function training(page){
- await openService(page,"Training");await text(page,"Build better days together.");await petsReady(page);const dog=petButton(page);await dog.waitFor({state:"visible",timeout:SERVER_TIMEOUT});if(await dog.getAttribute("aria-pressed")!=="true")await dog.click();const proceed=page.getByRole("button",{name:"Book a Meet & Greet",exact:true}).first();await ready(page,proceed,"Training assessment progression",SERVER_TIMEOUT);await proceed.click();await text(page,"All training programmes",SERVER_TIMEOUT);const chooseTrainer=page.getByRole("button",{name:"Choose trainer",exact:true});await ready(page,chooseTrainer,"Training programme progression",SERVER_TIMEOUT);await chooseTrainer.click();await text(page,"Your trainer matches",SERVER_TIMEOUT);const calendar=page.getByRole("button",{name:"Build session calendar"});await ready(page,calendar,"Training trainer match",SERVER_TIMEOUT);await calendar.click();await text(page,"Plan your sessions");await page.getByRole("button",{name:"Review & pay"}).click();await text(page,"Review your programme");const final=page.getByRole("button",{name:/Pay .* & request trainer approval|Refreshing server quote/i});await ready(page,final,"Training server quote",SERVER_TIMEOUT);const seen=await observeFinal(page,final,/POST \/api\/uat-scheduling/,[/POST \/api\/training-commercial/]);return`5 stages + final scheduler wiring (${seen})`;
+ await openService(page,"Training");await text(page,"Build better days together.");await petsReady(page);const dog=petButton(page);await dog.waitFor({state:"visible",timeout:SERVER_TIMEOUT});if(await dog.getAttribute("aria-pressed")!=="true")await dog.click();const proceed=page.getByRole("button",{name:"Book a Meet & Greet",exact:true}).first();await ready(page,proceed,"Training assessment progression",SERVER_TIMEOUT);await proceed.click();await text(page,"All training programmes",SERVER_TIMEOUT);const chooseTrainer=page.getByRole("button",{name:"Choose trainer",exact:true});await ready(page,chooseTrainer,"Training programme progression",SERVER_TIMEOUT);await chooseTrainer.click();await text(page,"Your trainer matches",SERVER_TIMEOUT);const careLocation=page.getByRole("region",{name:"Care location"});await careLocation.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const manual=careLocation.getByLabel("Complete doorstep address",{exact:true});if(await manual.count()){await address(page);}const useAddress=careLocation.getByRole("button",{name:"Use this address",exact:true});if(await useAddress.isVisible().catch(()=>false)){await ready(page,useAddress,"Training address coverage",SERVER_TIMEOUT);await useAddress.click();}const calendar=page.getByRole("button",{name:"Build session calendar"});await ready(page,calendar,"Training trainer match",SERVER_TIMEOUT);await calendar.click();await text(page,"Plan your sessions");await page.getByRole("button",{name:"Review & pay"}).click();await text(page,"Review your programme");const final=page.getByRole("button",{name:/Pay .* & request trainer approval|Refreshing server quote/i});await ready(page,final,"Training server quote",SERVER_TIMEOUT);const seen=await observeFinal(page,final,/POST \/api\/uat-scheduling/,[/POST \/api\/training-commercial/]);return`5 stages + final scheduler wiring (${seen})`;
 }
 
-async function enabled(locator,label,timeout=SERVER_TIMEOUT){await locator.waitFor({state:"visible",timeout});const deadline=Date.now()+timeout;while(!(await locator.isEnabled().catch(()=>false))&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,120));if(!(await locator.isEnabled().catch(()=>false)))die(`${label} did not become enabled within ${timeout}ms`);return locator;}
-async function address(page){const line1=await enabled(page.getByLabel(/Address Line 1/),"Service address");await line1.fill(ADDRESS);const verify=await enabled(page.getByRole("button",{name:"Verify service address",exact:true}),"Service address verification");await verify.click();await page.getByText("Verified service doorstep",{exact:true}).waitFor({state:"visible",timeout:SERVER_TIMEOUT});}
+async function address(page){const line1=await enabled(page.getByLabel(/Address Line 1/),"Service address",SERVER_TIMEOUT);await line1.fill(ADDRESS);const verify=await enabled(page.getByRole("button",{name:"Verify service address",exact:true}),"Service address verification",SERVER_TIMEOUT);await verify.click();await page.getByText("Verified service doorstep",{exact:true}).waitFor({state:"visible",timeout:SERVER_TIMEOUT});}
 async function sittingRates(page){
- const rateButtons=page.locator("button").filter({hasText:"/ night"}),first=rateButtons.first();
- try{await first.waitFor({state:"visible",timeout:20000});}
- catch(firstFailure){const retry=page.getByRole("button",{name:"Retry sitter search",exact:true});if(!await retry.isVisible().catch(()=>false)){const alerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);die(`Sitting profile rates unavailable${alerts.length?`: ${alerts.join(" | ")}`:""} (${firstFailure instanceof Error?firstFailure.message.split("\n")[0]:String(firstFailure)})`);}report.sittingDiscoveryRetries+=1;await retry.click();await first.waitFor({state:"visible",timeout:SERVER_TIMEOUT});}
+ const rateButtons=page.locator("button").filter({hasText:"/ night"}),first=rateButtons.first(),retry=page.getByRole("button",{name:"Retry sitter search",exact:true}),status=page.getByRole("status").filter({hasText:/Checking sitter availability/i});
+ const deadline=Date.now()+SERVER_TIMEOUT*2;let attempts=0,lastAlerts=[];
+ while(Date.now()<deadline){
+  if(await first.isVisible().catch(()=>false))break;
+  lastAlerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);
+  if(await retry.isVisible().catch(()=>false)&&attempts<2){attempts+=1;report.sittingDiscoveryRetries+=1;await retry.click();await status.waitFor({state:"visible",timeout:3000}).catch(()=>undefined);await status.waitFor({state:"hidden",timeout:SERVER_TIMEOUT}).catch(()=>undefined);continue;}
+  await page.waitForTimeout(200);
+ }
+ if(!await first.isVisible().catch(()=>false))die(`Sitting profile rates unavailable after ${attempts} governed retr${attempts===1?"y":"ies"}${lastAlerts.length?`: ${lastAlerts.join(" | ")}`:""}`);
  const rates=await rateButtons.allTextContents();report.sittingProfileRateEvidence=rates.slice(0,3).map(x=>x.replace(/\s+/g," ").trim());if(!rates.length)die("Sitting profile rates not rendered for checkout-vs-card review");return rates;
 }
+async function resolveStayLocation(page,available,name){
+ const region=page.getByRole("region",{name:"Care location"});await region.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const manual=region.getByLabel("Complete doorstep address",{exact:true}),change=region.getByRole("button",{name:"Change Address",exact:true}),retry=region.getByRole("button",{name:"Retry address check",exact:true});
+ const deadline=Date.now()+SERVER_TIMEOUT;let retryUsed=false;
+ while(Date.now()<deadline){
+  if(await available.isVisible().catch(()=>false)&&await available.isEnabled().catch(()=>false))return;
+  if(await manual.isVisible().catch(()=>false)){await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);return;}
+  if(await change.isVisible().catch(()=>false)&&await change.isEnabled().catch(()=>false)){await change.click();await manual.waitFor({state:"visible",timeout:TIMEOUT});await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);return;}
+  if(!retryUsed&&await retry.isVisible().catch(()=>false)){retryUsed=true;await retry.click();}
+  await page.waitForTimeout(150);
+ }
+ const alerts=(await page.getByRole("alert").allTextContents()).map(value=>value.replace(/\s+/g," ").trim()).filter(Boolean);die(`${name} address resolution did not become usable${alerts.length?`: ${alerts.join(" | ")}`:""}`);
+}
 async function stay(page,sitting){
- const name=sitting?"Pet Sitting":"Boarding";await openService(page,name);await text(page,sitting?"Care at home, around their routine.":"A stay that feels like home.");await petsReady(page);const available=page.getByRole("button",{name:sitting?/See available sitters/i:/See available homes/i});const pet=petButton(page);if(await pet.count())await pet.click();try{await ready(page,available,`${name} saved-address trip details`,8000);}catch{const manual=page.getByLabel(/Address Line 1/);if(!await manual.count())throw new Error(`${name} did not resolve a saved address and did not expose the manual address editor`);await address(page);await ready(page,available,`${name} manual-address trip details`,SERVER_TIMEOUT);}await available.click();await text(page,sitting?"Choose your sitter":"Choose your host");if(sitting)await sittingRates(page);
+ const name=sitting?"Pet Sitting":"Boarding";await openService(page,name);await text(page,sitting?"Care at home, around their routine.":"A stay that feels like home.");await petsReady(page);const available=page.getByRole("button",{name:sitting?/See available sitters/i:/See available homes/i});const pet=petButton(page);if(await pet.count())await pet.click();await resolveStayLocation(page,available,name);await available.click();await text(page,sitting?"Choose your sitter":"Choose your host");if(sitting)await sittingRates(page);
  const next=page.getByRole("button",{name:/Continue with|Choose an available host/i});await ready(page,next,`${name} caregiver match`,SERVER_TIMEOUT);await next.click();await text(page,"Build the Care Card");await page.getByLabel("Vet contact").fill("UAT Vet contact");await page.getByLabel("Emergency contact").fill("UAT emergency contact");if(sitting)await page.getByLabel("Home access instructions").fill("UAT home access instructions");await page.getByRole("button",{name:"Review protected booking"}).click();await text(page,"Review and confirm");await page.getByRole("checkbox",{name:/I agree to care/i}).check();const final=page.getByRole("button",{name:/create canonical stay|request final partner approval/i});await ready(page,final,`${name} server quote`,SERVER_TIMEOUT);const seen=await observeFinal(page,final,sitting?/POST \/api\/(sitting-payment|uat-scheduling|canonical-bookings)/:/POST \/api\/uat-scheduling/,[/POST \/api\/(boarding|sitting)-commercial/,/POST \/api\/(boarding|sitting).*quote/,/POST \/api\/live-price-quote/]);return`4 stages + caregiver + final wiring (${seen})`;
 }
 
@@ -92,7 +125,7 @@ async function walking(page){
 }
 
 async function taxi(page){
- await openService(page,"Pet Taxi");await text(page,"Who is travelling?");await petsReady(page);const trip=page.getByRole("button",{name:"Continue to trip details"});await ready(page,trip,"Taxi travellers",SERVER_TIMEOUT);await trip.click();const pickupLabel=page.getByLabel("Pickup address",{exact:true}),dropLabel=page.getByLabel("Drop address / Point 1",{exact:true});const pickup=await pickupLabel.count()?pickupLabel:page.getByText("Pickup address",{exact:true}).locator("xpath=following-sibling::input[1]"),drop=await dropLabel.count()?dropLabel:page.getByText("Drop address / Point 1",{exact:true}).locator("xpath=following-sibling::input[1]");await pickup.waitFor({state:"visible",timeout:SERVER_TIMEOUT});await pickup.fill("Indiranagar, Bengaluru");await drop.fill("Whitefield Vet Clinic, Bengaluru");const review=page.getByRole("button",{name:"Review ride requirements"});await ready(page,review,"Taxi locations");await review.click();await text(page,"Ready for a live route quote?");const calculate=page.getByRole("button",{name:/Calculate Citroën & XUV fares/i});await ready(page,calculate,"Taxi route quote",SERVER_TIMEOUT);await calculate.click();const carStage=page.getByText("Choose your car",{exact:false}).first(),routeError=page.getByRole("alert").first();const routeOutcome=await Promise.race([carStage.waitFor({state:"visible",timeout:SERVER_TIMEOUT}).then(()=>"ready"),routeError.waitFor({state:"visible",timeout:SERVER_TIMEOUT}).then(()=>"error")]).catch(()=>"timeout");if(routeOutcome==="error")die(`Taxi route quote failed: ${(await routeError.textContent())?.replace(/\s+/g," ").trim()||"unknown route error"}`);if(routeOutcome!=="ready")die("Taxi route quote did not resolve within the server timeout");await page.getByPlaceholder("6-digit service PIN").fill(PIN);const reserve=page.getByRole("button",{name:/Reserve · pay .* next/i});await ready(page,reserve,"Taxi vehicle quote",SERVER_TIMEOUT);const seen=await observeFinal(page,reserve,/POST \/api\/uat-scheduling/);return`5 stages + live route quote + scheduler wiring (${seen})`;
+ await openService(page,"Pet Taxi");await text(page,"Who is travelling?");await petsReady(page);const trip=page.getByRole("button",{name:"Continue to trip details"});await ready(page,trip,"Taxi travellers",SERVER_TIMEOUT);await trip.click();const pickupLabel=page.getByLabel("Pickup address",{exact:true}),dropLabel=page.getByLabel("Drop address / Point 1",{exact:true});const enhanced=page.locator('input[list="pawspace-bengaluru-addresses"]');const pickup=await pickupLabel.count()?pickupLabel:enhanced.nth(0),drop=await dropLabel.count()?dropLabel:enhanced.nth(1);await pickup.waitFor({state:"visible",timeout:SERVER_TIMEOUT});await pickup.fill("Indiranagar, Bengaluru");await drop.fill("Whitefield Vet Clinic, Bengaluru");const review=page.getByRole("button",{name:"Review ride requirements"});await ready(page,review,"Taxi locations");await review.click();await text(page,"Ready for a live route quote?");const calculate=page.getByRole("button",{name:/Calculate Citroën & XUV fares/i});await ready(page,calculate,"Taxi route quote",SERVER_TIMEOUT);const quoteResponse=page.waitForResponse(response=>response.url().includes("/api/taxi-commercial")&&response.request().method()==="POST",{timeout:SERVER_TIMEOUT});await calculate.click();const taxiResponse=await quoteResponse,taxiBody=await taxiResponse.json().catch(()=>({}));if(!taxiResponse.ok())die(`Taxi route quote failed (HTTP ${taxiResponse.status()}): ${taxiBody?.error||"unknown error"}`);await text(page,"Choose your car",SERVER_TIMEOUT);await page.getByPlaceholder("6-digit service PIN").fill(PIN);const reserve=page.getByRole("button",{name:/Reserve · pay .* next/i});await ready(page,reserve,"Taxi vehicle quote",SERVER_TIMEOUT);const seen=await observeFinal(page,reserve,/POST \/api\/uat-scheduling/);return`5 stages + live route quote + scheduler wiring (${seen})`;
 }
 
 async function food(page){
@@ -101,7 +134,21 @@ async function food(page){
 
 async function relocation(page){await openService(page,"Relocation");await text(page,"PET RELOCATION · ENQUIRY");await page.getByLabel("Email").fill("ui-acceptance@pawspace.test");await page.getByLabel("Pickup location").fill("Koramangala, Bengaluru");await page.getByLabel("Drop location").fill("Indiranagar, Bengaluru");const seen=await observeFinal(page,page.getByRole("button",{name:"Request relocation plan & quote"}),/POST \/api\/relocation-enquiry/);return`enquiry-only wiring (${seen}); no payment endpoint`;}
 
-async function main(){const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH||undefined}),context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage(),pageErrors=[];page.on("pageerror",error=>pageErrors.push(String(error.message).slice(0,240)));try{
- await runCase("real customer OTP/session",()=>login(page,context));await runCase("customer pet profile",()=>ensurePet(page));await runCase("premium Home and controls",()=>homeControls(page));await runCase("Grooming journey",()=>grooming(page));await runCase("Training journey",()=>training(page));await runCase("Boarding journey",()=>stay(page,false));await runCase("Pet Sitting journey",()=>stay(page,true));await runCase("Dog Walking journey",()=>walking(page));await runCase("Pet Taxi journey",()=>taxi(page));await runCase("Fresh Food journey",()=>food(page));await runCase("Relocation journey",()=>relocation(page));await runCase("no uncaught browser errors",async()=>{if(pageErrors.length)die(pageErrors.join(" | "));return"no pageerror events";});
- }finally{persist();await browser.close();}if(report.failures.length){console.error(`Customer UI acceptance failed: ${report.failures.length}`);process.exitCode=1;}else console.log(`Customer UI acceptance passed: ${report.summary.passed}/${report.summary.total}`);}
+async function main(){const executablePath=chromiumExecutable(),browser=await chromium.launch(executablePath?{headless:true,executablePath}:{headless:true}),context=await browser.newContext({viewport:{width:390,height:844}}),pageErrors=[];
+ const withPage=async(fn)=>{const page=await context.newPage();page.on("pageerror",error=>pageErrors.push(String(error.message).slice(0,240)));try{return await fn(page);}finally{await page.close().catch(()=>undefined);}};
+ try{
+  await runCase("real customer OTP/session",()=>withPage(page=>login(page,context)));
+  await runCase("customer pet profile",()=>withPage(page=>ensurePet(page)));
+  await runCase("premium Home and controls",()=>withPage(page=>homeControls(page)));
+  await runCase("Grooming journey",()=>withPage(page=>grooming(page)));
+  await runCase("Training journey",()=>withPage(page=>training(page)));
+  await runCase("Boarding journey",()=>withPage(page=>stay(page,false)));
+  await runCase("Pet Sitting journey",()=>withPage(page=>stay(page,true)));
+  await runCase("Dog Walking journey",()=>withPage(page=>walking(page)));
+  await runCase("Pet Taxi journey",()=>withPage(page=>taxi(page)));
+  await runCase("Fresh Food journey",()=>withPage(page=>food(page)));
+  await runCase("Relocation journey",()=>withPage(page=>relocation(page)));
+  await runCase("no uncaught browser errors",async()=>{if(pageErrors.length)die(pageErrors.join(" | "));return"no pageerror events";});
+ }finally{persist();await browser.close();}
+ if(report.failures.length){console.error(`Customer UI acceptance failed: ${report.failures.length}`);process.exitCode=1;}else console.log(`Customer UI acceptance passed: ${report.summary.passed}/${report.summary.total}`);}
 main().catch(error=>{report.failures.push({name:"harness",detail:error instanceof Error?error.message:String(error)});persist();console.error(error);process.exit(1);});
