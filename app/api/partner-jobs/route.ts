@@ -56,9 +56,12 @@ export async function GET(request: Request) {
           pets: session.petIds.map(id => ({ id, name: "Pet", species: "dog", breed: "", vaccinationStatus: "not_provided" })),
           payment: { method: "governed", mode: "programme", status: "programme", amount: 0, amountDueNow: 0 },
           training: { sequenceNo: session.sequence_no, totalSessions: session.total_sessions, completedSessions: session.completed_sessions, programmeStatus: session.programme_status, requirements: session.requirements, attendance: session.attendance, homework: session.homework, progress: session.progress, evidenceRefs: session.evidenceRefs },
+          subscription: null,
+          safetyRequirements: [],
+          addOns: [],
           proof: null,
           invoice: null,
-          events: session.events,
+          events: session.events.map(event=>({...event,occurredAt:event.createdAt,entityType:"training_session"})),
         });
       }
     }

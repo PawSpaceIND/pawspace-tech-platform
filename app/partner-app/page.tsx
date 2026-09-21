@@ -4,6 +4,8 @@ import type {PartnerJob as FeedJob,PartnerJobFeed} from "../../lib/partner-job-f
 import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
+import PartnerJobNotes from "./job-notes";
+import {selectPartnerWorkOrder} from "../../lib/partner-job-selection";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
@@ -220,10 +222,7 @@ function PartnerMobileAppContent() {
       .then((next) => {
         if (cancelled || version !== sessionVersion.current) return;
         setJobs(next);
-        setSelectedId((current) => {
-          if (requestedBookingId && next.some((job) => job.bookingId === requestedBookingId)) return requestedBookingId;
-          return current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? "");
-        });
+        setSelectedId(current=>selectPartnerWorkOrder(next,current,requestedBookingId));
         setError("");
       })
       .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
@@ -239,7 +238,7 @@ function PartnerMobileAppContent() {
     return()=>controller.abort();
   },[identity?.subjectId,refreshKey]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
-  const selected = useMemo(() => (tab==="home"?dutyJob:null) ?? jobs.find((job) => job.bookingId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId, tab, dutyJob]);
+  const selected = useMemo(() => (tab==="home"?dutyJob:null) ?? jobs.find((job) => job.workOrderId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId, tab, dutyJob]);
   const statusQueue=useStatusQueue(identity?.subjectId,()=>setRefreshKey(value=>value+1));
   const trackingNotice=useDutyTracking(dutyJob,statusQueue.setConnection,()=>setRefreshKey(value=>value+1));
   const [checks,setChecks]=useState<Record<string,string[]>>({});
@@ -470,7 +469,7 @@ function PartnerMobileAppContent() {
   const earningsOrders = Number(earnings?.orders ?? earnings?.computed?.orders ?? 0);
   const earningsGross = Number(earnings?.grossOrderValue ?? earnings?.computed?.grossOrderValue ?? 0);
 
-  const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
+  const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.workOrderId); setTab(target); };
 
   // Both handlers only ask the server to change the session, then re-run the identity check above.
   // Nothing here decides locally that the partner is signed out or has become someone else. They
@@ -599,7 +598,7 @@ function PartnerMobileAppContent() {
         {(tab === "jobs" || (tab === "home" && dutyJob)) && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>{tab==="home"?"Your active job":"My jobs"}</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
           {jobs.length === 0 && !error && <div className={styles.empty}>No canonical jobs assigned to this provider yet.</div>}
-          {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.bookingId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
+          {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.workOrderId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
           {selected && <section className={styles.detailCard}>
             <div className={styles.detailHead}><div><small>BOOKING {selected.bookingId}</small><h2>{selected.packageName}</h2></div><span>{label(selected.status)}</span></div>
             {isGroomerOnDuty(selected)&&<GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} managedTracking/>}
@@ -621,13 +620,12 @@ function PartnerMobileAppContent() {
             {/* Projected by the route out of the booking's pricing_json and, until now, discarded by the
                 client: the handling requirements recorded against this pet and the add-ons the partner is
                 expected to perform. Driving to a job without either is the gap this closes. */}
-            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{label(item)}</li>)}</ul></section>}
-            {!!selected.addOns.length && <div className={styles.proof}><b>Add-ons booked</b><span>{selected.addOns.map(label).join(" · ")}</span></div>}
+            <PartnerJobNotes safetyRequirements={selected.safetyRequirements} addOns={selected.addOns}/>
             {/* The lifecycle timeline the route already sanitizes for providers. Only the event type and
                 its timestamp are shown: detail_json is filtered server-side, but there is no reason to
                 render free-form detail on a partner's phone at all. */}
             {!!selected.events.length && <section className={styles.notice} aria-label="Job activity"><b>Recent activity</b><ul>{selected.events.slice(0, 5).map((event, index) => <li key={`${event.occurredAt}-${index}`}>{label(event.eventType)}{whenMs(event.occurredAt) ? ` · ${whenMs(event.occurredAt)}` : ""}</li>)}</ul></section>}
-            {isTraining ? <section className={styles.notice}><b>Training session</b><p>Session {selected.training?.sequenceNo ?? 1} of {selected.training?.totalSessions ?? 1} · {selected.training?.completedSessions ?? 0} completed · programme {label(selected.training?.programmeStatus || selected.status)}</p>{Boolean(selected.training?.requirements?.length) && <small>Goals: {selected.training?.requirements.join(", ")}</small>}<p>Trainer-specific session report, owner handover and secure evidence remain governed by the Training lifecycle before completion.</p></section> : <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>}
+            {isTraining ? <section className={styles.notice}><b>Training session</b><p><Link href={`/trainer?bookingId=${encodeURIComponent(selected.bookingId)}&sessionId=${encodeURIComponent(selected.trainingSessionId||"")}`}>Open full trainer workspace</Link></p><p>Session {selected.training?.sequenceNo ?? 1} of {selected.training?.totalSessions ?? 1} · {selected.training?.completedSessions ?? 0} completed · programme {label(selected.training?.programmeStatus || selected.status)}</p>{Boolean(selected.training?.requirements?.length) && <small>Goals: {selected.training?.requirements.join(", ")}</small>}<p>Trainer-specific session report, owner handover and secure evidence remain governed by the Training lifecycle before completion.</p></section> : <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>}
 
             {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
               {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
@@ -682,7 +680,7 @@ function PartnerMobileAppContent() {
 
         {tab === "tracking" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
-          {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.bookingId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
+          {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.workOrderId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
           {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
           {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
           {selected && isTraining && <section className={styles.notice}><b>Training GPS uses the Training lifecycle</b><p>Open the Training job to accept the session and start the journey. Arrival geofence and session evidence are enforced by the Training session API; the Grooming route card is intentionally not used for trainers.</p><button onClick={() => setTab("jobs")}>Open training session</button></section>}
