@@ -238,5 +238,126 @@
   "fix": "5ca13e4 — the capability matches what the panel calls; the self-test scopes refuse with the requirement named; a governed refusal keeps its own message",
   "verification": "tests/staff-console-navigation-and-lists.test.mjs (AI-D03 case); 237 existing voice/mobile-AI tests pass",
   "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-066",
+  "priorId": "CUST-L-D21",
+  "title": "A double tap on Reserve crashed the confirmation screen: the idempotent replay answered a thinner shape than a fresh order, so the total threw on render",
+  "severity": "P1",
+  "class": "UI/wiring",
+  "persona": "Customer · /v2/food",
+  "fix": "Merged in 37f1363 — the replay returns the full order contract and the page guards against re-entry and a missing total",
+  "verification": "tests/food-order-replay-contract.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-067",
+  "priorId": "CUST-L-D04",
+  "title": "The booking page rendered only the gateway 503 because the status read ran the Razorpay-key gate; booking, status and Manage link were hidden whenever the gateway was unconfigured",
+  "severity": "P2",
+  "class": "wiring",
+  "persona": "Customer · /v2/booking from Activity",
+  "fix": "Merged in 37f1363 — the gate applies to starting a payment only; status is a pure owned read. The booking card renders with the payment surface as a sibling",
+  "verification": "tests/customer-checkout-status-gateway-independence.test.mjs, tests/v2-booking-payment-page.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-068",
+  "priorId": "CUST-L-D22",
+  "title": "Fresh Food orders never appeared in Activity or the account, so a customer whose confirmation crashed had no in-app way back",
+  "severity": "P2",
+  "class": "wiring",
+  "persona": "Customer · /v2/activity, /api/customer-account",
+  "fix": "Merged in 37f1363 — a read-only owned projection of food orders in both surfaces, linking to /v2/food/manage",
+  "verification": "tests/food-order-account-activity.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-069",
+  "priorId": "CUST-L-D05 / CUST-L-D11",
+  "title": "A payment_pending booking had no way to resume payment from the manage screen, and V2 training recovery offered only a trainer refresh",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Customer · mobile grooming manage, /v2/training recovery",
+  "fix": "Merged in 37f1363 — Continue to payment on the mobile manage screen; the V2 training recovery banner links to the owned booking and payment page",
+  "verification": "tests/grooming-manage-continue-to-payment.test.mjs, tests/v2-booking-payment-page.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-070",
+  "priorId": "CUST-L-D01",
+  "title": "Documents review, quote issued and payment confirmed never completed, so the customer saw them pending while later milestones read complete",
+  "severity": "P2",
+  "class": "data",
+  "persona": "Customer and staff · relocation case",
+  "fix": "Merged in f0f9f02 — each milestone completes idempotently from the governed action that satisfies it",
+  "verification": "tests/relocation-closure.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-071",
+  "priorId": "CUST-L-D02 / CUST-L-D03",
+  "title": "Every governed relocation refusal was redacted to \"Unable to update relocation case\", the quote could be re-issued into a duplicate event, and the case list kept a stale status",
+  "severity": "P2",
+  "class": "backend",
+  "persona": "Staff · /team/relocation",
+  "fix": "Merged in f0f9f02 — governed refusals keep their precondition text, the quote re-issue is idempotent, and the list refreshes from the mutation response",
+  "verification": "tests/relocation-closure.test.mjs, tests/relocation-team-queue-refresh.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-072",
+  "priorId": "CUST-L-D13",
+  "title": "Booking times rendered in the viewer's device time zone with no label, so a 7:00 AM IST walk read as 1:30 am",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Customer · V2 pages and /boarding/manage",
+  "fix": "Merged in f0f9f02 and 37f1363 — one shared formatter pins Asia/Kolkata and labels IST across the V2 and manage surfaces, including /v2/booking",
+  "verification": "tests/india-time.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-073",
+  "priorId": "CUST-L-D06",
+  "title": "Switching payment mode dropped the applied coupon while Confirm stayed enabled, so the booking was created at full price",
+  "severity": "P2",
+  "class": "payment",
+  "persona": "Customer · mobile Book review",
+  "fix": "Merged in cf57c73 — a shared guard blocks Confirm until the coupon is re-applied or removed, with a visible message",
+  "verification": "tests/coupon-payment-mode-reapply-guard.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-074",
+  "priorId": "CUST-L-D15",
+  "title": "The pre-selected default slot sat inside the scheduler's refusal window, so the default booking attempt always failed",
+  "severity": "P2",
+  "class": "wiring",
+  "persona": "Customer · mobile Training Meet & Greet",
+  "fix": "Merged in cf57c73 — every chip, including the default, is generated from the same minimum lead time the scheduler enforces",
+  "verification": "tests/training-meet-greet-min-lead-slot.test.mjs",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-075",
+  "priorId": "CUST-L-D07",
+  "title": "The name field was shown to returning customers and the typed value ignored",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Customer · mobile OTP sign-in",
+  "fix": "Merged in cf57c73 — the OTP send response reports whether the phone belongs to an existing customer (a boolean, no PII) and the field renders only for a new account. The V2 modal's own field and its \"UAT CODE\" label are still open",
+  "verification": "tests/customer-otp-returning-customer-name-prompt.test.mjs",
+  "status": "fixed for the mobile app; the V2 sign-in modal remains open"
+ },
+ {
+  "id": "V2-076",
+  "priorId": "EMP-L-D01",
+  "title": "Preparing payment for an already-prepared run threw a bare error that the route redacted to a 500, indistinguishable from a lost payment instruction",
+  "severity": "P2",
+  "class": "backend",
+  "persona": "Founder / finance · /team/people/payroll",
+  "fix": "e7487ec — a repeat returns the existing batch, another state is refused with a 409 naming it, a missing run is a 404",
+  "verification": "tests/payroll-payment-preparation-repeat.test.mjs",
+  "status": "fixed, browser re-check pending"
  }
 ]
