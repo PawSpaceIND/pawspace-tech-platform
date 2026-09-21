@@ -7,6 +7,7 @@ import CustomerLogin from "../../mobile-app/customer-login";
 import {loadCustomerAccount} from "../../../lib/customer-account-client";
 import type {CustomerAccountRecord} from "../../../lib/customer-account";
 import styles from "../stay-experience.module.css";
+import taxiStyles from "./boarding-taxi-experience.module.css";
 
 export default function V2BoardingTaxiExperience({sourceBookingId}:{sourceBookingId:string}){
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null);
@@ -25,7 +26,7 @@ export default function V2BoardingTaxiExperience({sourceBookingId}:{sourceBookin
  return <main className={styles.page}><div className={styles.shell}>
   <header className={styles.nav}><Link href="/v2" className={styles.brand}>PawSpace</Link><Link href={stayHref} className={styles.back}>← Boarding booking</Link></header>
   <section className={styles.surface}><h1>Add Pet Taxi to your Boarding stay</h1><p>Choose a separate ride for your stay. Its price and payment are separate from Boarding.</p>
-   {settledAttempt!==attempt?<p role="status">Loading your PawSpace family…</p>:account?<TaxiFlow key={account.customerId+":"+sourceBookingId} customer={{customerId:account.customerId,customerName:account.name,phone:account.primaryPhone}} sourceBookingId={sourceBookingId}/>:<div className={styles.login}><h2>Sign in to arrange your ride.</h2><p role="alert">{error||"Use the customer account that owns your Boarding booking."}</p><button onClick={()=>setAttempt(value=>value+1)}>Retry account</button><CustomerLogin embedded onLoggedIn={()=>setAttempt(value=>value+1)}/></div>}
+   {settledAttempt!==attempt?<p role="status">Loading your PawSpace family…</p>:account?<div className={taxiStyles.ride}><TaxiFlow key={account.customerId+":"+sourceBookingId} customer={{customerId:account.customerId,customerName:account.name,phone:account.primaryPhone}} sourceBookingId={sourceBookingId}/></div>:<div className={styles.login}><h2>Sign in to arrange your ride.</h2><p role="alert">{error||"Use the customer account that owns your Boarding booking."}</p><button onClick={()=>setAttempt(value=>value+1)}>Retry account</button><CustomerLogin embedded onLoggedIn={()=>setAttempt(value=>value+1)}/></div>}
   </section>
  </div></main>;
 }
