@@ -28,4 +28,4 @@ export async function previewUatProviders(input:UatScheduleRequest,options:{time
   throw error;
  }finally{clearTimeout(timer);options.signal?.removeEventListener("abort",abort);}
 }
-export async function previewSitters(input:UatScheduleRequest):Promise<SitterPreview>{return previewUatProviders({...input,serviceCode:"pet_sitting"});}
+export async function previewSitters(input:UatScheduleRequest):Promise<SitterPreview>{return previewUatProviders({...input,serviceCode:"pet_sitting"},{timeoutMs:60_000});}
