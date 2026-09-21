@@ -1,3 +1,4 @@
+import { isV2CustomerPath } from "./v2/route-scope";
 import { openMobileRazorpayCheckout, type MobileRazorpayCheckoutOptions, type MobileRazorpayResult } from "./mobile/razorpay";
 export type CheckoutConfirmation = { bookingId:string; status:string; providerId:string|null; providerName:string|null; providerModel:string|null; packageName:string|null; scheduledStart:string; scheduledEnd:string; totalAmount:number; currency:string; paymentStatus:string|null; paymentId:string|null; gatewayOrderId:string|null; gatewayPaymentId:string|null; pets:Array<{id:string;name:string;species:string;breed:string|null}> };
 export type CheckoutState = { phase: "ready" | "starting" | "checkout" | "confirming" | "pending" | "captured" | "settled" | "error"; message: string; canCheck: boolean; confirmation?:CheckoutConfirmation };
@@ -16,9 +17,9 @@ export const BOOKING_CONFIRMATION_PATH = "/mobile-app/booking-confirmation";
  * Same-origin address Razorpay posts the receipt to if Checkout falls back to a full-page redirect.
  * Only an http(s) page origin can be returned to; a native/local shell keeps the in-page handler alone.
  */
-export function checkoutReturnUrl(bookingId: string, origin = typeof window === "undefined" ? "" : String(window.location?.origin || "")): string | undefined {
+export function checkoutReturnUrl(bookingId: string, origin = typeof window === "undefined" ? "" : String(window.location?.origin || ""), pathname = typeof window === "undefined" ? "" : String(window.location?.pathname || "")): string | undefined {
   if (!/^https?:\/\/[^/]+$/.test(origin)) return undefined;
-  return `${origin}${CHECKOUT_RETURN_PATH}?bookingId=${encodeURIComponent(bookingId)}`;
+  return `${origin}${CHECKOUT_RETURN_PATH}?bookingId=${encodeURIComponent(bookingId)}${isV2CustomerPath(pathname) ? "&scope=v2" : ""}`;
 }
 type Dependencies = { fetch: typeof fetch; open: (options: MobileRazorpayCheckoutOptions, env?: Record<string, unknown>) => Promise<MobileRazorpayResult> };
 export async function loadCustomerConfirmationProjection(bookingId:string,signal?:AbortSignal):Promise<CustomerConfirmationProjection>{
