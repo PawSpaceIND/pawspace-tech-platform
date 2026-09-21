@@ -35,3 +35,15 @@ test('EMP-14: /team/sales pages its customer list instead of rendering every rec
   assert.ok(!/\{customers\.map\(c=><button/.test(source), 'the unpaged render must be gone');
   assert.match(source, /Show \{Math\.min\(PAGE,listed\.length-visible\.length\)\} more/, 'the operator needs a way to load the rest');
 });
+
+test('AI-D03: the AI voice self-test refusal says what it needs, and the mobile bootstrap does not advertise a panel the role cannot open', () => {
+  const route = read('app/api/voice-outbound/route.ts');
+  assert.match(route, /AI voice self-test is limited to staff who can manage settings/, 'the refusal must name the requirement');
+  assert.match(route, /voice_self_test_permission_required/);
+  assert.match(route, /if\(isGovernedHttpError\(error\)\)return error;/, 'a governed refusal must keep its own message');
+  for (const scope of ['ai_self_test', 'ai_browser_test']) {
+    assert.ok(route.includes(`if(scope==="${scope}"){requireVoiceSelfTest(actor);`), `${scope} must use the explaining guard`);
+  }
+  const bootstrap = read('app/api/mobile-employee-ai/route.ts');
+  assert.match(bootstrap, /permissions\.includes\("communications\.call"\)&&actor\.permissions\.includes\("settings\.manage"\)/, 'voice capability must match what the panel actually calls');
+});
