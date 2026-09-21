@@ -186,7 +186,20 @@ function PartnerMobileAppContent() {
   const [earningsNotice, setEarningsNotice] = useState("");
   const [engagement, setEngagement] = useState("");
   const [workspaceState, setWorkspaceState] = useState<{ onboardingStatus: string; liveness: WorkspaceLiveness | null; pendingProof: WorkspacePendingProof[] }>({ onboardingStatus: "", liveness: null, pendingProof: [] });
+  // [LP-D08] A session superseded from another device (or otherwise revoked server-side) is only
+  // discovered when a background poll next 401s - not at the moment it happens. Falling back to the
+  // sign-in screen (instead of leaving the dashboard mounted with stale "Verified"/"Online" pills and a
+  // staff-worded banner) is itself the fix for the pills and for "a way back to the OTP form without a
+  // manual reload"; this notice is the honest, partner-facing reason shown there.
+  const [sessionNotice, setSessionNotice] = useState("");
   const sessionVersion = useRef(0);
+  const handleUnauthorized = () => {
+    sessionVersion.current += 1;
+    setIdentity(null);
+    setJobs([]);
+    setSessionNotice("Your session ended, most likely because you signed in on another device. Verify your phone number again to continue.");
+    setSessionState("unauthenticated");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +211,7 @@ function PartnerMobileAppContent() {
         if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
         return body.data;
       })
-      .then((data) => { if (!cancelled && version === sessionVersion.current) { setIdentity(data); setSessionState("verified"); setError(""); } })
+      .then((data) => { if (!cancelled && version === sessionVersion.current) { setIdentity(data); setSessionState("verified"); setError(""); setSessionNotice(""); } })
       .catch(() => { if (!cancelled && version === sessionVersion.current) { setIdentity(null); setSessionState("unauthenticated"); } });
     return () => { cancelled = true; };
   }, [identityKey]);
@@ -228,12 +241,13 @@ function PartnerMobileAppContent() {
     const version = sessionVersion.current;
     fetch(`/api/partner-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
       .then(async (response) => {
+        if (response.status === 401) { if (!cancelled && version === sessionVersion.current) handleUnauthorized(); return null; }
         const body = await response.json() as JobsResponse;
         if (!response.ok) throw new Error(body.error || "Unable to load provider jobs");
         return body.jobs ?? [];
       })
       .then((next) => {
-        if (cancelled || version !== sessionVersion.current) return;
+        if (next === null || cancelled || version !== sessionVersion.current) return;
         setJobs(next);
         setSelectedId((current) => {
           if (requestedBookingId && next.some((job) => job.bookingId === requestedBookingId)) return requestedBookingId;
@@ -297,6 +311,7 @@ function PartnerMobileAppContent() {
     let active = true;
     const version = sessionVersion.current;
     void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => {
+      if (response.status === 401) { if (active && version === sessionVersion.current) handleUnauthorized(); return; }
       const body = await response.json() as { data?: WorkspacePayload; error?: string };
       if (!response.ok) throw new Error(body.error || "Unable to load earnings");
       // main's staleness guard, and every setter below sits inside it. workspaceState especially:
@@ -555,6 +570,7 @@ function PartnerMobileAppContent() {
         {sessionState === "checking" || sessionState === "revoking" || sessionState === "revocation_failed"
           ? sessionState === "revocation_failed" ? <><div className={styles.error} role="alert">{error}</div><button type="button" className={styles.secondary} onClick={() => void signOut()}>Retry session revocation</button></> : <p role="status" className={styles.empty}>{sessionState === "revoking" ? "Ending your partner session and clearing this device…" : "Checking your partner session…"}</p>
           : <>
+            {sessionNotice && <div className={styles.error} role="alert">{sessionNotice}</div>}
             <PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"
               description="Verify your registered phone number to open your jobs, GPS and earnings. Nothing on this screen is available without a verified provider session."
               onLoggedIn={() => { sessionVersion.current+=1;setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
