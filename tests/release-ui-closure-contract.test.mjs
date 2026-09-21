@@ -83,9 +83,9 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /PAWSPACE_UAT_ACCESS_CODE/);
   assert.match(workflow, /node \.\/node_modules\/playwright\/cli\.js install --with-deps chromium/);
   assert.doesNotMatch(workflow, /run: npx playwright install/);
-  assert.match(workflow, /git cat-file blob "\$\{GITHUB_SHA\}:scripts\/customer-ui-acceptance-v2\.mjs"/);
-  assert.match(workflow, /ln -s "\$GITHUB_WORKSPACE\/node_modules" "\$TOOL_DIR\/node_modules"/);
-  assert.match(workflow, /node "\$TOOL_DIR\/customer-ui-acceptance-v2\.mjs"/);
+  assert.match(workflow, /customer-acceptance:/);
+  assert.match(workflow, /Run signed-in customer acceptance on a fresh runner/);
+  assert.match(workflow, /node scripts\/customer-ui-acceptance-v2\.mjs/);
   assert.doesNotMatch(workflow, /wrangler\s+deploy(?:\s|$)/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
 });
@@ -113,4 +113,17 @@ test("release UI visual phase retries only transient background API 5xx and stil
   assert.match(script, /recoveredApiFailures/);
   assert.match(script, /visualRoutesRetriedForApi5xx/);
   assert.match(script, /transientApiFailuresRecovered/);
+});
+
+
+test("signed-in customer acceptance runs on its own fresh GitHub runner", () => {
+  assert.match(workflow, /customer-acceptance:\n    if:/);
+  assert.match(workflow, /Run signed-in customer acceptance on a fresh runner/);
+  assert.match(workflow, /Verify fresh customer harness and deployed product SHA/);
+  assert.match(workflow, /name: release-ui-customer-acceptance-evidence/);
+  const visualJob = workflow.slice(workflow.indexOf("  ui-closure:"), workflow.indexOf("  customer-acceptance:"));
+  assert.doesNotMatch(visualJob, /customer-ui-acceptance-v2\.mjs/);
+  const customerJob = workflow.slice(workflow.indexOf("  customer-acceptance:"));
+  assert.match(customerJob, /node scripts\/customer-ui-acceptance-v2\.mjs/);
+  assert.doesNotMatch(customerJob, /release-ui-closure\.mjs/);
 });
