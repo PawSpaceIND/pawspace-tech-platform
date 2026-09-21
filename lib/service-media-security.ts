@@ -10,7 +10,14 @@ export async function ensureServiceMediaTable(db:Db){
    * still get a table with the column. Additive and nullable: a row written before the column existed
    * reads back as "no review recorded", never as approved. [PTJA-W2-B4-M04 / PTJA-W3-SC]
    */
-  for(const column of["review_status TEXT","reviewed_by TEXT","reviewed_at INTEGER","review_reason TEXT","supersedes TEXT","release_basis TEXT"]){
+  /*
+   * object_stored: what the redeemed upload grant actually verified about the bytes, not the caller's
+   * word. NULL until the upload is confirmed (issueMediaUploadGrant never sets it); redeemMediaUploadGrant
+   * writes 1 only when a private bucket answered a real HEAD for the object, 0 when no adapter is
+   * connected and the confirmation rests on the caller's own digest. [LP-N09] The pending-review copy and
+   * the reviewer queue read this column so nobody is told "uploaded and verified" for bytes nobody kept.
+   */
+  for(const column of["review_status TEXT","reviewed_by TEXT","reviewed_at INTEGER","review_reason TEXT","supersedes TEXT","release_basis TEXT","object_stored INTEGER"]){
     await db.prepare(`ALTER TABLE service_media_assets ADD COLUMN ${column}`).run()
       .catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
   }

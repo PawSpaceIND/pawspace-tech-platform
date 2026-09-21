@@ -29,8 +29,8 @@ export async function GET(request:Request){try{const db=await database();await e
   // Ops review queue: every asset whose verified upload is waiting for a second person's decision. This is
   // the list the Control tower's "Service proof review" reads; it needs bookings.manage because that is
   // the permission record_scan (the decision) requires, so nobody sees a queue they cannot act on.
-  if(!bookingId&&url.searchParams.get("pending")==="1"){requirePermission(actor,"bookings.manage");const pending=await db.prepare("SELECT a.id,a.booking_id,a.provider_id,a.purpose,a.mime_type,a.size_bytes,a.review_status,a.scan_status,a.access_status,a.created_by,a.created_at,a.updated_at,w.provider_name,w.service_code,w.status work_order_status FROM service_media_assets a LEFT JOIN provider_work_orders w ON w.booking_id=a.booking_id WHERE a.review_status='pending_review' AND a.retention_status='active' AND a.access_status!='pending_upload' ORDER BY a.created_at LIMIT 200").all<Row>();return json({pending:pending.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:false}))});}
-  if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,review_status,reviewed_by,review_reason,release_basis,created_by,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:isProofReady(row),proofState:serviceProofState(row),blockedReason:serviceProofRefusal(row)}))});}catch(error){return authError(error,"Unable to load service media");}}
+  if(!bookingId&&url.searchParams.get("pending")==="1"){requirePermission(actor,"bookings.manage");const pending=await db.prepare("SELECT a.id,a.booking_id,a.provider_id,a.purpose,a.mime_type,a.size_bytes,a.review_status,a.scan_status,a.access_status,a.object_stored,a.created_by,a.created_at,a.updated_at,w.provider_name,w.service_code,w.status work_order_status FROM service_media_assets a LEFT JOIN provider_work_orders w ON w.booking_id=a.booking_id WHERE a.review_status='pending_review' AND a.retention_status='active' AND a.access_status!='pending_upload' ORDER BY a.created_at LIMIT 200").all<Row>();return json({pending:pending.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:false,objectStored:objectStoredOf(row)}))});}
+  if(!bookingId)return json({error:"Booking ID is required"},400);const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));const assets=await db.prepare("SELECT id,booking_id,provider_id,purpose,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,review_status,reviewed_by,review_reason,release_basis,object_stored,created_by,created_at,updated_at FROM service_media_assets WHERE booking_id=? ORDER BY created_at").bind(bookingId).all<Row>();return json({bookingId,assets:assets.results.map(row=>({...row,ref:`media://asset/${String(row.id)}`,proofReady:isProofReady(row),proofState:serviceProofState(row),blockedReason:serviceProofRefusal(row),objectStored:objectStoredOf(row)}))});}catch(error){return authError(error,"Unable to load service media");}}
 
 /**
  * Mirrors assertServiceProofRef in lib/service-media-security.ts: a scanner did not condemn the file,
@@ -41,6 +41,12 @@ export async function GET(request:Request){try{const db=await database();await e
  */
 // One rule, two readers: this is the gate's own predicate, not a local copy of it.
 function isProofReady(row:Row){return serviceProofReleased(row);}
+/**
+ * What redeemMediaUploadGrant actually verified about the bytes for this asset, not the current
+ * environment's status. NULL (unconfirmed, or a row predating the column) reads as null - unknown,
+ * never claimed true. [LP-N09]
+ */
+function objectStoredOf(row:Row):boolean|null{const value=row.object_stored;return value===null||value===undefined?null:Number(value)===1;}
 
 /**
  * Steps 1-3 of the approved signed-upload rule. This route used to answer

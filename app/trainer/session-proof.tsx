@@ -6,8 +6,11 @@ import styles from "./session-proof.module.css";
 export function TrainingEvidenceControls({assets,busy,error,onUpload,onRefresh}:{assets:TrainingEvidenceAsset[];busy:boolean;error:string;onUpload:(file:File,purpose:TrainingEvidencePurpose)=>void;onRefresh:()=>void}){
  return <section className={styles.media}><div><span>SESSION PHOTOS</span><h3>Before and after photos</h3><p>Both photos need independent approval and release under the media policy before you can complete the session.</p>{error&&<p role="alert">{error}</p>}{(["before_service","after_service"] as const).map(purpose=>{
   const matching=assets.filter(asset=>asset.purpose===purpose),ready=matching.some(asset=>asset.proofReady),pending=matching.some(asset=>asset.access_status!=="pending_upload"&&asset.review_status!=="rejected");
+  // The upload boundary records whether the bytes were actually kept. Where they were not, saying
+  // "approved" without that fact would claim a photo PawSpace does not hold (LP-N09).
+  const unstored=matching.some(asset=>asset.objectStored===false);
   const label=purpose==="before_service"?"Before photo":"After photo";
-  return <div key={purpose}><strong>{label}: {ready?"Approved":pending?"Awaiting approval / release":matching.some(asset=>asset.review_status==="rejected")?"Rejected — choose a new photo":matching.length?"Upload incomplete — select the photo again":"Not uploaded"}</strong><label><span>{ready?"Add another": "Upload"} {label.toLowerCase()}</span><input aria-label={label} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value="";if(file)onUpload(file,purpose);}}/></label></div>;
+  return <div key={purpose}><strong>{label}: {unstored?(ready?"Approved — hash only":"Hash recorded — file storage is not connected in this environment; the image was not kept"):ready?"Approved":pending?"Awaiting approval / release":matching.some(asset=>asset.review_status==="rejected")?"Rejected — choose a new photo":matching.length?"Upload incomplete — select the photo again":"Not uploaded"}</strong><label><span>{ready?"Add another": "Upload"} {label.toLowerCase()}</span><input aria-label={label} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value="";if(file)onUpload(file,purpose);}}/></label></div>;
  })}<button disabled={busy} onClick={onRefresh}>Refresh photo approval</button></div></section>;
 }
 

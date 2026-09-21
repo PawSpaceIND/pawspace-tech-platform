@@ -189,7 +189,9 @@ async function bookingsForProvider(db:Db,providerId:string){
   upcoming:all.filter(b=>b.start>=nowIso&&!["completed","cancelled"].includes(b.status)),
   today:all.filter(b=>b.start.slice(0,10)===nowIso.slice(0,10)),
   past:all.filter(b=>b.start<nowIso||["completed","cancelled"].includes(b.status)),
-  paymentPending:all.filter(b=>["created","pending","failed","partial"].includes(b.paymentStatus)||b.paymentDueNow>0),
+  // [LP-D10] A captured payment is not pending even when paymentDueNow still carries the amount that
+  // was due at booking time; the extra `paymentDueNow>0` clause used to include it regardless of status.
+  paymentPending:all.filter(b=>b.paymentStatus!=="captured"&&(["created","pending","failed","partial"].includes(b.paymentStatus)||b.paymentDueNow>0)),
  };
 }
 
@@ -209,7 +211,28 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
   db.prepare("SELECT id,period_code,earned_amount,adjustment_amount,payable_amount,status,policy_status,source_json,updated_at FROM partner_settlement_statements WHERE provider_id=? ORDER BY period_code DESC LIMIT 24").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
  const pendingProof:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
- for(const b of bookings.past.slice(0,40)){const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));const have=new Set(done.results.map(r=>text(r.proof_type))),missing=required.filter(r=>!have.has(r));if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});}
+ for(const b of bookings.past.slice(0,40)){
+  const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;
+  let have:Set<string>;
+  /*
+   * [LP-D02] Grooming's Partner-app "Add service proof" (grooming-lifecycle add_proof) writes straight
+   * to grooming_service_proof.before_photo_ref/after_photo_ref, never to the generic provider_job_proofs
+   * staging table that submitJobProof above writes for the other verticals. Reading provider_job_proofs
+   * for grooming reported "missing before photo, after photo" forever, even once Ops approved both and
+   * the booking had already settled. This reads the SAME table the completion gate itself reads.
+   */
+  if(b.serviceCode==="grooming"){
+   const proof=await db.prepare("SELECT before_photo_ref,after_photo_ref FROM grooming_service_proof WHERE booking_id=?").bind(b.bookingId).first<Row>().catch(()=>null);
+   have=new Set<string>();
+   if(proof?.before_photo_ref)have.add("before_photo");
+   if(proof?.after_photo_ref)have.add("after_photo");
+  }else{
+   const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
+   have=new Set(done.results.map(r=>text(r.proof_type)));
+  }
+  const missing=required.filter(r=>!have.has(r));
+  if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});
+ }
  const contractEarnings={netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),statements:partnerStatements.results,note:"Contract earnings are governed provider earnings, not employee salary payroll. Attendance and leave live in the People view."};
  const commissionRows=commissionOrders.results.map(row=>({bookingId:text(row.booking_id),serviceCode:text(row.service_code),orderAmount:money(row.order_amount),commissionMode:text(row.commission_mode),commissionValue:num(row.commission_value),commissionAmount:money(row.commission_amount),source:text(row.commission_source),status:text(row.status),completedAt:num(row.completed_at),dueAt:num(row.due_at)}));
  const commissionEarnings={visible:true,netPayout:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length,grossOrderValue:money(commissionRows.reduce((sum,row)=>sum+row.orderAmount,0)),computed:{commissionAmount:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length},commissionOrders:commissionRows,payouts:commissionPayouts.results.map(row=>({id:text(row.id),bookingId:text(row.booking_id),amount:money(row.amount),status:text(row.status),dueAt:num(row.due_at),providerReference:row.provider_reference?text(row.provider_reference):null,updatedAt:num(row.updated_at)})),statements:partnerStatements.results,note:"Commission statement is visible to the provider from governed order commissions and payout state; approval and live payout remain Finance-controlled."};
