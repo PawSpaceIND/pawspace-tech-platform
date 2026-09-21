@@ -118,6 +118,21 @@ type WorkspacePayload = { linked?: boolean; reason?: string; engagement?: string
 const activeTravelStates = new Set(["assigned", "on_the_way", "arrived", "in_service"]);
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 const label = (value: string) => value.replaceAll("_", " ");
+/**
+ * [LP-D06] pricing.requirements carries codes shaped `<category>:<detail>`, e.g.
+ * `grooming_safety:friendly` (see app/mobile-app/grooming-flow.tsx). `label()` alone only replaces
+ * underscores, so the colon-joined code rendered verbatim as "grooming safety:friendly". The desktop
+ * partner feed (app/partner/jobs/page.tsx) already strips the known "grooming_safety:" prefix; this
+ * mirrors that for every known category and humanises an unknown one instead of showing the raw code.
+ */
+const REQUIREMENT_CATEGORY_LABELS: Record<string, string> = { grooming_safety: "Safety", grooming_special: "Special instructions" };
+const requirementLabel = (value: string) => {
+  const separator = value.indexOf(":");
+  if (separator <= 0) return label(value);
+  const category = value.slice(0, separator), detail = label(value.slice(separator + 1)).trim();
+  const known = REQUIREMENT_CATEGORY_LABELS[category] ?? label(category);
+  return detail ? `${known}: ${detail}` : known;
+};
 const when = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(date);
@@ -619,7 +634,7 @@ function PartnerMobileAppContent() {
             {/* Projected by the route out of the booking's pricing_json and, until now, discarded by the
                 client: the handling requirements recorded against this pet and the add-ons the partner is
                 expected to perform. Driving to a job without either is the gap this closes. */}
-            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{label(item)}</li>)}</ul></section>}
+            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{requirementLabel(item)}</li>)}</ul></section>}
             {!!selected.addOns.length && <div className={styles.proof}><b>Add-ons booked</b><span>{selected.addOns.map(label).join(" · ")}</span></div>}
             {/* The lifecycle timeline the route already sanitizes for providers. Only the event type and
                 its timestamp are shown: detail_json is filtered server-side, but there is no reason to
