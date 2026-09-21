@@ -22,7 +22,7 @@ export default function CustomerRelocationInquiries({customerId, routeScope = "l
     <h2>Your relocation inquiries</h2>
     {!visible ? <p role="status">Loading your saved inquiries…</p> : visible.error ? <><p role="alert">{visible.error}</p><button onClick={() => setAttempt(value => value + 1)}>Retry saved inquiries</button></> : visible.rows.length ? visible.rows.map(item => <article className={styles.row} key={item.id}>
       <h3>{String(item.pet_name || "Pet relocation")}</h3>
-      <p>{String(item.origin_city || "")} → {String(item.destination_city || "")} · {String(item.target_travel_date || "Date pending")}</p>
+      <p>{String(item.origin_city || "")}{item.origin_country ? `, ${String(item.origin_country)}` : ""} → {String(item.destination_city || "")}{item.destination_country ? `, ${String(item.destination_country)}` : ""} · {String(item.target_travel_date || "Date pending")}</p>
       <p>Status: {item.status.replaceAll("_", " ")}</p>
       <Link href={`${path}?caseId=${encodeURIComponent(item.id)}`}>Open inquiry {item.id}</Link>
     </article>) : <p>No relocation inquiries yet.</p>}

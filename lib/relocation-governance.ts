@@ -1,8 +1,9 @@
 import{ACCT,periodOf,postJournal}from"./finance-accounts";
 import{resolveRelocationFinancePolicy,taxFromGrossMargin}from"./special-service-finance-policy";
 import{queueSpecialServiceCaseUpdate}from"./special-service-case-linkage";
+import{normalizeRelocationInquiryInput,type RelocationInquiryInput,type RelocationTravelMode}from"./relocation-inquiry-input";
 type Row=Record<string,unknown>;
-export type RelocationMode="air"|"road"|"sea";
+export type RelocationMode=RelocationTravelMode;
 export type RelocationCaseStatus="lead"|"qualified"|"documents_pending"|"quote_pending"|"quote_sent"|"quote_accepted"|"payment_pending"|"transport_ready"|"in_transit"|"delivered"|"cancelled";
 
 const checklist=["vaccination_record","health_certificate","identity_document","travel_authorisation","crate_confirmation"] as const;
@@ -23,14 +24,15 @@ export async function ensureRelocationTables(db:D1Database){await db.batch([
 async function event(db:D1Database,caseId:string,eventType:string,actorId:string,detail:unknown={}){await db.prepare("INSERT INTO relocation_events (id,case_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),caseId,eventType,actorId,JSON.stringify(detail),Date.now()).run();}
 
 
-export async function createRelocationCase(db:D1Database,input:{customerId:string;petName:string;breed:string;ageYears:number;sizeClass:string;travelMode:RelocationMode;originCountry:string;originCity:string;destinationCountry:string;destinationCity:string;targetTravelDate:string;crateRequirement:string;idempotencyKey?:string},actorId:string){
+export async function createRelocationCase(db:D1Database,rawInput:Partial<RelocationInquiryInput>&{ageYears?:number|string;sizeClass?:string;travelMode?:string;idempotencyKey?:unknown},actorId:string){
  await ensureRelocationTables(db);
- if(!input.customerId||!input.petName||!input.originCity||!input.destinationCity)throw new Response("Customer, pet, origin and destination are required",{status:400});
- if(!["air","road","sea"].includes(input.travelMode))throw new Response("Unsupported relocation travel mode",{status:400});
- if(input.idempotencyKey!==undefined&&typeof input.idempotencyKey!=="string")throw new Response("Invalid relocation request reference",{status:400});
- const key=input.idempotencyKey?.trim();
- if(input.idempotencyKey!==undefined&&(!key||key.length<8||key.length>200))throw new Response("Invalid relocation request reference",{status:400});
- const fields={customer_id:input.customerId,pet_name:input.petName,breed:input.breed,age_years:Number(input.ageYears||0),size_class:input.sizeClass,travel_mode:input.travelMode,origin_country:input.originCountry,origin_city:input.originCity,destination_country:input.destinationCountry,destination_city:input.destinationCity,target_travel_date:input.targetTravelDate,crate_requirement:input.crateRequirement};
+ if(rawInput.idempotencyKey!==undefined&&typeof rawInput.idempotencyKey!=="string")throw new Response("Invalid relocation request reference",{status:400});
+ const key=rawInput.idempotencyKey?.trim();
+ if(rawInput.idempotencyKey!==undefined&&(!key||key.length<8||key.length>200))throw new Response("Invalid relocation request reference",{status:400});
+ // V2-045: the SAME contract the form and the API apply. Country, age and size must be explicit; a missing
+ // value is a 400 here too, so no caller (script, seed, future route) can store a silently defaulted case.
+ const input=normalizeRelocationInquiryInput(rawInput as Record<string,unknown>);
+ const fields={customer_id:input.customerId,pet_name:input.petName,breed:input.breed,age_years:input.ageYears,size_class:input.sizeClass,travel_mode:input.travelMode,origin_country:input.originCountry,origin_city:input.originCity,destination_country:input.destinationCountry,destination_city:input.destinationCity,target_travel_date:input.targetTravelDate,crate_requirement:input.crateRequirement};
  const digest=key?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([input.customerId,key])))),byte=>byte.toString(16).padStart(2,"0")).join("").slice(0,32).toUpperCase():crypto.randomUUID().slice(0,10).toUpperCase();
  const id=`RLC-${digest}`,now=Date.now();
  const existing=await db.prepare("SELECT * FROM relocation_cases WHERE id=?").bind(id).first<Row>();
@@ -38,7 +40,7 @@ export async function createRelocationCase(db:D1Database,input:{customerId:strin
  if(existing&&!sameInput(existing))throw new Response("This relocation request reference was already used for different details",{status:409});
  if(!existing){
   const travelAt=new Date(input.targetTravelDate).getTime();
-  if(!Number.isFinite(travelAt)||travelAt<=now)throw new Response("Relocation target date must be in the future",{status:400});
+  if(!Number.isFinite(travelAt)||travelAt<=now)throw new Response("Relocation target date must be in the future.",{status:400});
   // Case, checklist, milestones and opening event are committed together. Deterministic IDs make
   // an interrupted response or concurrent replay reuse the same case without resetting its state.
   const statements=[db.prepare("INSERT OR IGNORE INTO relocation_cases (id,customer_id,pet_name,breed,age_years,size_class,travel_mode,origin_country,origin_city,destination_country,destination_city,target_travel_date,crate_requirement,status,regulation_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'lead','manual_verification_required',?,?)").bind(id,...Object.values(fields),now,now)];

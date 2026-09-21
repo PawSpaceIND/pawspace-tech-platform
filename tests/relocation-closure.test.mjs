@@ -184,14 +184,15 @@ test("Relocation validates its inputs and its lifecycle preconditions", async ()
 
   const noPet = await refusal(newCase(db, { petName: "" }));
   assert.equal(noPet?.status, 400);
-  assert.match(noPet.message, /Customer, pet, origin and destination are required/);
+  // V2-045: refusals are field-specific so the customer form can show them inline (shared validator).
+  assert.match(noPet.message, /Enter your pet's name/);
 
   const noDestination = await refusal(newCase(db, { destinationCity: "" }));
   assert.equal(noDestination?.status, 400);
 
   const badMode = await refusal(newCase(db, { travelMode: "teleport" }));
   assert.equal(badMode?.status, 400);
-  assert.match(badMode.message, /Unsupported relocation travel mode/);
+  assert.match(badMode.message, /Choose air, road or sea/);
 
   const pastDate = await refusal(newCase(db, { targetTravelDate: new Date(Date.now() - 86_400_000).toISOString() }));
   assert.equal(pastDate?.status, 400);
