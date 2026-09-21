@@ -15,7 +15,7 @@ html[data-paw-theme="emerald"]{--paw-welcome:#123f33;--paw-welcome-text:#ffe4a0}
 html[data-paw-theme="rose"]{--paw-welcome:#b7ece3;--paw-welcome-text:#153b40}
 :root{--psu-emerald:var(--paw-primary);--psu-emerald-2:var(--paw-primary);--psu-emerald-3:var(--paw-primary);--psu-emerald-soft:var(--paw-raised);--psu-gold:var(--paw-gold);--psu-gold-soft:var(--paw-yellow);--psu-ivory:var(--paw-bg);--psu-surface:var(--paw-surface);--psu-border:var(--paw-line);--psu-text:var(--paw-text);--psu-muted:var(--paw-muted);--psu-hero:var(--paw-hero)}
 body{background:var(--paw-bg);color:var(--paw-text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>nav{display:none!important}
+.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>nav:not([data-employee-ai="enabled"]){display:none!important}
 .route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>header,.route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome])>[class*="_title"]{display:none!important}
 .route-mobile-app main[data-theme] [class*="_phone"]:has([data-location-welcome]){padding-bottom:0!important}
 button,input,select,textarea{font:inherit}button,a,input,select,textarea,summary{-webkit-tap-highlight-color:transparent}

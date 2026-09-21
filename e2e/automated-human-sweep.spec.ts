@@ -17,6 +17,7 @@ import { dirname } from "node:path";
 
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
+const EXPECTED_SHA = process.env.PW_EXPECTED_SHA || "unverified";
 const PHONE = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
 const ALT_PHONE = "9123456780";
 const CUSTOMER_NAME = "UAT Sweep Customer";
@@ -41,13 +42,28 @@ const SERVICE_DATE_LABEL = `${ist("en-IN", { day: "numeric" })} ${ist("en-IN", {
 const SERVICE_DATE_ISO = ist("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" });
 const rx = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const report: string[] = ["# PawSpace staging — automated multi-persona sweep", "", `- Origin: ${BASE}`, `- Run: ${new Date().toISOString()}`, ""];
+const report: string[] = ["# PawSpace staging — automated multi-persona sweep", "", `- Origin: ${BASE}`, `- Exact deployed SHA: ${EXPECTED_SHA}`, `- Run: ${new Date().toISOString()}`, ""];
 function log(line: string) { report.push(line); console.log(`[sweep] ${line}`); }
 function section(title: string) { report.push("", `## ${title}`, ""); console.log(`\n[sweep] === ${title} ===`); }
 async function shot(page: Page, name: string) { try { await page.screenshot({ path: `test-results/sweep-${name}.png`, fullPage: true }); report.push(`  ↳ screenshot: test-results/sweep-${name}.png`); } catch { /* best effort */ } }
 
 let bookingId = "";
 let assignedGroomer = "";
+let assignedProviderId = "";
+const PROVIDER_PHONES: Record<string, string> = {
+  uatcap_groom_ft: "9000000901", uatcap_groom_cm: "9000000902", uatcap_groom_east: "9000000903",
+  uatcap_groom_south: "9000000904", uatcap_groom_north: "9000000905", uatcap_groom_west: "9000000906", uatcap_groom_central: "9000000907",
+  uatcap_groom_east_2: "9000000911", uatcap_groom_east_3: "9000000912", uatcap_groom_south_2: "9000000913", uatcap_groom_south_3: "9000000914",
+  uatcap_groom_north_2: "9000000915", uatcap_groom_north_3: "9000000916", uatcap_groom_west_2: "9000000917", uatcap_groom_west_3: "9000000918",
+  uatcap_groom_central_2: "9000000919", uatcap_groom_central_3: "9000000920",
+  uatcap_groom_east_4: "9000000921", uatcap_groom_east_5: "9000000922", uatcap_groom_south_4: "9000000923", uatcap_groom_south_5: "9000000924",
+  uatcap_groom_north_4: "9000000925", uatcap_groom_north_5: "9000000926", uatcap_groom_west_4: "9000000927", uatcap_groom_west_5: "9000000928",
+  uatcap_groom_central_4: "9000000929", uatcap_groom_central_5: "9000000930",
+  uatcap_groom_east_6: "9000000951", uatcap_groom_east_7: "9000000952", uatcap_groom_east_8: "9000000953", uatcap_groom_south_6: "9000000954",
+  uatcap_groom_south_7: "9000000955", uatcap_groom_south_8: "9000000956", uatcap_groom_north_6: "9000000957", uatcap_groom_north_7: "9000000958",
+  uatcap_groom_north_8: "9000000959", uatcap_groom_west_6: "9000000960", uatcap_groom_west_7: "9000000961", uatcap_groom_west_8: "9000000962",
+  uatcap_groom_central_6: "9000000963", uatcap_groom_central_7: "9000000964", uatcap_groom_central_8: "9000000965",
+};
 
 test.describe.configure({ mode: "serial" });
 
@@ -150,6 +166,27 @@ async function reachReview(page: Page, opts: { line2?: string; preferGroomer?: b
   log("✅ Review step: mandatory Customer Name / Phone / Alternative Phone + optional instructions filled.");
 }
 
+async function partnerOtpLogin(context: BrowserContext, phone: string): Promise<Page> {
+  const page = await context.newPage();
+  await page.goto("/partner/onboarding");
+  await page.getByPlaceholder("10-digit phone number").fill(phone);
+  await page.getByRole("button", { name: "Send OTP" }).click();
+  const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
+  await expect(sandbox, "partner sandbox OTP must be shown on screen").toBeVisible({ timeout: 20_000 });
+  const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];
+  expect(code, "a 6-digit partner OTP must render").toMatch(/^\d{6}$/);
+  await page.getByPlaceholder("6-digit code").fill(code!);
+  const verified = page.waitForResponse(r => r.url().includes("/api/partner-otp") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  const res = await verified;
+  const body = await res.json().catch(() => ({})) as { data?: { providerId?: string; providerName?: string }; error?: string };
+  expect(res.status(), `partner OTP verify failed: ${JSON.stringify(body).slice(0, 200)}`).toBe(200);
+  expect(body.data?.providerId, "partner OTP must resolve a provider identity").toBeTruthy();
+  expect(body.data?.providerId, "partner OTP provider must match the booking assignment").toBe(assignedProviderId);
+  log(`✅ Partner OTP login resolved assigned provider ${body.data?.providerName || assignedGroomer} (${body.data?.providerId}).`);
+  return page;
+}
+
 async function staffSignIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
   await page.goto("/staging-login");
@@ -221,7 +258,7 @@ test("Customer V2 persona — sandbox OTP → unified shell, account, activity a
 });
 
 test("Customer persona — OTP → grooming booking → real booking ID (+ Razorpay modal probe)", async ({ browser }) => {
-  test.setTimeout(480_000); // two real scheduler reservations on remote D1 (~40 s each) plus the preview
+  test.setTimeout(540_000); // two real scheduler reservations on remote D1 plus the preview; final acceptance has no Playwright retry
   section("Customer persona (mobile app)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -233,12 +270,21 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     await reachReview(page, { line2: "Near the corner park" });
 
     await page.getByRole("button", { name: /^Pay after service/ }).click();
-    // A reservation is a real scheduler evaluation on remote D1 (40 s+ once the roster carries several groomers
-    // per zone), so this wait gets its own budget instead of the 45 s action timeout.
-    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
+    // Confirm first reserves the provider through /api/uat-scheduling and only then creates the canonical booking.
+    // Observe both boundaries separately so a slow scheduler cannot be misreported as a booking-write failure.
+    const confirmStartedAt = Date.now();
+    const reserved = page.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 180_000 });
+    const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 210_000 });
     const confirm = page.getByRole("button", { name: "Confirm booking", exact: true });
     await expect(confirm, "Confirm booking enabled once mandatory fields are valid").toBeEnabled();
     await confirm.click();
+    const reservedRes = await reserved;
+    expect(reservedRes.status(), await reservedRes.text()).toBe(200);
+    const reservedBody = await reservedRes.json().catch(() => ({})) as { data?: { provider?: { id?: string; name?: string } } };
+    assignedProviderId = String(reservedBody.data?.provider?.id || "");
+    if (reservedBody.data?.provider?.name) assignedGroomer = String(reservedBody.data.provider.name);
+    expect(assignedProviderId, "scheduler reservation must expose the assigned provider id").toBeTruthy();
+    log(`✅ Scheduler reservation completed on first attempt in ${Date.now() - confirmStartedAt} ms; assigned ${assignedGroomer || assignedProviderId} (${assignedProviderId}).`);
     const res = await created;
     expect(res.status(), await res.text()).toBe(201);
     const body = await res.json().catch(() => ({})) as { data?: { bookingId?: string; id?: string } };
@@ -269,8 +315,13 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
     try {
       await reachReview(p2, { preferGroomer: false });
       await p2.getByRole("button", { name: /^Pay online/ }).click();
-      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 150_000 });
+      const onlineStartedAt = Date.now();
+      const reservedOnline = p2.waitForResponse(r => r.url().includes("/api/uat-scheduling") && r.request().method() === "POST" && !(r.request().postData() || "").includes("\"action\":\"preview\""), { timeout: 180_000 });
+      const createdOnline = p2.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 210_000 });
       await p2.getByRole("button", { name: "Confirm booking", exact: true }).click();
+      const onlineReservedRes = await reservedOnline;
+      expect(onlineReservedRes.status(), await onlineReservedRes.text()).toBe(200);
+      log(`✅ Online-pay scheduler reservation completed in ${Date.now() - onlineStartedAt} ms.`);
       const onlineRes = await createdOnline;
       const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string } };
       log(`${onlineRes.status() === 201 ? "✅" : "⚠️"} 'Pay online' booking request → HTTP ${onlineRes.status()}${onlineBody.data?.bookingId ? ` (${onlineBody.data.bookingId}, payment pending until captured)` : ""}.`);
@@ -291,43 +342,29 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
   } finally { await context.close(); }
 });
 
-test("Partner persona — groomer sees the incoming job card in /partner/jobs", async ({ browser }) => {
+test("Partner persona — assigned groomer sees the exact incoming job in /partner/jobs", async ({ browser }) => {
   test.setTimeout(120_000);
   section("Partner persona (/partner/jobs)");
-  expect(ACCESS_CODE, "PAWSPACE_UAT_ACCESS_CODE must be provided (CI secret)").not.toEqual("");
+  expect(bookingId, "customer step must produce a canonical booking id").toBeTruthy();
+  expect(assignedProviderId, "customer step must capture the assigned provider id").toBeTruthy();
+  const phone = PROVIDER_PHONES[assignedProviderId];
+  expect(phone, `seeded sandbox Partner OTP phone must exist for ${assignedProviderId}`).toBeTruthy();
   const context = await browser.newContext();
   try {
-    const page = await staffSignIn(context, GROOMER_EMAIL);
-    log(`✅ Login: staff sign-in as ${GROOMER_EMAIL} (redirected to /me).`);
+    const page = await partnerOtpLogin(context, phone);
     await page.goto("/partner/jobs");
     await expect(page.getByRole("heading", { name: "Your jobs" })).toBeVisible({ timeout: 20_000 });
     await expect.poll(() => page.evaluate(async () => (await fetch("/api/partner-job-feed", { cache: "no-store", credentials: "include" })).status)).toBe(200);
     const feed = await page.evaluate(async () => (await (await fetch("/api/partner-job-feed", { cache: "no-store", credentials: "include" })).json()));
-    const counts = feed?.data?.counts ?? {};
-    log(`✅ Partner job feed loaded. Counts — needsAction:${counts.needsAction ?? "?"}, today:${counts.today ?? "?"}, upcoming:${counts.upcoming ?? "?"}, completed:${counts.completed ?? "?"}, total:${counts.total ?? "?"}.`);
-    if (bookingId) {
-      type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
-      const sections = (["needsAction", "today", "upcoming"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
-      const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
-      if (hit) {
-        log(`✅ Booking ${bookingId} is in ${GROOMER_EMAIL}'s job feed (${hit.section}: ${hit.job.serviceCode} · ${hit.job.packageName} · status ${hit.job.status} · ${hit.job.scheduledStart}).`);
-        // The card prints "<service> · <package> for <first name>" and the window — never the raw id — so match on those.
-        const firstName = hit.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
-        const cards = page.getByText(new RegExp(`^for ${rx(firstName)}$`));
-        const cardVisible = await cards.first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
-        if (cardVisible) await cards.first().scrollIntoViewIfNeeded().catch(() => {});
-        const cardCount = cardVisible ? await cards.count().catch(() => 1) : 0;
-        const workspaceLink = await page.locator(`[data-testid="partner-workspace-${bookingId}"]`).isVisible().catch(() => false);
-        log(cardVisible
-          ? `✅ Job card rendered on /partner/jobs under "${hit.section}" (${hit.job.serviceCode} · ${hit.job.packageName} for ${firstName}; ${cardCount} card${cardCount === 1 ? "" : "s"} for this sweep customer)${workspaceLink ? " with the 'Open assigned workspace →' link" : "; the workspace link appears once the job is actionable"}.`
-          : "⚠️ Job is in the feed API but its card was not located in the DOM within 20 s — check the screenshot.");
-      } else {
-        const anyGrooming = await page.getByText(/grooming/i).first().isVisible().catch(() => false);
-        log(`⚠️ Booking ${bookingId} not in this groomer's feed — it was assigned to ${assignedGroomer || "an unlinked provider"}, not the provider linked to ${GROOMER_EMAIL}. Feed rendered ${anyGrooming ? "with" : "without"} a grooming card.`);
-      }
-    } else {
-      log("ℹ️ No booking ID captured from the customer step; asserting the feed structure only.");
-    }
+    type FeedJob = { bookingId?: string; serviceCode?: string; packageName?: string; status?: string; scheduledStart?: string; customerFirstName?: string };
+    const sections = (["needsAction", "today", "upcoming", "completed"] as const).map(k => [k, ((feed?.data?.[k] ?? []) as FeedJob[])] as const);
+    const hit = sections.flatMap(([section, jobs]) => jobs.filter(j => j.bookingId === bookingId).map(job => ({ section, job })))[0];
+    expect(hit, `exact booking ${bookingId} must be visible to assigned provider ${assignedProviderId}`).toBeTruthy();
+    log(`✅ Exact booking ${bookingId} is visible to assigned provider ${assignedProviderId} in ${hit!.section} (${hit!.job.serviceCode} · ${hit!.job.packageName} · ${hit!.job.status} · ${hit!.job.scheduledStart}).`);
+    const firstName = hit!.job.customerFirstName || CUSTOMER_NAME.split(" ")[0];
+    const card = page.getByText(new RegExp(`^for ${rx(firstName)}$`)).first();
+    await expect(card, "assigned partner job card must render in the DOM").toBeVisible({ timeout: 20_000 });
+    log(`✅ Assigned-provider job card rendered on /partner/jobs for ${firstName}.`);
     expect(await page.getByRole("heading", { name: /Needs action|Today|Upcoming/ }).first().isVisible()).toBeTruthy();
     log("✅ Provider dashboard structure (Needs action / Today / Upcoming / Completed) rendered.");
     await shot(page, "partner-jobs");
@@ -408,4 +445,86 @@ test("Founder persona — /admin + /crm render, tables load, booking ID visible"
       log("ℹ️ No booking ID captured; skipped the booking-ID visibility assertion.");
     }
   } finally { await context.close(); }
+});
+
+test("Employee AI V2 — unauthorized customer blocked; authorized staff chat persists once", async ({ browser }) => {
+  test.setTimeout(180_000);
+  section("Employee AI V2 — mobile chat authorization and persistence");
+  expect(ACCESS_CODE, "PAWSPACE_UAT_ACCESS_CODE must be provided (CI secret)").not.toEqual("");
+
+  const customerContext = await browser.newContext();
+  try {
+    const customerPage = await customerContext.newPage();
+    await customerOtpLogin(customerPage);
+    const denied = await customerContext.request.get("/api/mobile-employee-ai");
+    expect(denied.status(), "customer identities must not receive employee AI access").toBe(403);
+    await customerPage.goto("/mobile-app");
+    await expect(customerPage.getByRole("button", { name: /^AI$/ })).toHaveCount(0);
+    log("✅ Customer identity received HTTP 403 and no Employee AI navigation item.");
+    await shot(customerPage, "employee-ai-customer-denied");
+  } finally { await customerContext.close(); }
+
+  const staffContext = await browser.newContext();
+  try {
+    const page = await staffSignIn(staffContext, FOUNDER_EMAIL);
+    const bootstrap = await staffContext.request.get("/api/mobile-employee-ai");
+    expect(bootstrap.status(), await bootstrap.text()).toBe(200);
+    const bootstrapBody = await bootstrap.json() as { data?: { capabilities?: { chat?: boolean; voice?: boolean }; customers?: Array<{ id?: string }> } };
+    expect(bootstrapBody.data?.capabilities?.chat).toBe(true);
+    const governedCustomers = bootstrapBody.data?.customers ?? [];
+    expect(governedCustomers.length, "Employee AI requires at least one governed customer context").toBeGreaterThan(0);
+
+    await page.goto("/mobile-app");
+    const aiNav = page.getByRole("button", { name: /^AI$/ });
+    await expect(aiNav, "authorized staff should receive the Employee AI navigation item").toBeVisible({ timeout: 20_000 });
+    await aiNav.click();
+    await expect(page.getByRole("region", { name: "Employee AI mobile workspace" })).toBeVisible();
+    await expect(page.getByLabel("Employee AI message")).toBeEnabled();
+
+    type ChatResult = { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean; ai?: { turn?: { output?: string } } }; error?: string };
+    let customerId = "";
+    let idempotencyKey = "";
+    let payload: { action: "chat"; customerId: string; message: string; idempotencyKey: string } | null = null;
+    let firstBody: ChatResult | null = null;
+    for (const candidate of governedCustomers) {
+      const candidateId = String(candidate.id || "");
+      if (!candidateId) continue;
+      const candidateKey = `uat-employee-ai:${EXPECTED_SHA}:${candidateId}:${Date.now()}`;
+      const candidatePayload = { action: "chat" as const, customerId: candidateId, message: "Summarise this customer's current PawSpace context and recommend the next customer-safe step.", idempotencyKey: candidateKey };
+      const response = await staffContext.request.post("/api/mobile-employee-ai", { data: candidatePayload });
+      const body = await response.json().catch(() => ({})) as ChatResult;
+      if (response.status() === 409 && /owned by staff/i.test(String(body.error || ""))) {
+        log(`ℹ️ Employee AI correctly paused customer ${candidateId} because the conversation is staff-owned; trying the next governed customer context.`);
+        continue;
+      }
+      expect(response.status(), JSON.stringify(body)).toBe(200);
+      customerId = candidateId;
+      idempotencyKey = candidateKey;
+      payload = candidatePayload;
+      firstBody = body;
+      break;
+    }
+    expect(customerId, "Employee AI requires at least one governed customer context that is not currently staff-owned").not.toEqual("");
+    expect(payload).not.toBeNull();
+    expect(firstBody).not.toBeNull();
+    expect(firstBody!.data?.duplicatePrevented).toBe(false);
+    expect(firstBody!.data?.messageId).toBeTruthy();
+    expect(firstBody!.data?.threadId).toBeTruthy();
+    expect(firstBody!.data?.autonomousExecution).toBe(false);
+    expect(firstBody!.data?.ai?.turn?.output, "real governed AI turn should return displayable output").toBeTruthy();
+
+    const replay = await staffContext.request.post("/api/mobile-employee-ai", { data: payload! });
+    expect(replay.status(), await replay.text()).toBe(200);
+    const replayBody = await replay.json() as { data?: { duplicatePrevented?: boolean; messageId?: string; threadId?: string; autonomousExecution?: boolean } };
+    expect(replayBody.data?.duplicatePrevented).toBe(true);
+    expect(replayBody.data?.messageId).toBe(firstBody!.data?.messageId);
+    expect(replayBody.data?.threadId).toBe(firstBody!.data?.threadId);
+    expect(replayBody.data?.autonomousExecution).toBe(false);
+
+    const snapshot = await staffContext.request.get(`/api/ai-conversation?threadId=${encodeURIComponent(firstBody!.data!.threadId!)}&customerId=${encodeURIComponent(customerId)}`);
+    expect(snapshot.status(), await snapshot.text()).toBe(200);
+    log(`✅ Authorized Employee AI returned a governed real chat turn for customer ${customerId}; canonical thread ${firstBody!.data?.threadId} persisted and an identical replay was deduplicated with autonomousExecution=false.`);
+    log(`${bootstrapBody.data?.capabilities?.voice ? "✅" : "⚠️"} Employee AI voice capability is ${bootstrapBody.data?.capabilities?.voice ? "authorized for this staff identity" : "not authorized for this staff identity"}.`);
+    await shot(page, "employee-ai-authorized");
+  } finally { await staffContext.close(); }
 });

@@ -351,7 +351,9 @@ test("signed-in customer acceptance follows current service progression and paym
   assert.match(source, /Training assessment progression/);
   assert.match(source, /Book a Meet & Greet/);
   assert.match(source, /Training programme progression/);
-  assert.match(source, /saved-address trip details/);
+  assert.match(source, /async function resolveStayLocation\(page,available,name\)/);
+  assert.match(source, /address resolution did not become usable/);
+  assert.doesNotMatch(source, /saved-address trip details`,8000/);
   assert.match(source, /Who is travelling\?/);
   assert.match(source, /Calculate Citroën & XUV fares/);
   assert.match(source, /Walking payment review/);
