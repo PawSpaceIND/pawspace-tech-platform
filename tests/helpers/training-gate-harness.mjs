@@ -70,8 +70,8 @@ export function freshTrainingWorld({ production = false } = {}) {
   const db = makeD1(sqlite);
   globalThis.__TRAINING_PHASE2_DB__ = db;
   globalThis.__TRAINING_PHASE2_ENV__ = production
-    ? { NODE_ENV: "production", PAWSPACE_LOCAL_PREVIEW: "off", PAWSPACE_SCHEDULING_ENV: "production" }
-    : { NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" };
+    ? { NODE_ENV: "production", PAWSPACE_LOCAL_PREVIEW: "off", PAWSPACE_SCHEDULING_ENV: "production", PAWSPACE_PAYMENT_ENV: "live" }
+    : { NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_PAYMENT_ENV: "sandbox" };
 
   sqlite.exec(`CREATE TABLE canonical_bookings (
     id TEXT PRIMARY KEY,

@@ -1,3 +1,4 @@
+import{trainingBookingPaymentState}from"./training-payment-eligibility";
 import{ensureTrainingSessionLifecycleTables,isTerminalTrainingProgramme}from"./training-session-lifecycle";
 import{ensureTrainingCommercialTables}from"./training-commercial-governance";
 import{resolveServiceCompletionFinance}from"./service-completion-finance";
@@ -6,7 +7,7 @@ type Row=Record<string,unknown>;
 export type TrainingCompensationRuleInput={cityId:string;providerId?:string;packageCode?:string;rateValue:number;effectiveFrom:string;reason:string;actorId:string};
 export type TrainingTaxPolicyInput={cityId:string;taxMode:"inclusive"|"exclusive";taxRate:number;effectiveFrom:string;reason:string;actorId:string};
 
-// governedPayment() below reads the commercial quote link and its payment attestation, which are owned by
+// governedPayment() below reads canonical quote-linked funding; commercial tables are owned by
 // lib/training-commercial-governance.ts and are NOT part of this module's own ensure chain. Only
 // app/api/training-reconciliation ensured them before calling the read model, so every other caller -
 // approveTrainingCancellation reaches here through ensureTrainingCancellationTables - failed with
@@ -25,7 +26,7 @@ export async function ensureTrainingFinanceTables(db:D1Database){await ensureTra
 async function financeEvent(db:D1Database,entityType:string,entityId:string,eventType:string,actorId:string,reason:string,detail:unknown){await db.prepare("INSERT INTO training_finance_events (id,entity_type,entity_id,event_type,actor_id,reason,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),entityType,entityId,eventType,actorId,reason,JSON.stringify(detail),Date.now()).run();}
 async function compensationRule(db:D1Database,input:{cityId:string;providerId:string;packageCode:string;at:string}){const rows=await db.prepare("SELECT * FROM training_compensation_rules WHERE city_id=? AND status='published' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) AND (provider_id IS NULL OR provider_id=?) AND (package_code IS NULL OR package_code=?) ORDER BY CASE WHEN provider_id=? THEN 0 ELSE 1 END,CASE WHEN package_code=? THEN 0 ELSE 1 END,version DESC LIMIT 1").bind(input.cityId,input.at,input.at,input.providerId,input.packageCode,input.providerId,input.packageCode).all<Row>();return rows.results[0]||null;}
 function invoiceAmounts(total:number,policy:Row|null){if(!policy||String(policy.status)!=="published"||policy.tax_rate===null||policy.tax_rate===undefined||!policy.tax_mode)throw new Response("Published Training tax policy is required",{status:409});const rate=Number(policy.tax_rate),mode=String(policy.tax_mode);if(mode==="inclusive"){const taxable=Math.round(total/(1+rate/100)*100)/100,tax=Math.round((total-taxable)*100)/100;return{status:"draft_ready_for_number",taxMode:mode,taxRate:rate,taxable,tax,invoiceTotal:total};}const tax=Math.round(total*(rate/100)*100)/100;return{status:"draft_ready_for_number",taxMode:mode,taxRate:rate,taxable:total,tax,invoiceTotal:Math.round((total+tax)*100)/100};}
-async function governedPayment(db:D1Database,bookingId:string){const row=await db.prepare("SELECT a.status,a.amount,q.total_amount,q.payment_mode FROM training_booking_quote_links l JOIN training_commercial_quotes q ON q.id=l.quote_id LEFT JOIN training_quote_payment_attestations a ON a.quote_id=q.id WHERE l.booking_id=?").bind(bookingId).first<Row>();if(!row)return{status:"UNPAID",amount:0,total:0};return{status:String(row.status||"UNPAID"),amount:Number(row.amount||0),total:Number(row.total_amount||0),paymentMode:String(row.payment_mode||"")};}
+async function governedPayment(db:D1Database,bookingId:string){const payment=await trainingBookingPaymentState(db,bookingId);return{status:payment.status,amount:payment.amountPaid,total:payment.totalAmount,paymentMode:payment.paymentMode};}
 
 // Provider views calculate only their completed-session earnings. Invoice issuance, service
 // completion finance and payout approval remain exclusive to the governed finance workflow.

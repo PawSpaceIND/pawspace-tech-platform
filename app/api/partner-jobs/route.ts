@@ -1,3 +1,4 @@
+import { trainingBookingPaymentState } from "../../../lib/training-payment-eligibility";
 import { authError, database, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { listTrainerSessions } from "../../../lib/training-session-lifecycle";
 import { projectTrainerSession } from "../../../lib/training-provider-projection";
@@ -38,13 +39,15 @@ export async function GET(request: Request) {
         const session = projectTrainerSession({ ...raw, customer_name: maskName(String((raw as Row).customer_name || "Customer")) });
         let commercial = commercialByBooking.get(session.booking_id);
         if (!commercial) {
-          commercial = await db.prepare("SELECT b.total_amount,b.currency,b.city_id,b.zone_id,b.status booking_status,p.method,p.mode,p.status payment_status,p.amount_due_now,q.payment_mode,q.amount_due_now quote_due_now,a.status attestation_status,a.amount amount_paid FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN training_booking_quote_links l ON l.booking_id=b.id LEFT JOIN training_commercial_quotes q ON q.id=l.quote_id LEFT JOIN training_quote_payment_attestations a ON a.quote_id=q.id WHERE b.id=? AND b.service_code='dog_training'").bind(session.booking_id).first<Row>() ?? {};
+          commercial = await db.prepare("SELECT b.total_amount,b.currency,b.city_id,b.zone_id,b.status booking_status,p.method,p.mode,p.status payment_status,p.amount_due_now,q.payment_mode,q.amount_due_now quote_due_now FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN training_booking_quote_links l ON l.booking_id=b.id LEFT JOIN training_commercial_quotes q ON q.id=l.quote_id WHERE b.id=? AND b.service_code='dog_training'").bind(session.booking_id).first<Row>() ?? {};
+          const funding = await trainingBookingPaymentState(db, session.booking_id);
+          commercial = {...commercial, funding_status:funding.status, amount_paid:funding.amountPaid};
           commercialByBooking.set(session.booking_id, commercial);
         }
         const totalAmount = Number(commercial.total_amount || 0);
         const inactive = ["cancelled", "refunded", "failed", "expired"].includes(String(commercial.booking_status));
         const refunded = ["refunded", "partially_refunded"].includes(String(commercial.payment_status));
-        const paymentStatus = refunded ? String(commercial.payment_status) : commercial.attestation_status === "FULLY_PAID" ? "captured" : commercial.attestation_status === "PARTIALLY_PAID" ? "partially_paid" : "pending";
+        const paymentStatus = refunded ? String(commercial.payment_status) : commercial.funding_status === "FULLY_PAID" ? "captured" : commercial.funding_status === "PARTIALLY_PAID" ? "partially_paid" : "pending";
         const amountPaid = Number(commercial.amount_paid || 0);
         const amountDueNow = inactive || refunded || paymentStatus === "captured" ? 0 : Math.max(0, Number(commercial.quote_due_now ?? commercial.amount_due_now ?? totalAmount) - amountPaid);
         result.push({
