@@ -50,14 +50,27 @@ test('launch readiness answers a UAT-cookie founder with no workspace header and
  delete globalThis['__V2_LAUNCH_REPAIRS_DB___ENV'];
 });
 
-test('subscription business view works on a database where the grooming plan module has never run',async()=>{
- const {db}=world();
+test('subscription business view route works on a database where the grooming plan module has never run',async()=>{
+ const {db}=world();globalThis.__V2_LAUNCH_REPAIRS_DB__=db;
+ const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'v2-launch-repairs-uat-signing-key-2026-09-21'};
+ const {ensureSecurityTables}=await import('../lib/server-auth.ts');await ensureSecurityTables(db);
+ await db.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('UAT-FOUNDER','founder@pawspace.in','PawSpace Founder','founder','active',1,1)").run();
  const wallet=await import('../lib/subscription-wallet.ts');
  await wallet.ensureSubscriptionWalletTables(db);
  await db.prepare("INSERT INTO customer_grooming_subscriptions (id,customer_id,plan_code,service_package_code,total_sessions,sessions_reserved,sessions_consumed,status,started_at,expires_at,source_booking_id,catalogue_version,created_at,updated_at) VALUES ('SUB-1','CUS-1','plan-a','dog-basic',4,0,1,'active',1,9999999999999,'BK-1','v1',1,1)").run();
- const view=await wallet.buildSubscriptionBusinessView(db,2);
- assert.ok(view&&typeof view==='object');
- assert.equal(view.priceCoverage.unknown,1);
+ // The wallet module itself stays dependency-free (tests/lane1-commercial-runtime imports it under
+ // the plain loader); the route is what ensures grooming_subscription_plans before the read.
+ const uat=await import('../lib/uat-staging-auth.ts');
+ const cookie=`pawspace_uat=${await uat.issueUatToken(env,'founder@pawspace.in',3600)}`;
+ const route=await import('../app/api/subscription-business-view/route.ts');
+ const response=await route.GET(new Request('https://ops.pawspace.example/api/subscription-business-view',{headers:{cookie}}));
+ const raw=await response.text();assert.equal(response.status,200,raw);
+ const body=JSON.parse(raw);
+ assert.equal(body.source,'customer_grooming_subscriptions');
+ assert.equal(body.data.priceCoverage.unknown,1);
+ const plans=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='grooming_subscription_plans'").all();
+ assert.equal(plans.results.length,1,'route must create the plan table it reads');
+ delete globalThis['__V2_LAUNCH_REPAIRS_DB___ENV'];
 });
 
 test('every seeded manager in employee-seed.sql resolves a full organizational scope and the UAT manager owns Booking Command Center',async()=>{
