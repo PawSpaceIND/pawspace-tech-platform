@@ -192,7 +192,7 @@ async function programmeWorld(over = {}) {
   w.sqlite.prepare("INSERT OR REPLACE INTO canonical_customers VALUES (?,?,?,?,?,?,'active',?,?)")
     .run(CUSTOMER, "Training Customer", "9800000222", "trn@example.test", CITY, '{}', now, now);
   w.sqlite.prepare(`INSERT OR REPLACE INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,pet_ids_json,created_by,created_at,updated_at)
-    VALUES (?,?,?,?,'training',?,?,'TRN-SG-1',?,?,?,'in_progress','customer_app',6000,'INR','{}','["TRN-PET-1"]','test',?,?)`)
+    VALUES (?,?,?,?,'dog_training',?,?,'TRN-SG-1',?,?,?,'in_progress','customer_app',6000,'INR','{}','["TRN-PET-1"]','test',?,?)`)
     .run(BOOKING, CUSTOMER, CITY, ZONE, PACKAGE, PACKAGE_NAME, TRAINER, start, end, now, now);
   w.sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('TRN-PAY-1',?,?,6000,3000,'INR','card','split','captured','razorpay','trn-idem-1','{}',?,?)")
     .run(BOOKING, CUSTOMER, now, now);

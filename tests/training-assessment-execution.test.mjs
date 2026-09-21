@@ -48,3 +48,39 @@ test("a mid-batch session failure rolls back execution rows and retry recovers t
  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n,1);assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE status='assigned'").get().n,1);
  const recovered=await materializeTrainingBooking(world.db,{bookingId:"MEET",actorId:"qa"});assert.equal(recovered.sessions.length,1);assert.equal(recovered.programme.booking_id,"MEET");
 });
+
+test("a paid assessment cancelled after preparation cannot be accepted",async()=>{
+ const world=freshWorld();seed(world);const {sessions}=await materializeTrainingBooking(world.db,{bookingId:"MEET",actorId:"qa"});
+ world.sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id='MEET'").run();
+ await assert.rejects(mutateTrainingSession(world.db,{sessionId:sessions[0].id,action:"accept",actorId:"qa",idempotencyKey:"cancelled-accept"}),e=>e instanceof Response&&e.status===409);
+ assert.equal(world.sqlite.prepare("SELECT status FROM training_sessions").get().status,"scheduled");
+});
+test("completion retry repairs an interrupted closeout without duplicate consumption or notifications",async()=>{
+ const world=freshWorld();seed(world);const {sessions}=await materializeTrainingBooking(world.db,{bookingId:"MEET",actorId:"qa"});
+ const batch=world.db.batch.bind(world.db);let inject=true;
+ world.db.batch=async statements=>{if(inject&&statements.some(s=>s.sql.startsWith("UPDATE canonical_bookings SET status='completed'"))){inject=false;throw new Error("injected closeout failure");}return batch(statements);};
+ await assert.rejects(completeSession(world,sessions[0],"recover-close"),/injected closeout failure/);
+ const replay=await mutateTrainingSession(world.db,{sessionId:sessions[0].id,action:"complete",actorId:"qa",idempotencyKey:"recover-close-complete"});
+ assert.equal(replay.duplicatePrevented,true);assert.equal(world.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='MEET'").get().status,"completed");
+ assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions").get().n,1);
+ assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_customer_notifications WHERE template_code='training_assessment_completed'").get().n,2);
+});
+
+test("cancellation between the initial read and acceptance transaction rolls back the session transition",async()=>{
+ const world=freshWorld();seed(world);const {sessions}=await materializeTrainingBooking(world.db,{bookingId:"MEET",actorId:"qa"});
+ const batch=world.db.batch.bind(world.db);let inject=true;
+ world.db.batch=async statements=>{if(inject&&statements.some(s=>s.sql.startsWith("UPDATE training_sessions SET status='accepted'"))){inject=false;world.sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id='MEET'").run();}return batch(statements);};
+ await assert.rejects(mutateTrainingSession(world.db,{sessionId:sessions[0].id,action:"accept",actorId:"qa",idempotencyKey:"cancel-race"}));
+ assert.equal(world.sqlite.prepare("SELECT status FROM training_sessions").get().status,"scheduled");
+ assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_events WHERE idempotency_key='cancel-race'").get().n,0);
+});
+test("replay after closeout commits but event enrichment fails does not queue duplicate notifications",async()=>{
+ const world=freshWorld();seed(world);const {sessions}=await materializeTrainingBooking(world.db,{bookingId:"MEET",actorId:"qa"});
+ const prepare=world.db.prepare.bind(world.db);let inject=true;
+ world.db.prepare=sql=>{const statement=prepare(sql);if(sql.startsWith("UPDATE training_session_events SET detail_json=")){const bind=statement.bind.bind(statement);statement.bind=(...args)=>{const bound=bind(...args),run=bound.run.bind(bound);bound.run=async()=>{if(inject){inject=false;throw new Error("injected enrichment failure");}return run();};return bound;};}return statement;};
+ await assert.rejects(completeSession(world,sessions[0],"recover-event"),/injected enrichment failure/);
+ await mutateTrainingSession(world.db,{sessionId:sessions[0].id,action:"complete",actorId:"qa",idempotencyKey:"recover-event-complete"});
+ assert.equal(world.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='MEET'").get().status,"completed");
+ assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_customer_notifications WHERE template_code='training_assessment_completed'").get().n,2);
+ assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions").get().n,1);
+});
