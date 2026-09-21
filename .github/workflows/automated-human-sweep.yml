@@ -7,6 +7,10 @@ name: Automated human sweep (staging)
 on:
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: 'Exact 40-character V2 product SHA currently deployed to staging'
+        required: true
+        default: 'a7124de52462f01e513569e64931db3c656ee9c1'
       base_url:
         description: 'Staging origin to sweep'
         required: true
@@ -23,7 +27,9 @@ on:
 
 jobs:
   sweep:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    environment: pawspace-staging
     # Shared with staging deploy and both browser proofs; preserve running and queued work.
     concurrency:
       group: pawspace-staging-sweep
@@ -36,12 +42,60 @@ jobs:
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
     steps:
+      # The exact-SHA gate uses merge-base to prove that the deployed V2 commit is
+      # contained in the selected main revision. A shallow checkout contains only
+      # HEAD and would reject every older-but-contained deployed baseline as an
+      # "invalid commit object" before Cloudflare metadata is inspected.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Install
         run: npm run install:ci
+      - name: Refuse stale or non-V2 staging deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_SHA" in *[!0-9a-f]* | "") echo "expected_sha must be lowercase hexadecimal" >&2; exit 1;; esac
+          test "${#EXPECTED_SHA}" -eq 40 || { echo "expected_sha must contain exactly 40 characters" >&2; exit 1; }
+          git merge-base --is-ancestor "$EXPECTED_SHA" HEAD || { echo "$EXPECTED_SHA is not contained in the selected main revision" >&2; exit 1; }
+          npx wrangler deployments status --json --name pawspace-staging > "$RUNNER_TEMP/staging-status.json"
+          npx wrangler versions list --json --name pawspace-staging > "$RUNNER_TEMP/staging-versions.json"
+          STATUS_FILE="$RUNNER_TEMP/staging-status.json" VERSIONS_FILE="$RUNNER_TEMP/staging-versions.json" node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const expected = process.env.EXPECTED_SHA;
+          const status = JSON.parse(readFileSync(process.env.STATUS_FILE, "utf8"));
+          const versions = JSON.parse(readFileSync(process.env.VERSIONS_FILE, "utf8"));
+          const activeIds = [];
+          const collectActive = value => {
+            if (!value || typeof value !== "object") return;
+            if (typeof value.version_id === "string") activeIds.push(value.version_id);
+            if (typeof value.versionId === "string") activeIds.push(value.versionId);
+            for (const child of Object.values(value)) collectActive(child);
+          };
+          collectActive(status);
+          const rows = Array.isArray(versions) ? versions : [];
+          const active = rows.find(row => activeIds.includes(String(row?.id || row?.version_id || "")));
+          const strings = [];
+          const collectStrings = value => {
+            if (typeof value === "string") strings.push(value);
+            else if (Array.isArray(value)) value.forEach(collectStrings);
+            else if (value && typeof value === "object") Object.values(value).forEach(collectStrings);
+          };
+          collectStrings(active || status);
+          const marker = `staging ${expected}`;
+          if (!active || !strings.includes(marker)) {
+            console.error(`Active staging version does not carry exact deployment marker ${marker}. Refusing to test.`);
+            process.exit(1);
+          }
+          console.log(`deployed_sha=${expected}`);
+          console.log("Active staging version contains the required V2 SHA.");
+          NODE
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Reseed staff directory + provider roster (with partner link)
@@ -57,6 +111,7 @@ jobs:
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PW_EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
           SWEEP_REPORT: test-results/human-sweep-report.md
         run: npx playwright test --config playwright.sweep.config.ts
       - name: Print the human-readable report

@@ -80,6 +80,8 @@ s.push("CREATE TABLE IF NOT EXISTS payroll_runs (id TEXT PRIMARY KEY,idempotency
 s.push("CREATE TABLE IF NOT EXISTS employee_payroll_results (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,employee_id TEXT NOT NULL,structure_id TEXT NOT NULL,gross_earnings REAL NOT NULL,total_deductions REAL NOT NULL,reimbursements REAL NOT NULL,employer_cost REAL NOT NULL,net_pay REAL NOT NULL,source_snapshot_json TEXT NOT NULL,UNIQUE(run_id,employee_id));");
 s.push("CREATE TABLE IF NOT EXISTS payroll_result_lines (id TEXT PRIMARY KEY,result_id TEXT NOT NULL,component_code TEXT NOT NULL,label TEXT NOT NULL,kind TEXT NOT NULL,amount REAL NOT NULL,source_type TEXT NOT NULL,source_reference TEXT,policy_version TEXT NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS payslips (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,employee_id TEXT NOT NULL,result_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'available_uat',created_at INTEGER NOT NULL,UNIQUE(run_id,employee_id));");
+s.push("CREATE TABLE IF NOT EXISTS leave_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',leave_code TEXT NOT NULL,allow_negative INTEGER NOT NULL DEFAULT 0,entitlement_units REAL,approval_reference TEXT,effective_from INTEGER NOT NULL,effective_until INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(name,version));");
+s.push("CREATE TABLE IF NOT EXISTS employee_leave_balances (employee_id TEXT NOT NULL,leave_code TEXT NOT NULL,balance REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(employee_id,leave_code));");
 s.push("CREATE TABLE IF NOT EXISTS sales_employee_base (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,base_vertical TEXT NOT NULL,effective_from TEXT NOT NULL,effective_until TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS sales_attributed_bookings (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,employee_id TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);");
@@ -115,10 +117,15 @@ Object.entries(BANDS).forEach(([band, cfg]) => {
 const RUN = "SEEDRUN-AUG2026";
 s.push(`INSERT OR IGNORE INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at) VALUES (${q(RUN)},'seed-payroll-aug-2026',${PERIOD_START},${PERIOD_END},'approved','{"seed":true,"period":"2026-08"}',${q("hr@pawspace.in")},${BASE},${q("finance@pawspace.in")},${BASE},${q("founder@pawspace.in")},${BASE});`);
 
+// ---- Explicit UAT-only leave policy. This is synthetic test configuration, not a production HR entitlement. ----
+const UAT_LEAVE_CODE = "CL";
+s.push(`INSERT OR IGNORE INTO leave_policies (id,name,version,status,leave_code,allow_negative,entitlement_units,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-LVP-CL','UAT Casual Leave',1,'active_uat','CL',0,12,'UAT-ONLY-NOT-PRODUCTION',${JOINED},'founder@pawspace.in',${BASE});`);
+
 // ---- Employees + app_users + compensation + payroll results/lines/payslips ----
 for (const e of employees) {
   s.push(`INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (${q("SEEDUSR-" + e.code)},${q(e.email)},${q(e.name)},${q(e.role)},'active',${JOINED},${BASE});`);
   s.push(`INSERT OR IGNORE INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES (${q(e.id)},${q(e.email)},${q(e.code)},${q(e.name)},${q(e.email)},'0000000000','active',${JOINED},${JOINED},${BASE});`);
+  s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(UAT_LEAVE_CODE)},12,${BASE});`);
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);
   const c = st.comp, net = money(c.gross - c.deductions);

@@ -14,6 +14,7 @@ const JSON_OUT = arg("json", "release-ui-closure-report.json");
 const TIMEOUT = Number(arg("timeout", "12000"));
 const SETTLE_MS = Number(arg("settle-ms", "300"));
 const MAX_CONTROLS_PER_ROUTE = Number(arg("max-controls", "40"));
+const VISUAL_API_ATTEMPTS = 3; // one initial visual load plus at most two retries for transient background 5xx
 
 if (!BASE) throw new Error("--base or PREVIEW_URL is required");
 if (!ACCESS_CODE) throw new Error("PAWSPACE_UAT_ACCESS_CODE is required for role coverage");
@@ -67,7 +68,7 @@ async function gotoSettled(page, url) {
   return response;
 }
 
-async function collectVisual(page, route, viewport) {
+async function collectVisualAttempt(page, route, viewport) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   const apiFailures = [], consoleErrors = [], pageErrors = [];
   const onResponse = (response) => {
@@ -127,6 +128,30 @@ async function collectVisual(page, route, viewport) {
   return { route, viewport: viewport.name, status, consoleErrors: [...new Set(consoleErrors)], pageErrors: [...new Set(pageErrors)], apiFailures: [...new Set(apiFailures)], ...measured, failures };
 }
 
+function transientApiOnly(result) {
+  return result.status > 0 && result.status < 500
+    && !result.pageErrors.length
+    && !result.horizontalOverflow
+    && !result.brokenImages.length
+    && !result.clippedControls.length
+    && result.apiFailures.length > 0
+    && result.failures.length === 1
+    && result.failures[0].startsWith("5xx API:");
+}
+
+async function collectVisual(page, route, viewport) {
+  const recoveredApiFailures = [];
+  let result = null;
+  for (let attempt = 1; attempt <= VISUAL_API_ATTEMPTS; attempt += 1) {
+    result = await collectVisualAttempt(page, route, viewport);
+    if (!transientApiOnly(result)) return { ...result, visualLoadAttempts: attempt, recoveredApiFailures };
+    if (attempt === VISUAL_API_ATTEMPTS) return { ...result, visualLoadAttempts: attempt, recoveredApiFailures };
+    recoveredApiFailures.push(...result.apiFailures.map((failure) => `attempt ${attempt}: ${failure}`));
+    await sleep(400 * attempt);
+  }
+  return { ...result, visualLoadAttempts: VISUAL_API_ATTEMPTS, recoveredApiFailures };
+}
+
 function linkWiringResult(target, route) {
   if (target.tag !== "a") return null;
   const href = String(target.href || "").trim();
@@ -149,6 +174,29 @@ const ROUTE_LOAD_ATTEMPTS = 3; // one initial load plus a maximum of two retries
 
 // A serviceable PawSpace document carries markers emitted by the root layout. Their absence means
 // whatever answered is not the application, however healthy the status line looked.
+async function waitForStableUi(page, timeoutMs = 3000) {
+  const started = Date.now();
+  let previous = "";
+  let stableSamples = 0;
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await page.evaluate(() => {
+      const controls = [...document.querySelectorAll("button,a[href]")].map((el) => ({
+        tag: el.tagName.toLowerCase(),
+        text: (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim(),
+        disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
+        hidden: !(el.getClientRects().length && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none"),
+      }));
+      return JSON.stringify(controls);
+    }).catch(() => "");
+    if (snapshot && snapshot === previous) stableSamples += 1;
+    else stableSamples = 0;
+    if (stableSamples >= 2) return true;
+    previous = snapshot;
+    await sleep(150);
+  }
+  return false;
+}
+
 async function assessRouteDocument(page, cfTextSource) {
   return page.evaluate(({ selector, textSource }) => {
     const pattern = new RegExp(textSource, "i");
@@ -178,7 +226,11 @@ async function loadRouteForProbe(page, route) {
     } catch (error) { navigationFailure = String(error.message).split("\n")[0].slice(0, 200); }
     const assessed = await assessRouteDocument(page, CF_ERROR_TEXT.source);
     if (!navigationFailure && status && status < 500 && !assessed.cloudflareError && assessed.pawspaceDocument) {
-      return { ok: true, attempts: attempt, status, retried: attempt > 1 };
+      const stable = await waitForStableUi(page);
+      if (stable) return { ok: true, attempts: attempt, status, retried: attempt > 1 };
+      outcome = { ok: false, attempts: attempt, status, reason: `PawSpace UI did not settle after route load (HTTP ${status})` };
+      if (attempt < ROUTE_LOAD_ATTEMPTS) await sleep(400 * attempt);
+      continue;
     }
     const reason = navigationFailure ? `navigation failed: ${navigationFailure}`
       : assessed.cloudflareError ? `Cloudflare edge error page instead of PawSpace (HTTP ${status || "?"}): ${assessed.sample}`
@@ -462,6 +514,8 @@ async function main() {
       discoveredRoutes: routes.length,
       visualChecks: visual.length + roleCoverage.length,
       visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length).length,
+      visualRoutesRetriedForApi5xx: [...visual, ...roleCoverage].filter((r) => (r.visualLoadAttempts || 1) > 1).map((r) => `${r.actor} ${r.route} ${r.viewport} (${r.visualLoadAttempts} attempts)`),
+      transientApiFailuresRecovered: [...visual, ...roleCoverage].reduce((n, r) => n + (r.recoveredApiFailures?.length || 0), 0),
       controlsProbed: controls.reduce((n, r) => n + r.controls.length, 0),
       controlFailures: controls.flatMap((r) => r.controls).filter((c) => isControlFailure(c.result)).length,
       // Every non-plain wiring verdict is counted here so a growing exemption surface is visible in

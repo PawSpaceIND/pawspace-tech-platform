@@ -464,6 +464,8 @@ test("persists one canonical customer-to-payment lifecycle across all four journ
     ["app/control/page.tsx","app/control/booking-lifecycle-panel.tsx","app/api/canonical-bookings/route.ts","db/schema.ts","app/mobile-app/grooming-flow.tsx","app/mobile-app/training-flow.tsx","app/mobile-app/stay-flow.tsx","lib/api-gateway.ts"].map((path)=>readFile(new URL("../"+path,import.meta.url),"utf8")),
   );
   assert.match(control,/Customer booking lifecycle/);
+  assert.match(control,/id:"lifecycle",permission:"bookings\.manage" as Permission,label:"Customer booking lifecycle"/);
+  assert.doesNotMatch(control,/id:"lifecycle",permission:"bookings\.view" as Permission,label:"Customer booking lifecycle"/);
   assert.match(panel,/One booking ID\. Every operating record linked\./);
   assert.match(panel,/UAT sandbox payments only/);
   for(const table of ["canonical_customers","canonical_pets","canonical_bookings","provider_work_orders","booking_payments","booking_lifecycle_events"])assert.match(route,new RegExp(table));
@@ -606,3 +608,6 @@ test("consolidates PawSpace into four role-based entry points", async () => {
   assert.match(team, /Showing what your role can open/);
   assert.match(team, /visibleWorkspaces\s*=\s*data\s*\?\s*workspaces\.filter/);
 });
+
+
+test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel]){assert.doesNotMatch(src,/Payment is captured/);assert.match(src,/Payment status is tracked separately/);}});

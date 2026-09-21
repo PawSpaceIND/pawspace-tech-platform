@@ -75,14 +75,55 @@ test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /pawspace-staging/);
   assert.match(workflow, /environment: \$\{\{ github\.event\.inputs\.target_environment \}\}/);
   assert.match(workflow, /expected_sha/);
-  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SHA"/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$EXPECTED_SHA" HEAD/);
+  assert.match(workflow, /wrangler deployments status --json --name "\$WORKER_NAME"/);
+  assert.match(workflow, /const marker = `\${process\.env\.MARKER_PREFIX} \${expected}`/);
   assert.match(workflow, /workers\\\.dev/);
   assert.match(workflow, /PAWSPACE_UAT_ACCESS_CODE/);
   assert.match(workflow, /node \.\/node_modules\/playwright\/cli\.js install --with-deps chromium/);
   assert.doesNotMatch(workflow, /run: npx playwright install/);
-  assert.match(workflow, /git cat-file blob "\$\{GITHUB_SHA\}:scripts\/customer-ui-acceptance-v2\.mjs"/);
-  assert.match(workflow, /ln -s "\$GITHUB_WORKSPACE\/node_modules" "\$TOOL_DIR\/node_modules"/);
-  assert.match(workflow, /node "\$TOOL_DIR\/customer-ui-acceptance-v2\.mjs"/);
-  assert.doesNotMatch(workflow, /wrangler deploy/);
+  assert.match(workflow, /customer-acceptance:/);
+  assert.match(workflow, /Run signed-in customer acceptance on a fresh runner/);
+  assert.match(workflow, /node scripts\/customer-ui-acceptance-v2\.mjs/);
+  assert.doesNotMatch(workflow, /wrangler\s+deploy(?:\s|$)/);
   assert.doesNotMatch(workflow, /d1 migrations apply/);
+});
+
+test("release UI closure waits for a bounded stable UI before snapshotting controls", () => {
+  assert.match(script, /async function waitForStableUi/);
+  assert.match(script, /timeoutMs = 3000/);
+  assert.match(script, /stableSamples >= 2/);
+  const loader = script.slice(script.indexOf("async function loadRouteForProbe"), script.indexOf("// Resolve the control"));
+  assert.match(loader, /const stable = await waitForStableUi\(page\)/);
+  assert.match(loader, /UI did not settle after route load/);
+});
+
+
+test("release UI visual phase retries only transient background API 5xx and still fails persistent errors", () => {
+  assert.match(script, /const VISUAL_API_ATTEMPTS = 3/);
+  assert.match(script, /function transientApiOnly/);
+  assert.match(script, /result\.status > 0 && result\.status < 500/);
+  assert.match(script, /!result\.pageErrors\.length/);
+  assert.match(script, /!result\.horizontalOverflow/);
+  assert.match(script, /!result\.brokenImages\.length/);
+  assert.match(script, /!result\.clippedControls\.length/);
+  assert.match(script, /result\.apiFailures\.length > 0/);
+  assert.match(script, /attempt === VISUAL_API_ATTEMPTS/);
+  assert.match(script, /recoveredApiFailures/);
+  assert.match(script, /visualRoutesRetriedForApi5xx/);
+  assert.match(script, /transientApiFailuresRecovered/);
+});
+
+
+test("signed-in customer acceptance runs on its own fresh GitHub runner", () => {
+  assert.match(workflow, /customer-acceptance:\n    if:/);
+  assert.match(workflow, /Run signed-in customer acceptance on a fresh runner/);
+  assert.match(workflow, /Verify fresh customer harness and deployed product SHA/);
+  assert.match(workflow, /name: release-ui-customer-acceptance-evidence/);
+  const visualJob = workflow.slice(workflow.indexOf("  ui-closure:"), workflow.indexOf("  customer-acceptance:"));
+  assert.doesNotMatch(visualJob, /customer-ui-acceptance-v2\.mjs/);
+  const customerJob = workflow.slice(workflow.indexOf("  customer-acceptance:"));
+  assert.match(customerJob, /node scripts\/customer-ui-acceptance-v2\.mjs/);
+  assert.doesNotMatch(customerJob, /release-ui-closure\.mjs/);
 });
