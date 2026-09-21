@@ -1,0 +1,10 @@
+.media,.precheck{margin-top:14px;padding:16px;display:grid;gap:12px;border:1px solid #ded7e5;border-radius:12px;background:#faf8fb;color:#302638;font-size:14px;line-height:1.5}
+.media>div,.media>div>div,.precheck label,.media label{display:grid;gap:10px;min-width:0}
+.media>div>div{padding:12px 0;border-top:1px solid #e4ddea}
+.media h3{margin:0;font-size:18px}.media p,.precheck p{margin:0;font-size:14px}
+.media span,.precheck>span{color:#176b52;font-size:12px;font-weight:700}
+.media label,.precheck label{font-size:14px;font-weight:600}
+.media input,.precheck input{box-sizing:border-box;max-width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid #c6bccf;border-radius:8px;background:white;font:inherit}
+.media button,.precheck button{min-height:44px;padding:10px 14px;border:1px solid #b8cfc6;border-radius:8px;background:#176b52;color:white;font:inherit;font-weight:600;cursor:pointer}
+.media button:disabled,.precheck button:disabled{opacity:.55;cursor:not-allowed}
+.media button:focus-visible,.precheck button:focus-visible,.media input:focus-visible,.precheck input:focus-visible{outline:3px solid #e7a432;outline-offset:3px}

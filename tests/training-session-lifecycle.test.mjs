@@ -96,9 +96,9 @@ test("ARRIVE is geofenced to the customer doorstep", async () => {
   const s1 = sessions[0];
   await act(world, s1, "accept", "g-accept");
   await act(world, s1, "on_the_way", "g-otw");
-  await refusal(act(world, s1, "arrive", "g-arrive-blind"), 409, /ARRIVED requires provider latitude and longitude/);
-  const far = await refusal(act(world, s1, "arrive", "g-arrive-far", FAR_AWAY), 409, /ARRIVED requires <=250m/);
-  assert.match(far, /Trainer is \d+m from the customer doorstep/);
+  await refusal(act(world, s1, "arrive", "g-arrive-blind"), 409, /Allow location access to confirm arrival/);
+  const far = await refusal(act(world, s1, "arrive", "g-arrive-far", FAR_AWAY), 409, /Move within 250m and retry arrival/);
+  assert.match(far, /You are \d+m from the customer doorstep/);
   assert.equal((await getTrainingSession(world.db, s1.id)).status, "on_the_way", "a refused arrival leaves the session on the way");
   const near = await act(world, s1, "arrive", "g-arrive", { latitude: DOORSTEP.latitude + 0.0005, longitude: DOORSTEP.longitude });
   assert.equal(near.status, "arrived");

@@ -99,7 +99,7 @@ function baseTables() {
   // #388 gates ARRIVE on a doorstep geofence, which reads this table. Seeded, not stubbed: the
   // real schema, with real coordinates the trainer is then required to arrive at.
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'staff_entered',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,review_status TEXT,release_basis TEXT)");
 }
 
 const NOW = Date.now();
@@ -184,7 +184,7 @@ function seedEvidence(mediaId, sessionRow) {
 }
 
 function seedAsset(mediaId, purpose, sessionRow) {
-  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
+  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?,'approved','scanner_clean')")
     .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, purpose, `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
   sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
     .run(mediaId, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);

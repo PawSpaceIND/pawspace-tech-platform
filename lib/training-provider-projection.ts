@@ -163,6 +163,7 @@ export function projectTrainerSession(value: unknown) {
     homework: projectHomework(row.homework),
     progress: projectProgress(row.progress),
     evidenceRefs: evidenceRefs(row.evidenceRefs),
+    ownerHandover: Number(row.owner_handover_minutes)>=15&&Number(row.owner_handover_completed_at)>0?{durationMinutes:Number(row.owner_handover_minutes),completedAt:Number(row.owner_handover_completed_at)}:null,
     events,
   };
 }

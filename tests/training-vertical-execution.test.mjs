@@ -255,7 +255,7 @@ test("TRN-06 arrival geofence: a trainer must actually be at the customer's door
 
   const noCoords = await act("arrive");
   assert.equal(noCoords.ok, false, "arriving without coordinates must be refused");
-  assert.match(String(noCoords.body ?? ""), /requires provider latitude and longitude/i);
+  assert.match(String(noCoords.body ?? ""), /Allow location access to confirm arrival/i);
 
   // ~2.2 km away - a trainer marking themselves arrived from the next neighbourhood.
   const farAway = await act("arrive", { latitude: DOORSTEP.lat + 0.02, longitude: DOORSTEP.lng });
@@ -295,7 +295,7 @@ async function evidence(db, purpose, id) {
   const now = Date.now();
   const media = await import("../lib/service-media-security.ts");
   await media.ensureServiceMediaTable(db);
-  await db.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,'k','image/jpeg',2048,'sha','clean','ready','active',0,?,?,?)")
+  await db.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,'k','image/jpeg',2048,'sha','clean','ready','active',0,?,?,?,'approved','scanner_clean')")
     .bind(id, BOOKING, TRAINER, purpose, TRAINER, now, now).run();
   await db.prepare("INSERT OR REPLACE INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
     .bind(id, SESSION, PROGRAMME, BOOKING, TRAINER, now).run();
