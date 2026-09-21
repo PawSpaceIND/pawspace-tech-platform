@@ -61,7 +61,7 @@ Thirty-seven entries, every one with an executable regression test. The register
 | Frozen full suite | `ab4d03e` | 6,539 tests, 4 failures — all repository gates, listed in `logs/` |
 | Frozen full suite | `a69cdd7` | **6,544 tests, 0 failures, 0 skipped**, 942 s |
 | Staging deploy and certification | `ad4c56e` | Run 35609497578, certified 28 of 28 |
-| Staging deploy and certification | `a69cdd7` | Run 35634442129 — see the pull request for the outcome |
+| Staging deploy and certification | `a69cdd7` | Run 35634442129 **succeeded**; certified at the staging URL, evidence artifact 10655658700 |
 | Browser verification | `a69cdd7` | `records/final-browser-verification-a69cdd7.json` |
 
 The four failures at `ab4d03e` were mine and are fixed in `a69cdd7`: a table declared two ways, a

@@ -31,7 +31,8 @@ follows the 2026-09-20 V2 end-to-end test report.
 | Frozen full suite | `ad4c56e` | 6,450 tests, 0 failures, 0 skipped, 611 s |
 | Staging deploy + certification | `ad4c56e` | Run 35609497578 success — CERTIFIED 28/28, LIVE version = `ad4c56e`, rollback reference recorded, SMS smoke disabled |
 | Automated human sweep (staging) | — | Not runnable for a PR-branch SHA: the workflow only runs from `main` and requires the SHA to be contained in `main`. Run it after merge. |
-| Frozen full suite | final SHA | See the PR description for the closing run |
+| Frozen full suite | `a69cdd7` | 6,544 tests, 0 failures, 0 skipped, 942 s |
+| Staging deploy + certification | `a69cdd7` | Run 35634442129 succeeded and certified the commit at the staging URL |
 
 ## Boundaries
 
