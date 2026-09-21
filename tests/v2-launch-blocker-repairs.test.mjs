@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
 import {freshSqlite,makeD1} from './helpers/taxi-harness.mjs';
 installWorkersHooks('__V2_LAUNCH_REPAIRS_DB__');
@@ -36,7 +37,7 @@ test('lead_callbacks created by drizzle 0021 (intake shape) is repaired additive
 test('launch readiness answers a UAT-cookie founder with no workspace header and still refuses anonymous callers',async()=>{
  const {db}=world();globalThis.__V2_LAUNCH_REPAIRS_DB__=db;
  // installWorkersHooks(globalName) reads runtime vars from globalThis[`${globalName}_ENV`].
- const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'v2-launch-repairs-uat-signing-key-2026-09-21'};
+ const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:crypto.randomUUID()+crypto.randomUUID()};
  const {ensureSecurityTables}=await import('../lib/server-auth.ts');await ensureSecurityTables(db);
  await db.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('UAT-FOUNDER','founder@pawspace.in','PawSpace Founder','founder','active',1,1)").run();
  const uat=await import('../lib/uat-staging-auth.ts');
@@ -52,7 +53,7 @@ test('launch readiness answers a UAT-cookie founder with no workspace header and
 
 test('subscription business view route works on a database where the grooming plan module has never run',async()=>{
  const {db}=world();globalThis.__V2_LAUNCH_REPAIRS_DB__=db;
- const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'v2-launch-repairs-uat-signing-key-2026-09-21'};
+ const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:crypto.randomUUID()+crypto.randomUUID()};
  const {ensureSecurityTables}=await import('../lib/server-auth.ts');await ensureSecurityTables(db);
  await db.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('UAT-FOUNDER','founder@pawspace.in','PawSpace Founder','founder','active',1,1)").run();
  const wallet=await import('../lib/subscription-wallet.ts');
@@ -104,4 +105,28 @@ test('leave requests without an active policy or with invalid input are governed
 test('Employee AI mobile surfaces a refused or failed chat turn instead of clearing the message silently',()=>{
  const source=read('app/mobile-app/employee-ai-mobile.tsx');
  assert.match(source,/<\/form>\{error&&<p role="alert" className=\{styles\.voiceError\}>\{error\}<\/p>\}/);
+});
+
+test('Booking Command Center stream refuses out-of-scope and anonymous callers with governed 401/403, never 500 (EMP-15)',async()=>{
+ const {sqlite,db}=world();globalThis.__V2_LAUNCH_REPAIRS_DB__=db;loadSql(sqlite,read('scripts/employee-seed.sql'));
+ const env=globalThis['__V2_LAUNCH_REPAIRS_DB___ENV']={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:crypto.randomUUID()+crypto.randomUUID()};
+ const {ensureSecurityTables}=await import('../lib/server-auth.ts');await ensureSecurityTables(db);
+ const uat=await import('../lib/uat-staging-auth.ts');
+ const cookieFor=async email=>`pawspace_uat=${await uat.issueUatToken(env,email,3600)}`;
+ const route=await import('../app/api/booking-command-center/stream/route.ts');
+ const url='https://ops.pawspace.example/api/booking-command-center/stream';
+ const anonymous=await route.GET(new Request(url));
+ assert.equal(anonymous.status,401,await anonymous.text());
+ const sales=await route.GET(new Request(url,{headers:{cookie:await cookieFor('sunita.manager37@tkpetcare.in')}}));
+ const salesBody=await sales.text();
+ assert.equal(sales.status,403,salesBody);
+ assert.match(JSON.parse(salesBody).error,/organizational scope/i);
+ const controller=new AbortController();
+ const operations=await route.GET(new Request(url,{headers:{cookie:await cookieFor('jyoti.manager39@tkpetcare.in')},signal:controller.signal}));
+ assert.equal(operations.status,200);
+ assert.match(String(operations.headers.get('content-type')),/text\/event-stream/);
+ const reader=operations.body.getReader();const first=await reader.read();
+ assert.match(new TextDecoder().decode(first.value),/^event: ready/);
+ controller.abort();await reader.cancel().catch(()=>{});
+ delete globalThis['__V2_LAUNCH_REPAIRS_DB___ENV'];
 });
