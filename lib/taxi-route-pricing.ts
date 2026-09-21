@@ -1,4 +1,3 @@
-import {governedJsonError} from "./governed-http-error.ts";
 type Runtime=Record<string,unknown>;
 export type TaxiRouteLeg={distanceKm:number;durationMinutes:number;provider:"google_routes_uat"|"sandbox_route_fallback";providerReference:string};
 const parseDuration=(value:unknown)=>{const raw=String(value||"");const match=raw.match(/^(\d+(?:\.\d+)?)s$/);return match?Number(match[1]):Number.NaN};
@@ -7,7 +6,7 @@ export async function computeTaxiRouteLeg(runtime:Runtime,originAddress:string,d
  const origin=originAddress.trim(),destination=destinationAddress.trim();
  if(origin.length<5||destination.length<5||origin.toLowerCase()===destination.toLowerCase())throw new Response("Pet Taxi requires distinct complete pickup and drop addresses",{status:400});
  if(String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase()!=="sandbox")throw new Response("Pet Taxi UAT route pricing is locked to the Maps sandbox adapter",{status:409});
- const key=String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key){console.warn("[taxi-route-pricing] GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured; route pricing refused");throw governedJsonError({error:"Pet Taxi route pricing is not available right now. Please try again later or contact PawSpace support.",code:"route_pricing_unavailable"},503);}
+ const key=String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key){console.warn("[taxi-route-pricing] GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured; route pricing refused");throw new Response("Pet Taxi route pricing is not available right now. Please try again later or contact PawSpace support.",{status:503});}
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
  try{
   const response=await fetcher("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters"},body:JSON.stringify({origin:{address:origin},destination:{address:destination},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});
