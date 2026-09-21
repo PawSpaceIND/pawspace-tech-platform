@@ -44,6 +44,14 @@ test("real TOTP implementation accepts its current code and rejects a different 
  const code=await totpCode(secret,now);
  assert.match(code,/^\d{6}$/);
  assert.equal(await verifyTotp(secret,code,now),true);
- const other=code==="000000"?"000001":"000000";
+ // verifyTotp accepts the code for any of three 30s windows (-30s, 0, +30s), so a hardcoded "wrong"
+ // code is only wrong about 999,997 times in a million: when one of those three happens to be that
+ // constant the assertion below fails on a correct implementation. That landed once in CI. Derive a
+ // code that provably is not any of the three instead - four candidates cannot all collide with
+ // three accepted codes.
+ const accepted=new Set(await Promise.all([-30000,0,30000].map(drift=>totpCode(secret,now+drift))));
+ assert.equal(accepted.has(code),true,"the current code must be one of the three windows verifyTotp accepts");
+ const other=["000000","000001","000002","000003"].find(candidate=>!accepted.has(candidate));
+ assert.ok(other,"four candidates cannot all collide with three accepted codes");
  assert.equal(await verifyTotp(secret,other,now),false);
 });
