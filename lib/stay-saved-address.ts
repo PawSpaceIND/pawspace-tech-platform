@@ -1,13 +1,14 @@
 import type { CustomerAccountRecord } from "./customer-account";
 import type { ZoneResult } from "../app/mobile-app/address-picker";
 import { resolveServiceCoverage } from "./service-zone-client";
+import { serviceAddressText } from "./service-address-text";
 export type SavedStayAddress = CustomerAccountRecord["addresses"][number];
 export type StayLocation = Pick<ZoneResult, "zone" | "assignment" | "address"> & Partial<Pick<ZoneResult, "placeId" | "latitude" | "longitude">>;
 export function defaultStayAddress(addresses: SavedStayAddress[]) {
   return addresses.find(address => address.isDefault) ?? addresses[0] ?? null;
 }
 export function savedStayAddressText(address: SavedStayAddress) {
-  return [address.line1, address.line2, address.area, address.city, address.postalCode].filter(Boolean).join(", ");
+  return serviceAddressText(address);
 }
 export async function validateSavedStayAddress(address: SavedStayAddress, signal?: AbortSignal): Promise<StayLocation> {
   const pin = address.postalCode?.replace(/\D/g, "") || savedStayAddressText(address).match(/\b[1-9]\d{5}\b/)?.[0] || "";
