@@ -1,4 +1,6 @@
 "use client";
+import {partnerJobWorkspaceHref} from "../../lib/partner-job-workspace";
+import type {PartnerJob as FeedJob,PartnerJobFeed} from "../../lib/partner-job-feed";
 import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
@@ -151,6 +153,7 @@ function PartnerMobileAppContent() {
   const [uatCode, setUatCode] = useState("");
   const [switching, setSwitching] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [otherJobs,setOtherJobs]=useState<FeedJob[]>([]),[feedError,setFeedError]=useState("");
   const [selectedId, setSelectedId] = useState("");
   // Live order impact: the retired /groomer prototype was the only surface that reached the governed
   // /api/booking-operations, but it sent hardcoded IDs. Here it runs against the REAL selected booking.
@@ -228,6 +231,13 @@ function PartnerMobileAppContent() {
   }, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);
 
   useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    queueMicrotask(()=>{if(!controller.signal.aborted){setOtherJobs([]);setFeedError("");}});
+    if(!identity?.subjectId)return()=>controller.abort();
+    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(!controller.signal.aborted)setOtherJobs([...feed.needsAction,...feed.today,...feed.upcoming,...feed.completed].filter(job=>!["grooming","dog_training"].includes(job.serviceCode)));}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
+    return()=>controller.abort();
+  },[identity?.subjectId,refreshKey]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
   const selected = useMemo(() => (tab==="home"?dutyJob:null) ?? jobs.find((job) => job.bookingId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId, tab, dutyJob]);
   const statusQueue=useStatusQueue(identity?.subjectId,()=>setRefreshKey(value=>value+1));
@@ -564,15 +574,17 @@ function PartnerMobileAppContent() {
                 {nextAction && <button disabled={busy||pendingStatus||(nextAction==="start_service"&&!checklistComplete("before",selectedChecks))||((nextAction==="complete"||nextAction==="add_proof")&&!checklistComplete("after",selectedChecks))} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, "jobs")}>{isTraining ? "Open training session" : canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
+            </> : <><h2>{otherJobs.length?"Your assigned work":"No assigned jobs"}</h2><p>{otherJobs.length?"Open your service workspace below to continue.":"Your work will appear here after assignment."}</p></>}
           </section>
 
           <div className={styles.stats}>
-            <article><span>{activeJobs.length}</span><small>active jobs</small></article>
-            <article><span>{completedJobs.length}</span><small>completed</small></article>
+            <article><span>{activeJobs.length+otherJobs.filter(job=>!["completed","cancelled"].includes(job.status)).length}</span><small>active jobs</small></article>
+            <article><span>{completedJobs.length+otherJobs.filter(job=>job.status==="completed").length}</span><small>completed</small></article>
             <article><span>GPS</span><small>tap to start</small></article>
           </div>
 
+          {feedError&&<p role="alert">{feedError}</p>}
+          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job);return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
           <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>

@@ -98,3 +98,25 @@ test("default refresh contracts only read status/programme and never start anoth
     }
   } finally { globalThis.fetch=original; }
 });
+
+test('verified Meet & Greet confirms its assessment without asking for a programme ledger',async()=>{
+ const f=fixture({packageCode:'trainer-meet-greet'});
+ const result=await loadVerifiedTrainingConfirmation(base,undefined,f.dependencies);
+ assert.equal(result.programme,null);assert.equal(result.booking.status,'confirmed');
+ assert.deepEqual(f.calls.map(c=>c.kind),['projection']);
+});
+test('unpaid Meet & Greet cannot bypass capture verification',async()=>{
+ const f=fixture({packageCode:'trainer-meet-greet',paymentStatus:'created'});
+ await assert.rejects(loadVerifiedTrainingConfirmation(base,undefined,f.dependencies),TrainingConfirmationPendingError);
+});
+test('preparing a Meet & Greet does not materialize a training programme',async(t)=>{
+ const {prepareTrainingProgramme}=await import('../lib/training-programme-client.ts');
+ const request=t.mock.method(globalThis,'fetch',()=>{throw new Error('Assessment must not create programme');});
+ assert.equal(await prepareTrainingProgramme({bookingId:'MEET1',packageCode:'trainer-meet-greet'}),null);
+ assert.equal(request.mock.callCount(),0);
+});
+
+test('Training catalogue and programme gateways show a useful error for an HTML outage',async()=>{
+ const original=globalThis.fetch;globalThis.fetch=async()=>new Response('<html>upstream gateway unavailable</html>',{status:502,headers:{'content-type':'text/html'}});
+ try{const catalogue=await import('../lib/training-commercial-client.ts'),programme=await import('../lib/training-programme-client.ts');for(const call of [()=>catalogue.loadTrainingPackages(),()=>programme.loadTrainingProgramme('B1')])await assert.rejects(call(),error=>error instanceof Error&&!/Unexpected token|<html>|JSON/.test(error.message)&&error.message.length>10);}finally{globalThis.fetch=original;}
+});

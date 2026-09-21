@@ -165,7 +165,13 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/customer-grooming-summary")return "scheduling.book";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
   if(url.pathname==="/api/grooming-finance")return "finance.view";
-  if(url.pathname==="/api/grooming-payment-sandbox")return "payments.manage";
+  if(url.pathname==="/api/grooming-payment-sandbox"){
+    if(method==="GET")return "bookings.view";
+    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
+    // Assigned-provider ownership is enforced by the handler. Captures, refunds and simulations
+    // continue to require Finance authority; requesting customer payment never grants that power.
+    return body.action==="request_after_service"?"bookings.view":"payments.manage";
+  }
   if(url.pathname==="/api/grooming-lifecycle"){
     if(method==="GET")return "bookings.view";
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;

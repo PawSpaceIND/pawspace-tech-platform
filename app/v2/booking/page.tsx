@@ -1,0 +1,22 @@
+"use client";
+import Link from "next/link";
+import {useEffect,useState} from "react";
+import {useQueryParameter} from "../../../lib/use-query-parameter";
+import {loadCustomerConfirmationProjection,type CustomerConfirmationProjection} from "../../../lib/customer-checkout-client";
+import {customerBookingManageHref} from "../../../lib/customer-activity";
+import {customerScopedHref} from "../../../lib/v2/route-scope";
+import BookingPaymentPage from "../../mobile-app/booking-payment-page";
+import styles from "../customer-detail.module.css";
+const money=(n:number,currency:string)=>new Intl.NumberFormat("en-IN",{style:"currency",currency,maximumFractionDigits:2}).format(n);
+export default function V2BookingPage(){
+ const bookingId=useQueryParameter("bookingId"),[record,setRecord]=useState<CustomerConfirmationProjection|null>(null),[error,setError]=useState(""),[attempt,setAttempt]=useState(0);
+ useEffect(()=>{const controller=new AbortController();queueMicrotask(()=>{if(!controller.signal.aborted){setRecord(null);setError("");}});if(!bookingId)return()=>controller.abort();void loadCustomerConfirmationProjection(bookingId,controller.signal).then(value=>{if(!controller.signal.aborted)setRecord(value);}).catch(problem=>{if(!controller.signal.aborted)setError(problem instanceof Error?problem.message:"Unable to load your booking.");});return()=>controller.abort();},[bookingId,attempt]);
+ const manage=record?customerBookingManageHref({id:record.bookingId,serviceCode:record.serviceCode,status:record.bookingStatus,scheduledStart:record.scheduledStart}):null;
+ const payable=record&&record.amountDueNow>0&&!["cancelled","canceled","refunded","failed","expired"].includes(record.bookingStatus);
+ const mode=record?.paymentMode;
+ return <main className={styles.page}><div className={styles.shell}><header className={styles.topbar}><Link href="/v2/activity">← Your bookings</Link><Link href="/v2">PawSpace</Link></header>
+ {!bookingId?<p role="alert">Open a booking from your Activity timeline.</p>:error?<section className={styles.card}><p role="alert">{error}</p><button onClick={()=>setAttempt(x=>x+1)}>Retry booking</button></section>:!record?<p role="status">Loading your booking…</p>:<><section className={styles.card}><h1>{record.packageName}</h1><p>{record.bookingId}</p><p>Status: {record.bookingStatus.replaceAll("_"," ")}</p><p>{new Date(record.scheduledStart).toLocaleString("en-IN")} · {record.providerName||"Assignment pending"}</p><p>{record.pets?.map(pet=>pet.name).join(", ")}</p><p>Total: {money(record.totalAmount,record.currency)} · Payment: {record.paymentStatus.replaceAll("_"," ")}</p>{manage&&<Link href={customerScopedHref("/v2",manage)}>Manage service</Link>}<button onClick={()=>setAttempt(x=>x+1)}>Refresh status</button></section>
+ {payable&&(mode==="prepaid"||mode==="split"||mode==="split_50_50")&&<BookingPaymentPage serviceName={record.packageName} bookingId={record.bookingId} totalAmount={record.totalAmount} amountDueNow={record.amountDueNow} mode={mode} onVerified={()=>setAttempt(x=>x+1)}/>}
+ {mode==="pay_after_service"&&record.paymentStatus!=="captured"&&record.paymentStatus!=="paid"&&<p>Your provider will share the payment request after service completion.</p>}</>}
+ </div></main>;
+}

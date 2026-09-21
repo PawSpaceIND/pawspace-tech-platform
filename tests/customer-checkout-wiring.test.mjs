@@ -17,7 +17,7 @@ const receipt = { bookingId: 'B1', orderId: 'order_fixture', paymentId: 'pay_fix
   signature: createHmac('sha256', env.RAZORPAY_KEY_SECRET_SANDBOX).update('order_fixture|pay_fixture').digest('hex') };
 function world(t) {
   const sqlite = new DatabaseSync(':memory:'); t.after(() => sqlite.close());
-  sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,service_code TEXT DEFAULT 'grooming',package_name TEXT DEFAULT 'Bath & Basic',provider_id TEXT DEFAULT 'PRV1',scheduled_start TEXT DEFAULT '2026-09-20T03:30:00.000Z',scheduled_end TEXT DEFAULT '2026-09-20T05:30:00.000Z',total_amount REAL DEFAULT 499.50,currency TEXT DEFAULT 'INR',updated_at INTEGER DEFAULT 1);
+  sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,package_code TEXT,service_code TEXT DEFAULT 'grooming',package_name TEXT DEFAULT 'Bath & Basic',provider_id TEXT DEFAULT 'PRV1',scheduled_start TEXT DEFAULT '2026-09-20T03:30:00.000Z',scheduled_end TEXT DEFAULT '2026-09-20T05:30:00.000Z',total_amount REAL DEFAULT 499.50,currency TEXT DEFAULT 'INR',updated_at INTEGER DEFAULT 1);
     CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT,mode TEXT DEFAULT 'prepaid');
     CREATE TABLE payment_intents(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,payment_id TEXT,gateway_order_id TEXT,provider TEXT,environment TEXT,amount_paise INTEGER,currency TEXT);
     CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT,detail_json TEXT NOT NULL DEFAULT '{}');
@@ -230,7 +230,7 @@ test('status returns a customer-owned ready projection with exact server slot, p
   const response = await POST(request({ action: 'status', bookingId: 'B1' }, session));
   assert.equal(response.status, 200); const body = await response.json();
   assert.deepEqual(body.data.confirmation, {
-    ready: true, bookingId: 'B1', serviceCode: 'grooming', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
+    ready: true, bookingId: 'B1', serviceCode: 'grooming', packageCode:'', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
     totalAmount: 499.5, currency: 'INR', providerId: 'PRV1', providerName: 'Rahul M.', providerModel: 'full_time', workOrderStatus: 'assigned', scheduledStart: '2026-09-20T03:30:00.000Z', scheduledEnd: '2026-09-20T05:30:00.000Z', updatedAt: 1,
     gatewayOrderId: 'order_fixture', gatewayPaymentId: 'pay_fixture', pets: [],
   });

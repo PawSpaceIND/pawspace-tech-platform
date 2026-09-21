@@ -64,7 +64,7 @@ export async function POST(request: Request) {
             WHERE e.booking_id=b.id AND e.payment_id=p.id AND (e.signature_verified=1 OR (e.signature_verified=0 AND json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api')) AND e.processing_status='processed'
               AND e.event_type IN ('payment.captured','order.paid','payment_link.paid'))`
         : "NULL";
-      const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
+      const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
           w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.mode payment_mode,p.status payment_status,p.amount_due_now,
           ${transactionExpression} transaction_id
           FROM canonical_bookings b
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
       const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
-        ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageName: String(projection.package_name),
+        ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageCode: String(projection.package_code||""), packageName: String(projection.package_name),
         bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || canonical.gatewayPaymentId, amountDueNow: Number(projection.amount_due_now || 0),
         totalAmount: canonical.totalAmount, currency: canonical.currency, providerId: canonical.providerId || String(projection.provider_id),
         providerName: canonical.providerName || String(projection.provider_name), providerModel: canonical.providerModel || String(projection.provider_model), workOrderStatus: String(projection.work_order_status),

@@ -383,3 +383,11 @@ for(const boundary of ['ai_suggestions','ai_conversation_turns'])test(`handoff i
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_audit_events WHERE action='suggestion_recorded'").get().n,expected);
  assert.equal(sqlite.prepare('SELECT status FROM ai_turn_reservations').get().status,'retryable');
 });
+
+test("a provider HTTP failure persists degraded connectivity and routes the customer to staff",async()=>{
+ const{sqlite,db}=await world();const stub=answered("",{failure:"billing_required"});
+ const result=await turn(sqlite,db,{text:"what is the price of grooming",stub,key:"provider-http-failure"});
+ assert.equal(result.turn.handoffReason,"provider_error");assert.equal(result.providerConnected,false);
+ const snapshot=await orchestrator.aiConversationSnapshot(db,{actor:customerActor(sqlite,"CUS-1"),threadId:"THREAD-1",customerId:"CUS-1"});
+ assert.equal(snapshot.providerStatus,"degraded");assert.equal(snapshot.providerConnected,false);assert.equal(handoffs(sqlite).length,1);
+});

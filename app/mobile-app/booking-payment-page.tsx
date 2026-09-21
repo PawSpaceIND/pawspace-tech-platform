@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CustomerCheckoutController, type CheckoutState } from "../../lib/customer-checkout-client";
 import styles from "./booking-payment-page.module.css";
 
-const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(value);
+const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(value);
 
 type Props={
  serviceName:string; totalAmount:number; amountDueNow:number; mode:"prepaid"|"split"|"split_50_50"|"pay_after_service";

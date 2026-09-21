@@ -18,7 +18,7 @@ export async function loadVerifiedTrainingConfirmation(
   base: TrainingBookingResult,
   signal?: AbortSignal,
   dependencies: Dependencies = defaultDependencies,
-): Promise<{ booking: TrainingBookingResult; programme: CustomerTrainingProgramme; providerName: string }> {
+): Promise<{ booking: TrainingBookingResult; programme: CustomerTrainingProgramme | null; providerName: string }> {
   signal?.throwIfAborted();
   const projection = await dependencies.projection(base.bookingId, signal);
   signal?.throwIfAborted();
@@ -33,6 +33,9 @@ export async function loadVerifiedTrainingConfirmation(
       projection.paymentStatus !== "captured" || !projection.transactionId?.trim() ||
       !projection.paymentId?.trim() || !projection.providerId?.trim() || !projection.providerName?.trim()) {
     throw new TrainingConfirmationPendingError();
+  }
+  if (projection.packageCode === "trainer-meet-greet") {
+    return { booking: { ...base, status: projection.bookingStatus, paymentId: projection.paymentId }, programme: null, providerName: projection.providerName };
   }
   const programme = await dependencies.programme(base.bookingId, signal);
   if (programme.programme.booking_id !== base.bookingId ||

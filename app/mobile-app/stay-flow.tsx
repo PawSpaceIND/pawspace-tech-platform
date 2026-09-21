@@ -73,7 +73,8 @@ const money = (n: number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(n);
 const shortDate = (value: string) =>
   new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
@@ -752,7 +753,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange }: 
                 <span>
                   <b>Reserve with 50% now</b>
                   <small>
-                    {money(reserveAmount)} now · {money(balanceAmount)} due 24
+                    {money(Math.round(total*50)/100)} now · {money(Math.round((total-Math.round(total*50)/100)*100)/100)} due 24
                     hours before check-in
                   </small>
                 </span>

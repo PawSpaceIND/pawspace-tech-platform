@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number 
 CREATE TABLE IF NOT EXISTS payroll_runs (id TEXT PRIMARY KEY,period_start INTEGER,period_end INTEGER,status TEXT);
 CREATE TABLE IF NOT EXISTS employee_payroll_results (id TEXT PRIMARY KEY,run_id TEXT,employee_id TEXT,gross_earnings REAL);
 CREATE TABLE IF NOT EXISTS provider_commercial_terms (id TEXT PRIMARY KEY,engagement_model TEXT);
-CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT,provider_id TEXT,provider_net_payout REAL,computed_at INTEGER,term_id TEXT);
+CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT,provider_id TEXT,provider_net_payout REAL,computed_at INTEGER,term_id TEXT,platform_gst REAL DEFAULT 0,provider_gst_deducted REAL DEFAULT 0,platform_fee REAL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS boarding_host_settlement_ledger (booking_id TEXT,provider_id TEXT,payout_amount REAL,eligible_at INTEGER);
 `);
   const july = Date.UTC(2026, 6, 15);

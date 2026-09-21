@@ -29,6 +29,8 @@ export type AiFailureClass =
   | "rate_limited"
   | "provider_error"
   | "client_error"
+  | "billing_required"
+  | "model_unavailable"
   | "oversized_output"
   | "malformed_output"
   | "empty_output";
@@ -47,6 +49,8 @@ const FAILURE_REASON: Record<AiFailureClass, string> = {
   rate_limited: "The AI provider rate-limited this request",
   provider_error: "The AI provider returned a server error",
   client_error: "The AI provider rejected this request",
+  billing_required: "The AI provider account needs billing or credit attention",
+  model_unavailable: "The configured AI model is unavailable to this provider account",
   oversized_output: "The AI provider response exceeded the size limit and was discarded",
   malformed_output: "The AI provider returned a response this adapter could not parse",
   empty_output: "The AI provider returned no usable text",
@@ -207,8 +211,14 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     }
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      const failure = aiFailureForStatus(response.status);
+      let failure = aiFailureForStatus(response.status);
+      // Classify known configuration failures without exposing the provider response or credentials.
+      try{
+        const body=JSON.parse(await readBoundedText(response,16*1024)) as {error?:{message?:unknown}};
+        const message=String(body.error?.message||"");
+        if([400,402,403].includes(response.status)&&/credit balance|insufficient (?:credit|fund)|billing|purchase credits/i.test(message))failure="billing_required";
+        else if([400,404].includes(response.status)&&/model/i.test(message)&&/not found|does not exist|not available|not have access|deprecated|retired/i.test(message))failure="model_unavailable";
+      }catch{/* Status-based classification remains available for malformed or oversized failures. */}
       return await finishFailure(failure, response.status);
     }
 

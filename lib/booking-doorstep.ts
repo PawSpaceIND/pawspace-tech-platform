@@ -25,7 +25,7 @@ async function tableExists(db:Db,name:string){
 }
 const coordinate=(value:unknown)=>{const n=Number(value);return value==null||!Number.isFinite(n)?null:n;};
 
-export type BookingDoorstep={latitude:number;longitude:number;source:"booking_service_locations"|"booking_service_addresses"};
+export type BookingDoorstep={latitude:number;longitude:number;source:"booking_service_locations"|"booking_service_addresses"|"scheduling_assignment_decisions"};
 
 export async function resolveBookingDoorstep(db:Db,bookingId:string):Promise<BookingDoorstep|null>{
  if(await tableExists(db,"booking_service_locations")){
@@ -47,6 +47,19 @@ export async function resolveBookingDoorstep(db:Db,bookingId:string):Promise<Boo
   const row=await db.prepare("SELECT latitude,longitude FROM booking_service_addresses WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
   const latitude=coordinate(row?.latitude),longitude=coordinate(row?.longitude);
   if(latitude!==null&&longitude!==null)return{latitude,longitude,source:"booking_service_addresses"};
+ }
+ // Non-Grooming booking flows reserve a server-geocoded service address through the scheduler.
+ // Read that immutable reservation snapshot, never the customer's subsequently edited address.
+ if(await tableExists(db,"canonical_bookings")&&await tableExists(db,"scheduling_assignment_decisions")){
+  const row=await db.prepare("SELECT b.customer_id,b.service_code,d.shortlist_json FROM canonical_bookings b JOIN scheduling_assignment_decisions d ON d.group_id=b.schedule_group_id WHERE b.id=?").bind(bookingId).first<Row>().catch(()=>null);
+  if(row){
+   try{
+    const request=JSON.parse(String(row.shortlist_json)).request as Row;
+    const latitude=coordinate(request.latitude),longitude=coordinate(request.longitude);
+    if(String(request.customerId)===String(row.customer_id)&&String(request.serviceCode)===String(row.service_code)&&latitude!==null&&longitude!==null&&Math.abs(latitude)<=90&&Math.abs(longitude)<=180)
+     return{latitude,longitude,source:"scheduling_assignment_decisions"};
+   }catch{/* An absent/malformed snapshot is not location evidence. */}
+  }
  }
  return null;
 }

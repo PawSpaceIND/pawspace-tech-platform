@@ -47,3 +47,10 @@ test("missing partner OTP schema self-heals once and still issues a challenge",a
   assert.ok(seen.some(sql=>/^CREATE TABLE IF NOT EXISTS partner_otp_challenges/i.test(sql.trim())),"fallback must provision missing OTP table");
   assert.ok(seen.some(sql=>/INSERT INTO partner_otp_challenges/.test(sql)),"challenge insert must succeed after fallback");
 });
+
+test('verified partner OTP clears a prior staff persona cookie',async()=>{
+ const{db}=world(false);Object.assign(globalThis.__PARTNER_OTP_HOTPATH_ENV__,{PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'uat-partner-persona-test-0123456789abcdef0123456789'});
+ const{requestPartnerOtp}=await import('../lib/partner-otp.ts');const issued=await requestPartnerOtp(db,{phone:'9000000901'});
+ const{POST}=await import('../app/api/partner-otp/route.ts');const response=await POST(new Request('https://staging.example/api/partner-otp',{method:'POST',headers:{origin:'https://staging.example','content-type':'application/json',cookie:'pawspace_uat=prior-staff-cookie'},body:JSON.stringify({action:'verify',challengeId:issued.challengeId,code:issued.sandboxCode,name:'QA provider',cityId:'blr'})}));
+ assert.equal(response.status,200,await response.clone().text());const{clearUatCookie}=await import('../lib/uat-staging-auth.ts');assert.ok(response.headers.getSetCookie().includes(clearUatCookie()));assert.ok(response.headers.getSetCookie().some(value=>value.startsWith('pawspace_identity_session=')));
+});

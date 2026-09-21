@@ -3,7 +3,7 @@ import { CustomerOtpVerificationError, discardCustomerOtpChallenge, requestCusto
 import { upsertIdentityBinding } from "../../../lib/identity-binding";
 import { issuePlatformSession, platformSessionCookie } from "../../../lib/platform-session";
 import { verifyIdentityAssertion } from "../../../lib/verified-identity-assertion";
-import { uatLoginEnabled } from "../../../lib/uat-staging-auth";
+import { clearUatCookie, uatLoginEnabled } from "../../../lib/uat-staging-auth";
 import { developmentOtpSandboxEnabled } from "../../../lib/otp-sandbox-runtime";
 import { productionOtpEnabled } from "../../../lib/otp-production-runtime";
 import { normalizeIndianMobile, parseSmsTestAllowlist, sendFast2SmsMessage } from "../../../lib/sms-test-provider";
@@ -84,10 +84,13 @@ export async function POST(request: Request) {
         principalKey: verified.principalKey, subjectType: verified.subjectType, subjectId: verified.subjectId,
         ttlSeconds: 28_800, metadata: { cityId: verified.cityId ?? null },
       });
+      const sessionHeaders=new Headers({"cache-control":"no-store"});
+      sessionHeaders.append("set-cookie",platformSessionCookie(issued.token,issued.ttlSeconds));
+      sessionHeaders.append("set-cookie",clearUatCookie());
       return json(
         { data: { customerId, customerName, phone, expiresAt: issued.session.expiresAt } },
         200,
-        { "set-cookie": platformSessionCookie(issued.token, issued.ttlSeconds), "cache-control": "no-store" },
+        sessionHeaders,
       );
     }
     return json({ error: "Unsupported action" }, 400);

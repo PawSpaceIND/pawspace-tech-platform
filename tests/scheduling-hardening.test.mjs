@@ -393,3 +393,11 @@ test("contract: the double-booking guard and restore-on-failure are present in s
   assert.match(routeSource, /SLOT_LOST_DURING_REASSIGN/);
   assert.match(routeSource, /securityAudit\(db,actor,`scheduling\.\$\{input\.action\}`/);
 });
+
+test("engine: an empty optional weekday list uses the default cadence",async()=>{
+ const providers=[mkProvider("w1",96,{services:["dog_walking"],travelBufferMinutes:20})],start=istInstant(10,7);
+ const req={cityId:"blr",zoneId:"blr-east",serviceCode:"dog_walking",petIds:["Bruno"],scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+30*60_000).toISOString(),occurrences:2};
+ const implicit=await schedule(memoryRepo({providers,windows:["06:00-21:00"]}),req);
+ const explicit=await schedule(memoryRepo({providers,windows:["06:00-21:00"]}),{...req,weekdays:[]});
+ assert.deepEqual(explicit.occurrences,implicit.occurrences);assert.equal(explicit.occurrences.length,2);
+});
