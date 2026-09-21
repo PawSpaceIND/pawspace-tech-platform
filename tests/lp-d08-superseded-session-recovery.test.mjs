@@ -18,6 +18,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks("__LP_D08_DB__");
 import { readFile } from "node:fs/promises";
 
 const source = () => readFile(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
@@ -76,4 +79,18 @@ test("LP-D08: the 'Verified'/'Online' pills exist only inside the verified-dashb
   assert.ok(gateIndex >= 0 && pillIndex >= 0 && onlinePillIndex >= 0, "all three markers must be present in source");
   assert.ok(gateIndex < pillIndex, "the sign-in gate's early return must come before the Verified pill in source order");
   assert.ok(gateIndex < onlinePillIndex, "the sign-in gate's early return must come before the Online pill in source order");
+});
+
+test("LP-D08 executed: the partner notice is not the staff sign-in sentence the auth library emits", async () => {
+  const auth = await import("../lib/uat-staging-auth.ts");
+  // signInRequiredResponse needs the UAT env to emit its full sentence; without it the library
+  // deliberately answers a bare "Authentication required".
+  const staffRefusal = auth.signInRequiredResponse({ PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "x".repeat(64) });
+  const staffCopy = await staffRefusal.clone().text().catch(() => "");
+  assert.match(staffCopy, /staging sign-in has expired|\/staging-login/, "the staff copy is what it always was");
+  const page = fs.readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
+  const notice = page.match(/setSessionNotice\(\s*["'`]([^"'`]+)["'`]/);
+  assert.ok(notice, "the partner path must set its own notice");
+  assert.ok(!staffCopy.includes(notice[1]), "the partner must not be shown the staff sentence");
+  assert.ok(!/staging-login/.test(notice[1]), "the partner notice must not send them to the staff entry point");
 });

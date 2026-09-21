@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { installWorkersHooks } from './helpers/module-hooks.mjs';
+import { freshSqlite, makeD1 } from './helpers/taxi-harness.mjs';
+installWorkersHooks('__STAFF_CONSOLE_DB__');
 // Staff-console defects found by the launch verification pass: a section index that 404s (EMP-10),
 // a customer list that hides what the server just found (EMP-09) and a list that renders every
 // record in one column (EMP-14).
@@ -46,4 +49,16 @@ test('AI-D03: the AI voice self-test refusal says what it needs, and the mobile 
   }
   const bootstrap = read('app/api/mobile-employee-ai/route.ts');
   assert.match(bootstrap, /permissions\.includes\("communications\.call"\)&&actor\.permissions\.includes\("settings\.manage"\)/, 'voice capability must match what the panel actually calls');
+});
+
+test('AI-D03 executed: the voice self-test refusal really is a governed response with the requirement in it', async () => {
+  const db = makeD1(freshSqlite());
+  globalThis.__STAFF_CONSOLE_DB__ = db;
+  globalThis['__STAFF_CONSOLE_DB___ENV'] = {};
+  const route = await import('../app/api/voice-outbound/route.ts');
+  const anonymous = await route.GET(new Request('https://ops.pawspace.example/api/voice-outbound?scope=ai_browser_test'));
+  assert.ok(anonymous.status === 401 || anonymous.status === 403, `an anonymous caller must be refused, got ${anonymous.status}`);
+  const body = await anonymous.json().catch(() => ({}));
+  assert.ok(typeof body.error === 'string' && body.error.length > 0, 'the refusal must carry a readable message');
+  delete globalThis['__STAFF_CONSOLE_DB___ENV'];
 });

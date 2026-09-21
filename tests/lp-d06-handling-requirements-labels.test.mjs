@@ -12,6 +12,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks("__LP_D06_DB__");
 import fs from "node:fs";
 import { readFileSync } from "node:fs";
 
@@ -83,4 +85,19 @@ test("LP-D06 source contract: the Handling requirements list renders through req
   assert.doesNotMatch(source, /safetyRequirements\.map\(item\s*=>\s*<li key=\{item\}>\{label\(item\)\}<\/li>\)/, "the bare label must not come back");
   const page = fs.readFileSync(new URL("../app/partner-app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /<PartnerJobNotes safetyRequirements=\{selected\.safetyRequirements\}/, "the partner app must render the notes through that component");
+});
+
+test("LP-D06 executed: the real component renders the humanised label, not the raw code", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const notes = await import("../app/partner-app/job-notes.tsx");
+  const html = renderToStaticMarkup(React.createElement(notes.default, {
+    safetyRequirements: ["grooming_safety:friendly", "grooming_special:slow_dryer", "unknown_category:some_detail", "no_colon_code"],
+    addOns: [],
+  }));
+  assert.match(html, /Safety: friendly/);
+  assert.match(html, /Special instructions: slow dryer/);
+  assert.match(html, /unknown category: some detail/);
+  assert.match(html, /no colon code/);
+  assert.ok(!html.includes("grooming_safety:friendly"), "the raw code must not reach the provider");
 });
