@@ -2,5 +2,5 @@ import Link from "next/link";
 import BoardingCustomerStayPanel from "../../mobile-app/boarding-customer-stay-panel";
 export default async function BoardingManagePage({searchParams,routeScope="legacy"}:{searchParams:Promise<{bookingId?:string}>;routeScope?:"legacy"|"v2"}){
  const params=await searchParams,bookingId=String(params.bookingId||"").trim();
- return <main style={{maxWidth:980,margin:"0 auto",padding:24,fontFamily:"system-ui"}}><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>My PawSpace</Link><h1 style={{fontSize:28,margin:"16px 0"}}>Your Boarding booking</h1>{bookingId?<BoardingCustomerStayPanel key={bookingId} bookingId={bookingId} caregiverName="Host name unavailable"/>:<p>Open a Boarding booking from your Activity to view its care plan and requests.</p>}</main>;
+ return <main style={{maxWidth:980,margin:"0 auto",padding:24,fontFamily:"system-ui"}}><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>My PawSpace</Link><h1 style={{fontSize:28,margin:"16px 0"}}>Your Boarding booking</h1>{bookingId?<BoardingCustomerStayPanel key={bookingId} routeScope={routeScope} bookingId={bookingId} caregiverName="Host name unavailable"/>:<p>Open a Boarding booking from your Activity to view its care plan and requests.</p>}</main>;
 }
