@@ -65,15 +65,18 @@ type Job = {
   events: JobEvent[];
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
-type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number };
+type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number; objectStored?: boolean | null };
 type ProofState = "missing" | "unconfirmed" | "pending" | "rejected" | "approved";
+/** [LP-N09] The one honest sentence for a confirmed upload whose bytes were never actually kept. */
+const NOT_STORED_TEXT = "Photo hash recorded — file storage is not connected in this environment; the image was not kept";
 /** What the partner should do next for one proof slot, from the server's own asset states. */
 function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_service"): { state: ProofState; text: string } {
   const items = assets.filter(asset => asset.purpose === purpose).sort((a, b) => Number(b.created_at) - Number(a.created_at));
-  if (items.some(asset => asset.proofReady)) return { state: "approved", text: "approved by Ops · ready for service proof" };
+  const released = items.find(asset => asset.proofReady);
+  if (released) return released.objectStored === false ? { state: "approved", text: `approved by Ops · ${NOT_STORED_TEXT.toLowerCase()}` } : { state: "approved", text: "approved by Ops · ready for service proof" };
   const latest = items[0];
   if (!latest) return { state: "missing", text: "not uploaded yet" };
-  if (latest.review_status === "pending_review") return { state: "pending", text: "uploaded and verified · awaiting Ops approval" };
+  if (latest.review_status === "pending_review") return latest.objectStored === false ? { state: "pending", text: `${NOT_STORED_TEXT} · awaiting Ops review of the hash` } : { state: "pending", text: "uploaded and verified · awaiting Ops approval" };
   if (latest.review_status === "rejected") return { state: "rejected", text: `rejected by Ops${latest.review_reason ? ` (${latest.review_reason})` : ""} · upload a replacement` };
   if (latest.access_status === "pending_upload") return { state: "unconfirmed", text: "registered but never confirmed · choose the file again" };
   return { state: "pending", text: `${label(latest.access_status)} · ${label(latest.review_status || latest.scan_status)}` };
@@ -304,6 +307,9 @@ function PartnerMobileAppContent() {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
   const [mediaPollKey, setMediaPollKey] = useState(0);
+  // [LP-N09] What the upload response just said about the bytes it received, so the toast right after
+  // upload can be as honest as the per-slot status text is once mediaAssets refetches.
+  const lastUploadObjectStoredRef = useRef<boolean | null>(null);
   const proofStage = Boolean(selected && selected.serviceCode !== "dog_training" && selected.status === "in_service" && !selected.proof?.beforePhotoRef);
   const bothApproved = describeProof(mediaAssets, "before_service").state === "approved" && describeProof(mediaAssets, "after_service").state === "approved";
   useEffect(() => {
@@ -333,8 +339,9 @@ function PartnerMobileAppContent() {
     // about bytes the server never saw. That held only while no bucket was bound, and would have failed the
     // moment one was (redeem then HEADs the bucket for an object that nobody had written).
     const upload = await boundedFetch("/api/service-media/upload", { method: "PUT", headers: { "content-type": item.mimeType, "x-pawspace-media-id": mediaId, "x-pawspace-upload-token": grant.token }, body: item.file }, 60_000);
-    const uploaded = await upload.json().catch(() => ({})) as { error?: string };
+    const uploaded = await upload.json().catch(() => ({})) as { error?: string; data?: { objectStored?: boolean } };
     if (!upload.ok) throw proofFailure(upload.status, uploaded.error || "Unable to upload proof media");
+    lastUploadObjectStoredRef.current = uploaded.data?.objectStored ?? null;
   };
 
   useEffect(() => {
@@ -365,7 +372,10 @@ function PartnerMobileAppContent() {
         if (outcome === "withdrawn") { setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo left the sync queue before it was sent. Add it again if it is still needed.`); return; }
         await flushProviderProofQueue(registerQueuedProof);
         setMediaPollKey(value => value + 1);
-        setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);
+        const name = purpose === "before_service" ? "Before" : "After";
+        setMediaMessage(lastUploadObjectStoredRef.current === false
+          ? `${name} photo hash recorded, but file storage is not connected in this environment — the image was not kept. Ops can still review the hash (Control tower → Customer booking lifecycle → Service proof).`
+          : `${name} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);
       } catch (problem) {
         if (isPermanentProofError(problem)) { await discardProviderProof(queued.id); setMediaMessage(""); setError(problem.message); }
         else setMediaMessage("Network interrupted. Proof is safely queued and will retry automatically.");

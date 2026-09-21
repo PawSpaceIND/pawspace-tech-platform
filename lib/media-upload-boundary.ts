@@ -357,17 +357,21 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   }
 
   const mediaId=String(grant!.media_id),bookingId=String(grant!.booking_id);
+  // Honest per-asset fact, not the environment's current status: what THIS confirmation actually verified.
+  // Connected means headStoredObject just matched the grant; disconnected means only a caller-reported
+  // digest was checked and no bytes exist anywhere. [LP-N09]
+  const objectStored=storage.connected;
   const [claimed,published]=await db.batch([
     db.prepare("UPDATE media_upload_grants SET status='consumed',consumed_at=? WHERE id=? AND status='issued' AND EXISTS (SELECT 1 FROM service_media_assets a WHERE a.id=media_upload_grants.media_id AND a.retention_status='active' AND a.access_status='pending_upload')").bind(now,grantId),
-    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',updated_at=? WHERE id=? AND retention_status='active' AND access_status='pending_upload' AND EXISTS (SELECT 1 FROM media_upload_grants g WHERE g.id=? AND g.status='consumed' AND g.consumed_at=?)").bind(now,mediaId,grantId,now),
+    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',object_stored=?,updated_at=? WHERE id=? AND retention_status='active' AND access_status='pending_upload' AND EXISTS (SELECT 1 FROM media_upload_grants g WHERE g.id=? AND g.status='consumed' AND g.consumed_at=?)").bind(objectStored?1:0,now,mediaId,grantId,now),
   ]);
   if(Number(claimed?.meta?.changes??0)!==1||Number(published?.meta?.changes??0)!==1){
     const current=await db.prepare("SELECT status FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
     if(String(current?.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
     refuse("This media upload grant is no longer pending",409,{code:"upload_token_consumed"});
   }
-  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected});
-  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected};
+  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected,objectStored});
+  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected,objectStored};
 }
 
 async function asset(db:Db,mediaId:string){
