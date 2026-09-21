@@ -33,7 +33,7 @@ const futureStart = () => new Date(Date.now() + 7 * DAY).toISOString();
 const STAGES = [];
 const stage = (name, status, detail) => STAGES.push({ name, status, detail });
 
-const trnWorld = (env = {}) => world("__TRN_DB__", "__TRN_ENV__", env);
+const trnWorld = (env = {}) => world("__TRN_DB__", "__TRN_ENV__", {PAWSPACE_PAYMENT_ENV:"sandbox",...env});
 
 // --- 1. CATALOGUE + QUOTE ----------------------------------------------------
 test("TRN-01 catalogue: the governed training plans are what the customer is offered", async () => {
@@ -213,6 +213,10 @@ async function programmeWorld(over = {}) {
               new Date(now + n * 7 * DAY).toISOString(), new Date(now + n * 7 * DAY + 3600000).toISOString(), now, now).run();
     }
   }
+  const commercial=await import("../lib/training-commercial-governance.ts");
+  const quote=await commercial.createTrainingQuote(w.db,{packageCode:PACKAGE,petCount:1,scheduledStart:futureStart(),paymentMode:"split"});
+  await commercial.captureTrainingQuoteSandbox(w.db,{quoteId:quote.quoteId,amount:quote.amountDueNow,paymentKey:"programme-fixture-deposit"});
+  await commercial.trainingQuoteLinkStatement(w.db,quote.quoteId,BOOKING).run();
   return { ...w, start, end };
 }
 
@@ -406,7 +410,7 @@ test("TRN-09 evidence: closing needs before AND after proof, scan-approved and b
 });
 
 test("TRN-10 final balance: the last session of a split plan cannot close until the balance is paid", async () => {
-  /* assertFinalBalancePaid applies ONLY on the last session (sequence_no === total_sessions), which
+  /* Full-balance eligibility applies ONLY on the last session (sequence_no === total_sessions), which
    * is the commercial point: the customer pays the second half before the programme is delivered.
    * Both directions are pinned here, because a gate that fires on every session would be just as
    * wrong as one that never fires. */
@@ -421,6 +425,7 @@ test("TRN-10 final balance: the last session of a split plan cannot close until 
     });
     const quoteId = String(quote.quoteId ?? quote.id);
     await com.captureTrainingQuoteSandbox(w.db, { quoteId, amount: 3000, paymentKey: `fb-${Math.random()}` });
+    await w.db.prepare("DELETE FROM training_booking_quote_links WHERE booking_id=?").bind(BOOKING).run();
     await com.trainingQuoteLinkStatement(w.db, quoteId, BOOKING).run();
     if (payBalance) {
       await com.collectTrainingRemainingBalanceSandbox(w.db, { quoteId, amount: 3000, paymentKey: `fb2-${Math.random()}` });
@@ -601,6 +606,7 @@ test("TRN-14 invoice: not until fully paid, then arithmetically right, once, and
   const quoteId = String(quote.quoteId ?? quote.id);
   await com.captureTrainingQuoteSandbox(db, { quoteId, amount: 3000, paymentKey: "inv-dep" });
   await com.collectTrainingRemainingBalanceSandbox(db, { quoteId, amount: 3000, paymentKey: "inv-bal" });
+  await db.prepare("DELETE FROM training_booking_quote_links WHERE booking_id=?").bind(BOOKING).run();
   await com.trainingQuoteLinkStatement(db, quoteId, BOOKING).run();
   assert.equal((await com.trainingQuotePaymentState(db, quoteId)).status, "FULLY_PAID",
     "the fixture must genuinely be paid in full before this half means anything");
