@@ -14,9 +14,14 @@ export function saveStatusQueue(provider:string,items:QueuedStatus[],storage:Pic
 export function enqueueStatus(input:Omit<QueuedStatus,"id"|"createdAt">):QueuedStatus {
   const items=readStatusQueue(input.providerId);
   const existing=items.find(item=>item.bookingId===input.bookingId);
-  if(existing)throw new Error("This job already has a pending update. Sync or resolve it before sending another.");
+  // [LP-D07] An item still awaiting delivery (no error yet) genuinely conflicts with a second update for
+  // the same job. An item that already FAILED (e.g. a 409 geofence refusal - "tap Mark arrived again once
+  // you are at the address") is a resolved outcome, not an in-flight one: a fresh tap of the primary
+  // control replaces it with the new attempt instead of being refused forever by its own stale entry.
+  if(existing&&!existing.error)throw new Error("This job already has a pending update. Sync or resolve it before sending another.");
   const item={...input,id:crypto.randomUUID(),createdAt:Date.now()};
-  saveStatusQueue(input.providerId,[...items,item]); // A failed disk write must prevent optimistic success.
+  const next=existing?items.map(value=>value.id===existing.id?item:value):[...items,item];
+  saveStatusQueue(input.providerId,next); // A failed disk write must prevent optimistic success.
   return item;
 }
 const targets={on_the_way:"on_the_way",arrived:"arrived",start_service:"in_service",complete:"completed"};

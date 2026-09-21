@@ -252,7 +252,11 @@ function PartnerMobileAppContent() {
   const trackingNotice=useDutyTracking(dutyJob,statusQueue.setConnection,()=>setRefreshKey(value=>value+1));
   const [checks,setChecks]=useState<Record<string,string[]>>({});
   const selectedChecks=selected?checks[selected.bookingId]??[]:[];
-  const pendingStatus=Boolean(selected&&statusQueue.pending.some(item=>item.bookingId===selected.bookingId));
+  // [LP-D07] Only an item still awaiting delivery blocks the primary control. One that already failed
+  // (its `error` is set - e.g. a 409 geofence refusal) is a resolved state the partner can act on again
+  // immediately; the "Retry saved updates" banner stays available as the other way to resend the same
+  // attempt, per enqueueStatus's replace-on-retry rule above.
+  const pendingStatus=Boolean(selected&&statusQueue.pending.some(item=>item.bookingId===selected.bookingId&&!item.error));
   const toggleCheck=(id:string)=>{if(selected)setChecks(current=>({...current,[selected.bookingId]:selectedChecks.includes(id)?selectedChecks.filter(value=>value!==id):[...selectedChecks,id]}));};
   const activeJobs = jobs.filter((job) => !["completed", "cancelled"].includes(job.status));
   const completedJobs = jobs.filter((job) => job.status === "completed");
