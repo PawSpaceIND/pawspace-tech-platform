@@ -36,7 +36,7 @@ follows the 2026-09-20 V2 end-to-end test report.
 | Browser E2E personas (CI) | `469edbb` | **Failed** — `e2e/customer-booking.spec.ts:421`, Confirm booking stayed disabled after a payment-mode switch. Real defect, logged as V2-082 and fixed in `b1f4d39`; the red run is kept as found, not relabelled. |
 | Frozen full suite | `b1f4d39` | 6,547 tests, 0 failures, 0 skipped, 925 s |
 | Browser E2E personas (CI) | `b1f4d39` | Run 35647702969 **success** — the red case above passes |
-| Staging deploy + certification | `b1f4d39` | Dispatched 2026-09-21 ~20:17 UTC for the V2-082 fix; result recorded when the run completes |
+| Staging deploy + certification | `b1f4d39` | Run 35649768568 **success** — exact-SHA checkout verified clean, D1 migrations applied, isolation certified before any D1 write, PII-safe Sentry delivery verified, staff directory and human-UAT provider roster loaded, deploy certified; every live-SMS and live-OTP step skipped as required by `sms_smoke=disabled`. Evidence artifact 10660889872. |
 
 ## Boundaries
 
