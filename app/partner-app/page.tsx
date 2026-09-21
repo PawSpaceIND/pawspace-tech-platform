@@ -701,7 +701,12 @@ function PartnerMobileAppContent() {
                   {[10, 15, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
                 </select>
               </label>
-              <div className={styles.primaryActions}>
+              {/* [LP-D04] Three buttons at flex:1 with the global review-overrides.css min-width:0 reset
+                  compressed each to ~71px on a Pixel 7, and the same stylesheet's overflow-wrap:anywhere
+                  then broke words mid-letter to fit ("Packa ge upgra ded"). liveOrderActions gives each
+                  button enough width to hold its longest word, so wrapping - which the buttons still do,
+                  and must - only ever happens at a word boundary. */}
+              <div className={`${styles.primaryActions} ${styles.liveOrderActions}`}>
                 <button disabled={operationBusy} onClick={() => void reportOperation("package_upgrade")}>Package upgraded</button>
                 <button disabled={operationBusy} onClick={() => void reportOperation("service_overrun")}>Service taking longer</button>
                 <button disabled={operationBusy} onClick={() => void reportOperation("running_late")}>Running late</button>
