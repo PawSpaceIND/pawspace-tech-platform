@@ -16,7 +16,9 @@ test("every transactional customer service enters a payment step except Relocati
   relocation:await read("app/mobile-app/relocation-flow.tsx"),
  };
  for(const key of ["grooming","training","stay","walking","food"])assert.match(files[key],/BookingPaymentPage/,`${key} must render the shared payment page`);
- assert.match(files.taxi,/openMobileRazorpayCheckout|payment-order/,"Taxi retains its verified Razorpay checkout");
+ assert.match(files.taxi,/new CustomerCheckoutController\(/,"Taxi enters the shared verified checkout controller");
+ assert.match(files.taxi,/controller\.start\(/,"Taxi starts checkout through the shared controller");
+ assert.doesNotMatch(files.taxi,/openMobileRazorpayCheckout|\/api\/payment-order/,"Taxi must not bypass the shared checkout locks and recovery contract");
  assert.doesNotMatch(files.relocation,/BookingPaymentPage|openMobileRazorpayCheckout|payment-order/,"Relocation remains the governed enquiry exception");
 });
 
