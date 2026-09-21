@@ -200,6 +200,7 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
   // package or payment mode is not spendable, no matter that one is still held in state.
   if(!currentQuote||!activeTrainer||busy||bookingRequest.current||!account||!location||selectedPets.length===0)return;
   bookingRequest.current=true;setBusy(true);setError("");
+  let createdBookingId="";
   try{
    const quote=currentQuote;
    const customer={id:account.customerId,name:account.name,primaryPhone:account.primaryPhone,secondaryPhone:account.secondaryPhone??undefined,email:account.email??undefined};
@@ -208,10 +209,11 @@ export default function TrainingPage({routeScope="legacy"}:{routeScope?:"legacy"
    const scheduledEnd=request.scheduledEnd,requestId=request.clientRequestId;
    const schedule=await reserveUatSchedule({...request,preferredProviderId:activeTrainer.id});
    const result=await createCanonicalTrainingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,trainingQuote:quote,customer,pets:bookingPets,cityId:location.cityId,zoneId:location.zoneId,scheduledStart,scheduledEnd,provider:schedule.provider});
+   createdBookingId=result.bookingId;
    const nextProgramme=await prepareTrainingProgramme({bookingId:result.bookingId,packageCode:quote.packageCode});
    setPaymentVerified(false);setConfirmationError("");setConfirmedProviderName("");
    setPendingCheckout({booking:result,programme:nextProgramme,total:quote.totalAmount,dueNow:quote.amountDueNow,mode:quote.paymentMode});window.scrollTo(0,0);
-  }catch(problem){const message=problem instanceof Error?problem.message:"Unable to confirm canonical Training programme";setError(message);if(problem instanceof SchedulingRefusal){setAvailability({key:availabilityKey,providers:[],error:message});setTrainerId("");}}
+  }catch(problem){if(createdBookingId){window.location.assign(`/v2/booking?bookingId=${encodeURIComponent(createdBookingId)}`);return;}const message=problem instanceof Error?problem.message:"Unable to confirm canonical Training programme";setError(message);if(problem instanceof SchedulingRefusal){setAvailability({key:availabilityKey,providers:[],error:message});setTrainerId("");}}
   finally{bookingRequest.current=false;setBusy(false)}
  }
 

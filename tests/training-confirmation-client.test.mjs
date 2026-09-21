@@ -99,21 +99,22 @@ test("default refresh contracts only read status/programme and never start anoth
   } finally { globalThis.fetch=original; }
 });
 
-test('verified Meet & Greet confirms its assessment without asking for a programme ledger',async()=>{
+test('verified Meet & Greet requires its execution session but remains an assessment confirmation',async()=>{
  const f=fixture({packageCode:'trainer-meet-greet'});
  const result=await loadVerifiedTrainingConfirmation(base,undefined,f.dependencies);
  assert.equal(result.programme,null);assert.equal(result.booking.status,'confirmed');
- assert.deepEqual(f.calls.map(c=>c.kind),['projection']);
+ assert.deepEqual(f.calls.map(c=>c.kind),['projection','programme']);
 });
 test('unpaid Meet & Greet cannot bypass capture verification',async()=>{
  const f=fixture({packageCode:'trainer-meet-greet',paymentStatus:'created'});
  await assert.rejects(loadVerifiedTrainingConfirmation(base,undefined,f.dependencies),TrainingConfirmationPendingError);
 });
-test('preparing a Meet & Greet does not materialize a training programme',async(t)=>{
+test('preparing a Meet & Greet creates its canonical execution session before checkout',async(t)=>{
  const {prepareTrainingProgramme}=await import('../lib/training-programme-client.ts');
- const request=t.mock.method(globalThis,'fetch',()=>{throw new Error('Assessment must not create programme');});
+ const request=t.mock.method(globalThis,'fetch',async()=>Response.json({data:programme}));
  assert.equal(await prepareTrainingProgramme({bookingId:'MEET1',packageCode:'trainer-meet-greet'}),null);
- assert.equal(request.mock.callCount(),0);
+ assert.equal(request.mock.callCount(),1);
+ assert.deepEqual(JSON.parse(request.mock.calls[0].arguments[1].body),{bookingId:"MEET1"});
 });
 
 test('Training catalogue and programme gateways show a useful error for an HTML outage',async()=>{

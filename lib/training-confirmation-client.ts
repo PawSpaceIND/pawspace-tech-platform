@@ -34,9 +34,6 @@ export async function loadVerifiedTrainingConfirmation(
       !projection.paymentId?.trim() || !projection.providerId?.trim() || !projection.providerName?.trim()) {
     throw new TrainingConfirmationPendingError();
   }
-  if (projection.packageCode === "trainer-meet-greet") {
-    return { booking: { ...base, status: projection.bookingStatus, paymentId: projection.paymentId }, programme: null, providerName: projection.providerName };
-  }
   const programme = await dependencies.programme(base.bookingId, signal);
   if (programme.programme.booking_id !== base.bookingId ||
       programme.sessions.some(session => session.booking_id !== base.bookingId || session.programme_id !== programme.programme.id)) {
@@ -51,7 +48,7 @@ export async function loadVerifiedTrainingConfirmation(
   signal?.throwIfAborted();
   return {
     booking: { ...base, status: projection.bookingStatus, paymentId: projection.paymentId },
-    programme,
+    programme: projection.packageCode === "trainer-meet-greet" ? null : programme,
     providerName: projection.providerName,
   };
 }
