@@ -7,3 +7,13 @@ export async function loadCustomerRelocationCases(customerId:string,signal?:Abor
 export async function loadRelocationCase(caseId:string,signal?:AbortSignal){return payload<RelocationCase>(await fetch(`/api/relocation?scope=customer&caseId=${encodeURIComponent(caseId)}`,{cache:"no-store",signal}));}
 export async function loadRelocationQueue(){return payload<Array<Record<string,unknown>>>(await fetch("/api/relocation",{cache:"no-store"}));}
 export async function updateRelocationCase(input:Record<string,unknown>){return payload<RelocationCase>(await fetch("/api/relocation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}));}
+/**
+ * Reflects a mutated case's new status into the staff queue list without a full reload. The case list
+ * is loaded once and never touched again by an action's response, so after a governed transition the
+ * aside kept showing the case's status from before the action (CUST-L-D03: 'documents_pending' after
+ * the detail pane had already moved to 'quote_sent'). Returns a NEW array; rows that are not the
+ * updated case are returned by reference, unchanged.
+ */
+export function mergeRelocationQueueStatus(queue:Array<Record<string,unknown>>,updated:RelocationCase):Array<Record<string,unknown>>{
+  return queue.map(row=>String(row.id)===updated.id?{...row,status:updated.status}:row);
+}

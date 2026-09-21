@@ -5,10 +5,11 @@ import GroomingChangePolicy from "./grooming-change-policy";
 import {useEffect,useState} from "react";
 import {loadCustomerAccount} from "../../../lib/customer-account-client";
 import type {CustomerAccountRecord} from "../../../lib/customer-account";
+import {formatIndiaDateTimeMedium} from "../../../lib/india-time";
 import styles from "./grooming-customer-booking.module.css";
 
 type Booking=CustomerAccountRecord["bookings"][number];
-const formatDate=(value:string)=>new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));
+const formatDate=formatIndiaDateTimeMedium;
 export default function GroomingCustomerBooking({bookingId,routeScope="legacy"}:{bookingId:string;routeScope?:"legacy"|"v2"}) {
  const[customerId,setCustomerId]=useState(""),[notice,setNotice]=useState<{bookingId:string;text:string}|null>(null);
  const [booking,setBooking]=useState<Booking|null>(null),[loadedId,setLoadedId]=useState(""),[error,setError]=useState(""),[refresh,setRefresh]=useState(0);
