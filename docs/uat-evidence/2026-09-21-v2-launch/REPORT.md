@@ -9,7 +9,9 @@ remains the baseline, and every finding here carries its prior id where one exis
 A four-area browser verification pass ran against a local build of `ad4c56e`, one server and one
 database per area, driving customer, provider, staff and AI journeys as real personas. Its findings
 became the work list. Thirty-seven register entries (V2-045 to V2-081) were opened, repaired and
-covered by executable regressions. The final commit is `a69cdd7`.
+covered by executable regressions. A thirty-eighth, V2-082, was opened afterwards when the required
+Browser E2E personas job went red on `469edbb` and turned out to be a real customer-facing defect
+rather than CI noise. The final commit is `b1f4d39`.
 
 ## 2. Verification pass, by area
 
@@ -63,6 +65,9 @@ Thirty-seven entries, every one with an executable regression test. The register
 | Staging deploy and certification | `ad4c56e` | Run 35609497578, certified 28 of 28 |
 | Staging deploy and certification | `a69cdd7` | Run 35634442129 **succeeded**; certified at the staging URL, evidence artifact 10655658700 |
 | Browser verification | `a69cdd7` | `records/final-browser-verification-a69cdd7.json` |
+| Browser E2E personas (CI) | `469edbb` | **Failed**, 1 of 13 — `e2e/customer-booking.spec.ts:421`. Recorded as found; see V2-082 below. |
+| Frozen full suite | `b1f4d39` | **6,547 tests, 0 failures, 0 skipped**, 925 s |
+| Browser E2E personas (CI) | `b1f4d39` | Run 35647702969 **success** |
 
 The four failures at `ab4d03e` were mine and are fixed in `a69cdd7`: a table declared two ways, a
 library import that broke the plain test loader, agent worktrees tripping the credential scan, and
@@ -80,6 +85,34 @@ Staff: the WhatsApp section index renders; the sales list is 3,072 pixels with a
 down from 22,771; CRM search for a real phone number returns "1 shown" where it returned "0 shown";
 Revenue CRM, Launch essentials, Business 360 and the Booking Command Center stream all answer 200;
 a lead assignment refusal answers 404 "Lead not found" where it answered 500.
+
+## 5a. V2-082, found by CI after the verification pass closed
+
+The required Browser E2E personas job went red on `469edbb`: one of thirteen cases,
+`e2e/customer-booking.spec.ts:421`, timed out with `Confirm booking` stuck at
+`<button disabled aria-disabled="true">`. It reproduced identically on a local build of the same SHA,
+so it was not CI noise.
+
+The cause was the CUST-L-D06 money-honesty guard meeting a case it was not written for. That guard
+drops a coupon's governed quote whenever the commercial terms change and blocks Confirm until a fresh
+quote exists, so a booking can never be created at full price while the screen still claims a
+discount. Correct — but a new customer's welcome coupon **auto-applies** in `CouponField` without them
+ever typing it, and switching payment mode is an ordinary action. The result was a customer blocked at
+the last step of the funnel, told to "reapply it above" a code they never chose.
+
+The block is unchanged. `CouponField` now fetches the fresh governed quote for the dropped code itself
+instead of waiting to be asked. The server still decides the discount for the new terms; if the coupon
+no longer qualifies it is cleared with a reason and the total shown is honestly full price. A new
+`keepGuardArmed` option keeps the caller's guard armed while that request is in flight, because
+blanking the code there is the original CUST-L-D06 blindness and would unblock Confirm against the
+stale quote.
+
+Evidence: the failing case reproduced red then green locally; the full chromium persona set 13/13;
+`tests/coupon-payment-mode-reapply-guard.test.mjs` 8/8 with three added cases covering the wiring, the
+in-flight window and the no-longer-eligible path; the frozen full suite at `b1f4d39` 6,547/0; and CI
+run 35647702969 green on the same commit.
+
+The red run at `469edbb` is left in the ledger as it happened.
 
 ## 6. Still open
 

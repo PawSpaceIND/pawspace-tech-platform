@@ -33,6 +33,10 @@ follows the 2026-09-20 V2 end-to-end test report.
 | Automated human sweep (staging) | — | Not runnable for a PR-branch SHA: the workflow only runs from `main` and requires the SHA to be contained in `main`. Run it after merge. |
 | Frozen full suite | `a69cdd7` | 6,544 tests, 0 failures, 0 skipped, 942 s |
 | Staging deploy + certification | `a69cdd7` | Run 35634442129 succeeded and certified the commit at the staging URL |
+| Browser E2E personas (CI) | `469edbb` | **Failed** — `e2e/customer-booking.spec.ts:421`, Confirm booking stayed disabled after a payment-mode switch. Real defect, logged as V2-082 and fixed in `b1f4d39`; the red run is kept as found, not relabelled. |
+| Frozen full suite | `b1f4d39` | 6,547 tests, 0 failures, 0 skipped, 925 s |
+| Browser E2E personas (CI) | `b1f4d39` | Run 35647702969 **success** — the red case above passes |
+| Staging deploy + certification | `b1f4d39` | Dispatched 2026-09-21 ~20:17 UTC for the V2-082 fix; result recorded when the run completes |
 
 ## Boundaries
 
