@@ -1,6 +1,7 @@
 import { authError, database, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { listTrainerSessions } from "../../../lib/training-session-lifecycle";
 import { projectTrainerSession } from "../../../lib/training-provider-projection";
+import { ensureTrainingCommercialTables } from "../../../lib/training-commercial-governance";
 import { maskName } from "../../../lib/platform-security";
 import { GET as getGroomingJobs } from "../partner-grooming-jobs/route";
 
@@ -31,8 +32,21 @@ export async function GET(request: Request) {
 
     if (services.has("dog_training")) {
       const sessions = await listTrainerSessions(db, providerId);
+      await ensureTrainingCommercialTables(db);
+      const commercialByBooking = new Map<string, Row>();
       for (const raw of sessions) {
         const session = projectTrainerSession({ ...raw, customer_name: maskName(String((raw as Row).customer_name || "Customer")) });
+        let commercial = commercialByBooking.get(session.booking_id);
+        if (!commercial) {
+          commercial = await db.prepare("SELECT b.total_amount,b.currency,b.city_id,b.zone_id,b.status booking_status,p.method,p.mode,p.status payment_status,p.amount_due_now,q.payment_mode,q.amount_due_now quote_due_now,a.status attestation_status,a.amount amount_paid FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN training_booking_quote_links l ON l.booking_id=b.id LEFT JOIN training_commercial_quotes q ON q.id=l.quote_id LEFT JOIN training_quote_payment_attestations a ON a.quote_id=q.id WHERE b.id=? AND b.service_code='dog_training'").bind(session.booking_id).first<Row>() ?? {};
+          commercialByBooking.set(session.booking_id, commercial);
+        }
+        const totalAmount = Number(commercial.total_amount || 0);
+        const inactive = ["cancelled", "refunded", "failed", "expired"].includes(String(commercial.booking_status));
+        const refunded = ["refunded", "partially_refunded"].includes(String(commercial.payment_status));
+        const paymentStatus = refunded ? String(commercial.payment_status) : commercial.attestation_status === "FULLY_PAID" ? "captured" : commercial.attestation_status === "PARTIALLY_PAID" ? "partially_paid" : "pending";
+        const amountPaid = Number(commercial.amount_paid || 0);
+        const amountDueNow = inactive || refunded || paymentStatus === "captured" ? 0 : Math.max(0, Number(commercial.quote_due_now ?? commercial.amount_due_now ?? totalAmount) - amountPaid);
         result.push({
           serviceCode: "dog_training",
           bookingId: session.booking_id,
@@ -46,15 +60,15 @@ export async function GET(request: Request) {
           occurrenceCount: 1,
           packageCode: session.plan_code,
           packageName: session.plan_name || "Dog Training",
-          zoneId: "",
-          cityId: "blr",
+          zoneId: String(commercial.zone_id || ""),
+          cityId: String(commercial.city_id || ""),
           scheduledStart: session.scheduled_start,
           scheduledEnd: session.scheduled_end,
-          totalAmount: 0,
-          currency: "INR",
+          totalAmount,
+          currency: String(commercial.currency || "INR"),
           customer: { id: session.customer_id, name: session.customer_name, maskedPhone: "Masked" },
           pets: session.petIds.map(id => ({ id, name: "Pet", species: "dog", breed: "", vaccinationStatus: "not_provided" })),
-          payment: { method: "governed", mode: "programme", status: "programme", amount: 0, amountDueNow: 0 },
+          payment: { method: String(commercial.method || "online"), mode: String(commercial.payment_mode || commercial.mode || "prepaid"), status: paymentStatus, amount: totalAmount, amountDueNow },
           training: { sequenceNo: session.sequence_no, totalSessions: session.total_sessions, completedSessions: session.completed_sessions, programmeStatus: session.programme_status, requirements: session.requirements, attendance: session.attendance, homework: session.homework, progress: session.progress, evidenceRefs: session.evidenceRefs },
           subscription: null,
           safetyRequirements: [],

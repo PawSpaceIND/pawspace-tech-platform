@@ -23,3 +23,20 @@ test("Training sessions sharing a booking remain independently selectable across
  const jobs=[{bookingId:"B",workOrderId:"S1",status:"completed"},{bookingId:"B",workOrderId:"S2",status:"scheduled"},{bookingId:"B",workOrderId:"S3",status:"locked"}];
  assert.equal(selectPartnerWorkOrder(jobs,"","B"),"S2");assert.equal(selectPartnerWorkOrder(jobs,"S3","B"),"S3");assert.equal(selectPartnerWorkOrder([],"S3","B"),"");
 });
+
+test("Training jobs expose canonical price, payment due, paid and refunded states",async()=>{
+ const world=freshWorld();await ensureProviderCapacityTables(world.db);
+ world.sqlite.prepare("INSERT INTO provider_capacity_profiles(id,city_id,name,provider_model,services_json,zones_json,effective_from,status,live,updated_by,updated_at) VALUES (?,'blr','QA Trainer','full_time','[\"dog_training\"]','[\"blr-east\"]','2026-01-01','active',1,'qa',1)").run(TRAINER);
+ seedBooking(world,{id:"PRICE",group:"PRICE-G",packageCode:"trainer-meet-greet",sessions:1,total:500,dueNow:500});await materializeTrainingBooking(world.db,{bookingId:"PRICE",actorId:"qa"});
+ const cookie=await sessionCookie(world.db,"provider",TRAINER);
+ const read=async()=>{const response=await routeCall(jobs.GET,"GET",'/api/partner-jobs?providerId='+TRAINER,{cookie});assert.equal(response.status,200);return response.body.jobs[0];};
+ let job=await read();assert.equal(job.totalAmount,500);assert.equal(job.payment.status,"captured");assert.equal(job.payment.amountDueNow,0);assert.equal(job.zoneId,"blr-east");
+ world.sqlite.prepare("UPDATE training_quote_payment_attestations SET status='PARTIALLY_PAID',amount=200").run();
+ job=await read();assert.equal(job.payment.status,"partially_paid");assert.equal(job.payment.amountDueNow,300);
+ world.sqlite.prepare("DELETE FROM training_quote_payment_attestations").run();
+ job=await read();assert.equal(job.payment.status,"pending","canonical captured claim alone is not Training attestation");assert.equal(job.payment.amountDueNow,500);
+ world.sqlite.prepare("UPDATE booking_payments SET status='refunded'").run();
+ job=await read();assert.equal(job.payment.status,"refunded");assert.equal(job.payment.amountDueNow,0);
+ const otherCookie=await sessionCookie(world.db,"provider","other-provider");
+ assert.equal((await routeCall(jobs.GET,"GET",'/api/partner-jobs?providerId='+TRAINER,{cookie:otherCookie})).status,403);
+});

@@ -155,7 +155,7 @@ test("the final session stays blocked until the remaining balance is paid", asyn
   const last = sessions[1];
   for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", DOORSTEP], ["start", {}], ["owner_handover", { ownerHandoverMinutes: 15 }]]) await act(world, last, action, `f2-${action}`, extra);
   const refs = seedEvidence(world, "MA-F2", last);
-  await refusal(act(world, last, "complete", "f2-complete-unpaid", { report: { ...REPORT, evidenceRefs: refs } }), 409, /blocked until the remaining balance is paid; current state PARTIALLY_PAID/);
+  await refusal(act(world, last, "complete", "f2-complete-unpaid", { report: { ...REPORT, evidenceRefs: refs } }), 409, /pay the remaining Training balance before the final session can be completed/);
   world.sqlite.prepare("UPDATE training_quote_payment_attestations SET status='FULLY_PAID',amount=8000 WHERE quote_id='TQ-B1'").run();
   const done = await act(world, last, "complete", "f2-complete", { report: { ...REPORT, evidenceRefs: refs } });
   assert.equal(done.status, "completed");

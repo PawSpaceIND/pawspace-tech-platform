@@ -435,7 +435,7 @@ test("TRN-10 final balance: the last session of a split plan cannot close until 
 
   const unpaid = await closeLast(false);
   assert.equal(unpaid.res.ok, false, "the final session must not close while half the fee is outstanding");
-  assert.match(String(unpaid.res.body ?? ""), /Final Training session is blocked/i);
+  assert.match(String(unpaid.res.body ?? ""), /pay the remaining Training balance before the final session can be completed/i);
   assert.equal(unpaid.w.sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(SESSION).status, "in_session",
     "a blocked completion must leave the session open");
 
