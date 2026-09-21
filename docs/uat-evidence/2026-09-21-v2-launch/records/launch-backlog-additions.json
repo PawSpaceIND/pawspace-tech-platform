@@ -194,5 +194,49 @@
   "fix": "920cd84 — POST /api/taxi-bookings replay maps the row into the same contract as the first response (petIds included)",
   "verification": "tests/taxi-booking-replay-contract.test.mjs",
   "status": "fixed"
+ },
+ {
+  "id": "V2-062",
+  "priorId": "EMP-09",
+  "title": "CRM customer search read \"0 shown\" for a contact the API had just returned: the client re-filtered the server's result set against the rows' masked name and phone",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Founder / sales manager · /crm",
+  "fix": "da68ac4 — a result set the server searched is kept as-is; segment narrowing still applies",
+  "verification": "tests/staff-console-navigation-and-lists.test.mjs (EMP-09 case); browser re-check pending",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-063",
+  "priorId": "EMP-10",
+  "title": "The WhatsApp section index answered 404 while its analytics, templates and automation children rendered",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Any staff · /team/whatsapp",
+  "fix": "da68ac4 — the section has an index page naming and linking each child",
+  "verification": "tests/staff-console-navigation-and-lists.test.mjs (EMP-10 case); browser re-check pending",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-064",
+  "priorId": "EMP-14",
+  "title": "The merged customer list rendered every record in one column (236 records, about 22,700px)",
+  "severity": "P2",
+  "class": "UI",
+  "persona": "Founder / sales · /team/sales",
+  "fix": "da68ac4 — the list is filtered and paged at 25 with a show-more control",
+  "verification": "tests/staff-console-navigation-and-lists.test.mjs (EMP-14 case); browser re-check pending",
+  "status": "fixed, browser re-check pending"
+ },
+ {
+  "id": "V2-065",
+  "priorId": "AI-D03 / AICRM-R03",
+  "title": "capabilities.voice was advertised on communications.call alone while the panel's readiness call also needs settings.manage, so the panel answered \"Voice request refused\" with no reason",
+  "severity": "P2",
+  "class": "wiring/auth",
+  "persona": "Manager · /mobile-app AI voice panel",
+  "fix": "5ca13e4 — the capability matches what the panel calls; the self-test scopes refuse with the requirement named; a governed refusal keeps its own message",
+  "verification": "tests/staff-console-navigation-and-lists.test.mjs (AI-D03 case); 237 existing voice/mobile-AI tests pass",
+  "status": "fixed, browser re-check pending"
  }
 ]
