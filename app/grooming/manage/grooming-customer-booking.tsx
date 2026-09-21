@@ -30,6 +30,12 @@ export default function GroomingCustomerBooking({bookingId}:{bookingId:string}) 
    <section className={styles.card} aria-label="Booking details"><p className={styles.status}>{booking.status.replaceAll("_"," ")}</p><h2>{booking.packageName}</h2><p className={styles.reference}>Booking reference · {booking.id}</p>
     <dl><div><dt>Starts</dt><dd>{formatDate(booking.scheduledStart)} IST</dd></div><div><dt>Ends</dt><dd>{formatDate(booking.scheduledEnd)} IST</dd></div><div><dt>Booking total</dt><dd>{new Intl.NumberFormat("en-IN",{style:"currency",currency:booking.currency}).format(booking.totalAmount)}</dd></div></dl>
     <p className={styles.note}>The booking total is not a receipt or confirmation of payment.</p>
+    {
+     /* [CUST-L-D05] a payment_pending booking had Refresh controls and "Cancellation unavailable" but
+      * no way back to payment. This reuses the same mobile booking-confirmation payment surface the
+      * customer paid from originally — no cancellation policy is invented here. */
+     booking.status==="payment_pending"&&<Link href={`/mobile-app/booking-confirmation?bookingId=${encodeURIComponent(booking.id)}`}>Continue to payment</Link>
+    }
    </section>
    {booking.status==="completed"&&<GroomingCareSummary key={booking.id} bookingId={booking.id}/>}
    <GroomingChangePolicy key={`${booking.id}:${booking.scheduledStart}:${booking.status}`} bookingId={booking.id} customerId={customerId} onChanged={message=>{setNotice({bookingId:booking.id,text:message});reload();}}/>
