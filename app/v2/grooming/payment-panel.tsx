@@ -7,10 +7,11 @@ import {
   loadV2GroomingCheckoutReadiness, saveV2GroomingDoorstep,
   type CheckoutState, type CustomerConfirmationProjection, type V2GroomingCheckoutReadiness,
 } from "../../../lib/v2/grooming-checkout-client";
+import { formatIndiaDateTimeMedium } from "../../../lib/india-time";
 import styles from "./grooming.module.css";
 
 const when = (value: string) => Number.isFinite(Date.parse(value))
-  ? new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Verifying time";
+  ? formatIndiaDateTimeMedium(value) : "Verifying time";
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 
 type Props = { bookingId: string; initialAddress?: string; initialPincode?: string; preparing?: boolean };

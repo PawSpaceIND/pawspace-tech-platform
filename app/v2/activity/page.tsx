@@ -3,11 +3,12 @@ import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import type {CustomerAccountRecord} from "../../../lib/customer-account";
 import {loadV2CustomerAccount,loadV2CustomerSession} from "../../../lib/v2/customer-experience-client";
+import {formatIndiaDateTime} from "../../../lib/india-time";
 import styles from "../customer-detail.module.css";
 const CLOSED=new Set(["completed","cancelled","canceled","refunded","closed"]);
 const label=(v:string)=>v.replaceAll("_"," ");
 const money=(v:number,c:string)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:c,maximumFractionDigits:0}).format(v);
-const when=(v:string)=>{const d=new Date(v);return Number.isNaN(d.getTime())?"Schedule pending":new Intl.DateTimeFormat("en-IN",{weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(d);};
+const when=(v:string)=>formatIndiaDateTime(v,{weekday:true});
 export default function V2ActivityPage(){
  const[account,setAccount]=useState<CustomerAccountRecord|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState("");
  useEffect(()=>{let live=true;(async()=>{try{const session=await loadV2CustomerSession();if(!session)return;const record=await loadV2CustomerAccount();if(live)setAccount(record);}catch(p){if(live)setError(p instanceof Error?p.message:"We could not load your activity.");}finally{if(live)setLoading(false);}})();return()=>{live=false};},[]);

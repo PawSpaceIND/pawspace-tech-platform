@@ -7,10 +7,11 @@ import type{BoardingCarePlan}from"../../lib/boarding-stay-lifecycle";
 import{loadCustomerBoardingStay,updateBoardingStay,type BoardingStay}from"../../lib/boarding-stay-client";
 import{requestBoardingFinanceChange}from"../../lib/boarding-finance-client";
 import{loadBoardingProof,updateBoardingProof,type BoardingProofSnapshot}from"../../lib/boarding-proof-client";
+import{formatIndiaDateTime}from"../../lib/india-time";
 import styles from"./stay-flow.module.css";
 
 function label(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
-function when(value:string|number){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(date):String(value);}
+function when(value:string|number){return formatIndiaDateTime(value,{fallback:String(value)});}
 function localInput(value:string){const date=new Date(value);if(!Number.isFinite(date.getTime()))return"";const shifted=new Date(date.getTime()-date.getTimezoneOffset()*60_000);return shifted.toISOString().slice(0,16);}
 function suggestedExtension(value:string){const date=new Date(value);if(!Number.isFinite(date.getTime()))return"";date.setHours(date.getHours()+24);return localInput(date.toISOString());}
 function stayMessage(stay:BoardingStay){switch(stay.status){case"awaiting_host_acceptance":return"The selected host still needs to accept the canonical stay. Payment status is tracked separately on the canonical booking payment record.";case"confirmed":return"Your host accepted. Capacity is locked for the paid stay window.";case"recovery_pending":return"The original booking is protected while PawSpace Operations arranges host recovery.";case"in_progress":return"Your pet is checked in. Care events below come from the canonical stay ledger.";case"completed":return"Checkout is complete. Settlement, tax and payout are governed separately.";case"cancelled":return"The stay is cancelled. Any approved refund remains in the sandbox refund ledger until recorded by Finance.";default:return`Current stay status: ${label(stay.status)}.`;}}
