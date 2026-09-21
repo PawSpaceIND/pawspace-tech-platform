@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { quoteGovernedCoupon } from "../../lib/coupon-governance-client";
+import { droppedCouponReport } from "../../lib/coupon-reapply-guard";
 import type { CustomerKind, PawspaceService } from "../../lib/offer-engine";
 import styles from "./coupon-field.module.css";
 
@@ -124,9 +125,14 @@ export default function CouponField(props: {
 
   useEffect(() => {
     if (!applied || !appliedCommercialKey.current || appliedCommercialKey.current === commercialKey) return;
+    // CUST-L-D06: report the DROPPED code, not "". Passing "" here reads identically to "no coupon was
+    // ever involved", which let a caller's own stale-quote guard (couponCode && !couponQuoteId) go
+    // silent and a booking confirm at full price with no block and only a small, easy-to-miss line.
+    // Keeping the code lets every caller's existing guard catch "a coupon needs reapplying" on its own.
+    const report = droppedCouponReport(applied);
     setApplied("");
     setMessage("Booking details changed — apply the coupon again for a fresh governed quote");
-    onDiscountChange(0, "");
+    onDiscountChange(report.discount, report.code);
   }, [applied, commercialKey, onDiscountChange]);
 
   return (
