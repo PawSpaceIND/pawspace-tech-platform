@@ -24,6 +24,16 @@ function maskPhone(value:unknown){const digits=String(value||"").replace(/\D/g,"
 // contact data and must never leave the customer surface unmasked.
 function partnerFirstName(value:unknown){const first=String(value||"").trim().split(/\s+/)[0];return first||"Customer";}
 function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
+/**
+ * A declined assignment leaves canonical_bookings.status at 'confirmed' - the CUSTOMER's booking is
+ * still confirmed while Operations finds a replacement - and moves only the work order to
+ * reassignment_needed. This list is the PROVIDER's view of their own work order, so reporting the
+ * booking status verbatim rendered a job the provider had just declined as "Confirmed", with Accept
+ * and Decline still offered; Accept then failed 409 "No pending provider offer is available". The
+ * partner app derives its next action from this field, so the field has to name the work order truth.
+ */
+const RECOVERY_WORK_ORDER_STATUSES=new Set(["reassignment_needed","recovery_pending"]);
+function providerJobStatus(bookingStatus:string,workOrderStatus:string){return RECOVERY_WORK_ORDER_STATUSES.has(workOrderStatus)?"reassignment_needed":bookingStatus;}
 
 export async function GET(request:Request){
   try{
@@ -57,7 +67,7 @@ export async function GET(request:Request){
       const safetyRequirements=Array.isArray(pricing.requirements)?pricing.requirements.filter((item):item is string=>typeof item==="string"):[];
       jobs.push({
         bookingId:String(row.booking_id),workOrderId:String(row.work_order_id),providerId:String(row.provider_id),providerName:String(row.provider_name),providerModel:String(row.provider_model),
-        status:String(row.booking_status),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
+        status:providerJobStatus(String(row.booking_status),String(row.work_order_status)),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
         zoneId:String(row.zone_id),cityId:String(row.city_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),totalAmount:Number(row.total_amount||0),currency:String(row.currency||"INR"),
         customer:{id:String(row.customer_id),name:partnerFirstName(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
         pets:pets.results.map((pet:Row)=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status),safetyNotes:[parseJson<Record<string,unknown>>(pet.profile_json,{}).aggression,pricing.healthSafetyNotes,pricing.behaviourNotes].filter((value):value is string=>typeof value==="string"&&value.trim().length>0)})),
