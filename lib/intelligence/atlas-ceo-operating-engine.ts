@@ -1,4 +1,5 @@
-import {AtlasDecisionPolicy,AtlasExecutiveProposal,DEFAULT_ATLAS_DECISION_POLICY,evaluateAtlasProposal} from "./atlas-executive-governance";
+import type {AtlasDecisionPolicy,AtlasExecutiveProposal} from "./atlas-executive-governance";
+import {DEFAULT_ATLAS_DECISION_POLICY,evaluateAtlasProposal} from "./atlas-executive-governance";
 
 export type AtlasExecutiveCandidate={
  proposal:AtlasExecutiveProposal;
