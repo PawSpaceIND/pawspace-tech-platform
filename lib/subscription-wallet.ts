@@ -1,3 +1,4 @@
+import{ensureGroomingSubscriptionPlans}from"./grooming-governance";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -108,6 +109,9 @@ export async function listCustomerSubscriptionWallets(db:Db,customerId:string){a
  */
 export async function buildSubscriptionBusinessView(db:Db,asOf=Date.now()){
   await ensureSubscriptionWalletTables(db);
+  // grooming_subscription_plans belongs to lib/grooming-governance; on a database where that module has never
+  // run (fresh staging D1) the plan read below threw "no such table" and Control > Business 360 returned 500.
+  await ensureGroomingSubscriptionPlans(db);
   const subs=await db.prepare("SELECT id,customer_id,plan_code,total_sessions,sessions_consumed,status,expires_at FROM customer_grooming_subscriptions").all<Row>();
   const planCodes=[...new Set(subs.results.map(s=>String(s.plan_code)))];
   const priceByPlan=new Map<string,{price:number;sessions:number}>();

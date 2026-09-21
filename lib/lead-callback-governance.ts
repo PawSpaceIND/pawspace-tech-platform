@@ -17,7 +17,27 @@ async function ensureLeadWorkItemIndexesIfPresent(db:Db){
  ]);
 }
 
-export async function ensureLeadCallbackTables(db:Db){await db.batch([
+/*
+ * Schema collision repair. drizzle/0021 creates lead_callbacks in an older intake shape
+ * (phone, name, preferred_at, source, requested_by) and the staging deploy applies that migration
+ * before any module runs. This module owns the governed shape (requested_at, scheduled_by,
+ * completed_at, completed_outcome, missed_at). On a database that already holds the older table the
+ * index on requested_at failed, the whole batch rolled back, lead_callback_events was never created
+ * and every Revenue CRM read returned 500. Add the governed columns additively (nullable ALTERs,
+ * backfilled from the intake columns) BEFORE the index batch, so both shapes coexist on one table.
+ */
+async function repairLegacyLeadCallbacksShape(db:Db){
+ const table=await db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='lead_callbacks'").first<Row>();
+ if(!table)return;
+ const columns=new Set((await db.prepare("PRAGMA table_info(lead_callbacks)").all<Row>()).results.map(row=>text(row.name)));
+ const missing:Array<[string,string]>=[["requested_at","INTEGER"],["scheduled_by","TEXT"],["completed_at","INTEGER"],["completed_outcome","TEXT"],["missed_at","INTEGER"]].filter(([name])=>!columns.has(name)) as Array<[string,string]>;
+ if(!missing.length)return;
+ for(const [name,type] of missing)await db.prepare(`ALTER TABLE lead_callbacks ADD COLUMN ${name} ${type}`).run();
+ if(missing.some(([name])=>name==="requested_at"))await db.prepare(`UPDATE lead_callbacks SET requested_at=COALESCE(${columns.has("preferred_at")?"preferred_at,":""}created_at) WHERE requested_at IS NULL`).run();
+ if(missing.some(([name])=>name==="scheduled_by"))await db.prepare(`UPDATE lead_callbacks SET scheduled_by=COALESCE(${columns.has("requested_by")?"requested_by,":""}'legacy_intake') WHERE scheduled_by IS NULL`).run();
+}
+
+export async function ensureLeadCallbackTables(db:Db){await repairLegacyLeadCallbacksShape(db);await db.batch([
  // Explicit, governed record: every scheduled callback is a real, separate row - never just an
  // overwrite of a single "next action" field, so a lead's full callback history stays visible and
  // a rep who reschedules can't quietly lose the trail of promises already made to the customer.
