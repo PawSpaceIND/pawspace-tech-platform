@@ -194,7 +194,7 @@ export async function runCompletedJourney(ctx, config) {
   const completed = await lifecycle("complete");
   const visible = await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
 
-  return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total,
+  return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total, customerCookie, bookingPayload,
     persisted: {
       booking: sqlite.prepare("SELECT * FROM canonical_bookings WHERE id=?").get(bookingId),
       pet: sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").get(config.customerId),
