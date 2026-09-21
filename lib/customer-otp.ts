@@ -12,6 +12,7 @@ const normalizePhone=(value:string)=>value.replace(/\D/g,"").slice(-10);
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const HASHED_MARKER="[hashed]";
 const OTP_RETENTION_MS=60*60*1000;
+export class CustomerOtpVerificationError extends Error{readonly status:number;constructor(message:string,status:number){super(message);this.name="CustomerOtpVerificationError";this.status=status;}}
 async function canonicalOtpCustomerId(phone:string){
  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`pawspace:customer-otp:${phone}`));
  const suffix=Array.from(new Uint8Array(digest)).slice(0,12).map(byte=>byte.toString(16).padStart(2,"0")).join("").toUpperCase();
@@ -56,16 +57,16 @@ export async function resolveOtpCustomer(db:D1Database,phone:string){return db.p
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);await ensureCustomerAccountTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
- if(!row)throw new Error("OTP challenge not found");
- if(Number(row.consumed)===1)throw new Error("This OTP has already been used");
- if(Date.now()>Number(row.expires_at))throw new Error("OTP has expired - request a new one");
- if(Number(row.attempts)>=5)throw new Error("Too many incorrect attempts - request a new OTP");
+ if(!row)throw new CustomerOtpVerificationError("OTP challenge not found",404);
+ if(Number(row.consumed)===1)throw new CustomerOtpVerificationError("This OTP has already been used",409);
+ if(Date.now()>Number(row.expires_at))throw new CustomerOtpVerificationError("OTP has expired - request a new one",410);
+ if(Number(row.attempts)>=5)throw new CustomerOtpVerificationError("Too many incorrect attempts - request a new OTP",429);
  const salt=text(row.verifier_salt),stored=text(row.verifier_hash);
- if(!salt||!stored)throw new Error("OTP challenge is no longer valid - request a new one");
+ if(!salt||!stored)throw new CustomerOtpVerificationError("OTP challenge is no longer valid - request a new one",409);
  const candidate=await otpVerifier(input.challengeId,salt,text(input.code));
- if(!constantTimeEqual(stored,candidate)){await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();throw new Error("Incorrect OTP code");}
+ if(!constantTimeEqual(stored,candidate)){await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();throw new CustomerOtpVerificationError("Incorrect OTP code",401);}
  const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1,verifier_salt=NULL,verifier_hash=NULL WHERE id=? AND consumed=0").bind(input.challengeId).run();
- if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
+ if(!Number(claim.meta.changes))throw new CustomerOtpVerificationError("This OTP has already been used",409);
  const phone=text(row.phone);
  let customer=await resolveOtpCustomer(db,phone);
  if(!customer){

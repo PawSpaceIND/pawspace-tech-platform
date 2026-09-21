@@ -18,3 +18,8 @@ test("system role permission updates propagate into initialized D1",()=>{const s
 test("attendance API enforces employee self scope and manager permissions",()=>{const api=read("app/api/attendance-leave/route.ts");assert.match(api,/Employee self-service scope denied/);assert.match(api,/attendance\.manage/);assert.match(api,/leave\.manage/);assert.match(api,/securityAudit/);});
 
 test("attendance and leave never hard-code grace leave overtime or GPS policy",()=>{const src=read("lib/attendance-leave.ts"),page=read("app/team/people/time/page.tsx");assert.match(src,/hardcodedGraceMinutes:false/);assert.match(src,/hardcodedLeaveEntitlement:false/);assert.match(src,/hardcodedOvertimeRate:false/);assert.match(src,/gpsRequired:false/);assert.match(page,/Hard-coded leave\/grace\/OT policy:<\/b> NO/);assert.match(page,/Production ready:<\/b> NO/);});
+
+
+test("People Time UI exposes governed manager approval controls",()=>{const page=read("app/team/people/time/page.tsx");assert.match(page,/approve_adjustment/);assert.match(page,/decide_leave/);assert.match(page,/Approve leave/);assert.match(page,/Reject leave/);});
+
+test("normal staging employee seed includes an explicit UAT-only leave policy and balances",()=>{const seed=read("scripts/employee-seed-gen.mjs");assert.match(seed,/UAT Casual Leave/);assert.match(seed,/UAT-ONLY-NOT-PRODUCTION/);assert.match(seed,/employee_leave_balances/);});
