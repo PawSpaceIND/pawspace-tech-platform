@@ -58,7 +58,7 @@ jobs:
               c.state AS call_state,
               c.provider AS call_provider,
               c.production_call AS production_call,
-              c.created_at AS call_created_at,
+              c.requested_at AS call_requested_at,
               c.updated_at AS call_updated_at
             FROM voice_carrier_uat_queue q
             LEFT JOIN voice_call_orders c ON c.id=q.call_id
@@ -88,7 +88,7 @@ jobs:
             startedAt: row.started_at == null ? null : Number(row.started_at),
             finishedAt: row.finished_at == null ? null : Number(row.finished_at),
             updatedAt: Number(row.updated_at || 0),
-            callCreatedAt: row.call_created_at == null ? null : Number(row.call_created_at),
+            callRequestedAt: row.call_requested_at == null ? null : Number(row.call_requested_at),
             callUpdatedAt: row.call_updated_at == null ? null : Number(row.call_updated_at),
           } : { status: 'not_staged' };
           console.log('VOICE_UAT_QUEUE_INSPECTION='+JSON.stringify(safe));
