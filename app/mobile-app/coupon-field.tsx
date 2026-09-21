@@ -61,12 +61,16 @@ export default function CouponField(props: {
   const requestVersion=useRef(0);
   useEffect(()=>{requestVersion.current+=1;return()=>{requestVersion.current+=1;};},[commercialKey]);
 
-  const apply = async (rawCode?: string) => {
+  const apply = async (rawCode?: string, options?: { keepGuardArmed?: boolean }) => {
     const normalized = (rawCode ?? code).trim().toUpperCase();
     if (!normalized || loading) return;
     if (!customerId) { setMessage("Sign in required before applying a coupon"); return; }
     const version=++requestVersion.current;
-    setApplied("");onDiscountChange(0, "");
+    setApplied("");
+    // A customer pressing Apply clears the caller's coupon state outright. An automatic re-quote must
+    // not: blanking the code here is the CUST-L-D06 blindness itself, and would unblock Confirm at
+    // full price for however long the fresh quote is still in flight.
+    if (!options?.keepGuardArmed) onDiscountChange(0, "");
     setLoadingKey(commercialKey);
     try {
       const result = await quoteGovernedCoupon({
@@ -131,8 +135,15 @@ export default function CouponField(props: {
     // Keeping the code lets every caller's existing guard catch "a coupon needs reapplying" on its own.
     const report = droppedCouponReport(applied);
     setApplied("");
-    setMessage("Booking details changed — apply the coupon again for a fresh governed quote");
+    setMessage("Booking details changed — rechecking this coupon against the new total…");
     onDiscountChange(report.discount, report.code);
+    // V2 launch e2e: switching the payment mode is an ordinary customer action, and a new customer's
+    // welcome coupon auto-applies above without them ever typing it. Reporting the drop alone left
+    // Confirm disabled at the last step of the funnel, asking them to "reapply" a code they never
+    // chose. Fetch the fresh governed quote for them. The server still decides the discount for the
+    // NEW terms, and until it answers the caller's guard stays armed above, so Confirm cannot fire
+    // against the stale one. If the coupon no longer qualifies, apply() clears it and says why.
+    void apply(report.code, { keepGuardArmed: true });
   }, [applied, commercialKey, onDiscountChange]);
 
   return (

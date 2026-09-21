@@ -414,5 +414,18 @@
   "fix": "c8dd694 — a closed booking no longer satisfies a replay; the request is refused with the booking id and status and the customer is asked to choose another time",
   "verification": "tests/launch-partner-lifecycle-refusals.test.mjs (with a control proving an open booking still replays)",
   "status": "fixed; creating a second booking for the identical slot would require changing the idempotency fingerprint, which is the double-submit guard — recorded as a limit"
+ },
+ {
+  "id": "V2-082",
+  "priorId": "CUST-L-D06 follow-up",
+  "title": "Tapping Pay online left Confirm booking disabled, telling a new customer to reapply a welcome coupon they never typed",
+  "severity": "P1",
+  "class": "flow",
+  "persona": "Customer · new customer at Grooming Review, auto-applied welcome coupon",
+  "surface": "/mobile-app Grooming → Review, app/mobile-app/coupon-field.tsx, app/mobile-app/grooming-flow.tsx",
+  "found": "2026-09-21 required Browser E2E personas job on PR #960 (e2e/customer-booking.spec.ts:421), reproduced locally",
+  "fix": "CouponField now fetches a fresh governed quote for the dropped code itself when the commercial terms change, instead of only reporting the drop. The caller's stale-quote guard stays armed while that request is in flight (new keepGuardArmed option, so an automatic re-quote never blanks the code the way a manual Apply does), and the Confirm-time alert says the coupon is being rechecked rather than ordering a reapply.",
+  "verification": "tests/coupon-payment-mode-reapply-guard.test.mjs (3 added cases covering the wiring, the in-flight window and the coupon-no-longer-eligible path); e2e/customer-booking.spec.ts:421 reproduced red then green locally, full chromium persona set 13/13",
+  "status": "fixed; the CUST-L-D06 block itself is unchanged — Confirm still cannot fire while no governed quote covers the current terms"
  }
 ]

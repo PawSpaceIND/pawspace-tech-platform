@@ -87,3 +87,62 @@ test("CUST-L-D06 end to end: the exact reported sequence (apply, then switch pay
   assert.equal(couponQuoteId, "", "the stale quote id must not survive the drop");
   assert.equal(couponNeedsReapply(couponCode, couponQuoteId), true, "Confirm must now be blocked, not silently proceed at full price");
 });
+
+// ---------------------------------------------------------------------------------------------------
+// CUST-L-D06 follow-up, found by the required Browser E2E personas job on the V2 launch branch
+// (e2e/customer-booking.spec.ts:421). The guard above is right, but reporting the drop and stopping
+// there was not the whole fix: a NEW customer's welcome coupon auto-applies in CouponField without
+// them ever typing it, so tapping "Pay online" armed the guard and left Confirm booking disabled
+// (<button disabled aria-disabled="true">) behind an alert telling them to "reapply it above" a code
+// they never chose. Confirm must not fire against a stale quote, AND the customer must not have to
+// clear a block they did not create: CouponField now fetches the fresh governed quote itself, with
+// the caller's guard still armed for the window the request is in flight.
+// ---------------------------------------------------------------------------------------------------
+
+test("CUST-L-D06 follow-up wiring: a dropped quote is re-fetched automatically, with the guard still armed", () => {
+  const field = read("app/mobile-app/coupon-field.tsx");
+  const invalidateEffect = field.slice(field.indexOf("appliedCommercialKey.current === commercialKey"), field.indexOf("}, [applied, commercialKey, onDiscountChange]);"));
+  assert.match(invalidateEffect, /void apply\(report\.code,\s*\{\s*keepGuardArmed:\s*true\s*\}\)/, "the drop must be followed by a fresh governed quote for the same code");
+  // keepGuardArmed exists precisely so the automatic re-quote does not blank the caller's coupon code
+  // while the request is in flight - blanking it is the original CUST-L-D06 blindness.
+  assert.match(field, /if \(!options\?\.keepGuardArmed\) onDiscountChange\(0, ""\);/, "only a manual Apply may blank the caller's coupon state up front");
+  assert.doesNotMatch(field, /setApplied\(""\);onDiscountChange\(0, ""\);/, "the unconditional blank-on-apply must be gone");
+});
+
+test("CUST-L-D06 follow-up wiring: the customer is told the coupon is being rechecked, not ordered to reapply it", () => {
+  const field = read("app/mobile-app/coupon-field.tsx");
+  const flow = read("app/mobile-app/grooming-flow.tsx");
+  assert.doesNotMatch(field, /apply the coupon again/i, "CouponField must not ask for a manual reapply it now performs itself");
+  assert.doesNotMatch(flow, /reapply it above/i, "the Confirm-time alert must not order a reapply that happens automatically");
+  assert.match(flow, /couponPendingReapply/, "the block itself must remain while no live quote exists");
+});
+
+test("CUST-L-D06 follow-up end to end: payment-mode switch blocks Confirm only until the fresh quote lands", async () => {
+  const { couponNeedsReapply, droppedCouponReport } = await import("../lib/coupon-reapply-guard.ts");
+  let discount = 0, couponCode = "", couponQuoteId = "";
+  const onDiscountChange = (value, code, quoteId) => { discount = value; couponCode = code; couponQuoteId = quoteId || ""; };
+
+  // The welcome coupon auto-applies for a new customer under "Pay after service".
+  onDiscountChange(100, "WELCOME", "quote_after");
+  assert.equal(couponNeedsReapply(couponCode, couponQuoteId), false);
+
+  // Tap "Pay online": CouponField drops the stale quote and reports the code.
+  const report = droppedCouponReport(couponCode);
+  onDiscountChange(report.discount, report.code);
+  assert.equal(couponNeedsReapply(couponCode, couponQuoteId), true, "Confirm must be blocked while no quote covers the new terms");
+  assert.equal(discount, 0, "the stale discount must not keep applying");
+
+  // The automatic re-quote is in flight - it must NOT blank the code, or Confirm unblocks at full price.
+  assert.equal(couponCode, "WELCOME", "the in-flight re-quote must leave the guard armed");
+  assert.equal(couponNeedsReapply(couponCode, couponQuoteId), true);
+
+  // The server answers for the NEW terms and Confirm unblocks with no customer action at all.
+  onDiscountChange(100, "WELCOME", "quote_online");
+  assert.equal(couponNeedsReapply(couponCode, couponQuoteId), false, "Confirm must unblock once the fresh quote lands");
+  assert.equal(discount, 100);
+
+  // If the coupon does not qualify for the new terms, apply() clears it and the total is honestly full price.
+  onDiscountChange(0, "");
+  assert.equal(couponNeedsReapply(couponCode, couponQuoteId), false, "no coupon left to block on");
+  assert.equal(discount, 0);
+});
