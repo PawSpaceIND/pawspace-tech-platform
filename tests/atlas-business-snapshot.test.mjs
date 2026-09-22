@@ -6,6 +6,7 @@ installWorkersHooks();
 const atlas=await import("../lib/intelligence/atlas-business-snapshot.ts");
 const atlasData=await import("../lib/intelligence/atlas-data.ts");
 const revenue=await import("../lib/revenue-mission-control.ts");
+const marketing=await import("../lib/marketing-governance.ts");
 
 function makeD1(sqlite){
  const statement=(sql,args=[])=>({bind:(...values)=>statement(sql,values),first:async()=>sqlite.prepare(sql).get(...args)??null,all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>{const r=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(r.changes)}}}});
@@ -60,4 +61,60 @@ test("daily founder analysis uses canonical mission snapshot and ignores mislead
  assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);
  const proposal=sqlite.prepare("SELECT proposal_type,status,basis_id FROM atlas_proposals ORDER BY created_at DESC LIMIT 1").get();
  assert.equal(proposal.proposal_type,'campaign_activation');assert.equal(proposal.status,'proposed');assert.match(proposal.basis_id,/^daily:.*:MD$/);
+});
+
+
+test("Founder approval transitions only the exact linked Atlas proposal",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),action={type:"campaign.activate",campaignId:"C-EXACT"};
+ const p1=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Proposal one",snapshot,basisId:"B1",riskClass:"high",action,createdBy:"atlas"});
+ const p2=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Proposal two",snapshot,basisId:"B2",riskClass:"high",action,createdBy:"atlas"});
+ sqlite.prepare("INSERT INTO governed_marketing_campaigns (id,name,objective,service_code,city_id,audience_rule_json,budget_amount,currency,holdout_percent,status,approval_status,approved_by,approved_at,created_by,created_at,updated_at) VALUES ('C-EXACT','Exact binding','retention','grooming','blr','{}',1000,'INR',10,'approved','approved','founder@pawspace.test',?,'founder@pawspace.test',?,?)").run(now,now,now);
+ sqlite.prepare("INSERT INTO marketing_audience_snapshots (id,campaign_id,snapshot_at,total_candidates,eligible_count,holdout_count,suppressed_count,policy_json,created_by) VALUES ('AUD-EXACT','C-EXACT',?,0,0,0,0,'{}','founder@pawspace.test')").run(now);
+ const m1=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Activate exact campaign?",action,actionStatus:"approval_required",proposalId:p1.id,createdAt:now});
+ const m2=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Same action, second proposal",action,actionStatus:"approval_required",proposalId:p2.id,createdAt:now+1});
+ const result=await atlasData.executeAtlasApprovedAction(db,{messageId:m1.messageId,actorEmail:"founder@pawspace.test"});
+ assert.equal(result.status,"executed");assert.equal(result.proposalId,p1.id);assert.equal(result.journalUpdated,true);
+ const rows=sqlite.prepare("SELECT id,status FROM atlas_proposals WHERE id IN (?,?) ORDER BY id").all(p1.id,p2.id);const byId=Object.fromEntries(rows.map(r=>[r.id,r.status]));
+ assert.equal(byId[p1.id],"executed");assert.equal(byId[p2.id],"proposed");
+ const second=sqlite.prepare("SELECT action_status,proposal_id FROM atlas_chat_messages WHERE id=?").get(m2.messageId);assert.equal(second.action_status,"approval_required");assert.equal(second.proposal_id,p2.id);
+ const legacy=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Legacy action",action,actionStatus:"approval_required",createdAt:now+2});
+ const error=await atlasData.executeAtlasApprovedAction(db,{messageId:legacy.messageId,actorEmail:"founder@pawspace.test"}).then(()=>null,e=>e);
+ assert.equal(error instanceof Response,true);assert.equal(error.status,409);assert.equal(await error.text(),"Atlas proposal journal link is required");
+});
+
+
+test("executing Atlas approval recovers from canonical active campaign without duplicate activation",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),action={type:"campaign.activate",campaignId:"C-RECOVER"};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Recover",snapshot,basisId:"REC",riskClass:"high",action,createdBy:"atlas"});
+ await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"proposed",to:"approved",actorId:"founder@pawspace.test"});
+ sqlite.prepare("INSERT INTO governed_marketing_campaigns (id,name,objective,service_code,city_id,audience_rule_json,budget_amount,currency,holdout_percent,status,approval_status,approved_by,approved_at,created_by,created_at,updated_at) VALUES ('C-RECOVER','Recover','retention','grooming','blr','{}',1000,'INR',10,'active','approved','founder@pawspace.test',?,'founder@pawspace.test',?,?)").run(now,now,now);
+ const message=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Recover action",action,actionStatus:"executing",proposalId:proposal.id,createdAt:now});
+ const result=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:"founder@pawspace.test"});
+ assert.equal(result.status,"executed");assert.equal(result.recovered,true);assert.equal(result.duplicatePrevented,true);
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"executed");assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"executed");
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_governance_events WHERE campaign_id='C-RECOVER' AND event_type='activated'").get().n,0);
+});
+
+test("daily retry reuses existing campaign proposal for same day mission and action",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
+ sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER); INSERT INTO governed_marketing_campaigns VALUES ('C-RETRY','Retry campaign','approved','approved',2000000000000);");
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MR','Retry mission',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:'company'}),now-10000,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('RC','MR','retry-collected','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);globalThis.__PAWSPACE_TEST_ENV__={};
+ const first=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const count1=sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n;
+ sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);const second=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const count2=sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n;
+ assert.equal(count1,1);assert.equal(count2,1);assert.deepEqual(second.action,{type:'campaign.activate',campaignId:'C-RETRY'});
+});
+
+
+test("Founder approval rejects proposal/message action mismatch and restores approval state",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),proposalAction={type:"campaign.activate",campaignId:"C-A"},messageAction={type:"campaign.activate",campaignId:"C-B"};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Bound to A",snapshot,basisId:"MISMATCH",riskClass:"high",action:proposalAction,createdBy:"atlas"});
+ const message=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Mismatched action",action:messageAction,actionStatus:"approval_required",proposalId:proposal.id,createdAt:now});
+ const error=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:"founder@pawspace.test"}).then(()=>null,e=>e);
+ assert.equal(error instanceof Response,true);assert.equal(error.status,409);assert.equal(await error.text(),"Atlas proposal action binding mismatch");
+ assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"approval_required");
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"proposed");
 });
