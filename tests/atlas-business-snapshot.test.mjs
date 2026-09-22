@@ -106,3 +106,15 @@ test("daily retry reuses existing campaign proposal for same day mission and act
  sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);const second=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const count2=sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n;
  assert.equal(count1,1);assert.equal(count2,1);assert.deepEqual(second.action,{type:'campaign.activate',campaignId:'C-RETRY'});
 });
+
+
+test("Founder approval rejects proposal/message action mismatch and restores approval state",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),proposalAction={type:"campaign.activate",campaignId:"C-A"},messageAction={type:"campaign.activate",campaignId:"C-B"};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Bound to A",snapshot,basisId:"MISMATCH",riskClass:"high",action:proposalAction,createdBy:"atlas"});
+ const message=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Mismatched action",action:messageAction,actionStatus:"approval_required",proposalId:proposal.id,createdAt:now});
+ const error=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:"founder@pawspace.test"}).then(()=>null,e=>e);
+ assert.equal(error instanceof Response,true);assert.equal(error.status,409);assert.equal(await error.text(),"Atlas proposal action binding mismatch");
+ assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"approval_required");
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"proposed");
+});
