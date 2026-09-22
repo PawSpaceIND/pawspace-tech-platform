@@ -117,15 +117,33 @@ Object.entries(BANDS).forEach(([band, cfg]) => {
 const RUN = "SEEDRUN-AUG2026";
 s.push(`INSERT OR IGNORE INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at) VALUES (${q(RUN)},'seed-payroll-aug-2026',${PERIOD_START},${PERIOD_END},'approved','{"seed":true,"period":"2026-08"}',${q("hr@pawspace.in")},${BASE},${q("finance@pawspace.in")},${BASE},${q("founder@pawspace.in")},${BASE});`);
 
-// ---- Explicit UAT-only leave policy. This is synthetic test configuration, not a production HR entitlement. ----
-const UAT_LEAVE_CODE = "CL";
-s.push(`INSERT OR IGNORE INTO leave_policies (id,name,version,status,leave_code,allow_negative,entitlement_units,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-LVP-CL','UAT Casual Leave',1,'active_uat','CL',0,12,'UAT-ONLY-NOT-PRODUCTION',${JOINED},'founder@pawspace.in',${BASE});`);
+// ---- Current employment version for the seeded managers (location, team, cost centre). Without
+// these rows a manager resolves no organizational scope and is locked out of Booking Command
+// Center, CRM and People. Held verbatim: they were hand-written into employee-seed.sql and are
+// reproduced here so regenerating this file cannot drop them again. ----
+s.push("CREATE TABLE IF NOT EXISTS employee_employment_versions (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,version INTEGER NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,employment_type TEXT,probation_status TEXT,title TEXT,team_code TEXT,manager_employee_id TEXT,cost_centre_code TEXT,location_code TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(employee_id,version));");
+s.push("INSERT OR IGNORE INTO employee_employment_versions (id,employee_id,version,effective_from,effective_until,employment_type,probation_status,title,team_code,manager_employee_id,cost_centre_code,location_code,reason,actor_id,created_at) VALUES ('SEEDEMPV-EMP037','SEEDEMP-EMP037',1,1705276800000,NULL,'full_time','confirmed','Sales Manager','sales',NULL,'CC-SALES','BLR','Seeded manager organizational scope for human UAT','hr@pawspace.in',1785542400000);");
+s.push("INSERT OR IGNORE INTO employee_employment_versions (id,employee_id,version,effective_from,effective_until,employment_type,probation_status,title,team_code,manager_employee_id,cost_centre_code,location_code,reason,actor_id,created_at) VALUES ('SEEDEMPV-EMP038','SEEDEMP-EMP038',1,1705276800000,NULL,'full_time','confirmed','Operations Manager','operations',NULL,'CC-OPERATIONS','BLR','Seeded manager organizational scope for human UAT','hr@pawspace.in',1785542400000);");
+s.push("INSERT OR IGNORE INTO employee_employment_versions (id,employee_id,version,effective_from,effective_until,employment_type,probation_status,title,team_code,manager_employee_id,cost_centre_code,location_code,reason,actor_id,created_at) VALUES ('SEEDEMPV-EMP039','SEEDEMP-EMP039',1,1705276800000,NULL,'full_time','confirmed','Operations Manager','operations',NULL,'CC-OPERATIONS','BLR','Seeded manager organizational scope for human UAT','hr@pawspace.in',1785542400000);");
+s.push("INSERT OR IGNORE INTO employee_employment_versions (id,employee_id,version,effective_from,effective_until,employment_type,probation_status,title,team_code,manager_employee_id,cost_centre_code,location_code,reason,actor_id,created_at) VALUES ('SEEDEMPV-EMP040','SEEDEMP-EMP040',1,1705276800000,NULL,'full_time','confirmed','Customer Experience Manager','customer-experience',NULL,'CC-CUSTOMER-EXPERIENCE','BLR','Seeded manager organizational scope for human UAT','hr@pawspace.in',1785542400000);");
+
+// ---- Explicit UAT-only leave policies. Synthetic test configuration, NOT production HR entitlements. ----
+// The /me leave form is a free-text code whose placeholder tells the tester "e.g. CL / SL / EL". Only CL
+// had a policy, so two of the three codes the form itself suggests were a governed 409 dead end. Owner
+// decision 2026-09-22: seed a generic sandbox policy set. The allowances are round sandbox numbers and
+// every row carries UAT-ONLY-NOT-PRODUCTION; none of this is an HR entitlement.
+const UAT_LEAVE_POLICIES = [
+  { code: "CL", name: "UAT Casual Leave", units: 12 },
+  { code: "SL", name: "UAT Sick Leave", units: 8 },
+  { code: "EL", name: "UAT Earned Leave", units: 15 },
+];
+for (const lp of UAT_LEAVE_POLICIES) s.push(`INSERT OR IGNORE INTO leave_policies (id,name,version,status,leave_code,allow_negative,entitlement_units,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-LVP-${lp.code}',${q(lp.name)},1,'active_uat',${q(lp.code)},0,${lp.units},'UAT-ONLY-NOT-PRODUCTION',${JOINED},'founder@pawspace.in',${BASE});`);
 
 // ---- Employees + app_users + compensation + payroll results/lines/payslips ----
 for (const e of employees) {
   s.push(`INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (${q("SEEDUSR-" + e.code)},${q(e.email)},${q(e.name)},${q(e.role)},'active',${JOINED},${BASE});`);
   s.push(`INSERT OR IGNORE INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES (${q(e.id)},${q(e.email)},${q(e.code)},${q(e.name)},${q(e.email)},'0000000000','active',${JOINED},${JOINED},${BASE});`);
-  s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(UAT_LEAVE_CODE)},12,${BASE});`);
+  for (const lp of UAT_LEAVE_POLICIES) s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);
   const c = st.comp, net = money(c.gross - c.deductions);
