@@ -37,3 +37,62 @@ test("20-way daily-cap contention stops exactly at configured capacity",async()=
 test("write path reasserts zone, service, effective period and exact unavailability overlap",()=>{const route=fs.readFileSync("app/api/uat-scheduling/route.ts","utf8");assert.match(route,/json_each\(p\.services_json\)/);assert.match(route,/json_each\(p\.zones_json\)/);assert.match(route,/p\.effective_from<=\?/);assert.match(route,/p\.effective_to IS NULL OR p\.effective_to>=\?/);assert.match(route,/u\.starts_at<\? AND u\.ends_at>\?/);assert.doesNotMatch(route,/blockedProviders\(date/);});
 
 test("server address authority overwrites browser city zone coordinates and radius",()=>{const route=fs.readFileSync("app/api/uat-scheduling/route.ts","utf8"),authority=fs.readFileSync("lib/service-discovery-address.ts","utf8");assert.match(route,/resolveGovernedServiceAddress\(db,/);assert.match(route,/input=\{\.\.\.input,cityId:governed\.cityId,zoneId:governed\.zoneId,latitude:governed\.latitude,longitude:governed\.longitude,serviceRadiusKm:governed\.serviceRadiusKm\}/);assert.match(authority,/SERVICE_DISCOVERY_RADIUS_KM=16/);assert.match(authority,/geocodeAddress\(\{address\}\)/);});
+// ---------------------------------------------------------------------------------------------------
+// LP-N11. A sitting booking was created, payment captured five minutes later through the staff sandbox,
+// and the sitter's Accept was then refused 409: provider_assignment_offers.expires_at was offered_at +
+// 180s. The seeded commission sitters and hosts (sit_sana, sit_neha, sit_asha, host_*) carried a
+// three-minute acceptance window, which expires before a tester can finish checkout. uatcap_sit_cm
+// already had 60 and worked, which is why the same journey passed elsewhere.
+//
+// Owner decision 2026-09-22: 30 minutes, for the advance-booked verticals. Pet Taxi and Dog Walking are
+// live dispatch, where a 30-minute window to accept a ride would be operationally wrong, so they keep 3.
+//
+// The seed writes with INSERT OR IGNORE, so a longer window would never have reached a database that
+// already held these rows - which is exactly why staging kept refusing. These cases execute the real
+// seeder against SQLite and read the rows back.
+// ---------------------------------------------------------------------------------------------------
+
+const { seedProviderCapacityDefaults, getProviderAcceptanceTimeout } = await import("../lib/provider-capacity-governance.ts");
+const seededCapacity = () => new DatabaseSync(":memory:");
+
+test("LP-N11: seeded sitters and hosts get a 30-minute acceptance window, taxi and walking keep three", async () => {
+  const sqlite = seededCapacity();
+  await seedProviderCapacityDefaults(d1(sqlite));
+  for (const id of ["sit_sana", "sit_neha", "sit_asha", "host_sana", "host_maya_rohan", "host_arjun_tara", "host_priya_dev"]) {
+    assert.equal(await getProviderAcceptanceTimeout(d1(sqlite), id), 30, `${id} must have the advance-booking window`);
+  }
+  for (const id of ["taxi_rahul", "taxi_meera", "walk_nisha", "walk_kiran", "walk_asha"]) {
+    assert.equal(await getProviderAcceptanceTimeout(d1(sqlite), id), 3, `${id} is live dispatch and must keep the short window`);
+  }
+  sqlite.close();
+});
+
+test("LP-N11: a database already holding the three-minute rows is repaired, not ignored", async () => {
+  const sqlite = seededCapacity();
+  await seedProviderCapacityDefaults(d1(sqlite));
+  // Put the database back into the state staging was actually in: the row exists, at three minutes.
+  // INSERT OR IGNORE alone can never fix that, which is the whole defect.
+  sqlite.prepare("UPDATE provider_capacity_profiles SET acceptance_timeout_minutes=3 WHERE id='sit_sana'").run();
+  const raw = () => sqlite.prepare("SELECT acceptance_timeout_minutes m FROM provider_capacity_profiles WHERE id='sit_sana'").get().m;
+  // Read the row directly: getProviderAcceptanceTimeout seeds on the way in, so asking it would
+  // already repair the row and the precondition could never be observed.
+  assert.equal(raw(), 3, "precondition: the stale row is back");
+
+  await seedProviderCapacityDefaults(d1(sqlite));
+  assert.equal(raw(), 30, "the seeder itself must repair the stored row, not just the read");
+  assert.equal(await getProviderAcceptanceTimeout(d1(sqlite), "sit_sana"), 30, "a redeploy must repair the stale row");
+  sqlite.close();
+});
+
+test("LP-N11: the repair only ever raises, so a longer window set by anyone else survives", async () => {
+  const sqlite = seededCapacity();
+  await seedProviderCapacityDefaults(d1(sqlite));
+  // An operator lengthens one window through Control, and a uatcap_* profile already carries 60.
+  sqlite.prepare("UPDATE provider_capacity_profiles SET acceptance_timeout_minutes=120 WHERE id='sit_neha'").run();
+  sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_sit_cm','blr','PawSpace Sitter (UAT)','commission','[\"pet_sitting\"]','[\"blr-east\"]',1,4.9,95,4,30,12,60,'active',1,'2026-01-01',NULL,'founder_seed',1)").run();
+
+  await seedProviderCapacityDefaults(d1(sqlite));
+  assert.equal(await getProviderAcceptanceTimeout(d1(sqlite), "sit_neha"), 120, "a longer window must not be cut back to 30");
+  assert.equal(await getProviderAcceptanceTimeout(d1(sqlite), "uatcap_sit_cm"), 60, "the 60-minute UAT profile must not be cut back to 30");
+  sqlite.close();
+});
