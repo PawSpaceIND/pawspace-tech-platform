@@ -33,7 +33,8 @@ concurrency:
 
 jobs:
   ui-closure:
-    if: ${{ github.event.inputs.confirm == 'ui-closure' }}
+    needs: customer-acceptance
+    if: ${{ github.event.inputs.confirm == 'ui-closure' && needs.customer-acceptance.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.target_environment }}
     env:
