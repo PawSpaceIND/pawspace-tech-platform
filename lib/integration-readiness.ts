@@ -90,6 +90,8 @@ function detectedCredentialStatus(runtime:Record<string,unknown>,detector:unknow
  }
 }
 
+export function integrationCredentialStatusForCode(runtime:Record<string,unknown>,integrationCode:string):CredentialStatus|null{const seed=seeds.find(item=>item.code===integrationCode);return seed?detectedCredentialStatus(runtime,seed.credentialDetector):null;}
+
 /**
  * Seeds are inserted with INSERT OR IGNORE, so correcting a seed value only reaches fresh databases -
  * any environment that already holds INT-VOICE-01 would keep code_boundary_status='partial' and the old
