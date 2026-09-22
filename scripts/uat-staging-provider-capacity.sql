@@ -267,9 +267,20 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
 CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date);
 CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source);
+-- Overnight-capable UAT services must remain bookable across midnight. Repair existing authored
+-- Pet Sitting roster rows first: INSERT OR IGNORE alone would preserve an older 06:00-22:00 row and
+-- make the default overnight Sitting journey impossible even though the sitter is active. This only
+-- touches synthetic uatcap_* roster rows; partner_app / operations availability remains authoritative.
+UPDATE scheduling_availability
+SET windows_json='["00:00-23:59"]',updated_at=strftime('%s','now')*1000
+WHERE source='roster'
+  AND provider_id IN (
+    SELECT id FROM provider_capacity_profiles
+    WHERE id LIKE 'uatcap\_%' ESCAPE '\' AND services_json LIKE '%"pet_sitting"%'
+  );
 WITH RECURSIVE days(d,n) AS (SELECT date('now','-1 day'),0 UNION ALL SELECT date(d,'+1 day'),n+1 FROM days WHERE n<16)
 INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at)
-SELECT 'uatseed_'||p.id||'_'||days.d||'_'||z.value,p.id,p.city_id,z.value,days.d,CASE WHEN p.services_json LIKE '%"boarding"%' THEN '["00:00-23:59"]' ELSE '["06:00-22:00"]' END,'roster',strftime('%s','now')*1000
+SELECT 'uatseed_'||p.id||'_'||days.d||'_'||z.value,p.id,p.city_id,z.value,days.d,CASE WHEN p.services_json LIKE '%"boarding"%' OR p.services_json LIKE '%"pet_sitting"%' THEN '["00:00-23:59"]' ELSE '["06:00-22:00"]' END,'roster',strftime('%s','now')*1000
 FROM provider_capacity_profiles p,json_each(p.zones_json) z,days
 WHERE p.id LIKE 'uatcap\_%' ESCAPE '\';
 
