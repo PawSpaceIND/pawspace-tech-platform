@@ -135,7 +135,7 @@ test("provider connection is reported from configuration, not asserted as boiler
   coldDb({ PAWSPACE_AI_PROVIDER_API_KEY: "sk-test-not-a-real-key" });
   const connected = await adapter.aiProviderConnection();
   assert.equal(connected.connected, true, "a configured key must be reported as connected");
-  assert.equal(connected.providerRef, "anthropic");
+  assert.equal(connected.providerRef, "openai");
   assert.ok(!JSON.stringify(connected).includes("sk-test-not-a-real-key"), "the key itself is never returned");
 
   // The team AI page must no longer state the provider is disconnected as a fixed fact.
