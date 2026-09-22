@@ -127,3 +127,10 @@ test("signed-in customer acceptance runs on its own fresh GitHub runner", () => 
   assert.match(customerJob, /node scripts\/customer-ui-acceptance-v2\.mjs/);
   assert.doesNotMatch(customerJob, /release-ui-closure\.mjs/);
 });
+
+
+test("customer acceptance completes before the load-heavy visual closure begins", () => {
+  const visualJob = workflow.slice(workflow.indexOf("  ui-closure:"), workflow.indexOf("  customer-acceptance:"));
+  assert.match(visualJob, /needs: customer-acceptance/);
+  assert.match(visualJob, /needs\.customer-acceptance\.result == 'success'/);
+});
