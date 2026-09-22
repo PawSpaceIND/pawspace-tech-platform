@@ -49,6 +49,8 @@ async function thread({ phone = "9876500044", optOut = 0, whatsappConsent = 1, e
   globalThis.__CHAT_REPLY_ENV__ = { ...env };
 
   await chat.ensureChatHumanReplyTables(db);
+  const { ensureWhatsAppUatTables } = await import("../lib/whatsapp-uat-adapter.ts");
+  await ensureWhatsAppUatTables(db);
   const { ensureCustomer360Tables } = await import("../lib/customer-360.ts");
   await ensureCustomer360Tables(db);
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT,name TEXT,primary_phone TEXT,secondary_phone TEXT,email TEXT,source TEXT,consent_json TEXT,created_at INTEGER,updated_at INTEGER)");
@@ -59,9 +61,18 @@ async function thread({ phone = "9876500044", optOut = 0, whatsappConsent = 1, e
     sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,provider,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('WA-IN',?,?,'inbound','whatsapp','service','inbound','{}','delivered','limechat','wa-in','{}','customer',1,1)").run(THREAD, CUSTOMER);
   }
 
+  /** The customer answering in the thread. Consent is transcribed from a real reply, never entered for them. */
+  let replies = 0;
+  const customerReplies = (body = "yes please") => {
+    replies += 1;
+    sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,provider,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,'inbound','chat','service','customer_reply',?,'delivered','pawspace_web_chat',?,'{}','customer',?,?)")
+      .run(`IN-${replies}`, THREAD, CUSTOMER, JSON.stringify({ text: body }), `in-${replies}`, Date.now() + 1000, Date.now() + 1000);
+  };
+  /** An approved WhatsApp template, without which no session can be opened with this customer. */
+  const approveHandoverTemplate = () => sqlite.prepare("INSERT OR REPLACE INTO whatsapp_uat_templates (template_key,status,category,approved_language,updated_by,updated_at) VALUES (?, 'approved','utility','en','test',1)").run(chat.CHAT_HANDOVER_TEMPLATE_KEY);
   const outbound = () => sqlite.prepare("SELECT template_key,channel,status,provider,payload_json,policy_json FROM communication_messages WHERE thread_id=? AND direction='outbound' ORDER BY created_at,id").all(THREAD);
   const said = () => outbound().map((row) => JSON.parse(row.payload_json).text);
-  return { sqlite, db, outbound, said };
+  return { sqlite, db, outbound, said, customerReplies, approveHandoverTemplate };
 }
 
 const refusal = async (promise) => {
@@ -106,20 +117,52 @@ test("the customer is ASKED in the thread before anything moves to WhatsApp", as
   assert.equal(blocked.body?.code, "consent_not_asked");
 });
 
-test("consent given moves the conversation; consent refused keeps it here", async () => {
+test("consent given moves the conversation, and the move actually queues a WhatsApp message", async () => {
   const granted = await thread();
+  granted.approveHandoverTemplate();
   await chat.askWhatsAppMoveConsent(granted.db, { actor: STAFF, threadId: THREAD });
+  granted.customerReplies("yes please");
   await chat.recordWhatsAppMoveConsent(granted.db, { threadId: THREAD, granted: true, actorId: STAFF.email });
-  const moved = await chat.moveChatThreadToWhatsApp(granted.db, { actor: STAFF, threadId: THREAD });
-  assert.equal(moved.moved, true);
 
+  const moved = await chat.moveChatThreadToWhatsApp(granted.db, { actor: STAFF, threadId: THREAD });
+
+  assert.equal(moved.moved, true);
+  // `moved:true` on its own proves nothing: a function that did nothing at all could return it. What
+  // makes this a move is a real WhatsApp message on the thread.
+  assert.ok(moved.handoverMessageId, "the handover must have a message behind it");
+  const whatsapp = granted.sqlite.prepare("SELECT id,channel,direction FROM communication_messages WHERE thread_id=? AND channel='whatsapp'").all(THREAD);
+  assert.equal(whatsapp.length, 1, "exactly one WhatsApp message is queued for the handover");
+  assert.equal(whatsapp[0].direction, "outbound");
+  assert.equal(moved.externalDelivery, false, "queued, not delivered: dispatch stays the separate step it has always been");
+  assert.ok(granted.said().some((line) => /moved this conversation to WhatsApp/.test(line)), "and the customer is told in the chat they are leaving");
+});
+
+test("consent refused keeps the conversation here", async () => {
   const declined = await thread();
   await chat.askWhatsAppMoveConsent(declined.db, { actor: STAFF, threadId: THREAD });
+  declined.customerReplies("no thanks");
   await chat.recordWhatsAppMoveConsent(declined.db, { threadId: THREAD, granted: false, actorId: STAFF.email });
+
   const refused = await refusal(chat.moveChatThreadToWhatsApp(declined.db, { actor: STAFF, threadId: THREAD }));
+
   assert.equal(refused.status, 409);
   assert.equal(refused.body?.code, "consent_declined");
   assert.ok(declined.said().some((line) => line.includes("will reply to you here in this chat")), "and the customer is told a human stays with them here");
+  assert.equal(declined.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE thread_id=? AND channel='whatsapp'").get(THREAD).n, 0,
+    "nothing is queued to WhatsApp for a customer who said no");
+});
+
+test("staff cannot record consent the customer never gave", async () => {
+  // The in-thread question exists so the customer decides. Taking `granted` from the request body and
+  // writing it down would have let staff record a yes that was never said.
+  const { db, sqlite } = await thread();
+  await chat.askWhatsAppMoveConsent(db, { actor: STAFF, threadId: THREAD });
+
+  const refused = await refusal(chat.recordWhatsAppMoveConsent(db, { threadId: THREAD, granted: true, actorId: STAFF.email }));
+
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body?.code, "customer_reply_required");
+  assert.equal(sqlite.prepare("SELECT status FROM chat_whatsapp_move_consents WHERE thread_id=?").get(THREAD).status, "asked", "still merely asked");
 });
 
 test("no number, or a CRM opt-out, is not a question worth asking", async () => {
@@ -189,4 +232,21 @@ test("a takeover on web chat asks the question by itself", async () => {
   assert.match(source, /askWhatsAppMoveConsent\(db,\{actor,threadId:body\.threadId\}\)/);
   assert.match(source, /body\.action==="take_over"\?await askWhatsAppMoveConsent/);
   assert.match(source, /\.catch\(\(\)=>null\)/, "best-effort: a posted message must not turn a committed takeover into an error");
+});
+
+test("with no approved template the move refuses, and says nothing was sent", async () => {
+  // A customer who has only used web chat has no WhatsApp session, and WhatsApp will not let a business
+  // open one with free text. No approved template means no move — reported, not worked around.
+  const { db, sqlite } = await thread();
+  await chat.askWhatsAppMoveConsent(db, { actor: STAFF, threadId: THREAD });
+  sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,provider,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('IN-T',?,?,'inbound','chat','service','customer_reply','{\"text\":\"yes\"}','delivered','pawspace_web_chat','in-t','{}','customer',?,?)")
+    .run(THREAD, CUSTOMER, Date.now() + 1000, Date.now() + 1000);
+  await chat.recordWhatsAppMoveConsent(db, { threadId: THREAD, granted: true, actorId: STAFF.email });
+
+  const refused = await refusal(chat.moveChatThreadToWhatsApp(db, { actor: STAFF, threadId: THREAD }));
+
+  assert.equal(refused.status, 503);
+  assert.equal(refused.body?.code, "whatsapp_handover_not_queued");
+  assert.match(String(refused.body?.error), /Nothing has been sent/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE thread_id=? AND channel='whatsapp'").get(THREAD).n, 0);
 });

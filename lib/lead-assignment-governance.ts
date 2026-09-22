@@ -62,7 +62,9 @@ export function leadCityId(value:unknown){
  if(!raw)return "";
  if(LEAD_CITY_ALIASES[raw])return LEAD_CITY_ALIASES[raw];
  if(LEAD_CITY_IDS.includes(raw))return raw;
- for(const[label,id]of Object.entries(LEAD_CITY_ALIASES))if(raw.includes(label))return id;
+ // Word-boundary, not a bare substring: `raw.includes("bangalore")` also matched "notbangalore" and
+ // "bangalorexyz", routing a lead whose area text merely contained a city name into that city's queue.
+ for(const[label,id]of Object.entries(LEAD_CITY_ALIASES))if(new RegExp(`(^|[^a-z0-9])${label}([^a-z0-9]|$)`).test(raw))return id;
  // A bare id inside a longer label ("blr-east", "BLR / south") - matched on a word boundary so a city
  // id can never be found inside an unrelated word.
  for(const id of LEAD_CITY_IDS)if(new RegExp(`(^|[^a-z0-9])${id}([^a-z0-9]|$)`).test(raw))return id;

@@ -16,10 +16,16 @@ function sameOrigin(request:Request){const origin=request.headers.get("origin");
 export async function GET(request:Request){
  try{
   const actor=await authorize(request,"communications.manage"),db=await database(),url=new URL(request.url);
-  const threadId=url.searchParams.get("threadId")||"",customerId=url.searchParams.get("customerId")||"";
-  if(!threadId||!customerId)return json({error:"Thread and customer are required"},400);
+  const threadId=url.searchParams.get("threadId")||"";
+  if(!threadId)return json({error:"Thread ID is required"},400);
   if(!(await actorCanAccessConversation(db,actor,threadId)))return json({error:"Conversation access denied"},403);
-  return json({data:await whatsAppMoveEligibility(db,{threadId,customerId})});
+  /* The customer is READ FROM THE THREAD, never taken from the query string. It used to be a parameter,
+   * so a member of staff authorised for one conversation could pass any other customer's id and read
+   * back that customer's phone number, opt-out state and consent. The thread is what access was checked
+   * against, so the thread is what decides whose contact details come back. */
+  const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Record<string,unknown>>();
+  if(!thread)return json({error:"Conversation not found"},404);
+  return json({data:await whatsAppMoveEligibility(db,{threadId,customerId:String(thread.customer_id??"")})});
  }catch(error){if(error instanceof Response)return error;return authError(error,"Unable to load chat reply state");}
 }
 

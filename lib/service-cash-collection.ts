@@ -102,7 +102,7 @@ export async function authoriseCompletionWithoutCollection(db:Db,input:{bookingI
  return{bookingId:input.bookingId,reason,authorisedBy:input.actorId,authorisedAt:now,payoutReleased:false as const};
 }
 
-export type CollectionGate={required:boolean;satisfied:boolean;via:"not_required"|"gateway_capture"|"recorded_collection"|"ops_override";payoutReleased:boolean;collected:number;overrideReason:string|null};
+export type CollectionGate={required:boolean;satisfied:boolean;via:"not_required"|"gateway_capture"|"recorded_collection"|"ops_override";payoutReleased:boolean;collected:number;bookingTotal:number;shortfall:number;overrideReason:string|null};
 
 /**
  * The gate itself, called on the way into completion.
@@ -113,14 +113,30 @@ export type CollectionGate={required:boolean;satisfied:boolean;via:"not_required
  * payment to the provider as well.
  */
 export async function assertCollectionRecordedForCompletion(db:Db,input:{bookingId:string;providerId:string}):Promise<CollectionGate>{
- if(!await isPayAfterService(db,input.bookingId))return{required:false,satisfied:true,via:"not_required",payoutReleased:true,collected:0,overrideReason:null};
+ if(!await isPayAfterService(db,input.bookingId))return{required:false,satisfied:true,via:"not_required",payoutReleased:true,collected:0,bookingTotal:0,shortfall:0,overrideReason:null};
  await ensureServiceCashCollectionTables(db);
+ const booking=await db.prepare("SELECT total_amount FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+ const bookingTotal=round2(Number(booking?.total_amount||0));
+ /* A SHORTFALL IS NOT A COLLECTION.
+  *
+  * This used to release the payout on any amount above zero, so a provider who recorded Rs 189 against a
+  * Rs 1,899 booking completed the job and accrued the full payout, with the Rs 1,710 that never arrived
+  * recorded and then ignored. The owner's decision is that a provider cannot complete until the
+  * collection is accounted for; money the customer did not hand over is not accounted for.
+  *
+  * A short collection still lets the job CLOSE - the service was delivered and refusing would strand the
+  * provider at the door over the customer's payment - but it is treated exactly as an Operations
+  * override is: the settlement is written withheld, with the shortfall named, and Finance decides.
+  * A rounding tolerance of one rupee keeps a legitimate cash rounding from withholding a payout. */
+ const shortfallOf=(amount:number)=>round2(Math.max(0,bookingTotal-amount));
+ const settled=(amount:number)=>bookingTotal<=0||shortfallOf(amount)<=1;
+
  const collected=await collectedForBooking(db,input.bookingId).catch(()=>0);
- if(collected>0)return{required:true,satisfied:true,via:"gateway_capture",payoutReleased:true,collected,overrideReason:null};
+ if(collected>0)return{required:true,satisfied:true,via:"gateway_capture",payoutReleased:settled(collected),collected,bookingTotal,shortfall:shortfallOf(collected),overrideReason:settled(collected)?null:`Payout withheld: the gateway captured ${collected} of ${bookingTotal}; ${shortfallOf(collected)} is unaccounted for.`};
  const recorded=await recordedCashCollection(db,input.bookingId);
- if(recorded&&recorded.amount>0)return{required:true,satisfied:true,via:"recorded_collection",payoutReleased:true,collected:recorded.amount,overrideReason:null};
+ if(recorded&&recorded.amount>0)return{required:true,satisfied:true,via:"recorded_collection",payoutReleased:settled(recorded.amount),collected:recorded.amount,bookingTotal,shortfall:shortfallOf(recorded.amount),overrideReason:settled(recorded.amount)?null:`Payout withheld: the provider recorded ${recorded.amount} of ${bookingTotal}; ${shortfallOf(recorded.amount)} is unaccounted for.`};
  const override=await collectionOverride(db,input.bookingId);
- if(override)return{required:true,satisfied:true,via:"ops_override",payoutReleased:false,collected:0,overrideReason:override.reason};
+ if(override)return{required:true,satisfied:true,via:"ops_override",payoutReleased:false,collected:0,bookingTotal,shortfall:bookingTotal,overrideReason:override.reason};
  throw governedJsonError({
   error:"Record the payment you collected before completing this job. This booking is pay-after-service, so nothing has been collected yet. If the customer has not paid, Operations can authorise the completion - your payout stays on hold until the payment is accounted for.",
   code:"cash_collection_required",

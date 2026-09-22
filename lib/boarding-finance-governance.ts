@@ -68,15 +68,24 @@ export async function mutateBoardingFinance(db:D1Database,input:BoardingFinanceI
    * split stay's collected truth lives in its payment schedule, not in that column. */
   const started=stayStatus==="in_progress"||String(stay.check_in_status)==="complete";
   if(!started&&await collectedForBooking(db,input.bookingId)<=0){
+   /* ONE batch: the cancellation, the audit event and the idempotency record commit together.
+    *
+    * These used to be three writes. The batch released the stay and the capacity first, and only then
+    * wrote the event and the idempotency key - so a failure in between left the reservation cancelled
+    * with no audit row and no replayable result, and the customer's retry would try to cancel a stay
+    * that was already gone. The idempotency record is what makes the retry safe, so it cannot commit
+    * after the thing it makes safe. */
+   const result={requestId:id,bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:0,refundId:null,refundStatus:"not_required",capacityReleased:true,bookingPreserved:false};
    await db.batch([
     db.prepare("INSERT INTO boarding_cancellation_requests (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?,?,'cancelled',?,?)").bind(id,input.bookingId,stay.stay_id,input.actorId,why,now,now),
     db.prepare("UPDATE boarding_stays SET status='cancelled',updated_at=? WHERE id=?").bind(now,stay.stay_id),
     db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status!='completed'").bind(now,input.bookingId),
     db.prepare("UPDATE boarding_capacity_locks SET status='released',updated_at=? WHERE stay_id=? AND status='active'").bind(now,stay.stay_id),
     db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status NOT IN ('completed','cancelled')").bind(input.bookingId),
+    db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancelled",input.actorId,JSON.stringify({requestId:id,reason:why,unpaidCustomerCancellation:true,approvedRefundAmount:0,refundId:null,policySource:"unpaid_customer_cancellation"}),now),
+    db.prepare("INSERT INTO boarding_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
    ]);
-   await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancelled",input.actorId,JSON.stringify({requestId:id,reason:why,unpaidCustomerCancellation:true,approvedRefundAmount:0,refundId:null,policySource:"unpaid_customer_cancellation"}),now).run();
-   return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:0,refundId:null,refundStatus:"not_required",capacityReleased:true,bookingPreserved:false});
+   return result;
   }await db.prepare("INSERT INTO boarding_cancellation_requests (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?,?,'policy_review_required',?,?)").bind(id,input.bookingId,stay.stay_id,input.actorId,why,now,now).run();await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancellation_requested",input.actorId,JSON.stringify({requestId:id,reason:why,refundPolicy:"configuration_required"}),now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true});
  }
 

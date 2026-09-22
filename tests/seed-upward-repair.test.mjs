@@ -32,16 +32,26 @@ function makeD1(sqlite) {
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-/** Runs the statements of `sql` that mention `table`, in file order, against a fresh database. */
-function runSeed(sql, table, seedExisting = () => {}) {
+/**
+ * Runs the statements of `sql` that mention `table`, in file order, against a fresh database.
+ *
+ * `also` names further tables whose statements must come along: the balance repair asks
+ * leave_ledger_events whether the leave has ever been used, so that table has to exist for it to run.
+ */
+function runSeed(sql, table, seedExisting = () => {}, also = []) {
   const sqlite = new DatabaseSync(":memory:");
-  const statements = sql.split(";\n").map((line) => line.trim()).filter(Boolean).filter((line) => line.includes(table));
+  const wanted = [table, ...also];
+  const statements = sql.split(";\n").map((line) => line.trim()).filter(Boolean).filter((line) => wanted.some((name) => line.includes(name)));
+  // The pre-existing rows go in after EVERY CREATE has run, not after the first one: the balance repair
+  // reads leave_ledger_events, so a fixture row for it cannot be written while that table is still two
+  // statements away from existing.
   let created = false;
-  for (const statement of statements) {
-    sqlite.exec(`${statement};`);
-    if (!created && /CREATE TABLE/i.test(statement)) { created = true; seedExisting(sqlite); }
-  }
+  const isDdl = (statement) => /(^|\n)\s*CREATE\s/i.test(statement);
+  const ddl = statements.filter(isDdl);
+  for (const statement of ddl) { sqlite.exec(`${statement};`); created = true; }
   assert.ok(created, `the seed must create ${table} before it writes to it`);
+  seedExisting(sqlite);
+  for (const statement of statements) if (!isDdl(statement)) sqlite.exec(`${statement};`);
   return sqlite;
 }
 
@@ -78,13 +88,13 @@ test("a leave balance left at zero is raised, and one already larger is not rese
 
   const emptied = runSeed(seed, "employee_leave_balances", (sqlite) => {
     sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (?,'CL',0,1)").run(employeeId);
-  });
+  }, ["leave_ledger_events"]);
   assert.equal(emptied.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id=? AND leave_code='CL'").get(employeeId).balance, 12,
-    "a tester with a zero balance cannot apply for the leave the form offers");
+    "an untouched seeded balance left at zero cannot apply for the leave the form offers");
 
   const generous = runSeed(seed, "employee_leave_balances", (sqlite) => {
     sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (?,'CL',30,1)").run(employeeId);
-  });
+  }, ["leave_ledger_events"]);
   assert.equal(generous.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id=? AND leave_code='CL'").get(employeeId).balance, 30,
     "the repair only ever raises: a larger balance someone granted is not taken away");
 });
@@ -178,4 +188,23 @@ test("after the repair, the real leave module accepts the request the /me form o
   catch (error) { unknown = error; }
   assert.ok(unknown instanceof Response);
   assert.equal(unknown.status, 409, "an unknown leave code still answers 409");
+});
+
+test("a redeploy never hands back leave somebody already took", () => {
+  /*
+   * "balance below the seeded figure" was not a safe test on its own. A tester who had taken 5 of their
+   * 12 days sits at 7, which is below 12, so every redeploy restored those 5 days and let them apply for
+   * leave they had already spent. leave_ledger_events is the record of what was actually used, and its
+   * presence is what makes a balance untouchable.
+   */
+  const seed = read("scripts/employee-seed.sql");
+  const employeeId = /INSERT OR IGNORE INTO employee_leave_balances \(employee_id,leave_code,balance,updated_at\) VALUES \('([^']+)','CL'/.exec(seed)?.[1];
+
+  const spent = runSeed(seed, "employee_leave_balances", (sqlite) => {
+    sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (?,'CL',7,1)").run(employeeId);
+    sqlite.prepare("INSERT INTO leave_ledger_events (id,idempotency_key,employee_id,leave_code,event_type,units,source_request_id,actor_id,created_at) VALUES ('LLE-1','leave:LVR-1:approved',?,'CL','debit',-5,'LVR-1','hr@pawspace.in',2)").run(employeeId);
+  }, ["leave_ledger_events"]);
+
+  assert.equal(spent.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id=? AND leave_code='CL'").get(employeeId).balance, 7,
+    "five days taken stay taken; a seed must never credit leave back");
 });

@@ -82,6 +82,9 @@ s.push("CREATE TABLE IF NOT EXISTS payroll_result_lines (id TEXT PRIMARY KEY,res
 s.push("CREATE TABLE IF NOT EXISTS payslips (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,employee_id TEXT NOT NULL,result_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'available_uat',created_at INTEGER NOT NULL,UNIQUE(run_id,employee_id));");
 s.push("CREATE TABLE IF NOT EXISTS leave_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',leave_code TEXT NOT NULL,allow_negative INTEGER NOT NULL DEFAULT 0,entitlement_units REAL,approval_reference TEXT,effective_from INTEGER NOT NULL,effective_until INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(name,version));");
 s.push("CREATE TABLE IF NOT EXISTS employee_leave_balances (employee_id TEXT NOT NULL,leave_code TEXT NOT NULL,balance REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(employee_id,leave_code));");
+// The balance repair below asks leave_ledger_events whether this leave has ever been used, so the seed
+// has to be able to run before that table exists. DDL copied from lib/attendance-leave.ts, its owner.
+s.push("CREATE TABLE IF NOT EXISTS leave_ledger_events (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,employee_id TEXT NOT NULL,leave_code TEXT NOT NULL,event_type TEXT NOT NULL,units REAL NOT NULL,source_request_id TEXT,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS sales_employee_base (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,base_vertical TEXT NOT NULL,effective_from TEXT NOT NULL,effective_until TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS sales_attributed_bookings (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,employee_id TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);");
@@ -155,12 +158,16 @@ for (const lp of UAT_LEAVE_POLICIES) {
 for (const e of employees) {
   s.push(`INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (${q("SEEDUSR-" + e.code)},${q(e.email)},${q(e.name)},${q(e.role)},'active',${JOINED},${BASE});`);
   s.push(`INSERT OR IGNORE INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES (${q(e.id)},${q(e.email)},${q(e.code)},${q(e.name)},${q(e.email)},'0000000000','active',${JOINED},${JOINED},${BASE});`);
-  // Balances get the same upward repair: a tester whose seeded balance was left at 0 by an earlier run
-  // cannot apply for the leave the form offers. Only a balance BELOW the seeded figure is raised, so a
-  // balance a person granted, or one already spent down from a larger grant, is never reset.
+  /* Balances get the same upward repair, but ONLY where the leave has never been touched.
+   *
+   * "balance < seeded figure" alone was wrong: a tester who had already taken 5 of their 12 days sits at
+   * 7, which is below 12, so every redeploy handed those 5 days back and let them apply for leave they
+   * had already spent. leave_ledger_events is the record of every debit and credit, so its absence for
+   * this employee and code is what makes a balance safe to top up - an untouched seeded row, not a
+   * spent one. */
   for (const lp of UAT_LEAVE_POLICIES) {
     s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
-    s.push(`UPDATE employee_leave_balances SET balance=${lp.units},updated_at=${BASE} WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)} AND balance<${lp.units};`);
+    s.push(`UPDATE employee_leave_balances SET balance=${lp.units},updated_at=${BASE} WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)} AND balance<${lp.units} AND NOT EXISTS (SELECT 1 FROM leave_ledger_events WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)});`);
   }
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);

@@ -1,4 +1,5 @@
 import{ensureConversationGovernance}from"./conversation-governance";
+import{queueWhatsAppUatOutbound}from"./whatsapp-uat-adapter";
 import{ensureCustomer360Tables}from"./customer-360";
 import{governedJsonError}from"./governed-http-error";
 import type{AuthenticatedActor}from"./server-auth";
@@ -32,6 +33,8 @@ export type WhatsAppMoveBlock="no_phone_number"|"crm_opt_out"|"whatsapp_not_conn
 
 /** What the customer reads in the thread. Never a promise the platform cannot keep. */
 export const STAY_IN_THREAD_MESSAGE="A member of the PawSpace team will reply to you here in this chat.";
+/** The approved WhatsApp template that opens the session when a chat thread moves across. */
+export const CHAT_HANDOVER_TEMPLATE_KEY="chat_whatsapp_handover";
 export const CONSENT_QUESTION="Would you like us to continue this conversation on WhatsApp? Reply here to let us know - either way, a member of the PawSpace team will keep replying to you in this chat.";
 
 const BLOCK_EXPLANATION:Record<WhatsAppMoveBlock,string>={
@@ -179,10 +182,18 @@ export async function askWhatsAppMoveConsent(db:Db,input:{actor:AuthenticatedAct
 /** The customer's answer, recorded against the thread it was given in. */
 export async function recordWhatsAppMoveConsent(db:Db,input:{threadId:string;granted:boolean;actorId:string}){
  const thread=await chatThread(db,input.threadId),customerId=text(thread.customer_id);
- const asked=await db.prepare("SELECT status FROM chat_whatsapp_move_consents WHERE thread_id=?").bind(input.threadId).first<Row>();
+ const asked=await db.prepare("SELECT status,asked_at FROM chat_whatsapp_move_consents WHERE thread_id=?").bind(input.threadId).first<Row>();
  if(!asked)throw governedJsonError({error:"The customer has not been asked about moving to WhatsApp yet",code:"consent_not_asked"},409);
+ /* Consent is the CUSTOMER's, so there has to be a customer message to read it from.
+  *
+  * This took `granted` from the request body and wrote it down, which meant a member of staff could
+  * record consent that was never given - the one thing the in-thread question exists to prevent. The
+  * answer is still transcribed by staff, because a free-text reply is not machine-readable, but it must
+  * now correspond to an inbound message that arrived AFTER the question was put. */
+ const reply=await db.prepare("SELECT id FROM communication_messages WHERE thread_id=? AND direction='inbound' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(input.threadId,Number(asked.asked_at||0)).first<Row>().catch(()=>null);
+ if(!reply)throw governedJsonError({error:"The customer has not replied since they were asked. Consent is recorded from their answer in this chat, not entered on their behalf.",code:"customer_reply_required"},409);
  const now=Date.now(),status=input.granted?"granted":"declined";
- await db.prepare("UPDATE chat_whatsapp_move_consents SET status=?,answered_at=? WHERE thread_id=?").bind(status,now,input.threadId).run();
+ await db.prepare("UPDATE chat_whatsapp_move_consents SET status=?,answered_at=?,detail_json=? WHERE thread_id=?").bind(status,now,JSON.stringify({recordedBy:input.actorId,fromMessageId:text(reply.id)}),input.threadId).run();
  if(!input.granted)await postToThread(db,{threadId:input.threadId,customerId,body:STAY_IN_THREAD_MESSAGE,templateKey:"chat_stay_in_thread",createdBy:input.actorId,idempotencyKey:`chat-stay-in-thread:${input.threadId}:consent_declined`,policy:{whatsappMove:"declined_by_customer"}});
  return{threadId:input.threadId,customerId,status,answeredAt:now,...await whatsAppMoveEligibility(db,{threadId:input.threadId,customerId})};
 }
@@ -199,7 +210,27 @@ export async function moveChatThreadToWhatsApp(db:Db,input:{actor:AuthenticatedA
  const eligibility=await whatsAppMoveEligibility(db,{threadId:input.threadId,customerId});
  if(eligibility.blockedBy==="whatsapp_not_connected")throw governedJsonError({error:"WhatsApp is not connected on this environment, so this conversation cannot be moved there and no message has been sent. Reply to the customer in this chat instead.",code:"whatsapp_not_connected",blockedBy:eligibility.blockedBy,staffGuidance:STAY_IN_THREAD_MESSAGE},503);
  if(!eligibility.eligible)throw governedJsonError({error:`This conversation stays in the web chat. ${BLOCK_EXPLANATION[eligibility.blockedBy!]}`,code:eligibility.blockedBy!,blockedBy:eligibility.blockedBy,staffGuidance:STAY_IN_THREAD_MESSAGE},409);
+ /* Actually move it, or do not report a move.
+  *
+  * This used to write a line of metadata and return `moved:true` without queueing anything, changing any
+  * routing or recording any delivery - a success the customer would never see, which is the exact thing
+  * this decision forbids elsewhere in this file. The handover now goes through the WhatsApp outbound
+  * queue that every other WhatsApp message in this codebase goes through, so it inherits that path's
+  * consent, template and frequency controls, and the customer is told in the chat they are leaving.
+  *
+  * `queued` is reported honestly: the UAT adapter queues, it does not deliver, and dispatch remains the
+  * separate step it has always been. */
  const now=Date.now();
- await db.prepare("UPDATE chat_whatsapp_move_consents SET detail_json=? WHERE thread_id=?").bind(JSON.stringify({movedAt:now,movedBy:input.actor.email}),input.threadId).run();
- return{threadId:input.threadId,customerId,moved:true as const,movedAt:now,...eligibility};
+ /* The template is not optional and cannot be skipped.
+  *
+  * A customer who has only ever used web chat has no WhatsApp session, and WhatsApp does not allow a
+  * business to open one with free text - the first message must be an approved template. The adapter
+  * enforces that (`approved_template_required_outside_session`), which is the whole reason the handover
+  * goes through it rather than writing a row directly. With no approved template the move refuses and
+  * the conversation stays where it is, which is the honest outcome, not a failure to work around. */
+ const handover=await queueWhatsAppUatOutbound(db,{provider:"sandbox_simulator",threadId:input.threadId,customerId,templateKey:CHAT_HANDOVER_TEMPLATE_KEY,text:"We are continuing this conversation on WhatsApp, as you agreed. A member of the PawSpace team will reply to you here.",idempotencyKey:`chat-whatsapp-move:${input.threadId}`,createdBy:input.actor.email}).catch(()=>null);
+ if(!handover?.queued)throw governedJsonError({error:`The move to WhatsApp could not be queued${handover&&"reason"in handover&&handover.reason?`: ${text(handover.reason)}`:""}. Nothing has been sent; reply to the customer in this chat instead.`,code:"whatsapp_handover_not_queued",staffGuidance:STAY_IN_THREAD_MESSAGE},503);
+ await db.prepare("UPDATE chat_whatsapp_move_consents SET detail_json=? WHERE thread_id=?").bind(JSON.stringify({movedAt:now,movedBy:input.actor.email,handoverMessageId:handover.messageId??null}),input.threadId).run();
+ await postToThread(db,{threadId:input.threadId,customerId,body:"We have moved this conversation to WhatsApp. You can keep replying here too.",templateKey:"chat_moved_to_whatsapp",createdBy:input.actor.email,idempotencyKey:`chat-moved-to-whatsapp:${input.threadId}`,policy:{whatsappMove:"queued"}});
+ return{threadId:input.threadId,customerId,moved:true as const,movedAt:now,handoverMessageId:handover.messageId??null,externalDelivery:false as const,...eligibility};
 }

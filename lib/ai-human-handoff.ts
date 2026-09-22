@@ -115,18 +115,35 @@ export async function aiHumanHandoffSnapshot(db:D1Database,input:{actor:Authenti
  */
 export async function listAiHandoffQueue(db:D1Database,input:{limit?:number;actor?:AuthenticatedActor}={}){
  await ensureAiHumanHandoff(db);
- const limit=Math.min(100,Math.max(1,input.limit||50)),access=input.actor?(await ensureConversationAccessTables(db),conversationAccessPredicate(input.actor,"t")):{sql:"1=1",binds:[]as unknown[]};
- const identified=`SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at,c.name canonical_name,c.primary_phone canonical_phone,g.name crm_name FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id LEFT JOIN canonical_customers c ON c.id=h.customer_id LEFT JOIN crm_contacts g ON g.id=h.customer_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`;
- const anonymous=`SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at,NULL canonical_name,NULL canonical_phone,NULL crm_name FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`;
- const visibleRows=await db.prepare(identified).bind(...access.binds,limit).all<Row>().catch((error:unknown)=>{
-  if(!/no such table: (canonical_customers|crm_contacts)/i.test(error instanceof Error?error.message:String(error)))throw error;
-  return db.prepare(anonymous).bind(...access.binds,limit).all<Row>();
+ // A non-numeric ?limit= arrived here as NaN and went straight into SQL as the LIMIT value, so the
+ // whole queue failed to load instead of returning a page. An unreadable limit falls back to the default.
+ const requested=Number(input.limit),limit=Math.min(100,Math.max(1,Number.isFinite(requested)&&requested>0?Math.floor(requested):50)),access=input.actor?(await ensureConversationAccessTables(db),conversationAccessPredicate(input.actor,"t")):{sql:"1=1",binds:[]as unknown[]};
+ /* Each identity table is joined independently and dropped independently.
+  *
+  * A single catch that fell all the way back to no identity at all meant one missing table threw the
+  * OTHER table's name and phone away, and every row came back unresolved. crm_contacts also had its name
+  * read but not its phone, so a conversation that exists only as a CRM contact showed a name staff could
+  * not act on. Both tables now contribute a name AND a phone, and a database missing one still shows
+  * whatever the other one knows. */
+ const base="SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at";
+ const query=(canonical:boolean,crm:boolean)=>`${base},${canonical?"c.name canonical_name,c.primary_phone canonical_phone":"NULL canonical_name,NULL canonical_phone"},${crm?"g.name crm_name,g.primary_phone crm_phone":"NULL crm_name,NULL crm_phone"} FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id${canonical?" LEFT JOIN canonical_customers c ON c.id=h.customer_id":""}${crm?" LEFT JOIN crm_contacts g ON g.id=h.customer_id":""} WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`;
+ const missingTable=(error:unknown)=>/no such table: (canonical_customers|crm_contacts)/i.exec(error instanceof Error?error.message:String(error))?.[1]??null;
+ const run=(canonical:boolean,crm:boolean)=>db.prepare(query(canonical,crm)).bind(...access.binds,limit).all<Row>();
+ const visibleRows=await run(true,true).catch(async(error:unknown)=>{
+  const missing=missingTable(error);
+  if(!missing)throw error;
+  // Drop only the table that is actually absent; keep the other one's identity.
+  const canonical=missing!=="canonical_customers",crm=missing!=="crm_contacts";
+  return run(canonical,crm).catch((second:unknown)=>{
+   if(!missingTable(second))throw second;
+   return run(false,false);
+  });
  });
  const totalRows=await db.prepare(`SELECT h.status,COUNT(*) count FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} GROUP BY h.status`).bind(...access.binds).all<Row>();
  const totals=new Map<string,number>();for(const row of totalRows.results||[])totals.set(text(row.status),Number(row.count||0));
  return{queue:(visibleRows.results||[]).map(row=>{
   const canonicalName=text(row.canonical_name),crmName=text(row.crm_name);
-  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||null,identitySource:canonicalName?"canonical_customer":crmName?"crm_contact":"unresolved",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};
+  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||text(row.crm_phone)||null,identitySource:canonicalName?"canonical_customer":crmName?"crm_contact":"unresolved",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};
  }),byStatus:Object.fromEntries(totals),waiting:totals.get("queued")||0,withStaff:totals.get("staff_active")||0};
 }
 

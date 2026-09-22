@@ -193,6 +193,36 @@ test("a collection needs an amount and a method", async () => {
   assert.equal((await post({ action: "record_cash_collection", collectedAmount: 1899, collectionMethod: "bank_transfer_next_week" })).body?.code, "collection_method_required");
 });
 
+test("a short collection closes the job but does NOT release the payout", async () => {
+  /*
+   * The gate released the payout on any amount above zero, so a provider who recorded ₹189 against a
+   * ₹1,899 booking completed and accrued the full payout, with the ₹1,710 that never arrived recorded
+   * and then ignored. A shortfall is not a collection.
+   */
+  const { post, complete, bookingStatus, settlement } = await groomingWorld();
+
+  await post({ action: "record_cash_collection", collectedAmount: 189, collectionMethod: "cash" });
+  const completed = await complete();
+
+  assert.equal(completed.status, 200, "the job still closes: refusing would strand the provider at the door");
+  assert.equal(bookingStatus(), "completed");
+  assert.equal(completed.body?.collection?.payoutReleased, false);
+  assert.equal(completed.body?.collection?.shortfall, 1710);
+
+  const readiness = settlement();
+  assert.equal(readiness.status, "withheld_pending_collection", "money the customer did not hand over is not accounted for");
+  assert.match(readiness.reason, /1710 is unaccounted for/, "and Finance is told exactly how much is missing");
+});
+
+test("a rounding-sized shortfall does not withhold a payout", async () => {
+  // Cash rounds. A rupee short is not a missing collection, and treating it as one would hold real
+  // payouts for no reason.
+  const { post, complete, settlement } = await groomingWorld();
+  await post({ action: "record_cash_collection", collectedAmount: 1898, collectionMethod: "cash" });
+  assert.equal((await complete()).status, 200);
+  assert.equal(settlement().status, "accrued");
+});
+
 test("a mistyped amount can be corrected before the job closes, and not after", async () => {
   const { post, complete } = await groomingWorld();
 
