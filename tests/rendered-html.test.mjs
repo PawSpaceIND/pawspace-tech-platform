@@ -563,7 +563,7 @@ test("runs a persistent Revenue 100, lead SLA, RNR and customer-ticket foundatio
   assert.match(panel, /Tickets, refunds and escalations/);
   assert.match(panel, /WATI, SMS and calling actions remain UAT-queued/);
   assert.match(route, /generateDaily100/);
-  assert.match(route, /Four .* attempts are already recorded/);
+  assert.match(await readFile(new URL("../lib/lead-attempt.ts",import.meta.url),"utf8"), /Four .* attempts are already recorded/);
   assert.match(route, /Cold requires 4 calls, 4 WhatsApp attempts and three working days/);
   assert.match(route, /runLeadSlaGovernance/);
   assert.match(route, /Resolution, root cause and evidence are mandatory/);

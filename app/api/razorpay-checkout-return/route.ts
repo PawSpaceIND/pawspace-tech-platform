@@ -77,7 +77,9 @@ function errorCode(fields: Record<string, string>) {
 }
 
 function redirectTo(request: Request, params: Record<string, string>) {
-  const target = new URL(BOOKING_CONFIRMATION_PATH, request.url);
+  // A fixed enum preserves the originating app without accepting a redirect URL.
+  const path = new URL(request.url).searchParams.get("scope") === "v2" ? "/v2/booking-confirmation" : BOOKING_CONFIRMATION_PATH;
+  const target = new URL(path, request.url);
   for (const [key, value] of Object.entries(params)) if (value) target.searchParams.set(key, value);
   return new Response(null, { status: 303, headers: { location: target.toString(), "cache-control": "no-store" } });
 }

@@ -1,0 +1,10 @@
+Deploy staging run 35634442129 (workflow_dispatch, ref fix/v2-human-test-launch-20260921)
+inputs: confirm=staging, expected_sha=a69cdd76529e8fe93043897d4c483b938718c7f2, sms_smoke=disabled
+Overall conclusion: SUCCESS (job "deploy" completed 2026-09-21T17:55:24Z)
+Every step succeeded; the SMS smoke and live customer OTP steps were skipped by design (sms_smoke=disabled).
+  checkout exact sha clean -> install -> build (vinext) -> configure staging -> apply D1 migrations (17:50:25-17:53:52)
+  -> record rollback reference -> deploy -> certify isolation before any D1 write -> PII-safe Sentry check
+  -> load staff directory -> load human-UAT provider roster -> certify the staging deploy (17:54:15-17:55:21)
+Final line: "Certified staging deploy of a69cdd76529e8fe93043897d4c483b938718c7f2 at https://pawspace-staging.karthik-fce.workers.dev"
+Evidence artifact: staging-certification-a69cdd76529e8fe93043897d4c483b938718c7f2 (artifact id 10655658700)
+Not covered by this run: browser journeys on the staging host, which the sandbox that produced this branch cannot reach.

@@ -1,0 +1,139 @@
+{
+  "steps": [
+    {
+      "step": "empty submit",
+      "fieldAlerts": [
+        "Enter your pet's name.",
+        "Enter the breed (for example Indie, Labrador or Persian).",
+        "Enter your pet's age in years (use 0 for under one year).",
+        "Choose your pet's size.",
+        "Enter the destination country.",
+        "Enter the destination city."
+      ],
+      "createCalls": 0
+    },
+    {
+      "step": "domestic form",
+      "kindHint": "Domestic move within India"
+    },
+    {
+      "step": "domestic created",
+      "caseId": "RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "route": "Domestic move · road · Bengaluru, India → Pune, India",
+      "pet": "Rex · Indie · 0 years · medium"
+    },
+    {
+      "step": "domestic reload",
+      "caseIdVisible": true,
+      "pune": true,
+      "uae": false
+    },
+    {
+      "step": "international form",
+      "kindHint": "International move · airline and destination documentation apply"
+    },
+    {
+      "step": "international created",
+      "caseId": "RLC-244F99EFCDD69A4A324DBD309E60617D",
+      "route": "International move · air · Bengaluru, India → Dubai, United Arab Emirates",
+      "pet": "Mia · Persian · 0.5 years · small"
+    },
+    {
+      "step": "invalid age",
+      "fieldAlerts": [
+        "Pet age must be a number between 0 and 30 years."
+      ],
+      "roadHint": "Road moves are usually within one country. Please double-check the destination country before you continue.",
+      "newCreateCalls": 0
+    },
+    {
+      "step": "activity",
+      "domesticListed": true,
+      "intlListed": true
+    },
+    {
+      "step": "activity reopen",
+      "url": "/v2/relocation?caseId=RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "stillPune": true
+    }
+  ],
+  "api": [
+    {
+      "path": "/api/relocation?scope=customer&customerId=CUS-OTP-02D5AE514D3AFB424894BF6C",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation",
+      "method": "POST",
+      "status": 201
+    },
+    {
+      "path": "/api/relocation?scope=customer&caseId=RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation?scope=customer&caseId=RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation?scope=customer&customerId=CUS-OTP-02D5AE514D3AFB424894BF6C",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation",
+      "method": "POST",
+      "status": 201
+    },
+    {
+      "path": "/api/relocation?scope=customer&caseId=RLC-244F99EFCDD69A4A324DBD309E60617D",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation?scope=customer&customerId=CUS-OTP-02D5AE514D3AFB424894BF6C",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation?scope=customer&customerId=CUS-OTP-02D5AE514D3AFB424894BF6C",
+      "method": "GET",
+      "status": 200
+    },
+    {
+      "path": "/api/relocation?scope=customer&caseId=RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "method": "GET",
+      "status": 200
+    }
+  ],
+  "customerId": "CUS-OTP-02D5AE514D3AFB424894BF6C",
+  "staff": {
+    "total": 4,
+    "domestic": {
+      "id": "RLC-4C8B89DEF7EDFEDBDF1BFE520CD2AD34",
+      "pet_name": "Rex",
+      "age_years": 0,
+      "size_class": "medium",
+      "travel_mode": "road",
+      "origin": "Bengaluru, India",
+      "destination": "Pune, India",
+      "status": "lead"
+    },
+    "intl": {
+      "id": "RLC-244F99EFCDD69A4A324DBD309E60617D",
+      "pet_name": "Mia",
+      "age_years": 0.5,
+      "size_class": "small",
+      "travel_mode": "air",
+      "origin": "Bengaluru, India",
+      "destination": "Dubai, United Arab Emirates",
+      "status": "lead"
+    },
+    "pageText": "Bengaluru, India → Pune, India · road · Rex (Indie, 0 yr, medium)"
+  },
+  "pageErrors": [],
+  "failed5xx": []
+}

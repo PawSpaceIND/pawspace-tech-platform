@@ -11,10 +11,24 @@ import { useCallback, useEffect, useState } from "react";
  * Approve / Reject here is `PATCH /api/service-media {action:"record_scan"}`, which requires
  * bookings.manage and refuses self-approval by the uploader.
  */
-type Asset = { id: string; ref: string; booking_id: string; provider_id: string; purpose: string; mime_type: string; size_bytes: number; scan_status: string; access_status: string; review_status?: string | null; review_reason?: string | null; reviewed_by?: string | null; created_by?: string | null; created_at: number; proofReady: boolean; provider_name?: string; service_code?: string };
+type Asset = { id: string; ref: string; booking_id: string; provider_id: string; purpose: string; mime_type: string; size_bytes: number; scan_status: string; access_status: string; review_status?: string | null; review_reason?: string | null; reviewed_by?: string | null; created_by?: string | null; created_at: number; proofReady: boolean; provider_name?: string; service_code?: string; objectStored?: boolean | null };
 const label = (value: string | null | undefined) => String(value ?? "").replaceAll("_", " ") || "—";
 const when = (value: number) => new Date(Number(value)).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
-const stateOf = (asset: Asset) => asset.proofReady ? "approved · proof ready" : asset.review_status === "pending_review" ? "awaiting your decision" : asset.review_status === "rejected" ? "rejected" : asset.access_status === "pending_upload" ? "registered, upload not confirmed" : `${label(asset.access_status)} · ${label(asset.review_status ?? asset.scan_status)}`;
+/**
+ * [LP-N09] objectStored is what the redemption actually verified, not this environment's headline
+ * status: false means the upload was confirmed from a caller-reported digest alone because no private
+ * bucket is bound, and no bytes exist anywhere for a reviewer to open. "awaiting your decision" and
+ * "proof ready" must never be the whole story when that is true - the words themselves changed, not
+ * whether the reviewer may still approve (that choice stays theirs; see the banner in the article below).
+ */
+const stateOf = (asset: Asset) => {
+  const notStored = asset.objectStored === false;
+  if (asset.proofReady) return notStored ? "approved · but no file was ever kept (storage not connected)" : "approved · proof ready";
+  if (asset.review_status === "pending_review") return notStored ? "hash recorded only, no file kept · awaiting your decision" : "awaiting your decision";
+  if (asset.review_status === "rejected") return "rejected";
+  if (asset.access_status === "pending_upload") return "registered, upload not confirmed";
+  return `${label(asset.access_status)} · ${label(asset.review_status ?? asset.scan_status)}`;
+};
 
 export default function ServiceProofReview({ bookingId, title }: { bookingId?: string; title?: string }) {
   const [assets, setAssets] = useState<Asset[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -55,6 +69,7 @@ export default function ServiceProofReview({ bookingId, title }: { bookingId?: s
     {assets.map(asset => <article key={asset.id} style={{ display: "grid", gap: 6, padding: 10, borderRadius: 10, background: asset.review_status === "pending_review" ? "#fff8e6" : "#f4f7f5" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}><strong>{label(asset.purpose)} photo</strong><span>{stateOf(asset)}</span></div>
       <small>{!bookingId && <>Booking {asset.booking_id} · {asset.provider_name ?? asset.provider_id} · </>}{asset.mime_type} · {Math.round(Number(asset.size_bytes) / 1024)} KB · uploaded {when(asset.created_at)}{asset.created_by ? ` by ${asset.created_by}` : ""}{asset.reviewed_by ? ` · reviewed by ${asset.reviewed_by}` : ""}{asset.review_reason ? ` · "${asset.review_reason}"` : ""}</small>
+      {asset.objectStored === false && <p role="alert" style={{ margin: 0, color: "#b3261e", fontWeight: 600 }}>⚠ File storage is not connected in this environment. Only the upload&apos;s hash was verified — no image exists to open. Whether that is acceptable to approve is your call.</p>}
       {asset.review_status === "pending_review" && <div style={{ display: "grid", gap: 6 }}>
         <input aria-label={`Review reason for ${label(asset.purpose)} photo`} placeholder="Reason for the decision (required)" value={reasons[asset.id] ?? ""} onChange={event => setReasons(current => ({ ...current, [asset.id]: event.target.value }))} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

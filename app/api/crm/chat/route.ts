@@ -219,7 +219,14 @@ export async function POST(request: Request) {
         }
       );
 
-      return json({ ok: true, data: result }, result.queued ? (result.duplicatePrevented ? 200 : 201) : 400);
+      if (!result.queued) {
+        const reason = String(result.reason || "not_queued");
+        const explained = reason === "whatsapp_consent_required"
+          ? "WhatsApp consent is required before staff can message this customer; reach them through a governed fallback instead"
+          : `Message was not queued (${reason.replace(/_/g, " ")})`;
+        return json({ ok: false, error: explained, data: result }, 409);
+      }
+      return json({ ok: true, data: result }, result.duplicatePrevented ? 200 : 201);
     }
 
     if (body.action === "simulate_inbound") {

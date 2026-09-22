@@ -1,0 +1,864 @@
+[
+  {
+    "id": "EMP-L-R01",
+    "priorId": "EMP-01",
+    "title": "FIXED: GET /api/revenue-crm / daily revenue priority no longer 500s",
+    "persona": "founder@pawspace.in",
+    "url": "/team/daily-revenue, /crm, /team",
+    "steps": [
+      "Sign in as founder",
+      "Open /team/daily-revenue",
+      "Page calls GET /api/revenue-crm"
+    ],
+    "expected": "Ranked daily opportunity list (or an honest empty state), no server error",
+    "actual": "GET /api/revenue-crm now returns 200 (ranked:0, keys:[] on this seed - no ranked leads today, an honest empty result, not the prior D1_ERROR). Also confirmed via /crm (revenue:200) and /team (no 500 in evidence.failedRequests for this route).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'daily-revenue' and 'crm-load'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/team-daily-revenue.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/nav-_team_daily_revenue.png"
+    ],
+    "severity": "P1",
+    "class": "backend",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R02",
+    "priorId": "EMP-02",
+    "title": "FIXED: seeded managers are no longer blanket-refused on CRM/BCC/People; each manager now gets scoped access with an honest 403 outside their scope",
+    "persona": "jyoti.manager39 (OPERATIONS), sunita.manager37 (SALES), vishal.manager40 (customer-experience)",
+    "url": "/crm, /booking-command-center, /team/people, /api/crm, /api/booking-command-center, /api/people-foundation",
+    "steps": [
+      "Sign in as each manager",
+      "Call the API matrix for all 30 staff endpoints",
+      "Open /crm and /booking-command-center"
+    ],
+    "expected": "Manager role holds customers.view/bookings.manage/people.view per defaultRoles inside their organizational scope",
+    "actual": "jyoti (OPS scope): /api/booking-command-center 200 (14/0 bookings depending on run), /api/people-foundation 200 (employees:2), /api/uat-scheduling 200; /api/crm now 403 with a specific, rendered message 'CRM is outside the manager's organizational scope' (correctly scoped, not the old blanket 'not fully provisioned'). sunita/vishal (SALES/CX scope): /api/crm 200; /api/booking-command-center 403 'Booking Command Center is outside the manager's organizational scope' (correctly scoped). No manager persona saw the old blanket denial message in this run.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json steps 0,1,3,4,6,7,18,19,23,26",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles/jyoti-bcc.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles/sunita-crm.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/crm-home.png"
+    ],
+    "severity": "P1",
+    "class": "auth",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R03",
+    "priorId": "EMP-03",
+    "title": "FIXED: finance MFA enrolment UI now exists and unblocks the finance role",
+    "persona": "anjali.finance33@tkpetcare.in, mahesh.finance34@tkpetcare.in",
+    "url": "/mfa, /team/finance, POST /api/v1/auth/mfa/enroll",
+    "steps": [
+      "Sign in as finance",
+      "UI redirects to /mfa?next=/team/finance",
+      "Enrol: wrong code rejected, then correct code verifies",
+      "Retry payroll/finance APIs"
+    ],
+    "expected": "Finance can enrol MFA in the browser and then use finance/payroll workspaces",
+    "actual": "/mfa?next=%2Fteam%2Ffinance shown before enrolment; wrong code -> 401 'Invalid MFA code' (shown in UI); correct verify -> 200, lands on /team/finance, DB mfa_enabled=1. After enrolment: GET /api/payroll 200 (was 403 'MFA enrollment required' before). Same confirmed for a second finance persona (mahesh.finance34) who then reviews a payroll run. (/api/me still 403 after enrolment - consistent with finance having no employee record, not an MFA gate.)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json steps 0,1,3",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/anjali-mfa-verify-wrong.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/anjali-after-mfa-team-finance.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/mahesh-after-mfa-payroll.png"
+    ],
+    "severity": "P1",
+    "class": "auth",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R04",
+    "priorId": "EMP-04",
+    "title": "FIXED: /team/people/payroll now has working Review / Approve / Prepare-payment controls and a full calculate->review->approve run completed via the UI with two distinct finance actors",
+    "persona": "founder@pawspace.in (maker), mahesh.finance34@tkpetcare.in (reviewer), founder (approver)",
+    "url": "/team/people/payroll, POST /api/payroll",
+    "steps": [
+      "Founder: Calculate Sept-2026 payroll -> PAYRUN-13345F82-85C",
+      "Founder tries Review own run",
+      "mahesh (finance, MFA-enrolled) opens the page and clicks Review payroll",
+      "mahesh tries Approve own review",
+      "Founder tries Approve (maker, not reviewer)",
+      "Founder clicks Approve after mahesh's review",
+      "founder clicks Prepare sandbox payment"
+    ],
+    "expected": "Page exposes calculate/review/approve/prepare-payment; maker cannot review/approve own action; two distinct finance actors can complete the run",
+    "actual": "Page buttons now include 'Review payroll' and 'Prepare sandbox payment' (previously absent). Founder (maker) reviewing own run -> 500 'Payroll update failed' (blocked, but as a generic 500 not a governed 4xx - see EMP-L-D02). mahesh reviews -> 200 'reviewed', DB reviewed_by=mahesh.finance34@tkpetcare.in. mahesh approving own review -> 500 (blocked). Founder (maker, distinct from reviewer) approves -> 200 'approved', DB approved_by=founder@pawspace.in. So the full calculate->review->approve chain now completes via the UI when maker and reviewer are different actors. Prepare sandbox payment then fails with a NEW schema defect (see EMP-L-D01).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json steps 4-10",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'payroll-page-controls-P1-10'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/payroll-mahesh-review.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/payroll-founder-approve.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/payroll-mahesh-approve-refused.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/payroll-page.png"
+    ],
+    "severity": "P1",
+    "class": "wiring",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R05",
+    "priorId": "EMP-05",
+    "title": "FIXED: /team/people/time now has Approve leave / Reject leave / Approve adjustment controls, driven successfully by a manager",
+    "persona": "jyoti.manager39 (manager)",
+    "url": "/team/people/time",
+    "steps": [
+      "Associate raises two leave requests + one adjustment",
+      "Manager opens /team/people/time",
+      "Click Approve leave on request 1, Reject leave on request 2, Approve adjustment"
+    ],
+    "expected": "Manager can decide leave/adjustments from the UI",
+    "actual": "Page now shows buttons 'Approve adjustment', 'Approve leave', 'Reject leave' (previously only Refresh). All three UI actions returned 200 and updated the DB: LVR-C270795B-E14 -> approved (approved_by=jyoti.manager39), LVR-34E24AEF-123 -> rejected, AAR-27BA56A7-4B3 -> approved (UI says 'approved', though the immediate follow-up DB read still showed status 'pending' - see EMP-L-D03). Associate's /me then shows both decisions.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json steps 7,8,9,10,12",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/jyoti-leave-approved.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/jyoti-leave-rejected.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/jyoti-adjustment-approved.png"
+    ],
+    "severity": "P1",
+    "class": "wiring",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R06",
+    "priorId": "EMP-06",
+    "title": "FIXED: applying for leave from /me now succeeds (active leave policy seeded); unconfigured-policy case is now a governed 409, not a 500",
+    "persona": "anita.associate17 (associate)",
+    "url": "/me (Apply for leave), POST /api/attendance-leave request_leave",
+    "steps": [
+      "On /me fill Leave type CL, From/To tomorrow, reason",
+      "Click Apply (twice, for two separate requests)",
+      "Repeat with a leave code that has no active policy",
+      "Repeat requesting more days than the balance allows"
+    ],
+    "expected": "Pending leave request created (balance checked), or an honest 4xx if policy/balance is invalid",
+    "actual": "CL apply -> 200 {id:'LVR-C270795B-E14', status:'pending'}; UI shows 'Leave request submitted for manager approval.' A second CL request also succeeds (LVR-34E24AEF-123). A leave code with no active policy -> 409 'Active leave policy configuration is required' (governed, was 500 before) and the UI shows that message inline. An overdraw request still returns 200/pending (balance appears to be checked at approval, not at request time - not further exercised).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json steps 2,3,4,5",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/anita-leave-applied.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/anita-leave-no-policy.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people/anita-leave-overdraw.png"
+    ],
+    "severity": "P1",
+    "class": "backend",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R07",
+    "priorId": "EMP-07",
+    "title": "STILL OPEN: lead-assignment-governance / lead-sla-governance business-rule calls still return deterministic 500 (no active policy seeded); no UI posts these actions",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/lead-assignment-governance (assign, replay), POST /api/lead-sla-governance (start_clock)",
+    "steps": [
+      "Create a lead via /crm",
+      "POST assign with idempotencyKey",
+      "Replay the same idempotency key",
+      "POST start_clock",
+      "Repeat on a second fresh lead with missing params"
+    ],
+    "expected": "Governed 4xx for missing/unsatisfied policy; idempotent replay; UI to assign/reassign",
+    "actual": "assign -> 500 'Unable to update lead assignment governance' (both a fresh run and a replay); slaStart -> 500 'Unable to update lead SLA governance'; a second, independent probe with missing params also 500. Deterministic across 2 separate test scripts (not a flake). policies:[] confirms no active assignment policy is seeded. No page posts assign/reassign or SLA actions. Note: an engineering backlog record (V2-054) claims this was fixed, but the browser evidence collected against this build (server 127.0.0.1:8792, commit ad4c56e) still reproduces the 500 both times it was driven.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'crm-lead-assign-replay-EMP07'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups.json step 'lead-governance-EMP07'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json evidence.failedRequests (2x lead-assignment-governance:500, 1x lead-sla-governance:500)"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R08",
+    "priorId": "EMP-08",
+    "title": "FIXED: /api/launch-readiness now authenticates UAT sessions; Control 'Launch essentials' loads",
+    "persona": "founder@pawspace.in",
+    "url": "/control (Launch essentials), GET /api/launch-readiness",
+    "steps": [
+      "Sign in as founder via /staging-login",
+      "Open /control -> Launch essentials"
+    ],
+    "expected": "Launch readiness items for launch.view holders via the cookie session, not just the header-only identity probe",
+    "actual": "GET /api/launch-readiness -> 200 with 12 items, canWrite:true, gate summary (p0Total:8, p0Verified:0, integrationBlockers:5, providerVerificationBlockers:52, approved:false). Panel renders the item list instead of the prior empty shell. (A 401 console error is still logged from the unrelated customer/partner /api/identity-session probe, per the harness note - ignored.)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'control-launch-essentials'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/control-launch-essentials.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/control-_Launch_essentials.png"
+    ],
+    "severity": "P1",
+    "class": "auth",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R09",
+    "priorId": "EMP-09",
+    "title": "STILL OPEN: CRM list search shows '0 shown' for a lead the API can find by phone or name; detail-card low-contrast text persists",
+    "persona": "founder@pawspace.in",
+    "url": "/crm",
+    "steps": [
+      "Add lead via '+ Add lead'",
+      "Type the lead's phone into the search box",
+      "Separately call GET /api/crm?search=<phone> and GET /api/crm?search=<name>"
+    ],
+    "expected": "Lead appears in the list once created; readable detail card",
+    "actual": "GET /api/crm?search=<phone> -> 200, 1 contact found (CU-54473). GET /api/crm?search=<name> -> 200, 2 contacts found. The CRM page list still shows '0 shown' for both the same phone and the same name search. Detail-card low-contrast pairs are still reported on the CRM page (e.g. 'PAWSPACE WORKSPACE' rgb(186,170,202) on rgba(255,255,255,0.05), ratio 2.17; several ratios <2). Appearance-pill/CTA overlap was not re-driven this pass.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json step 'crm-search-phone-and-name'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'crm-add-lead-and-search' (lowContrastOnDetail)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups/crm-search-phone.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups/crm-search-name.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/crm-lead-search.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R10",
+    "priorId": "EMP-10",
+    "title": "STILL OPEN: /team/whatsapp returns 404",
+    "persona": "founder@pawspace.in",
+    "url": "/team/whatsapp",
+    "steps": [
+      "Open /team/whatsapp"
+    ],
+    "expected": "WhatsApp hub or redirect to a sub-page",
+    "actual": "404 'We couldn't find that page'. Sub-pages (/team/whatsapp/analytics|templates|automation) still render fine.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'team-whatsapp-EMP10'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/team-whatsapp.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R11",
+    "priorId": "EMP-11",
+    "title": "PARTIALLY FIXED: finance's silent shells are gone (all finance pages now render or show honest denial text, including /control); manager's /control is still a silent shell",
+    "persona": "manager (jyoti/sunita/vishal), finance (anjali)",
+    "url": "/control and the previously-listed manager/finance routes",
+    "steps": [
+      "Sign in as each manager and as finance",
+      "Crawl the previously-silent routes",
+      "Record whether a 403 on the page's API is shown to the user"
+    ],
+    "expected": "Visible 'You do not have permission' / 'MFA required' message wherever the backing API is refused",
+    "actual": "Finance: 'silent' list is now empty across all crawled routes; /team, /control, /team/finance*, /team/people* either render (finance now has access) or show an honest denial. controlPanelVisibleToFinance:true. Manager: CRM now shows an honest, scoped 403 message; BCC/People are no longer denied for the ops-scoped manager. But /control is still recorded as 'denied-SILENT GET /api/control-tower:403' for all three managers tested (jyoti, sunita, vishal) - the page renders with no explanation while the API refuses it.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json steps 1,4,7 detail.silent/.honest, and the per-route 'detail' arrays (/control: denied-SILENT for all 3 managers)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json step 'anjali-finance-pages' (silent:[])",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles/jyoti-ops-manager_control.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles/sunita-sales-manager_control.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R12",
+    "priorId": "EMP-12",
+    "title": "STILL OPEN: incentives.manage granted to no operational role; /api/i18n still readable without settings.manage. IMPROVED: managers now pass GET /api/uat-scheduling (200); associate/sales still 403 despite holding scheduling.book",
+    "persona": "jyoti/sunita/vishal (manager), anita.associate17, asha.groomer1, anjali.finance33",
+    "url": "/team/people/incentives, /api/incentives, /api/i18n, /api/uat-scheduling",
+    "steps": [
+      "Each persona: GET /api/incentives",
+      "Manager: POST approve_result",
+      "Each persona: GET /api/i18n",
+      "Each persona: GET /api/uat-scheduling"
+    ],
+    "expected": "Per lib/platform-security.ts defaultRoles",
+    "actual": "/api/incentives -> 403 'Permission denied' for jyoti/sunita/vishal/anita/asha (401 MFA for anjali); only founder can approve/dispute/reverse. /api/i18n -> 200 for jyoti/sunita/vishal/anita (403 for groomer, 401 MFA for finance) - still readable without settings.manage. /api/uat-scheduling -> now 200 for all three managers (was 403 before this build); still 403 for anita-associate and asha-groomer.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json matrix rows for /api/incentives, /api/i18n, /api/uat-scheduling",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json step 'jyoti-incentives-EMP12'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json step 'associate-other-screens-EMP12'"
+    ],
+    "severity": "P2",
+    "class": "auth",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R13",
+    "priorId": "EMP-13",
+    "title": "FIXED: Control 'Business 360 & reports' loads on first click (no more 500 on a fresh database)",
+    "persona": "founder@pawspace.in",
+    "url": "/control -> Business 360 & reports, GET /api/subscription-business-view",
+    "steps": [
+      "Open /control",
+      "Click 'Business 360 & reports' (first load, nothing called before it)"
+    ],
+    "expected": "Business views load without needing a prior call to a different endpoint",
+    "actual": "GET /api/subscription-business-view -> 200 directly, keys: asOf/liabilityStatus/unusedCreditLiability/priceCoverage/segments/pauseCancelRate. No 500 observed on first load.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'control-business-360'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/control-business-360.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/control-_Business_360_reports.png"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "EMP-L-R14",
+    "priorId": "EMP-14",
+    "title": "STILL OPEN: /team/sales Customer 360 renders the full customer list in one unpaginated column",
+    "persona": "founder@pawspace.in",
+    "url": "/team/sales",
+    "steps": [
+      "Open /team/sales"
+    ],
+    "expected": "Paged/virtualised list",
+    "actual": "pageHeight 23004px, 241 customer buttons rendered at once, pagination:false, searchInputs:0. Unchanged from the prior phase. Customer 360 itself still returns 200 for both ids once selected.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'customer-360'"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R15",
+    "priorId": "EMP-15",
+    "title": "STILL OPEN: BCC live-stream endpoint answers 500 (not 403) for staff outside bookings.manage scope",
+    "persona": "sunita.manager37, vishal.manager40, anita.associate17, anjali.finance33 (no bookings.manage)",
+    "url": "/booking-command-center -> GET /api/booking-command-center/stream",
+    "steps": [
+      "Sign in as each role",
+      "Open /booking-command-center or call the stream endpoint directly"
+    ],
+    "expected": "403 like the snapshot endpoint (groomer correctly gets 403)",
+    "actual": "GET /api/booking-command-center/stream -> 500 for sunita, vishal, anita-associate and anjali-finance (all recorded status:500, empty content-type/body) while GET /api/booking-command-center itself returns a proper 403 for the same personas. asha-groomer correctly gets 403 on both. jyoti (who does hold bookings.manage) gets 200. A patch is drafted (app/api/booking-command-center/stream/route.ts try/catch -> authError) at launch/emp15-stream-route.patch.md but explicitly not yet applied ('apply only after the frozen suite finishes') - not present in this build.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json matrix for /api/booking-command-center/stream (5 personas)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json step 'sunita-bcc-403-EMP15'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json step 'associate-other-screens-EMP12' (stream:500 for associate)"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R16",
+    "priorId": "EMP-16",
+    "title": "NOT RE-TESTED: BCC now shows a 'Tickets & refunds' tab, but no cancel/refund write action was driven this pass",
+    "persona": "founder@pawspace.in",
+    "url": "/booking-command-center",
+    "steps": [
+      "Select a booking in BCC",
+      "Look for a cancel/refund control"
+    ],
+    "expected": "Cancel/refund request reachable from BCC (or confirmation that it still is not)",
+    "actual": "The booking detail now exposes a 'Tickets & refunds' tab (alongside Overview/Journey/Payments/Communication) and 'cancelOrRefundControl' was detected true on a cancelled training booking's card; no POST to raise or process a cancellation/refund was driven or observed this pass, so whether it actually works end-to-end is unverified.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json step 'bcc-controls-EMP16'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/crawl.json result for /booking-command-center (buttons include 'Tickets & refunds')"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "not-retested"
+  },
+  {
+    "id": "EMP-L-R17",
+    "priorId": "EMP-17",
+    "title": "STILL PRESENT: test-lab banner on production-facing staff screens",
+    "persona": "founder@pawspace.in",
+    "url": "/team, /crm",
+    "steps": [
+      "Open /team and /crm"
+    ],
+    "expected": "No test-lab banner outside the test lab",
+    "actual": "testLabBanner:true on /crm; the Control page footer text 'TEST SYSTEMS \u00b7 PRODUCTION READY: NO' still renders. Unchanged from the prior phase.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'crm-load' (testLabBanner:true)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-R18",
+    "priorId": "EMP-18",
+    "title": "Unchanged by design: founder /me shows 'No employee record linked yet'",
+    "persona": "founder@pawspace.in",
+    "url": "/me",
+    "steps": [
+      "Sign in as founder -> lands on /me"
+    ],
+    "expected": "By design (founder not on payroll)",
+    "actual": "Honest empty state, unchanged: 'Your identity founder@pawspace.in is signed in, but it is not yet linked to an active employee record.'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/crawl.json result for /me"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R19",
+    "priorId": "EMP-19",
+    "title": "Still environment-gated: RazorpayX test payout, AI translate, voice, and (newly) payroll's own sandbox-payment step now fails for a different, non-env reason",
+    "persona": "founder@pawspace.in",
+    "url": "/team/finance/partners, /team/i18n, /team/voice, POST /api/payroll (prepare_payment)",
+    "steps": [
+      "Open partner-finance (0 statements/orders in seed)",
+      "Open i18n/voice pages"
+    ],
+    "expected": "Staging needs RazorpayX keys / AI provider key / voice env; these remain honest env gates",
+    "actual": "partner-finance still 0 statements/payouts/instructions in seed (level-1/level-2 approval and 'Send TEST payout' still not exercisable); testPayout:null. Reconciliation 200, compliance 200, 0 exceptions. Note: payroll's 'Prepare sandbox payment' no longer stops at an env gate - it now fails with a genuine schema defect, see EMP-L-D01.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json step 'partner-finance-and-reconciliation'"
+    ],
+    "severity": "P2",
+    "class": "infrastructure",
+    "status": "env-gated"
+  },
+  {
+    "id": "EMP-L-R20",
+    "priorId": "EMP-P01",
+    "title": "PASS (re-confirmed) - staff sign-in via /staging-login works for all personas driven this pass",
+    "persona": "all",
+    "url": "/staging-login",
+    "steps": [
+      "Sign in as founder, jyoti, sunita, vishal, anita, asha, anjali, mahesh"
+    ],
+    "expected": "200 and redirect to the app",
+    "actual": "Every persona used throughout this pass signed in and reached its landing page; no sign-in failures recorded.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json"
+    ],
+    "severity": "-",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R21",
+    "priorId": "EMP-P02",
+    "title": "PASS (re-confirmed) - CRM lead capture creates a contact/lead and auto-assigns an owner",
+    "persona": "founder@pawspace.in",
+    "url": "/crm",
+    "steps": [
+      "+ Add lead",
+      "Fill name/phone/pet",
+      "Save"
+    ],
+    "expected": "201 and persisted",
+    "actual": "201 {id:'CU-54473', leadId:'LEAD-1790002808441', assignedOwner:'rohit.menon@pawspace.in', ownerResolved:true}. (List search for the new lead still fails - tracked under EMP-L-R09.)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'crm-add-lead-and-search'"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R22",
+    "priorId": "EMP-P03",
+    "title": "PASS (re-confirmed) - Customer 360 loads for seeded customers; WhatsApp conversation-control 409 remains a governed state",
+    "persona": "founder@pawspace.in",
+    "url": "/team/sales, /api/customer-360, /team/customer-experience",
+    "steps": [
+      "Select a customer on /team/sales",
+      "Open /team/customer-experience"
+    ],
+    "expected": "200 for Customer 360; CX threads render",
+    "actual": "c360:[200,200] (recorded as part of the /team/sales pagination check). /team/customer-experience renders with 3x GET /api/whatsapp/conversation-control:409 (governed), matching the prior finding.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'customer-360'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/crawl.json result for /team/customer-experience"
+    ],
+    "severity": "-",
+    "class": "wiring",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R23",
+    "priorId": "EMP-P04",
+    "title": "PASS (re-confirmed) - Booking Command Center: 14 bookings, filters, selection, Reassign/Call/WhatsApp/Tracking persist with 201s",
+    "persona": "founder@pawspace.in",
+    "url": "/booking-command-center",
+    "steps": [
+      "Open BCC",
+      "Select E2E-BK-UI-001",
+      "Click Reassign, WhatsApp, Tracking, Call"
+    ],
+    "expected": "Actions recorded",
+    "actual": "api:200, bookings:14, stream 200 text/event-stream. All 4 actions returned 201 with deliveryStatus recorded/uat_queued.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json steps 'bcc-page-api-stream','bcc-select-and-actions'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/bcc-home.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder/bcc-actions.png"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R24",
+    "priorId": "EMP-P05",
+    "title": "PASS (re-confirmed) - Control runtime switch STOP/ENABLE round-trip works with a correct payload; a mis-formed first attempt without a valid reason returned 500 (see EMP-L-D02)",
+    "persona": "founder@pawspace.in",
+    "url": "/control, POST /api/control-runtime-switches",
+    "steps": [
+      "POST stop voice_outbound with a valid reason",
+      "Read mid-state",
+      "POST enable with a valid reason",
+      "Read after-state",
+      "POST with an unknown switch code / missing reason"
+    ],
+    "expected": "Audited toggle and restore; validation errors are governed",
+    "actual": "With a valid reason: stop -> 200, voice_outbound:false; enable -> 200, voice_outbound:true (fully restored), other 5 switches unaffected throughout. An initial attempt in this same pass without a well-formed reason returned 500 both times (same 'Unable to update emergency control' body) - reproduced again deliberately with an unknown switch code and a missing reason, both 500 (should be governed 4xx, see EMP-L-D02).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json step 'runtime-switch-roundtrip-correct-payload'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'control-stop-switch-roundtrip'"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R25",
+    "priorId": "EMP-P06",
+    "title": "NOT RE-TESTED this pass at the UI level: Ops work-queue/alerts/cases/scheduling honest-empty-state pages",
+    "persona": "founder@pawspace.in",
+    "url": "/team/operations/work-queue, /team/alerts, /team/cases, /team/scheduling",
+    "steps": [
+      "(not individually re-opened this pass)"
+    ],
+    "expected": "Render with honest empty states",
+    "actual": "Only API-level access was re-confirmed this pass (e.g. /api/ops-work-queue and /api/unified-cases return 200 for ops-scoped managers in the role matrix); no fresh page-level screenshots/content checks for these specific routes were captured in this evidence set, so full-page re-verification is not claimed.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json step 'jyoti-ops-manager-api-matrix' (allowed list includes /api/ops-work-queue, /api/unified-cases)"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "not-retested"
+  },
+  {
+    "id": "EMP-L-R26",
+    "priorId": "EMP-P07",
+    "title": "PASS (re-confirmed) - Attendance self-service: check in/out idempotent; adjustment request -> manager approval",
+    "persona": "anita.associate17, asha.groomer1, jyoti.manager39",
+    "url": "/me, /api/attendance-leave",
+    "steps": [
+      "Check in",
+      "Check out",
+      "request_adjustment",
+      "manager approve_adjustment"
+    ],
+    "expected": "Recorded and approved by a different actor",
+    "actual": "Associate and groomer: Check in/out both 200 with duplicatePrevented:true and 'Checked in./Checked out.' messages. Adjustment AAR-1918320B-53C created 200; manager decision covered under EMP-L-R05.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json steps 1,6,14"
+    ],
+    "severity": "-",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R27",
+    "priorId": "EMP-P08",
+    "title": "PASS (re-confirmed, now also via UI) - manager leave decisions persist and are visible to the associate",
+    "persona": "jyoti.manager39",
+    "url": "/team/people/time, /api/attendance-leave",
+    "steps": [
+      "Approve one pending leave, reject another"
+    ],
+    "expected": "Decisions visible on both sides",
+    "actual": "approved/rejected as in EMP-L-R05; associate's own view then lists 'LVR-C270795B-E14:approved' and 'LVR-34E24AEF-123:rejected' with balance CL:11.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json step 'associate-sees-decisions'"
+    ],
+    "severity": "-",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R28",
+    "priorId": "EMP-P09",
+    "title": "NOT RE-TESTED: incentive Approve/Reverse write actions were not re-driven this pass (buttons confirmed present; dispute flow opens but no seeded dispute existed)",
+    "persona": "founder@pawspace.in",
+    "url": "/team/people/incentives",
+    "steps": [
+      "Open /team/people/incentives",
+      "Click 'Open dispute'"
+    ],
+    "expected": "Ledger events on Approve/Reverse; dispute/resolve reachable",
+    "actual": "Buttons Reverse/Submit resolution/Cancel/Approve/Open dispute all present and, after clicking Open dispute, a 'Submit dispute' control appears - but result was 'no request' (no pending item to dispute in this seed) and no Approve/Reverse POST was driven this pass, so the write path itself was not re-exercised.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'incentives-founder'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json step 'incentives-open-dispute-resolve'"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "not-retested"
+  },
+  {
+    "id": "EMP-L-R29",
+    "priorId": "EMP-P10",
+    "title": "PASS (re-confirmed and extended) - Payroll API maker/checker: calculate, idempotent replay, and now a full UI-driven review->approve chain (see EMP-L-R04)",
+    "persona": "founder, mahesh.finance34",
+    "url": "/api/payroll, /team/people/payroll",
+    "steps": [
+      "calculate",
+      "replay same idempotency key",
+      "review as a different finance actor",
+      "approve as the original maker"
+    ],
+    "expected": "Maker/checker enforced",
+    "actual": "calculate -> 200 PAYRUN-13345F82-85C, 44 results, replay duplicatePrevented. Full detail in EMP-L-R04.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json steps 4-9"
+    ],
+    "severity": "-",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R30",
+    "priorId": "EMP-P11",
+    "title": "PASS (re-confirmed) - Finance as founder: GST invoice issue/replay, series setup, exports, statutory package, partner-finance all render and behave",
+    "persona": "founder@pawspace.in",
+    "url": "/team/finance/*, /api/gst-accounting, /api/finance-control",
+    "steps": [
+      "Issue a GST invoice",
+      "Replay the same source event",
+      "Attempt export without accounting mapping"
+    ],
+    "expected": "Render + governed responses",
+    "actual": "Invoice issued 200 (UATINV000001, CGST/SGST 90/90); replay returns the same invoice (replaySameInvoice:true); export without mapping -> 409 'configuration_required' (governed, not 500); GSTR-1 draft 200; statutory package 200; expense maker/checker fully governed (create 201, missing If-Match 428, self-approve 403 'Maker cannot approve their own transaction', checker approve 200, replay 412, journal balanced 1250/1250).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json steps 11-18"
+    ],
+    "severity": "-",
+    "class": "wiring",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R31",
+    "priorId": "EMP-P12",
+    "title": "PARTIALLY RE-TESTED: report/config pages still render cleanly on a fresh 55-route crawl; the specific pricing-rule/customer-reminder write actions were not re-driven this pass",
+    "persona": "founder@pawspace.in",
+    "url": "/team/pricing-rules, /team/customer-reminders, and 53 other routes",
+    "steps": [
+      "Crawl 55 founder routes"
+    ],
+    "expected": "Pages render; prior writes (pricing rule, reminder policy) still persist/available",
+    "actual": "Of 55 crawled routes only /team (subscription-customers 403, see EMP-L-D04) and /team/customer-experience (409 governed) showed any anomaly; everything else rendered with no 5xx/broken/thin/placeholder flags. No new pricing-rule or reminder-policy POST was driven this pass.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/crawl.json results (55 routes) and panels (23 Control panels)"
+    ],
+    "severity": "-",
+    "class": "UI",
+    "status": "not-retested"
+  },
+  {
+    "id": "EMP-L-R32",
+    "priorId": "EMP-P13",
+    "title": "PASS (re-confirmed) - role refusals are 403 (never 500) for groomer; role-filtered top-level navigation persists across roles",
+    "persona": "asha.groomer1, anita.associate17, jyoti/sunita/vishal (managers)",
+    "url": "/, /api/*",
+    "steps": [
+      "Full 30-endpoint API matrix per persona",
+      "Compare top-level nav card counts per persona"
+    ],
+    "expected": "Honest refusal, never a 500, for restricted roles; nav scoped by role",
+    "actual": "asha-groomer-api-matrix fiveXX:[] (zero 500s across all 30 calls, all denials clean 403). anita-associate-api-matrix has exactly one 500 (booking-command-center/stream, tracked separately under EMP-L-R15) and every other denial is 403. Top nav cards: managers 15, associate 12, groomer 6 - still scoped by role.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/roles.json steps 9,12 (fiveXX fields), steps 2,5,8,11,14 (team-nav cards)"
+    ],
+    "severity": "-",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-R33",
+    "priorId": "EMP-NT01",
+    "title": "STILL NOT TESTED: Pixel 7 viewport for employee screens, lead->booking conversion, exhaustive dead-button sweep. NOW EXERCISED: partial - leave apply->approve (fixed), payroll review->approve (fixed) but prepare-payment fails (new defect), incentive dispute UI opens (no seeded dispute to resolve)",
+    "persona": "-",
+    "url": "-",
+    "steps": [],
+    "expected": "",
+    "actual": "This pass covered desktop only for the employee area; Pixel 7 viewport, lead-to-booking conversion, and a dead-button click sweep beyond the tested pages were not attempted. Scheduling Reassign was still not exercised (no evidence found of reservations on test dates this run). Customer-experience write actions (Take over etc.) were not driven, only the tab/filter UI was observed.",
+    "evidence": [],
+    "severity": "-",
+    "class": "UI",
+    "status": "not-retested"
+  },
+  {
+    "id": "EMP-L-R34",
+    "priorId": "SW-023",
+    "title": "PARTIALLY FIXED: customer OTP wrong/unknown code now returns governed 401/404; partner OTP wrong/unknown code still returns 500",
+    "persona": "anon (customer + partner OTP)",
+    "url": "/api/customer-otp, /api/partner-otp",
+    "steps": [
+      "Request an OTP",
+      "Submit a wrong code",
+      "Submit an unknown challenge id",
+      "Repeat 3x for partner"
+    ],
+    "expected": "Governed 4xx for a wrong or unknown OTP code (both customer and partner)",
+    "actual": "Customer: wrong code -> 401 'Incorrect OTP code'; unknown challenge -> 404 'OTP challenge not found' (both governed, fixed). Partner: wrong code -> 500 'Incorrect OTP code'; unknown challenge -> 500 'OTP challenge not found', reproduced deterministically 3x in a row (founder.json once, followups.json 3x). Still the same defect as SW-023 for the partner side.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json step 'otp-wrong-code-SW023'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups.json step 'partner-otp-wrong-code-x3'"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "still-open"
+  },
+  {
+    "id": "EMP-L-D01",
+    "title": "NEW P1: Payroll 'Prepare sandbox payment' fails with a D1 schema error ('no such column: action') after a run is properly approved",
+    "persona": "founder@pawspace.in",
+    "url": "/team/people/payroll, POST /api/payroll (prepare_payment)",
+    "steps": [
+      "Calculate, review (as mahesh), approve (as founder) payrun PAYRUN-13345F82-85C so it reaches 'approved'",
+      "Click 'Prepare sandbox payment' on the page"
+    ],
+    "expected": "A sandbox payment batch is prepared (per the AGENT_BRIEF's Module E: sandbox-only payment batch with maker/checker)",
+    "actual": "Script/page hit a hard error: 'no such column: action'; POST /api/payroll returned 500 'Payroll update failed' with a database schema mismatch underneath. The prepare-sandbox-payment step of the payroll module cannot complete on this build, for a properly-approved run - this is a new regression, not the pre-existing MFA/env gate that blocked it in the prior phase.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json step 'payroll-ui-prepare-sandbox-payment'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance/ERR-payroll_ui_prepare_sandbox_payment.png"
+    ],
+    "severity": "P1",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "EMP-L-D02",
+    "title": "NEW P2: multiple governed business-rule refusals still surface as generic HTTP 500 instead of 4xx (payroll, attendance-leave decide, control-runtime-switches)",
+    "persona": "founder@pawspace.in, jyoti.manager39",
+    "url": "POST /api/payroll, POST /api/attendance-leave, POST /api/control-runtime-switches",
+    "steps": [
+      "Payroll: maker reviews own run; reviewer approves own review; approve an unknown run",
+      "attendance-leave: decide_leave on an unknown request id; manager self-approves own leave",
+      "control-runtime-switches: POST with an unknown switch code; POST with no/short reason"
+    ],
+    "expected": "A governed 4xx (403 for a maker/checker conflict, 404 for an unknown id, 400 for bad input) with a specific message",
+    "actual": "All of the following return HTTP 500 with a generic message instead: payroll maker reviewing own run ('Payroll update failed', x2 reproductions), reviewer approving own review, approving an unknown run id; attendance-leave deciding an unknown request id (x2), a manager self-approving their own leave request (their own request stays 'pending', matching the intended block, but the error class is wrong); control-runtime-switches with an unknown code or a missing/short reason. This is a consistent, deterministic pattern across at least 3 different APIs, reproduced across 2 independent test scripts.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/finance.json steps 5,7,8",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups.json steps 2,3",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json step 11",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json step 'runtime-switch-roundtrip-correct-payload' (unknownCode, noReason)"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "defect"
+  },
+  {
+    "id": "EMP-L-D03",
+    "title": "NEW P2: founder is refused (403) on GET /api/subscription-customers from /team, and Control > Approvals (GET /api/control-center-operations) returns 500",
+    "persona": "founder@pawspace.in",
+    "url": "/team, /control (Approvals panel)",
+    "steps": [
+      "Sign in as founder, load /team",
+      "Open Control > Approvals panel",
+      "Call GET /api/control-center-operations?mode=approvals"
+    ],
+    "expected": "Founder (full access) should not be refused on a read-only subscriptions listing; the Approvals panel should load",
+    "actual": "GET /api/subscription-customers -> 403 'Permission denied' for founder on /team (reproduced 3x across founder.json, followups2.json, and the 55-route crawl). GET /api/control-center-operations?mode=approvals -> 500 'Unable to load Control Center operations', reproduced both in the Approvals panel crawl and a dedicated repeat call (mode=health on the same endpoint returns 200 x3, so the endpoint itself works - only mode=approvals fails).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/founder.json evidence.failedRequests / inventory row '/team'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups2.json steps 'subscription-customers-founder','control-center-operations-deterministic'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/crawl.json panel 'Approvals', result for '/team'",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups/ERR-subscription_customers_founder.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/followups/control-approvals.png"
+    ],
+    "severity": "P2",
+    "class": "auth",
+    "status": "defect"
+  },
+  {
+    "id": "EMP-L-D04",
+    "title": "NEW P2: /team/relocation shows an associate the case queue but its staff-action buttons fail 403 with no visible denial message",
+    "persona": "anita.associate17 (associate)",
+    "url": "/team/relocation",
+    "steps": [
+      "Sign in as associate",
+      "Open /team/relocation (queue renders, case visible)",
+      "Attempt a staff action (customerActionAsStaff, qualify) on a case"
+    ],
+    "expected": "Either the queue is scoped so the associate only sees actionable cases, or a denied action shows an honest message (as groomer/finance get: a full-page 403 since they can't even list the queue)",
+    "actual": "list:200, queueShowsCase:true (associate CAN see the case in the queue), but customerActionAsStaff -> 403 'Customer ownership denied' and qualify -> 403 'Permission denied', recorded 'honest':false (no visible denial text on the page for those actions). By contrast asha-groomer and anjali-finance get list:403 with an honest full-page denial.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation.json step 'staff-roles-on-relocation' (anita-assoc)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/roles-anita-assoc.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "EMP-L-D05",
+    "title": "NEW P2/data: manager Approve-adjustment UI returns 200 'approved' but an immediate DB read still shows the adjustment 'pending', and replaying decide afterwards returns 500",
+    "persona": "jyoti.manager39 (manager)",
+    "url": "/team/people/time, POST /api/attendance-leave (approve_adjustment)",
+    "steps": [
+      "Manager clicks Approve adjustment for AAR-27BA56A7-4B3",
+      "Script reads the DB row immediately after",
+      "Script replays the same decide call"
+    ],
+    "expected": "DB status flips to 'approved' consistently with the 200 response; a replay of an already-decided request returns an idempotent/duplicate response, not a 500",
+    "actual": "POST -> 200, UI text 'Attendance adjustment approved', but the DB row read straight after still shows status:'pending'. A replay of the decide call then returns 500 'Attendance/leave update failed' instead of a duplicate-prevented response.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/people.json step 'manager-approve-adjustment-ui'"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "EMP-L-P01",
+    "title": "NEW PASS: Pet Relocation module - full lifecycle from customer lead through staff qualify/vendor/documents/quote/payment/milestones/refund/reconciliation, with correctly governed refusals throughout",
+    "persona": "customer (OTP), jyoti.manager39, sunita.manager37 (staff)",
+    "url": "/v2/relocation, /team/relocation, POST /api/relocation",
+    "steps": [
+      "Customer: empty submit blocked client-side; create domestic case (201, RLC-...); duplicate retry replays the same id (idempotent)",
+      "Customer cannot run staff actions (403 x3: qualify/issue-quote/staff-queue)",
+      "Staff: open case in queue; quote-before-docs refused 409; qualify + assign vendor 200",
+      "Customer registers 5 documents (200 x5, objectStored:false)",
+      "Staff refuses one doc with a note, customer sees it, re-uploads, all verified",
+      "Staff issues quote 200; customer accepts (200; replay -> 409 governed)",
+      "Staff: transport-before-payment refused 409; finance records payment 200 (liveMoney:false); milestones run in order (200 each) with an out-of-order attempt refused 409",
+      "Customer requests refund; self-resolve blocked 403; staff resolves 200; vendor settlement 200; reconciliation 200 balanced",
+      "Another customer denied read/write on the case (403 'Customer ownership denied')"
+    ],
+    "expected": "End-to-end relocation case management with proper ownership and state-machine governance",
+    "actual": "Every step above behaved exactly as expected, including every negative/out-of-order case returning a governed 4xx (never a 500) and full idempotency on both case-creation and quote-acceptance replay. Document uploads are registered but objectStored:false (no real object storage backing them locally - see EMP-L-E01) and payments are liveMoney:false (sandbox, as configured).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation.json steps 0-15",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/cust-02-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/staff-01-case.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/staff-05-quote-sent.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/cust-06-delivered.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation/cust-07-refund.png"
+    ],
+    "severity": "-",
+    "class": "wiring",
+    "status": "pass"
+  },
+  {
+    "id": "EMP-L-E01",
+    "title": "Environment-gated: relocation document uploads are registered but not object-stored (objectStored:false); relocation payment is sandbox (liveMoney:false)",
+    "persona": "customer, finance (staff)",
+    "url": "POST /api/relocation (register_document, record_payment)",
+    "steps": [
+      "Customer registers 5 relocation documents",
+      "Staff records payment on an accepted quote"
+    ],
+    "expected": "Per the brief: placeholder/synthetic documents are not real uploads; local sandbox has no live payment gateway",
+    "actual": "All 5 documents registered 200 but objectStored:false (bytes are not held in a real object store locally, matching the pattern seen elsewhere in the platform). Payment recorded 200 with liveMoney:false (sandbox only, no real money moved), consistent with the brief's payments-sandbox-without-keys configuration.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/employee/relocation.json steps 7,12"
+    ],
+    "severity": "P2",
+    "class": "infrastructure",
+    "status": "env-gated"
+  }
+]

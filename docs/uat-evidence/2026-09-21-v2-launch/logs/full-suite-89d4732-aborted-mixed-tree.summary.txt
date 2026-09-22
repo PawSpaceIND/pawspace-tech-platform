@@ -1,0 +1,12 @@
+ABORTED by operator at 2026-09-21T14:00:52Z: tree was edited (subscription-wallet import regression fix) while this frozen run at 89d4732 was in progress; run recorded as mixed-tree and discarded. 5 failures observed before abort, all ERR_MODULE_NOT_FOUND from lib/subscription-wallet.ts -> ./grooming-governance under the plain loader (tests/lane1-commercial-runtime.test.mjs).
+not ok 2403 - subscription wallet reserves, consumes and releases credits exactly once
+  error: "Cannot find module '/home/user/pawspace-tech-platform/lib/grooming-governance' imported from /home/user/pawspace-tech-platform/lib/subscription-wallet.ts"
+not ok 2404 - subscription expiry, customer mismatch and idempotency key collisions fail closed
+  error: "Cannot find module '/home/user/pawspace-tech-platform/lib/grooming-governance' imported from /home/user/pawspace-tech-platform/lib/subscription-wallet.ts"
+not ok 2405 - subscription wallet rejects non-finite and fractional numeric mutations before persistence
+  error: "Cannot find module '/home/user/pawspace-tech-platform/lib/grooming-governance' imported from /home/user/pawspace-tech-platform/lib/subscription-wallet.ts"
+not ok 2406 - subscription wallet idempotency binds pause duration and action reasons
+  error: "Cannot find module '/home/user/pawspace-tech-platform/lib/grooming-governance' imported from /home/user/pawspace-tech-platform/lib/subscription-wallet.ts"
+not ok 2407 - subscription pause entitlement and its idempotency event are one atomic mutation
+  error: "Cannot find module '/home/user/pawspace-tech-platform/lib/grooming-governance' imported from /home/user/pawspace-tech-platform/lib/subscription-wallet.ts"
+ok_before_abort=5351 not_ok_before_abort=5

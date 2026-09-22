@@ -21,6 +21,7 @@ import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/tra
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
 import { trainingProgrammeRequestId } from "../../lib/booking-state-integrity";
 import { useFlowHistory } from "../../lib/use-flow-history";
+import { APPROVED_BOOKING_TIME_BY_SERVICE, APPROVED_BOOKING_TIME_DEFAULT } from "../../lib/booking-time-policy";
 // Compose overlapping CSS-module classes: replacing a class name loses its layout rules.
 const styles: Record<string,string> = Object.fromEntries([...new Set([...Object.keys(baseStyles),...Object.keys(extraStyles),...Object.keys(uatStyles)])].map(key=>[key,[baseStyles[key],extraStyles[key],uatStyles[key]].filter(Boolean).join(" ")]));
 type Plan = {
@@ -72,7 +73,17 @@ const money = (n: number) =>
   }).format(n);
 const IST_OFFSET=330*60_000;
 const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6]};
-function futureIst(days:number,hour:number,minute=0){const now=new Date(),shifted=new Date(now.getTime()+IST_OFFSET);return new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+days,hour,minute)-IST_OFFSET);}
+function futureIst(days:number,hour:number,minute=0,now:number=Date.now()){const shifted=new Date(now+IST_OFFSET);return new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+days,hour,minute)-IST_OFFSET);}
+// CUST-L-D15: the Meet & Greet is reserved as serviceCode "dog_training" (see confirmMeetFirst below),
+// so the scheduler (lib/booking-time-policy.ts, enforced in app/api/uat-scheduling) refuses any start
+// less than this many minutes from now. A "Selected" default chip the scheduler will refuse is exactly
+// the defect: derive the minimum from the same governed rule so an unschedulable default is never shown.
+export const MEET_GREET_MIN_LEAD_MINUTES=APPROVED_BOOKING_TIME_BY_SERVICE.dog_training.minimumLeadMinutes??APPROVED_BOOKING_TIME_DEFAULT.minimumLeadMinutes;
+/** Smallest day offset (>=1) whose IST `hour:minute` sits at least `minimumLeadMinutes` ahead of `now`. */
+export function firstBookableMeetGreetDayOffset(hour:number,minute=0,now:number=Date.now(),minimumLeadMinutes:number=MEET_GREET_MIN_LEAD_MINUTES){for(let offset=1;offset<=30;offset+=1)if(futureIst(offset,hour,minute,now).getTime()-now>=minimumLeadMinutes*60_000)return offset;return 30;}
+/** The three Meet & Greet chip candidates. Every one - including the pre-selected default - clears the
+ * scheduler's minimum lead time, so "Selected" can never mean "the scheduler will refuse this". */
+export function meetGreetSlotDates(now:number=Date.now()){const firstOffset=firstBookableMeetGreetDayOffset(11,0,now),laterOffset=Math.max(firstOffset+1,firstBookableMeetGreetDayOffset(15,0,now));return [futureIst(firstOffset,11,0,now),futureIst(laterOffset,15,0,now),futureIst(laterOffset,16,0,now)];}
 function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Tue & Sat"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
 function slotLabel(value:Date){return new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(value);}
 function previewHour(time:string){return time.startsWith("9")?9:time.startsWith("3")?15:17;}
@@ -111,7 +122,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [frequency, setFrequency] = useState("Tue & Sat"),
     [time, setTime] = useState("3:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
-    [meetSlot, setMeetSlot] = useState(() => futureIst(1,11).toISOString()),
+    [meetSlot, setMeetSlot] = useState(() => meetGreetSlotDates()[0].toISOString()),
     [meetBookingId, setMeetBookingId] = useState(""),
     [meetPetKey, setMeetPetKey] = useState(""),
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
@@ -355,7 +366,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             <div className={styles.meetPitch}><span>MEET A TRAINER FIRST</span><h4>Prefer to meet a trainer before choosing a programme?</h4><p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p></div>
             <StayAddress customerId={customer.customerId} mode="training" onResolved={resolveLocation}/>
             <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
-            <div className={styles.meetSlots}>{[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}</div>
+            <div className={styles.meetSlots}>{meetGreetSlotDates().map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}</div>
             <p>We’ll check trainer availability in your area before confirming.</p>
             <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || pincode.length!==6}>{scheduling?"Reserving Meet & Greet…":"Book a Meet & Greet"}</button>
             {meetLinked&&<article className={styles.meetConfirmed}><b>✓ Meet &amp; Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||"Assigned trainer"} · {meetBookingId}</span><small>You can continue to a programme now or return after the meeting.</small></article>}

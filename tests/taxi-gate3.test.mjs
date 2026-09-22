@@ -347,7 +347,7 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
     unpaid: unpaid.unpaidTripTotal, refund: unpaid.refundTotal, net: unpaid.netPaidTotal,
   }, { status: "attention_required", due: 449, paid: 0, unpaid: 449, refund: 0, net: 0 });
   assert.equal(unpaid.settlementState, "attention_required", "a completed trip with no settlement is flagged");
-  assert.equal(unpaid.taxState, "configuration_required");
+  assert.equal(unpaid.taxState, "invoice_required");
 
   // PAID: the unpaid total clears, but tax is still unconfigured so attention stands. Fail-closed
   // reporting: "balanced" must not be reachable while a statutory field is unresolved.
@@ -359,8 +359,13 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
   assert.deepEqual({ paid: paid.paidTotal, unpaid: paid.unpaidTripTotal, refund: paid.refundTotal, net: paid.netPaidTotal },
     { paid: 449, unpaid: 0, refund: 0, net: 449 });
   assert.equal(paid.settlementState, "approved");
-  assert.equal(paid.taxState, "resolved");
-  assert.equal(paid.status, "balanced", "approved canonical settlement reconciles cleanly");
+  assert.equal(paid.taxState, "invoice_required");
+  assert.equal(paid.status, "attention_required", "a settled trip still needs its statutory invoice");
+  const invoice=await import("../lib/taxi-invoice.ts");
+  await invoice.saveTaxiTaxPolicy(db,{cityId:"blr",taxMode:"inclusive",taxRate:18,effectiveFrom:"2026-01-01",reason:"Synthetic UAT fixture tax policy",actorId:FINANCE_CHECKER});
+  await invoice.issueTaxiInvoice(db,{bookingId,reason:"Issue synthetic trip invoice",actorId:FINANCE_CHECKER});
+  const invoiced=await act(db,bookingId,"reconcile",{actorId:FINANCE_CHECKER,reason:"after invoice"});
+  assert.equal(invoiced.taxState,"resolved");assert.equal(invoiced.status,"balanced");
 
   // A recorded refund reduces the NET but not the paid total — both figures are kept. It has to be a
   // different booking: a refund requires a cancellation, and a completed booking cannot be cancelled.
@@ -374,7 +379,7 @@ test("Gate 3: reconciliation reports due, paid, refunded and settlement truth", 
 
   // Each reconciliation is a new immutable row, so the history is auditable.
   const rows = sqlite.prepare("SELECT id,paid_total,refund_total,net_paid_total,unpaid_trip_total,status,checked_by FROM taxi_finance_reconciliation WHERE booking_id=?").all(bookingId);
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 3);
   const byId = new Map(rows.map((row) => [String(row.id), row]));
   assert.equal(Number(byId.get(String(unpaid.reconciliationId))?.net_paid_total), 0, "the first reconciliation preserves the unpaid snapshot");
   assert.equal(Number(byId.get(String(paid.reconciliationId))?.net_paid_total), 449, "the second reconciliation preserves the paid snapshot");

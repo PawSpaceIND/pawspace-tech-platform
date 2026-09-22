@@ -35,7 +35,9 @@ test("Pet Sitting exposes all four booking stages and guarded transitions", asyn
   assert.match(flow, /canPlanStay\(\{datesValid,petCount:selectedPets\.length,serviceAvailable:serviceLocation\?\.zone\.serviceAvailable\}\)/);
   assert.match(flow, /disabled=\{!showCaregiver\}/);
   assert.match(flow, /Review protected booking/);
-  assert.match(flow, /disabled=\{!agreed \|\| !datesValid \|\| scheduling \|\| selectedPets\.length === 0 \|\| !serviceLocation \|\| \(mode === "sitting" && !sittingQuote\)\}/);
+  assert.match(flow, /const activeQuote = mode === "boarding" \? boardingQuote : sittingQuote/);
+  assert.match(flow, /if \(!activeQuote\)/);
+  assert.match(flow, /disabled=\{!agreed \|\| !datesValid \|\| scheduling \|\| selectedPets\.length === 0 \|\| !serviceLocation \|\| !activeQuote\}/);
 });
 
 test("Pet Sitting uses live sitter availability and a canonical quote before booking", async () => {

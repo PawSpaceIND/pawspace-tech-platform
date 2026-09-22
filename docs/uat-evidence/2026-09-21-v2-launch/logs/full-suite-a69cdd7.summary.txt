@@ -1,0 +1,9 @@
+FROZEN_TREE_SHA=a69cdd76529e8fe93043897d4c483b938718c7f2 START=2026-09-21T17:33:33Z
+# failed   -> captured_amount=0 net_customer_amount=0
+# tests 6544
+# pass 6544
+# fail 0
+# skipped 0
+# duration_ms 942867.761233
+EXIT=0 END=2026-09-21T17:49:17Z
+INTERRUPTED RUN (same SHA, worker restart at 5055 ok / 0 not ok) — rerun above is the recorded result.

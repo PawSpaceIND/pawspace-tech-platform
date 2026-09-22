@@ -1,0 +1,1008 @@
+[
+  {
+    "persona": "Groomer 9000000901 (uatcap_groom_ft), Pixel 7",
+    "url": "/partner-app Jobs -> completed job -> 'Create payment request' (POST /api/grooming-payment-sandbox request_after_service)",
+    "steps": [
+      "Customer books grooming with Pay after service (PS-UAT-MUBBSUG2-A32D, collect ₹1,241 at the door)",
+      "Groomer completes the job in /partner-app (the button only renders after completion)",
+      "Tap 'Create payment request' (twice)"
+    ],
+    "expected": "A sandbox payment request row / link+QR payload, or an honest 503 'configuration_required' like the create_order action returns",
+    "actual": "POST /api/grooming-payment-sandbox -> 500 {error:'Unable to run Grooming payment sandbox'} both times; wrangler: 'Error: Razorpay sandbox API credentials are not configured - payment link was not created' thrown unhandled; no post_service_payment_requests row; UI shows the raw error; GET now returns 200 {data:null} (the prior 403 gateway rule is gone)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-01-after-payment-request.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-payment-surfaces.json",
+      "wrangler.log 2026-09-21T14:25:24 unexpected error Razorpay sandbox API credentials are not configured",
+      "DB post_service_payment_requests: 0 rows for the booking"
+    ],
+    "severity": "P1",
+    "class": "payment",
+    "id": "LP-D01",
+    "priorId": "PARTNER-D01",
+    "status": "still-open",
+    "title": "Pay-after-service 'Create payment request' still cannot be raised: the gateway 403 is fixed but the handler now dies with a deterministic 500"
+  },
+  {
+    "persona": "Groomer 9000000901",
+    "url": "/partner-app Earnings (GET /api/provider-workspace pendingProof)",
+    "steps": [
+      "Complete PS-UAT-MUBBSUG2-A32D with both photos approved by the founder and 'Add service proof' 200",
+      "Open Earnings"
+    ],
+    "expected": "No outstanding-proof warning",
+    "actual": "'Service proof still outstanding PS-UAT-MUBBSUG2-A32D · grooming — missing before photo, after photo' while grooming_service_proof has both refs and the settlement is already accrued ₹862.49 on the same screen",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-20-earnings-after-complete.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-02-earnings.png",
+      "DB grooming_service_proof row for PS-UAT-MUBBSUG2-A32D (before/after refs present)"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "id": "LP-D02",
+    "priorId": "PARTNER-D02",
+    "status": "still-open",
+    "title": "Earnings still says 'Service proof still outstanding … missing before photo, after photo' for a job whose two photos were approved and recorded as service proof"
+  },
+  {
+    "persona": "Groomer 9000000901",
+    "url": "/partner-app Jobs -> Live order impact -> Package upgraded (POST /api/booking-operations)",
+    "steps": [
+      "Open the in-service job",
+      "Tap Package upgraded"
+    ],
+    "expected": "The app asks for the approved package/amount or the button is hidden",
+    "actual": "POST -> 400 {error:'Approved package and amount are required'}; header shows the raw error",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-13-live-order-impact.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json liveOrderImpact"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "id": "LP-D03",
+    "priorId": "PARTNER-D03",
+    "status": "still-open",
+    "title": "'Package upgraded' still always fails with 400 'Approved package and amount are required'"
+  },
+  {
+    "persona": "Groomer, Pixel 7 (412px)",
+    "url": "/partner-app Jobs -> Live order impact",
+    "steps": [
+      "Open an active/in-service job on Pixel 7",
+      "Scroll to Live order impact"
+    ],
+    "expected": "Whole words wrap",
+    "actual": "Buttons are 71px wide with overflow-wrap:anywhere; getClientRects shows 'Package','upgraded','Service','Running' split across lines (5 lines per button)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-live-order-impact-card.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json wrapCheckInService"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-D04",
+    "priorId": "PARTNER-D04",
+    "status": "still-open",
+    "title": "Live order impact buttons still break words mid-word ('Packa ge upgra ded', 'Servic e taking longer', 'Runni ng late')"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app GPS tab, GET /api/grooming-route destinationAddress",
+    "steps": [
+      "Customer picks the Places suggestion '42, Indiranagar Double Road … 560038'",
+      "Partner accepts and opens GPS & route"
+    ],
+    "expected": "'…, Indiranagar, Bengaluru 560038, India'",
+    "actual": "PIN appears once (prior D05 fixed); destinationAddress = '42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038, Bengaluru, India' (city twice) — recorded as new P3 LP-N06",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-05-gps-tab-after-recovery.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json routeGet"
+    ],
+    "severity": "P3",
+    "class": "data",
+    "id": "LP-D05",
+    "priorId": "PARTNER-D05",
+    "status": "fixed-verified",
+    "title": "PIN no longer duplicated in the doorstep address (fixed) — but the city is now duplicated: '… Bengaluru 560038, Bengaluru, India'"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app job detail 'Handling requirements'",
+    "steps": [
+      "Open PS-UAT-MUBBSUG2-A32D in Jobs"
+    ],
+    "expected": "'Safety: friendly' (as the desktop feed renders)",
+    "actual": "'Handling requirements grooming safety:friendly' (PartnerJobNotes only replaces underscores)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-02-job-detail-before-accept.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json handlingRequirements"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-D06",
+    "priorId": "PARTNER-D06",
+    "status": "still-open",
+    "title": "Handling requirements still render the raw code 'grooming safety:friendly'"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app 'Mark arrived' after a geofence refusal",
+    "steps": [
+      "Start journey with a fix 12,980 m away, tap Mark arrived -> 409 arrival_outside_geofence (correct)",
+      "Move to the doorstep (route POST 201 accepted)",
+      "Look for Mark arrived"
+    ],
+    "expected": "Mark arrived enabled again",
+    "actual": "markArrivedDisabled=true, retryVisible=true; arrival delivered via 'Retry saved updates' (booking_arrived event, geofence 0 m)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-08-arrived-far-refused.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-09-after-geofence-refusal-near.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json arrivedNearButtons"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-D07",
+    "priorId": "PARTNER-D07",
+    "status": "still-open",
+    "title": "After the 409 geofence refusal the server says 'tap Mark arrived once you are at the address' but the app keeps Mark arrived disabled; only the small 'Retry saved updates' banner button delivers the arrival"
+  },
+  {
+    "persona": "Groomer 9000000904 on iPhone 14 (device A) and Pixel 7 (device B)",
+    "url": "/partner-app",
+    "steps": [
+      "Sign in as 9000000904 on device A, then on device B",
+      "On device A switch to Jobs/Earnings"
+    ],
+    "expected": "Device A is told its session ended on another device and shows the OTP form",
+    "actual": "Header keeps '✓ Verified' and '🟢 Online'; /api/provider-workspace 401; banner text 'Your staging sign-in has expired. Open /staging-login to sign in again.' (staff wording) partly hidden under the header; only a manual reload shows the OTP form",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d08-deviceA-after-supersede.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d08-deviceA-after-reload.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-session-consent-hub.json"
+    ],
+    "severity": "P2",
+    "class": "auth",
+    "id": "LP-D08",
+    "priorId": "PARTNER-D08",
+    "status": "still-open",
+    "title": "Superseded session still shows the green 'Verified' + 'Online' pills; the new error banner has the wrong copy for a partner ('Your staging sign-in has expired. Open /staging-login…') and is clipped behind the sticky header"
+  },
+  {
+    "persona": "asha.groomer1 (staff), OTP groomer 9000000901, commission sitter sit_sana, commission host host_sana",
+    "url": "/partner/rates (GET /api/provider-service-rates -> 403)",
+    "steps": [
+      "Open /partner/rates as each identity"
+    ],
+    "expected": "Rates editor for commission hosts/sitters; explanatory copy only for full-time",
+    "actual": "All four show 'Permission denied' above 'No self-pricing packages are available for this provider…'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d09-rates-asha.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-08-hub-_partner_rates.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s01-08-hub-_partner_rates.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h01-10-rates-as-host.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-D09",
+    "priorId": "PARTNER-D09",
+    "status": "still-open",
+    "title": "/partner/rates still prints the raw 'Permission denied' — now verified for full-time groomers AND for the commission Boarding/Sitting partners the page is meant for"
+  },
+  {
+    "persona": "uat.demo.groomer (staff session)",
+    "url": "/partner/workspace PAYMENT PENDING",
+    "steps": [
+      "Sign in at /staging-login as uat.demo.groomer",
+      "Open /partner/workspace"
+    ],
+    "expected": "Captured payments are not 'pending'",
+    "actual": "API paymentPending rows carry paymentStatus 'captured' with paymentDueNow 1299 (contradictory)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d10-workspace-demo-groomer.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-session-consent-hub.json d10.api"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "id": "LP-D10",
+    "priorId": "PARTNER-D10",
+    "status": "still-open",
+    "title": "'PAYMENT PENDING' still lists captured payments (Full Groom 2026-08-07 ₹1,299 captured; 2026-05-10 ₹1,299 captured)"
+  },
+  {
+    "persona": "Groomer 9000000905 on iPhone 14, consent undecided",
+    "url": "/partner-app footer",
+    "steps": [
+      "Sign in without answering the consent",
+      "Scroll to the footer",
+      "Tap Jobs"
+    ],
+    "expected": "Nav tappable",
+    "actual": "aside bottom 559px vs nav top 592px (0px overlap), elementFromPoint = nav, tap succeeded",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d11-consent-footer.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d11-after-tap.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-D11",
+    "priorId": "PARTNER-D11",
+    "status": "fixed-verified",
+    "title": "Cookie-consent aside no longer covers the bottom nav"
+  },
+  {
+    "persona": "Commission provider E2E-PRV-UI-001 (phone 9800000222)",
+    "url": "/partner-app Jobs -> Decline",
+    "steps": [
+      "OTP sign-in 9800000222",
+      "Open E2E-BK-UI-001 (awaiting_acceptance)",
+      "Tap Decline"
+    ],
+    "expected": "Offer declined, recovery escalated",
+    "actual": "POST /api/provider-assignment-recovery -> ops_escalation; work order reassignment_needed; booking_lifecycle_events provider_recovery_escalated (reasonCode decline, attempt 1/3); see LP-N02/N03 for what the app shows afterwards",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05-01-jobs.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05-02-after-decline.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05-commission.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-O01",
+    "priorId": "PARTNER-O01",
+    "status": "pass",
+    "title": "Decline is offered to and works for a commission provider (seeded E2E-BK-UI-001)"
+  },
+  {
+    "persona": "Trainer 9000000931 (uatcap_train_ft)",
+    "url": "/partner-app Jobs, /trainer",
+    "steps": [
+      "Customer books Starter Plan at /v2/training (PS-UAT-MUBCDWKM-D3D2)",
+      "Trainer opens Jobs"
+    ],
+    "expected": "Sessions listed",
+    "actual": "TRAINING-SESSION-TS-9E2F94C7-D43 (scheduled) and TS-56034865-3A9 (locked) with payment 'split pending · ₹1,750 due online'; /trainer?bookingId&sessionId opens the exact session",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-01-jobs.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-03-trainer-workspace.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-trainer-unpaid.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-O02",
+    "priorId": "PARTNER-O02",
+    "status": "fixed-verified",
+    "title": "Training sessions now materialise for the OTP trainer: a customer V2 training booking creates two session work orders visible in /partner-app (one per session) with 'Open full trainer workspace' deep links"
+  },
+  {
+    "persona": "Trainer",
+    "url": "/partner-app Earnings (trainer)",
+    "steps": [],
+    "expected": "",
+    "actual": "Only observed for the sitter switch identity: /partner/workspace 'Commission partner · onboarding: not_linked'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s01-09-hub-_partner_workspace.png"
+    ],
+    "severity": "",
+    "class": "data",
+    "id": "LP-O03",
+    "priorId": "PARTNER-O03",
+    "status": "not-retested",
+    "title": "Trainer onboarding link state not re-checked in this pass (sit_sana workspace still shows 'onboarding: not_linked')"
+  },
+  {
+    "persona": "Groomer 9000000901",
+    "url": "/api/provider-notifications, /api/partner-finance, /api/incentives, /api/service-incentives",
+    "steps": [
+      "Signed-in provider page: fetch the four endpoints"
+    ],
+    "expected": "Either a provider-scoped surface or no claim of queued messages",
+    "actual": "403 x4; More tab has no notifications item; incentives list empty on Earnings",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json workspaceApi",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-21-more-tab.png"
+    ],
+    "severity": "P2",
+    "class": "partner",
+    "id": "LP-O04",
+    "priorId": "PARTNER-O04",
+    "status": "still-open",
+    "title": "No notifications/settlement-statement/incentive surface for a provider session: all four APIs answer 403 'Permission denied'; the app has no notifications screen and Live order impact still claims 'push/WhatsApp messages queued'"
+  },
+  {
+    "persona": "Groomer / Finance",
+    "url": "POST /api/grooming-lifecycle complete",
+    "steps": [
+      "Complete PS-UAT-MUBBSUG2-A32D without a payment request (LP-D01 blocks it anyway)"
+    ],
+    "expected": "Owner/Finance decision",
+    "actual": "service_completed event with paymentStatus created; provider-workspace paymentPending lists the job",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json workspaceApi",
+      "DB booking_lifecycle_events service_completed"
+    ],
+    "severity": "P2",
+    "class": "payment",
+    "id": "LP-O05",
+    "priorId": "PARTNER-O05",
+    "status": "owner-decision",
+    "title": "Completion is again accepted while the pay-after-service payment is 'created': invoice PS-2026-00483348 issued (₹1,241), settlement accrued ₹862.49 (TCS 6.21) before any cash collection; job sits under 'Payment pending' — Finance to confirm the cash-collection sequence"
+  },
+  {
+    "persona": "",
+    "url": "",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-01-jobs-list.png"
+    ],
+    "severity": "",
+    "class": "UI",
+    "id": "LP-O06",
+    "priorId": "PARTNER-O06",
+    "status": "not-retested",
+    "title": "Device-timezone rendering not re-tested (all runs used Asia/Kolkata; times rendered '24 Sept, 11:00 am' correctly in IST)"
+  },
+  {
+    "persona": "",
+    "url": "",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [],
+    "severity": "",
+    "class": "backend",
+    "id": "LP-O07",
+    "priorId": "PARTNER-O07",
+    "status": "not-retested",
+    "title": "Arrival without any trusted fix (uatBypass) not exercised; every arrival in this pass had a fix (refused at 12,980 m, accepted at 0 m)"
+  },
+  {
+    "persona": "",
+    "url": "",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-payment-surfaces.json hubs"
+    ],
+    "severity": "",
+    "class": "auth",
+    "id": "LP-O08",
+    "priorId": "PARTNER-O08",
+    "status": "not-retested",
+    "title": "Staff-session behaviour on /partner-app not re-run; with an OTP session /partner, /partner/workspace, /partner/jobs, /partner/rates, /partner-mobile, /v2/partner, /groomer all rendered (no 5xx)"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app GPS tab",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json nearGpsPost"
+    ],
+    "severity": "",
+    "class": "infrastructure",
+    "id": "LP-E01",
+    "priorId": "PARTNER-E01",
+    "status": "env-gated",
+    "title": "Google Routes ETA still waits for the maps server key: route.status configuration_required 'GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured' (GPS capture itself 201)"
+  },
+  {
+    "persona": "All providers",
+    "url": "/partner-app Earnings, /trainer Earnings",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-02-earnings.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-05-earnings.png"
+    ],
+    "severity": "",
+    "class": "payment",
+    "id": "LP-E02",
+    "priorId": "PARTNER-E02",
+    "status": "env-gated",
+    "title": "Live money OFF / sandbox payout rail; trainer earnings 'Execution: sandbox not connected'"
+  },
+  {
+    "persona": "Commission provider E2E-PRV-UI-001",
+    "url": "POST /api/grooming-lifecycle action=decline (replay)",
+    "steps": [
+      "Decline E2E-BK-UI-001 (works, via provider-assignment-recovery)",
+      "POST /api/grooming-lifecycle {action:'decline'} for the same booking"
+    ],
+    "expected": "409 'no pending offer'",
+    "actual": "500 {error:'Unable to update grooming lifecycle'}; wrangler: TypeError: Cannot read properties of undefined (reading 'confirmed') at route-_H4P0Hd1.js",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05-commission.json declineReplay",
+      "wrangler.log 2026-09-21T14:25:47 TypeError reading 'confirmed'"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "id": "LP-N01",
+    "status": "defect",
+    "title": "Declining an already-declined (reassignment_needed) work order crashes with a deterministic 500 TypeError instead of a 409"
+  },
+  {
+    "persona": "Commission provider E2E-PRV-UI-001, Pixel 7",
+    "url": "/partner-app Jobs after Decline",
+    "steps": [
+      "Decline E2E-BK-UI-001",
+      "Reload Jobs",
+      "Tap Accept job"
+    ],
+    "expected": "Declined job disappears or shows 'declined · reassignment pending'",
+    "actual": "Work order reassignment_needed is rendered as 'Confirmed'; Accept -> POST /api/provider-assignment-recovery 409",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05b-00-jobs-after-decline.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05b-01-after-accept-attempt.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05b-accept-after-decline.json"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "id": "LP-N02",
+    "status": "defect",
+    "title": "After Decline the job stays in the list as 'Confirmed' with Accept job + Decline still offered; Accept then fails 409 'No pending provider offer is available'"
+  },
+  {
+    "persona": "Customer 9800000111 (downstream of the decline)",
+    "url": "GET /api/customer-grooming-summary?bookingId=E2E-BK-UI-001",
+    "steps": [
+      "After LP-O01 decline, read the customer summary"
+    ],
+    "expected": "Reassignment pending / provider not shown",
+    "actual": "{status:'confirmed', provider:{id:'E2E-PRV-UI-001'}, tracking not_started}",
+    "evidence": [
+      "curl customer-grooming-summary after decline (see partner.md)"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "id": "LP-N03",
+    "status": "defect",
+    "title": "Customer summary still shows the declined provider as assigned (status confirmed, provider E2E UI Provider) after the provider declined and recovery escalated to Ops"
+  },
+  {
+    "persona": "Taxi provider taxi_meera (Switch UAT provider), Pixel 7",
+    "url": "/driver?bookingId=PS-UAT-TAXI-MUBCEJSP-8852, /driver/proof",
+    "steps": [
+      "Accept trip -> Assign UAT vehicle -> Confirm owner pickup -> Start trip -> Log pet settled -> Customer update -> Arrive drop-off -> Confirm drop-off (all 200)",
+      "Open /driver/proof and record a sandbox location sample"
+    ],
+    "expected": "Either samples stay recordable until completion, or arrival/drop-off are blocked until 2 samples exist (the card says 'Record 2 route samples before completion')",
+    "actual": "POST /api/taxi-proof record_location_sample -> 409 'Unable to update Pet Taxi proof records' (rule: samples only while trip in_progress); Complete trip button absent; booking in_progress / trip dropoff_confirmed (customer sees the same). Happy order on UATD-BK-TAXI-2 (samples before arrival) completes with a payment-due event",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-09-proof-page.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-12-after-dropoff.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-taxi.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x03-taxi-happy.json"
+    ],
+    "severity": "P1",
+    "class": "partner",
+    "id": "LP-N04",
+    "status": "defect",
+    "title": "Taxi trip can be driven to 'drop-off confirmed' before any route sample is recorded; afterwards samples are refused and 'Complete trip' never appears, so the trip is stuck in_progress with no in-app recovery"
+  },
+  {
+    "persona": "Sitter uatcap_sit_cm / sit_sana, Taxi taxi_meera, Trainer uatcap_train_ft",
+    "url": "/sitter, /driver/proof, /trainer, POST sitting-lifecycle / taxi-proof / taxi-lifecycle / training-sessions",
+    "steps": [
+      "Sitter sit_sana: Accept 3 min after the offer (offer expired) -> 'Unable to update Sitting lifecycle'",
+      "Sitter uatcap_sit_cm: Check in with my location 5 days before the care window -> same message (rule text: 'Cannot check in before the Sitting care window starts')",
+      "Trainer: complete without evidence, accept a cancelled session -> 'Unable to update Training session'",
+      "Taxi: sample after drop-off -> 'Unable to update Pet Taxi proof records'"
+    ],
+    "expected": "The governed reason text the lifecycle produces",
+    "actual": "Route catch blocks replace the thrown Response text with a generic message",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s01-02-after-accept.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s02-04-after-checkin.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t04-trainer-replay.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-taxi.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-N05",
+    "status": "defect",
+    "title": "Governed refusals are shown to providers as generic 'Unable to update … lifecycle/proof/session' (409) so the provider cannot tell what to do: expired sitter offer, check-in before the care window, samples after drop-off, premature training completion, cancelled-booking accept"
+  },
+  {
+    "persona": "Groomer",
+    "url": "GET /api/grooming-route destinationAddress",
+    "steps": [
+      "Accept PS-UAT-MUBBSUG2-A32D, open GPS"
+    ],
+    "expected": "City once",
+    "actual": "'Bengaluru' twice (PIN once — prior D05 fixed)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-05-gps-tab-after-recovery.png"
+    ],
+    "severity": "P3",
+    "class": "data",
+    "id": "LP-N06",
+    "status": "defect",
+    "title": "Doorstep address now duplicates the city: '… Indiranagar, Bengaluru 560038, Bengaluru, India'"
+  },
+  {
+    "persona": "Host host_sana (Switch UAT provider), Pixel 7",
+    "url": "/host?bookingId=UATD-BK-BOARD-2 Today card",
+    "steps": [
+      "Requests -> Accept UATD-STAY-2 (200, stay confirmed)",
+      "Today -> tap 'Care plan Required ›' / 'Check-in Pending ›'"
+    ],
+    "expected": "A care-plan form (submit_care_plan exists in the boarding-stay client) or clear copy that the customer must complete the care card",
+    "actual": "Toasts only; no inputs appear; check-in disabled; API replay/cross-tenant attempts need stayId (400 without it)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-01-care-plan-form.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-04-after-checkin.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-host-lifecycle.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-N07",
+    "status": "defect",
+    "title": "Host cannot progress a stay whose care plan is 'Required': the Care plan / Check-in / Extension / Check-out rows only toast 'Use the quick actions below to update it' but no care-plan quick action exists and '✓ Check in' stays disabled"
+  },
+  {
+    "persona": "Unknown phone 9000000999",
+    "url": "/partner-app OTP -> /api/identity-session, /api/provider-workspace",
+    "steps": [
+      "Enter 9000000999 at /partner-app, sandbox OTP, name 'New Applicant'"
+    ],
+    "expected": "An 'apply first' state without provider features",
+    "actual": "Dashboard with '✓ Verified', role service_provider; provider-workspace linked:true engagement 'direct' with employee-portal features; data is ownership-scoped so no foreign data leaked",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-00-after-otp-new-phone.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-onboarding.json"
+    ],
+    "severity": "P2",
+    "class": "auth",
+    "id": "LP-N08",
+    "status": "defect",
+    "title": "Any unknown 10-digit phone gets a fully 'Verified' service_provider session (PROV-OTP-…) with workspace feature flags (payslip/leave/advance true, surface employee_portal) although the sign-in copy says a profile must exist first"
+  },
+  {
+    "persona": "Groomer / Trainer / Founder",
+    "url": "/partner-app photo upload, /trainer session photos, /control Service proof awaiting review",
+    "steps": [
+      "Upload before/after PNGs as groomer (MEDIA-ED09D119-C5A, MEDIA-03376DB5-A62) and trainer (MEDIA-F83BA1D0-9C6, MEDIA-80D934F1-3A2)",
+      "Founder approves each with a reason"
+    ],
+    "expected": "Honest 'bytes received, storage not connected' state (the trainer client even has this copy) and no 'released as service proof' until an object exists",
+    "actual": "security_audit service_media.upload detail objectStored:false adapterConnected:false for all four; service_media_assets access_status 'ready', review approved, scan_status still 'pending'; local r2 store holds only metadata.sqlite (0 objects); grooming UI 'Before photo uploaded and verified · awaiting Ops approval'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-14-photos-awaiting-ops.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-founder-02-after-approval.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-founder-after-approval.png",
+      "DB security_audit_events service_media.upload rows"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "id": "LP-N09",
+    "status": "defect",
+    "title": "Service-proof photos say 'uploaded and verified' and get approved/released as service proof although objectStored=false and adapterConnected=false — the bytes were hashed and discarded (no object in the local R2 store); the checker approves an image nobody can open"
+  },
+  {
+    "persona": "Walker/taxi/sitter/host via Switch UAT provider",
+    "url": "/partner-app Jobs tab",
+    "steps": [
+      "Switch to uatcap_walk_ft, open Jobs"
+    ],
+    "expected": "Jobs tab mirrors the Home list or links to the workspace",
+    "actual": "Empty Jobs tab; Home shows 'Open dog walking job'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w01-01-jobs-as-walker.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w01-00-home-as-walker.png"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "id": "LP-N10",
+    "status": "defect",
+    "title": "Jobs tab says 'No canonical jobs assigned to this provider yet' for walkers/taxi/sitters/hosts while Home lists their 'service workspaces' (walking, taxi, sitting, boarding jobs)"
+  },
+  {
+    "persona": "Sitter sit_sana / sit_neha / host_sana (seeded commission roster)",
+    "url": "provider_capacity_profiles.acceptance_timeout_minutes",
+    "steps": [
+      "Create sitting PS-UAT-SIT-MUBCFHHP-0A1B (sit_sana), capture via staff sandbox 5 min later, Accept"
+    ],
+    "expected": "",
+    "actual": "provider_assignment_offers expires_at = offered_at + 180 s; accept 409",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s01-sitter.json",
+      "DB provider_assignment_offers"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "id": "LP-N11",
+    "status": "owner-decision",
+    "title": "Seeded sitters/hosts have a 3-minute acceptance window; with local checkout at 503 the sitting offer expired before payment could be captured, so the sitter's Accept was refused (uatcap_sit_cm has 60 min and worked). Owner/Ops to confirm the 3-minute UAT timeout"
+  },
+  {
+    "persona": "Customer/Trainer/Sitter",
+    "url": "/api/customer-checkout (503), /api/training-payment-sandbox, /api/sitting-payment-sandbox, /api/grooming-payment-sandbox (staff)",
+    "steps": [],
+    "expected": "",
+    "actual": "Training split deposit 1750 -> reconciliation amount_mismatch; only a full 3,500 capture made the booking confirmed (captured_amount now 5,250 with variance 0 — see LP-N13)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/b01-fund-and-boarding.json",
+      "curl grooming-payment-sandbox responses in partner.md"
+    ],
+    "severity": "",
+    "class": "payment",
+    "id": "LP-N12",
+    "status": "env-gated",
+    "title": "Funding a training/sitting booking locally is only possible with the staff sandbox simulator: customer checkout is 503 (no Razorpay keys) and the customer-side sandbox routes refuse a quote that is already 'used' (409 'Only an open … quote can be sandbox-captured'). Used as founder: link_order + simulate payment.captured"
+  },
+  {
+    "persona": "Founder (staff sandbox simulator)",
+    "url": "POST /api/grooming-payment-sandbox simulate_event payment.captured",
+    "steps": [
+      "simulate payment.captured 1750 (exception amount_mismatch), again 1750 (exception), then 3500 (processed)"
+    ],
+    "expected": "Over-capture flagged",
+    "actual": "matched / variance 0 / captured 5250",
+    "evidence": [
+      "DB payment_reconciliation_records PS-UAT-MUBCDWKM-D3D2"
+    ],
+    "severity": "P3",
+    "class": "payment",
+    "id": "LP-N13",
+    "status": "defect",
+    "title": "Repeated sandbox captures accumulate: after 1,750 + 1,750 + 3,500 the reconciliation record shows captured_amount 5,250 for a ₹3,500 order yet reconciliation_status 'matched' and variance 0"
+  },
+  {
+    "persona": "Sitter / Host",
+    "url": "/sitter check-in, /host check-in",
+    "steps": [],
+    "expected": "",
+    "actual": "check_in -> 409 (generic copy, LP-N05); host check-in disabled by care plan (LP-N07)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s02-sitter-run.json",
+      "lib/service-execution-clock.ts"
+    ],
+    "severity": "",
+    "class": "infrastructure",
+    "id": "LP-N14",
+    "status": "env-gated",
+    "title": "Sitting/boarding check-in is time-gated to the care window (serviceExecutionNow; the UAT clock override is refused outside isolated test UAT), so check-in/care/check-out could not be driven for bookings days away"
+  },
+  {
+    "persona": "Sitter / Customer",
+    "url": "/sitter, /v2/sitting",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s02-00-sitter-ready.png"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-N15",
+    "status": "owner-decision",
+    "title": "Sitting Meet & Greet: the sitter workspace shows no Meet & Greet step; customer side lists a ₹500 card (CUST-D09). Whether a paid/mandatory Meet & Greet exists for Sitting is an owner decision — nothing invented here"
+  },
+  {
+    "persona": "New provider 9000000999",
+    "url": "/partner/onboarding",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-01-onboarding-landing.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-02-after-start-application.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-04-after-submit.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/o01-onboarding.json"
+    ],
+    "severity": "",
+    "class": "infrastructure",
+    "id": "LP-N16",
+    "status": "env-gated",
+    "title": "Onboarding self-service: application POAPP-7A7AC1FA-D0A is created and the 7-step tracker renders, but document upload 'isn't available yet — it needs dedicated secure file storage' (no proof upload possible, objectStored=false by definition) and 'Submit application' -> 409 'We are not accepting caregiver applications for this service and city just yet' (Grooming/Bengaluru). Verification, qualification, interview, agreement and activation are staff-side handoffs (/api/provider-onboarding, /api/provider-verification 403 for the provider)"
+  },
+  {
+    "persona": "Trainer",
+    "url": "/trainer Earnings",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-05-earnings.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-trainer-complete.json earningsApi"
+    ],
+    "severity": "",
+    "class": "payment",
+    "id": "LP-N17",
+    "status": "owner-decision",
+    "title": "Completed training session is held as 'pending rate configuration — No published trainer compensation rule matches this completed session'; a Finance-published trainer rate is needed on staging"
+  },
+  {
+    "persona": "Trainer / Customer",
+    "url": "/v2/training Meet & Greet, boarding V2",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/b01-fund-and-boarding.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-N18",
+    "status": "not-retested",
+    "title": "Training assessment (Meet & Greet) not drivable (customer-side slot refusal CUST-D10; no meet booking materialised); Boarding stay could not be created for this customer because Bruno's vaccination is 'vaccinated' not 'verified' (customer-side gate) — host journey used the seeded stay"
+  },
+  {
+    "persona": "Customer 9800000111 (observed while creating partner test data)",
+    "url": "POST /api/canonical-bookings (mobile grooming flow)",
+    "steps": [
+      "Book Essential Bath Thu 24 Sept 11:00 (PS-UAT-MUBBSUG2-A32D), groomer completes it",
+      "Book the same pet/package/slot again"
+    ],
+    "expected": "New booking",
+    "actual": "canonical-bookings 200 returned PS-UAT-MUBBSUG2-A32D (status completed); the customer sees 'Your groomer is reserved.'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g07-customer-booking.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g07-09-reserved.png"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "id": "LP-N19",
+    "status": "defect",
+    "title": "Re-booking the same slot after the previous booking completed returns the completed booking (200, same bookingId, 'Your groomer is reserved') instead of creating a new one"
+  },
+  {
+    "persona": "Groomer 9000000901, Pixel 7 + iPhone 14",
+    "url": "/partner-app?bookingId=…",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-00-home-deeplink.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-01-jobs-list.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g04-d11-consent-footer.png"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P01",
+    "status": "pass",
+    "title": "OTP sign-in on both phones; deep link opens the exact assignment (job card selected, detail shows the booking id); customer-safe contact (first name 'E2E', '+91 ••••••0111', no raw phone/email)"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g06-00-denied.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g06-02-after-grant-no-reload.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g06-03-unavailable.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g06-groomer-denied.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P02",
+    "status": "pass",
+    "title": "Denied location handled honestly: with a real PERMISSION_DENIED the ON DUTY strip shows 'Location needs attention: User denied Geolocation'; granting permission recovers without reload (route POST 201 within 2 s, 'Location active while this browser is open'); POSITION_UNAVAILABLE also surfaced. Note: Playwright's un-answered prompt leaves the app on 'Requesting location permission…' indefinitely (harness artefact, recorded in g02)"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app lifecycle",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-18-after-complete.png",
+      "DB booking_lifecycle_events PS-UAT-MUBBSUG2-A32D"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P03",
+    "status": "pass",
+    "title": "Full grooming lifecycle durable: accept -> journey -> geofence refusal 409 at 12,980 m -> doorstep arrival (0 m) -> 3-item pre-service checklist gates Start service -> in_service -> photos -> founder maker/checker (empty reason refused, reason required) -> Add service proof 200 -> Complete -> completed; booking_lifecycle_events carry every transition with actor provider:uatcap_groom_ft; customer summary shows completed + invoice PS-2026-00483348"
+  },
+  {
+    "persona": "Groomer",
+    "url": "/partner-app Earnings / More / hub",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-02-earnings.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-05-hub-_partner.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g03-06-hub-_partner_workspace.png"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P04",
+    "status": "pass",
+    "title": "Earnings after completion: computed net payout ₹869, 1 order, gross ₹1,241, settlement accrued ₹862.49 'Commercial split resolved; TCS withheld 6.21; ledger balanced', Live money OFF; More tab links to onboarding/hub; /partner, /partner/workspace (₹868.7), /partner/jobs, /partner-mobile, /v2/partner, /groomer all render for the OTP session"
+  },
+  {
+    "persona": "Groomer",
+    "url": "Live order impact 'Running late'",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g02-lifecycle.json liveOrderImpact"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P05",
+    "status": "pass",
+    "title": "Running late records operation.running_late (201, notificationsQueued 2, rebooking case) and the card updates"
+  },
+  {
+    "persona": "All providers",
+    "url": "cross-tenant probes",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/g05-commission.json crossTenant",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-trainer-unpaid.json earningsOwnership",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-walker.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-taxi.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-host-lifecycle.json"
+    ],
+    "severity": "",
+    "class": "auth",
+    "id": "LP-P06",
+    "status": "pass",
+    "title": "Ownership boundaries hold for every vertical: other provider's jobs/lifecycle/route/media/earnings/sessions/stays -> 403 ('Provider ownership denied' / 'Identity session does not own this customer/provider scope'); other booking POST complete/accept/check_out -> 403"
+  },
+  {
+    "persona": "Trainer 9000000931",
+    "url": "/partner-app + /trainer",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-02-after-accept-unpaid-partner-app.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-04-trainer-after-accept-unpaid.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-06-meera-trainer-cancelled-booking.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t01-trainer-unpaid.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P07",
+    "status": "pass",
+    "title": "Net-funding rule: unpaid training session refused everywhere with the governed message 'The customer must complete the required Training payment before this session can proceed.' (partner-app Accept training session, /trainer Accept, direct API: all 409 training_payment_required); cancelled seeded session (train_meera, UATD-BK-TRAIN-2) has Accept disabled and API accept refused 409"
+  },
+  {
+    "persona": "Trainer 9000000931",
+    "url": "/trainer",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t02-trainer-lifecycle.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-trainer-complete.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-02-after-complete.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t03-founder-after-approval.png"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P08",
+    "status": "pass",
+    "title": "Multi-session lifecycle after funding: Accept -> On the way -> Arrived (denied location -> 'Allow location access to check in, then retry.'; far -> 409 'You are 12980m from the customer doorstep…'; doorstep -> arrived) -> pre-check (unsafe area disables Start) -> Start -> before/after upload -> founder approval in /control (same maker/checker list) -> Refresh photo approval -> owner handover 20 min -> Save report -> Complete & consume one session (consumedExactlyOnce, closure) -> next session unlocked (locked -> scheduled) and accepted; earnings hold honest; customer programme shows session 1 completed"
+  },
+  {
+    "persona": "Trainer",
+    "url": "POST /api/training-sessions",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/t04-trainer-replay.json"
+    ],
+    "severity": "",
+    "class": "backend",
+    "id": "LP-P09",
+    "status": "pass",
+    "title": "Interrupted-closeout style retry: replaying an action with the same idempotency key returns 200 duplicatePrevented:true (on_the_way on session 2); a fresh key after the transition is 409; complete without evidence/handover refused (generic copy, LP-N05)"
+  },
+  {
+    "persona": "Walker uatcap_walk_ft (Switch UAT provider), Pixel 7",
+    "url": "/partner-app Home -> 'Open dog walking job' -> /walker, /walker/proof",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-01-start-denied.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-02-start-far.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-06-proof-page.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-08-after-complete.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w02-walker.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P10",
+    "status": "pass",
+    "title": "Walker journey complete: cross-service link from Home, Accept canonical schedule, Confirm owner handover, Start walk with denied location -> 'Allow location access to check in, then retry.'; far -> 409 'Walker is 12980m from the customer doorstep; start requires <=250m'; doorstep -> in_progress; care update/pee/poop/water events 200; Complete disabled until 2 sandbox route samples recorded on /walker/proof; complete -> completed with payment-due ₹349 event; replay complete 409; customer view shows session 1 completed and the due payment"
+  },
+  {
+    "persona": "Taxi taxi_meera (Switch UAT provider)",
+    "url": "/driver?bookingId=UATD-BK-TAXI-2, /driver/proof",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x03-01-after-start.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x03-04-after-complete.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x03-taxi-happy.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P11",
+    "status": "pass",
+    "title": "Taxi happy order completes in the sandbox (no dispatch): Accept trip -> Assign UAT vehicle (TXV-MEERA-01) -> Confirm owner pickup -> Start trip -> 2 location samples on /driver/proof -> Arrive drop-off -> Confirm drop-off -> Complete trip (completed, payment-due event); replay 409; masked customer contact"
+  },
+  {
+    "persona": "Sitter uatcap_sit_cm (Switch UAT provider)",
+    "url": "/sitter?bookingId=PS-UAT-SIT-MUBDA4YP-93FC",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s02-01-after-accept.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/s02-sitter-run.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P12",
+    "status": "pass",
+    "title": "Sitter accepts a confirmed sitting request within the offer window (assigned, sitter_accepted event; customer view assigned); care card, vet/emergency contacts and service address shown; check-in blocked only by the care-window clock (LP-N14)"
+  },
+  {
+    "persona": "Host host_sana (Switch UAT provider)",
+    "url": "/host",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h01-02-tab-Requests.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h01-04-after-accept.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-11-tab-Settlement.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h02-12-tab-Homeprofile.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h01-host.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P13",
+    "status": "pass",
+    "title": "Host accepts a stay request from the Requests tab (UATD-STAY-2 -> confirmed, booking assigned, capacity 3 spots); Today/Requests/Capacity/Settlement/Home profile tabs render; host profile API returns verified KYC/background/home flags and rating; public profile is honest 'isNewProvider'"
+  },
+  {
+    "persona": "All",
+    "url": "/partner-app More -> Switch UAT provider",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/w01-walker.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/x02-taxi.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/partner/h01-host.json"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P14",
+    "status": "pass",
+    "title": "Switch UAT provider works for uatcap_walk_ft, taxi_meera, sit_sana, uatcap_sit_cm, host_sana, train_meera (200, identity re-checked); no horizontal overflow on any captured screen (Pixel 7 412px, iPhone 14 390px); no page errors in any run"
+  },
+  {
+    "persona": "Founder + groomer",
+    "url": "/api/pricing-control",
+    "steps": [],
+    "expected": "",
+    "actual": "",
+    "evidence": [
+      "curl output in partner.md"
+    ],
+    "severity": "",
+    "class": "partner",
+    "id": "LP-P15",
+    "status": "pass",
+    "title": "Grooming catalogue was empty on this database; published canonical_groom_dog-bath/basic/trim/makeover (+2-pet bundles) as founder via PATCH /api/pricing-control reason 'UAT publish for partner launch pass' — staging needs the same"
+  }
+]

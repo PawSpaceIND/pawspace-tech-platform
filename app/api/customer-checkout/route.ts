@@ -14,7 +14,6 @@ export async function POST(request: Request) {
     await requireCustomerOwnership(db, actor, session.subjectId);
     const { env } = await import("cloudflare:workers");
     const runtime = env as unknown as Record<string, unknown>;
-    const locks = customerCheckoutEnvironment(runtime);
     // Stream-limit the JSON body, including requests without Content-Length.
     if ((request.headers.get("content-type") || "").split(";")[0].trim().toLowerCase() !== "application/json") return json({ error: "JSON is required." }, 415);
     const reader = request.body?.getReader();
@@ -36,6 +35,13 @@ export async function POST(request: Request) {
     catch { return json({ error: "Invalid payment request." }, 400); }
     const bookingId = typeof body.bookingId === "string" ? body.bookingId : "";
     if (body.action === "start") {
+      // The Razorpay sandbox-configuration gate belongs here, not above: it protects only the action
+      // that opens a gateway order. "status" is a read of PawSpace's own booking/payment record and
+      // "confirm" re-checks this same gate itself (verifyCustomerCheckoutReceipt), so gating every
+      // action behind it hid the whole booking record behind a gateway outage (CUST-L-D04/D11): the
+      // V2 "View booking & payment" page and the training recovery screen both read this via
+      // loadCustomerConfirmationProjection({action:"status"}) and got a 503 instead of the booking.
+      const locks = customerCheckoutEnvironment(runtime);
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);
       const stage = await paymentStageAmount(db, bookingId);
       if (!stage) return json({ error: "Payment record was not found." }, 404);
@@ -64,7 +70,7 @@ export async function POST(request: Request) {
             WHERE e.booking_id=b.id AND e.payment_id=p.id AND (e.signature_verified=1 OR (e.signature_verified=0 AND json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api')) AND e.processing_status='processed'
               AND e.event_type IN ('payment.captured','order.paid','payment_link.paid'))`
         : "NULL";
-      const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
+      const projection = await db.prepare(`SELECT b.id booking_id,b.service_code,b.package_code,b.package_name,b.status booking_status,b.scheduled_start,b.scheduled_end,b.provider_id,b.total_amount,b.currency,b.updated_at,
           w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.mode payment_mode,p.status payment_status,p.amount_due_now,
           ${transactionExpression} transaction_id
           FROM canonical_bookings b
@@ -79,7 +85,7 @@ export async function POST(request: Request) {
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
       const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
-        ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageName: String(projection.package_name),
+        ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageCode: String(projection.package_code||""), packageName: String(projection.package_name),
         bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || canonical.gatewayPaymentId, amountDueNow: Number(projection.amount_due_now || 0),
         totalAmount: canonical.totalAmount, currency: canonical.currency, providerId: canonical.providerId || String(projection.provider_id),
         providerName: canonical.providerName || String(projection.provider_name), providerModel: canonical.providerModel || String(projection.provider_model), workOrderStatus: String(projection.work_order_status),

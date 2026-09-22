@@ -92,6 +92,25 @@ async function driveToDropoff(sqlite, db, trip, { samples = 2 } = {}) {
   return vehicleId;
 }
 
+/**
+ * A trip sitting at dropoff_confirmed WITHOUT the route evidence completion requires.
+ *
+ * The lifecycle no longer lets a driver reach that state — arrive_dropoff is gated on the same
+ * evidence, while the trip is still in_progress and the samples can still be recorded. Rows already
+ * in that state when the gate shipped can only be built here, by hand, and the completion-time gate
+ * that protects them is asserted against exactly this shape. Nothing in the module is relaxed for it.
+ */
+async function strandedAtDropoff(sqlite, db, trip, { samples = 0 } = {}) {
+  await drive(db, trip, "accept");
+  const vehicleId = seedVehicle(sqlite, { providerId: trip.providerId });
+  await drive(db, trip, "assign_vehicle", { vehicleId });
+  await drive(db, trip, "confirm_pickup", { handoverMethod: "owner" });
+  await drive(db, trip, "start_trip");
+  await recordRouteSamples(db, trip, samples);
+  sqlite.prepare("UPDATE taxi_trips SET status='dropoff_confirmed',dropoff_verification_status='uat_confirmed' WHERE id=?").run(trip.tripId);
+  return vehicleId;
+}
+
 const decide = async (path, { actorEmail, cookie, method = "GET", body } = {}) => {
   const headers = {
     ...(method === "GET" ? {} : { "content-type": "application/json" }),
@@ -159,21 +178,38 @@ test("Closure: completion is server-gated by canonical route evidence", async ()
   const { sqlite, db, trip } = await closureWorld();
   await seedActiveCommercialTerm(db);
 
-  // ZERO samples: refused. The old test asserted the refusal SENTENCE appeared in the module.
-  await driveToDropoff(sqlite, db, trip, { samples: 0 });
-  const none = await refusal(drive(db, trip, "complete_trip"));
-  assert.equal(none?.status, 409);
-  assert.match(String(none?.message), /at least two canonical sandbox route samples/);
-  assert.equal(String(sqlite.prepare("SELECT status FROM taxi_trips WHERE id=?").get(trip.tripId).status), "dropoff_confirmed",
-    "and the trip is not completed");
-  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) c FROM taxi_trip_payment_events WHERE booking_id=?").get(trip.bookingId).c), 0,
-    "no payment event is opened");
+  // ZERO samples: refused, at the ARRIVAL the completion rule depends on. The driver is still
+  // in_progress, which is the only state where route samples are accepted, so the refusal names an
+  // action they can actually take. [LP-N04]
+  await drive(db, trip, "accept");
+  await drive(db, trip, "assign_vehicle", { vehicleId: seedVehicle(sqlite, { providerId: trip.providerId }) });
+  await drive(db, trip, "confirm_pickup", { handoverMethod: "owner" });
+  await drive(db, trip, "start_trip");
+  const earlyArrival = await refusal(drive(db, trip, "arrive_dropoff"));
+  assert.equal(earlyArrival?.status, 409);
+  assert.match(String(earlyArrival?.message), /route samples under Route . proof before marking arrival/i);
+  assert.equal(String(sqlite.prepare("SELECT status FROM taxi_trips WHERE id=?").get(trip.tripId).status), "in_progress",
+    "the trip stays where route samples can still be recorded");
+  // ONE sample is still not a route, and arrival is still refused.
+  await recordRouteSamples(db, trip, 1);
+  assert.equal((await refusal(drive(db, trip, "arrive_dropoff")))?.status, 409, "one sample is a point, not a route");
+  // Recording the second sample is all it takes to get moving again: the hole has an in-app exit.
+  await recordRouteSamples(db, trip, 1);
+  await drive(db, trip, "arrive_dropoff");
+  await drive(db, trip, "confirm_dropoff", { handoverMethod: "clinic_staff" });
 
-  // ONE sample is still not a route.
+  // The completion-time gate still stands on its own for a trip already stranded at dropoff_confirmed
+  // without evidence — the rows that existed before arrival was gated.
   const single = await closureWorld({ bookingId: "BKG-CLOSE-1", tripId: "TRIP-CLOSE-1", reservationId: "RES-CLOSE-1", groupId: "GRP-CLOSE-1", customerId: "CUST-CLOSE-1" });
   await seedActiveCommercialTerm(single.db);
-  await driveToDropoff(single.sqlite, single.db, single.trip, { samples: 1 });
-  assert.equal((await refusal(drive(single.db, single.trip, "complete_trip")))?.status, 409);
+  await strandedAtDropoff(single.sqlite, single.db, single.trip, { samples: 1 });
+  const none = await refusal(drive(single.db, single.trip, "complete_trip"));
+  assert.equal(none?.status, 409);
+  assert.match(String(none?.message), /at least two canonical sandbox route samples/);
+  assert.equal(String(single.sqlite.prepare("SELECT status FROM taxi_trips WHERE id=?").get(single.trip.tripId).status), "dropoff_confirmed",
+    "and the trip is not completed");
+  assert.equal(Number(single.sqlite.prepare("SELECT COUNT(*) c FROM taxi_trip_payment_events WHERE booking_id=?").get(single.trip.bookingId).c), 0,
+    "no payment event is opened");
 
   // The route evidence must belong to THIS trip. Samples recorded on another trip do not count, which
   // is what makes the count a gate rather than a global counter.
@@ -213,7 +249,7 @@ test("Closure: completion is server-gated by canonical route evidence", async ()
 // ---------------------------------------------------------------------------------------------
 test("Closure: the customer reaches their own trip's management and incident surfaces", async () => {
   const { sqlite, db, trip } = await closureWorld();
-  await driveToDropoff(sqlite, db, trip, { samples: 0 });
+  await driveToDropoff(sqlite, db, trip);
   sqlite.prepare("UPDATE taxi_trips SET status='in_progress' WHERE id=?").run(trip.tripId);
   const incident = await proof.mutateTaxiProof(db, { bookingId: trip.bookingId, action: "report_incident", actorId: trip.providerId, idempotencyKey: nextKey("incident"), severity: "urgent", summary: "pet unsettled in heavy traffic" });
 

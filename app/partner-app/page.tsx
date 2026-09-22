@@ -1,7 +1,11 @@
 "use client";
+import {partnerJobWorkspaceHref} from "../../lib/partner-job-workspace";
+import type {PartnerJob as FeedJob,PartnerJobFeed} from "../../lib/partner-job-feed";
 import {boundedFetch} from "../../lib/bounded-fetch";
 
 import Link from "next/link";
+import PartnerJobNotes from "./job-notes";
+import {selectPartnerWorkOrder} from "../../lib/partner-job-selection";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
@@ -65,15 +69,18 @@ type Job = {
   events: JobEvent[];
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
-type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number };
+type MediaAsset = { id: string; ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null; created_at: number; objectStored?: boolean | null };
 type ProofState = "missing" | "unconfirmed" | "pending" | "rejected" | "approved";
+/** [LP-N09] The one honest sentence for a confirmed upload whose bytes were never actually kept. */
+const NOT_STORED_TEXT = "Photo hash recorded — file storage is not connected in this environment; the image was not kept";
 /** What the partner should do next for one proof slot, from the server's own asset states. */
 function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_service"): { state: ProofState; text: string } {
   const items = assets.filter(asset => asset.purpose === purpose).sort((a, b) => Number(b.created_at) - Number(a.created_at));
-  if (items.some(asset => asset.proofReady)) return { state: "approved", text: "approved by Ops · ready for service proof" };
+  const released = items.find(asset => asset.proofReady);
+  if (released) return released.objectStored === false ? { state: "approved", text: `approved by Ops · ${NOT_STORED_TEXT.toLowerCase()}` } : { state: "approved", text: "approved by Ops · ready for service proof" };
   const latest = items[0];
   if (!latest) return { state: "missing", text: "not uploaded yet" };
-  if (latest.review_status === "pending_review") return { state: "pending", text: "uploaded and verified · awaiting Ops approval" };
+  if (latest.review_status === "pending_review") return latest.objectStored === false ? { state: "pending", text: `${NOT_STORED_TEXT} · awaiting Ops review of the hash` } : { state: "pending", text: "uploaded and verified · awaiting Ops approval" };
   if (latest.review_status === "rejected") return { state: "rejected", text: `rejected by Ops${latest.review_reason ? ` (${latest.review_reason})` : ""} · upload a replacement` };
   if (latest.access_status === "pending_upload") return { state: "unconfirmed", text: "registered but never confirmed · choose the file again" };
   return { state: "pending", text: `${label(latest.access_status)} · ${label(latest.review_status || latest.scan_status)}` };
@@ -151,6 +158,7 @@ function PartnerMobileAppContent() {
   const [uatCode, setUatCode] = useState("");
   const [switching, setSwitching] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [otherJobs,setOtherJobs]=useState<FeedJob[]>([]),[feedError,setFeedError]=useState("");
   const [selectedId, setSelectedId] = useState("");
   // Live order impact: the retired /groomer prototype was the only surface that reached the governed
   // /api/booking-operations, but it sent hardcoded IDs. Here it runs against the REAL selected booking.
@@ -168,7 +176,20 @@ function PartnerMobileAppContent() {
   const [earningsNotice, setEarningsNotice] = useState("");
   const [engagement, setEngagement] = useState("");
   const [workspaceState, setWorkspaceState] = useState<{ onboardingStatus: string; liveness: WorkspaceLiveness | null; pendingProof: WorkspacePendingProof[] }>({ onboardingStatus: "", liveness: null, pendingProof: [] });
+  // [LP-D08] A session superseded from another device (or otherwise revoked server-side) is only
+  // discovered when a background poll next 401s - not at the moment it happens. Falling back to the
+  // sign-in screen (instead of leaving the dashboard mounted with stale "Verified"/"Online" pills and a
+  // staff-worded banner) is itself the fix for the pills and for "a way back to the OTP form without a
+  // manual reload"; this notice is the honest, partner-facing reason shown there.
+  const [sessionNotice, setSessionNotice] = useState("");
   const sessionVersion = useRef(0);
+  const handleUnauthorized = () => {
+    sessionVersion.current += 1;
+    setIdentity(null);
+    setJobs([]);
+    setSessionNotice("Your session ended, most likely because you signed in on another device. Verify your phone number again to continue.");
+    setSessionState("unauthenticated");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +201,7 @@ function PartnerMobileAppContent() {
         if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
         return body.data;
       })
-      .then((data) => { if (!cancelled && version === sessionVersion.current) { setIdentity(data); setSessionState("verified"); setError(""); } })
+      .then((data) => { if (!cancelled && version === sessionVersion.current) { setIdentity(data); setSessionState("verified"); setError(""); setSessionNotice(""); } })
       .catch(() => { if (!cancelled && version === sessionVersion.current) { setIdentity(null); setSessionState("unauthenticated"); } });
     return () => { cancelled = true; };
   }, [identityKey]);
@@ -210,17 +231,15 @@ function PartnerMobileAppContent() {
     const version = sessionVersion.current;
     fetch(`/api/partner-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
       .then(async (response) => {
+        if (response.status === 401) { if (!cancelled && version === sessionVersion.current) handleUnauthorized(); return null; }
         const body = await response.json() as JobsResponse;
         if (!response.ok) throw new Error(body.error || "Unable to load provider jobs");
         return body.jobs ?? [];
       })
       .then((next) => {
-        if (cancelled || version !== sessionVersion.current) return;
+        if (next === null || cancelled || version !== sessionVersion.current) return;
         setJobs(next);
-        setSelectedId((current) => {
-          if (requestedBookingId && next.some((job) => job.bookingId === requestedBookingId)) return requestedBookingId;
-          return current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? "");
-        });
+        setSelectedId(current=>selectPartnerWorkOrder(next,current,requestedBookingId));
         setError("");
       })
       .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
@@ -228,13 +247,24 @@ function PartnerMobileAppContent() {
   }, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);
 
   useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    queueMicrotask(()=>{if(!controller.signal.aborted){setOtherJobs([]);setFeedError("");}});
+    if(!identity?.subjectId)return()=>controller.abort();
+    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(!controller.signal.aborted)setOtherJobs([...feed.needsAction,...feed.today,...feed.upcoming,...feed.completed].filter(job=>!["grooming","dog_training"].includes(job.serviceCode)));}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
+    return()=>controller.abort();
+  },[identity?.subjectId,refreshKey]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
-  const selected = useMemo(() => (tab==="home"?dutyJob:null) ?? jobs.find((job) => job.bookingId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId, tab, dutyJob]);
+  const selected = useMemo(() => (tab==="home"?dutyJob:null) ?? jobs.find((job) => job.workOrderId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId, tab, dutyJob]);
   const statusQueue=useStatusQueue(identity?.subjectId,()=>setRefreshKey(value=>value+1));
   const trackingNotice=useDutyTracking(dutyJob,statusQueue.setConnection,()=>setRefreshKey(value=>value+1));
   const [checks,setChecks]=useState<Record<string,string[]>>({});
   const selectedChecks=selected?checks[selected.bookingId]??[]:[];
-  const pendingStatus=Boolean(selected&&statusQueue.pending.some(item=>item.bookingId===selected.bookingId));
+  // [LP-D07] Only an item still awaiting delivery blocks the primary control. One that already failed
+  // (its `error` is set - e.g. a 409 geofence refusal) is a resolved state the partner can act on again
+  // immediately; the "Retry saved updates" banner stays available as the other way to resend the same
+  // attempt, per enqueueStatus's replace-on-retry rule above.
+  const pendingStatus=Boolean(selected&&statusQueue.pending.some(item=>item.bookingId===selected.bookingId&&!item.error));
   const toggleCheck=(id:string)=>{if(selected)setChecks(current=>({...current,[selected.bookingId]:selectedChecks.includes(id)?selectedChecks.filter(value=>value!==id):[...selectedChecks,id]}));};
   const activeJobs = jobs.filter((job) => !["completed", "cancelled"].includes(job.status));
   const completedJobs = jobs.filter((job) => job.status === "completed");
@@ -275,6 +305,7 @@ function PartnerMobileAppContent() {
     let active = true;
     const version = sessionVersion.current;
     void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => {
+      if (response.status === 401) { if (active && version === sessionVersion.current) handleUnauthorized(); return; }
       const body = await response.json() as { data?: WorkspacePayload; error?: string };
       if (!response.ok) throw new Error(body.error || "Unable to load earnings");
       // main's staleness guard, and every setter below sits inside it. workspaceState especially:
@@ -304,6 +335,9 @@ function PartnerMobileAppContent() {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaAssetsError, setMediaAssetsError] = useState("");
   const [mediaPollKey, setMediaPollKey] = useState(0);
+  // [LP-N09] What the upload response just said about the bytes it received, so the toast right after
+  // upload can be as honest as the per-slot status text is once mediaAssets refetches.
+  const lastUploadObjectStoredRef = useRef<boolean | null>(null);
   const proofStage = Boolean(selected && selected.serviceCode !== "dog_training" && selected.status === "in_service" && !selected.proof?.beforePhotoRef);
   const bothApproved = describeProof(mediaAssets, "before_service").state === "approved" && describeProof(mediaAssets, "after_service").state === "approved";
   useEffect(() => {
@@ -333,8 +367,9 @@ function PartnerMobileAppContent() {
     // about bytes the server never saw. That held only while no bucket was bound, and would have failed the
     // moment one was (redeem then HEADs the bucket for an object that nobody had written).
     const upload = await boundedFetch("/api/service-media/upload", { method: "PUT", headers: { "content-type": item.mimeType, "x-pawspace-media-id": mediaId, "x-pawspace-upload-token": grant.token }, body: item.file }, 60_000);
-    const uploaded = await upload.json().catch(() => ({})) as { error?: string };
+    const uploaded = await upload.json().catch(() => ({})) as { error?: string; data?: { objectStored?: boolean } };
     if (!upload.ok) throw proofFailure(upload.status, uploaded.error || "Unable to upload proof media");
+    lastUploadObjectStoredRef.current = uploaded.data?.objectStored ?? null;
   };
 
   useEffect(() => {
@@ -365,7 +400,10 @@ function PartnerMobileAppContent() {
         if (outcome === "withdrawn") { setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo left the sync queue before it was sent. Add it again if it is still needed.`); return; }
         await flushProviderProofQueue(registerQueuedProof);
         setMediaPollKey(value => value + 1);
-        setMediaMessage(`${purpose === "before_service" ? "Before" : "After"} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);
+        const name = purpose === "before_service" ? "Before" : "After";
+        setMediaMessage(lastUploadObjectStoredRef.current === false
+          ? `${name} photo hash recorded, but file storage is not connected in this environment — the image was not kept. Ops can still review the hash (Control tower → Customer booking lifecycle → Service proof).`
+          : `${name} photo uploaded and verified. It now waits for Ops approval (Control tower → Customer booking lifecycle → Service proof). Once both photos are approved, tap "Add service proof".`);
       } catch (problem) {
         if (isPermanentProofError(problem)) { await discardProviderProof(queued.id); setMediaMessage(""); setError(problem.message); }
         else setMediaMessage("Network interrupted. Proof is safely queued and will retry automatically.");
@@ -460,7 +498,7 @@ function PartnerMobileAppContent() {
   const earningsOrders = Number(earnings?.orders ?? earnings?.computed?.orders ?? 0);
   const earningsGross = Number(earnings?.grossOrderValue ?? earnings?.computed?.grossOrderValue ?? 0);
 
-  const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
+  const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.workOrderId); setTab(target); };
 
   // Both handlers only ask the server to change the session, then re-run the identity check above.
   // Nothing here decides locally that the partner is signed out or has become someone else. They
@@ -526,6 +564,7 @@ function PartnerMobileAppContent() {
         {sessionState === "checking" || sessionState === "revoking" || sessionState === "revocation_failed"
           ? sessionState === "revocation_failed" ? <><div className={styles.error} role="alert">{error}</div><button type="button" className={styles.secondary} onClick={() => void signOut()}>Retry session revocation</button></> : <p role="status" className={styles.empty}>{sessionState === "revoking" ? "Ending your partner session and clearing this device…" : "Checking your partner session…"}</p>
           : <>
+            {sessionNotice && <div className={styles.error} role="alert">{sessionNotice}</div>}
             <PartnerLogin eyebrow="🐾 PawSpace Partner" title="Sign in to your Partner app"
               description="Verify your registered phone number to open your jobs, GPS and earnings. Nothing on this screen is available without a verified provider session."
               onLoggedIn={() => { sessionVersion.current+=1;setError(""); setSessionState("checking"); setIdentityKey((value) => value + 1); }} />
@@ -564,15 +603,17 @@ function PartnerMobileAppContent() {
                 {nextAction && <button disabled={busy||pendingStatus||(nextAction==="start_service"&&!checklistComplete("before",selectedChecks))||((nextAction==="complete"||nextAction==="add_proof")&&!checklistComplete("after",selectedChecks))} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, "jobs")}>{isTraining ? "Open training session" : canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
+            </> : <><h2>{otherJobs.length?"Your assigned work":"No assigned jobs"}</h2><p>{otherJobs.length?"Open your service workspace below to continue.":"Your work will appear here after assignment."}</p></>}
           </section>
 
           <div className={styles.stats}>
-            <article><span>{activeJobs.length}</span><small>active jobs</small></article>
-            <article><span>{completedJobs.length}</span><small>completed</small></article>
+            <article><span>{activeJobs.length+otherJobs.filter(job=>!["completed","cancelled"].includes(job.status)).length}</span><small>active jobs</small></article>
+            <article><span>{completedJobs.length+otherJobs.filter(job=>job.status==="completed").length}</span><small>completed</small></article>
             <article><span>GPS</span><small>tap to start</small></article>
           </div>
 
+          {feedError&&<p role="alert">{feedError}</p>}
+          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job);return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
           <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
@@ -587,7 +628,7 @@ function PartnerMobileAppContent() {
         {(tab === "jobs" || (tab === "home" && dutyJob)) && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>{tab==="home"?"Your active job":"My jobs"}</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
           {jobs.length === 0 && !error && <div className={styles.empty}>No canonical jobs assigned to this provider yet.</div>}
-          {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.bookingId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
+          {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.workOrderId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
           {selected && <section className={styles.detailCard}>
             <div className={styles.detailHead}><div><small>BOOKING {selected.bookingId}</small><h2>{selected.packageName}</h2></div><span>{label(selected.status)}</span></div>
             {isGroomerOnDuty(selected)&&<GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} managedTracking/>}
@@ -609,13 +650,12 @@ function PartnerMobileAppContent() {
             {/* Projected by the route out of the booking's pricing_json and, until now, discarded by the
                 client: the handling requirements recorded against this pet and the add-ons the partner is
                 expected to perform. Driving to a job without either is the gap this closes. */}
-            {!!selected.safetyRequirements.length && <section className={styles.notice} aria-label="Handling requirements"><b>Handling requirements</b><ul>{selected.safetyRequirements.map(item => <li key={item}>{label(item)}</li>)}</ul></section>}
-            {!!selected.addOns.length && <div className={styles.proof}><b>Add-ons booked</b><span>{selected.addOns.map(label).join(" · ")}</span></div>}
+            <PartnerJobNotes safetyRequirements={selected.safetyRequirements} addOns={selected.addOns}/>
             {/* The lifecycle timeline the route already sanitizes for providers. Only the event type and
                 its timestamp are shown: detail_json is filtered server-side, but there is no reason to
                 render free-form detail on a partner's phone at all. */}
             {!!selected.events.length && <section className={styles.notice} aria-label="Job activity"><b>Recent activity</b><ul>{selected.events.slice(0, 5).map((event, index) => <li key={`${event.occurredAt}-${index}`}>{label(event.eventType)}{whenMs(event.occurredAt) ? ` · ${whenMs(event.occurredAt)}` : ""}</li>)}</ul></section>}
-            {isTraining ? <section className={styles.notice}><b>Training session</b><p>Session {selected.training?.sequenceNo ?? 1} of {selected.training?.totalSessions ?? 1} · {selected.training?.completedSessions ?? 0} completed · programme {label(selected.training?.programmeStatus || selected.status)}</p>{Boolean(selected.training?.requirements?.length) && <small>Goals: {selected.training?.requirements.join(", ")}</small>}<p>Trainer-specific session report, owner handover and secure evidence remain governed by the Training lifecycle before completion.</p></section> : <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>}
+            {isTraining ? <section className={styles.notice}><b>Training session</b><p><Link href={`/trainer?bookingId=${encodeURIComponent(selected.bookingId)}&sessionId=${encodeURIComponent(selected.trainingSessionId||"")}`}>Open full trainer workspace</Link></p><p>Session {selected.training?.sequenceNo ?? 1} of {selected.training?.totalSessions ?? 1} · {selected.training?.completedSessions ?? 0} completed · programme {label(selected.training?.programmeStatus || selected.status)}</p>{Boolean(selected.training?.requirements?.length) && <small>Goals: {selected.training?.requirements.join(", ")}</small>}<p>Trainer-specific session report, owner handover and secure evidence remain governed by the Training lifecycle before completion.</p></section> : <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}${whenMs(selected.proof.updatedAt) ? ` · updated ${whenMs(selected.proof.updatedAt)}` : ""}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}{whenMs(selected.invoice.issuedAt) ? ` · issued ${whenMs(selected.invoice.issuedAt)}` : ""}</small>}</div>}
 
             {proofStage && <section className={styles.notice} aria-label="Service proof photos"><b>Secure before / after proof</b><p>Choose real UAT images. Each photo is uploaded, verified against its upload grant, then approved by Ops (a second person) before it counts as service proof.</p>
               {(["before_service", "after_service"] as const).map(purpose => { const status = describeProof(mediaAssets, purpose); const name = purpose === "before_service" ? "Before" : "After"; return <div key={purpose} className={styles.proof}><b>{name} photo</b><span>{status.text}</span>{status.state !== "approved" && status.state !== "pending" && <label>{status.state === "missing" ? `${name} photo` : `Replacement ${name.toLowerCase()} photo`} <input type="file" aria-label={`${name} photo`} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, purpose); }} /></label>}</div>; })}
@@ -656,7 +696,12 @@ function PartnerMobileAppContent() {
                   {[10, 15, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
                 </select>
               </label>
-              <div className={styles.primaryActions}>
+              {/* [LP-D04] Three buttons at flex:1 with the global review-overrides.css min-width:0 reset
+                  compressed each to ~71px on a Pixel 7, and the same stylesheet's overflow-wrap:anywhere
+                  then broke words mid-letter to fit ("Packa ge upgra ded"). liveOrderActions gives each
+                  button enough width to hold its longest word, so wrapping - which the buttons still do,
+                  and must - only ever happens at a word boundary. */}
+              <div className={`${styles.primaryActions} ${styles.liveOrderActions}`}>
                 <button disabled={operationBusy} onClick={() => void reportOperation("package_upgrade")}>Package upgraded</button>
                 <button disabled={operationBusy} onClick={() => void reportOperation("service_overrun")}>Service taking longer</button>
                 <button disabled={operationBusy} onClick={() => void reportOperation("running_late")}>Running late</button>
@@ -670,7 +715,7 @@ function PartnerMobileAppContent() {
 
         {tab === "tracking" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
-          {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.bookingId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
+          {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.workOrderId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
           {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
           {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
           {selected && isTraining && <section className={styles.notice}><b>Training GPS uses the Training lifecycle</b><p>Open the Training job to accept the session and start the journey. Arrival geofence and session evidence are enforced by the Training session API; the Grooming route card is intentionally not used for trainers.</p><button onClick={() => setTab("jobs")}>Open training session</button></section>}

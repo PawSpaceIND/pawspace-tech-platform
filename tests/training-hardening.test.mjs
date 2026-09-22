@@ -6,7 +6,7 @@ import * as nodeModule from "node:module";
 
 // Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
 // per-test SQLite-backed D1 shim, so the REAL training routes and libs execute unmodified.
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__TRN_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__TRN_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';},get PAWSPACE_PAYMENT_ENV(){return 'sandbox';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -99,7 +99,7 @@ function baseTables() {
   // #388 gates ARRIVE on a doorstep geofence, which reads this table. Seeded, not stubbed: the
   // real schema, with real coordinates the trainer is then required to arrive at.
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'staff_entered',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,review_status TEXT,release_basis TEXT)");
 }
 
 const NOW = Date.now();
@@ -184,7 +184,7 @@ function seedEvidence(mediaId, sessionRow) {
 }
 
 function seedAsset(mediaId, purpose, sessionRow) {
-  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
+  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?,'approved','scanner_clean')")
     .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, purpose, `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
   sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
     .run(mediaId, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
@@ -544,12 +544,13 @@ test("real execution: trainer earnings exist ONLY for completed sessions and der
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_session_earnings").get().n, 1);
 });
 
-test("real execution: earnings are held when captured money does not yet cover delivered value", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 0, sessions: 4 });
-  sqlite.prepare("UPDATE booking_payments SET amount_due_now=0 WHERE booking_id='B1'").run();
+test("real execution: earnings are held when payment is reversed after delivery", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 4 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
+  sqlite.prepare("UPDATE training_quote_payment_attestations SET amount=0,status='REFUNDED'").run();
+  sqlite.prepare("UPDATE booking_payments SET status='refunded'").run();
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
   const row = sqlite.prepare("SELECT status,hold_reason FROM training_session_earnings").get();
   assert.equal(row.status, "held_payment", "0 captured cannot cover a 2000 per-session delivery");
@@ -599,10 +600,11 @@ test("real execution: a pristine quote-linked programme reconciles with ZERO iss
 });
 
 test("real execution: reconciliation totals still agree after real completions and the finance read model refresh", async () => {
-  freshDb(); baseTables(); seedBooking({ governedPayment: false, id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
+  sqlite.prepare("DELETE FROM training_booking_quote_links").run(); // Simulate a damaged legacy link after legitimate delivery.
   await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
   const res = await call(reconciliationRoute.GET, "GET");

@@ -4,7 +4,7 @@ import {resolvePlatformSession} from "./platform-session";
 import{ensureAdminMfaTables,hasValidPrivilegedSession,privilegedRole}from"./admin-mfa";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
-import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
+import {GovernedRefusal,governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 import {resolveTrustedWorkspaceIdentity} from "./trusted-workspace-identity";
 
 type Db = Awaited<ReturnType<typeof database>>;
@@ -164,6 +164,7 @@ export async function completeReservedSecurityAudit(db:Db,actor:AuthenticatedAct
 }
 
 export function authError(error:unknown,fallback="Request failed"){
+  if(error instanceof GovernedRefusal)return governedJsonError({error:error.message},error.status);
   if(error instanceof Response){
     if(isGovernedHttpError(error))return error;
     if(error.status>=400&&error.status<500){

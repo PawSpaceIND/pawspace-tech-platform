@@ -1,0 +1,12 @@
+{
+  "activity": {
+    "istLabelled": true,
+    "sample": "Wed, 23 Sept, 12:22 pm IST",
+    "bookingCount": 5
+  },
+  "account": {
+    "status": 200,
+    "bookings": 1,
+    "foodOrders": 0
+  }
+}
