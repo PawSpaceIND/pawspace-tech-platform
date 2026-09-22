@@ -14,7 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { installAiHooks, freshAiDb, seedCustomer, customerActor, staffActor, inboundMessage, applyOwnedDdl } from "./helpers/ai-harness.mjs";
+import { installAiHooks, freshUatAiDb as freshAiDb, seedCustomer, customerActor, staffActor, inboundMessage, applyOwnedDdl } from "./helpers/ai-harness.mjs";
 
 installAiHooks();
 

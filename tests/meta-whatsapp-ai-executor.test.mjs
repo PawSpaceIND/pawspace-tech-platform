@@ -1,7 +1,7 @@
 import assert from"node:assert/strict";
 import fs from"node:fs";
 import test from"node:test";
-import{installAiHooks,freshAiDb,seedCustomer,staffActor}from"./helpers/ai-harness.mjs";
+import{installAiHooks,freshUatAiDb as freshAiDb,seedCustomer,staffActor}from"./helpers/ai-harness.mjs";
 
 installAiHooks();
 

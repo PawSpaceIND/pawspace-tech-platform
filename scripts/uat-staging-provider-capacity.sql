@@ -316,3 +316,26 @@ INSERT OR IGNORE INTO booking_punctuality_policies (id,service_code,city_id,prov
 CREATE TABLE IF NOT EXISTS training_compensation_rules (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,provider_id TEXT,package_code TEXT,rate_type TEXT NOT NULL DEFAULT 'per_completed_session',rate_value REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'published',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,reason TEXT NOT NULL,updated_at INTEGER NOT NULL);
 INSERT OR IGNORE INTO training_compensation_rules (id,city_id,provider_id,package_code,rate_type,rate_value,currency,status,version,effective_from,effective_to,updated_by,reason,updated_at) VALUES
  ('UAT-TRAINER-RATE-BLR','blr',NULL,NULL,'per_completed_session',1000,'INR','published',1,'2026-01-01',NULL,'uat_staging_seed','UAT-ONLY-NOT-PRODUCTION: placeholder sandbox rate so trainer earnings can be tested. Not a compensation policy.',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- AI AUDIENCE ROLLOUT (owner decision 2026-09-22, decision 3 of 10).
+--
+-- The customer AI is open to CUSTOMERS in UAT only. Staging defaulted to 'off', so a tester talking to
+-- the assistant on /chat reached a human handoff every time and the customer AI could not be exercised
+-- at all - the rollout stage was never something a tester could get past, because widening it is a
+-- settings.manage action on /team/ai/rollout that no UAT persona holds.
+--
+-- Opening it here is safe because the stage is NOT a standing permission: lib/ai-audience-rollout.ts
+-- only honours 'customers' on a UAT deployment (PAWSPACE_DEPLOYMENT_ENV in local/preview/staging/uat/e2e)
+-- and fails closed everywhere else, so this row cannot open the AI to customers if the database is ever
+-- restored or promoted somewhere it should not be. The provider gate is untouched: with no provider key
+-- the assistant still hands off honestly rather than inventing an answer.
+--
+-- The UPDATE is the upward repair for staging databases that already carry a seeded row. It is scoped to
+-- rows the SEEDS own, so a human who deliberately set the stage on /team/ai/rollout keeps their choice -
+-- a seed must never overrule a person, in either direction.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=1),stage TEXT NOT NULL DEFAULT 'off',reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO ai_audience_rollout (id,stage,reason,updated_by,updated_at) VALUES
+ (1,'customers','UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.','uat_staging_seed',1789300000000);
+UPDATE ai_audience_rollout SET stage='customers',reason='UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.',updated_by='uat_staging_seed',updated_at=1789300000000 WHERE id=1 AND stage IN ('off','staff_only') AND updated_by IN ('uat_staging_seed','founder_seed','founder@pawspace.in');

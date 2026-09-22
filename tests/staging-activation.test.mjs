@@ -24,7 +24,10 @@ test("voice STT/TTS adapter is fail-closed and returns the disconnected stubs un
 test("AI staff-first rollout: off -> staff_only -> customers, gate integrated into the orchestrator", () => {
   for (const s of ["off", "staff_only", "customers"]) assert.match(rollout, new RegExp(`"${s}"`));
   assert.match(rollout, /export async function resolveAiAudienceGate/);
-  assert.match(rollout, /stage === "customers" \|\| \(stage === "staff_only" && input\.audience === "staff"\)/);
+  assert.match(rollout, /effectiveStage === "customers" \|\| \(effectiveStage === "staff_only" && input\.audience === "staff"\)/);
+  // The customer stage is UAT-only (owner decision 2026-09-22) and fails closed off a UAT deployment.
+  // Executed proof of that gate lives in tests/ai-customer-rollout-uat-only.test.mjs.
+  assert.match(rollout, /CUSTOMER_AI_UAT_ENVIRONMENTS/);
   // the orchestrator consults the gate and hands off when the audience isn't enabled yet
   assert.match(orchestrator, /resolveAiAudienceGate/);
   assert.match(orchestrator, /rolloutGated/);
