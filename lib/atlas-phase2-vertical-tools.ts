@@ -69,7 +69,9 @@ async function vetPayout(db:D1Database,args:Row,actor:AuthenticatedActor){await 
 export type Phase2ExecutionInput={agentCode:string;goalId:string;toolCode:Phase2ToolCode;arguments:Row;actor:AuthenticatedActor;idempotencyKey?:string;env?:Row};
 function targetVertical(code:Phase2ToolCode){return code.startsWith("ops.")?"ops":code.startsWith("marketing.")?"marketing":code.startsWith("vet.")?"healthcare":"finance" as const;}
 export async function executePhase2Tool(db:D1Database,input:Phase2ExecutionInput){
- const env=input.env||{},definition=phase2ToolSchemas[input.toolCode],target=targetVertical(input.toolCode),mutation=definition.riskClass!=="read";\n if(input.agentCode==="atlas"&&mutation)return{status:"human_handoff" as const,executed:false,reason:"Atlas is recommendation-only for Phase 2 mutation tools"};\n const runtime=resolveVerticalRuntime(env,target,mutation?"execute_within_envelope":"recommend");
+ const env=input.env||{},definition=phase2ToolSchemas[input.toolCode],target=targetVertical(input.toolCode),mutation=definition.riskClass!=="read";
+ if(input.agentCode==="atlas"&&mutation)return{status:"human_handoff" as const,executed:false,reason:"Atlas is recommendation-only for Phase 2 mutation tools"};
+ const runtime=resolveVerticalRuntime(env,target,mutation?"execute_within_envelope":"recommend");
  if(runtime.mode==="disabled")return{status:"human_handoff" as const,executed:false,reason:`${target} AI runtime is disabled`};
  if(input.toolCode==="ops.voice.dispatch"&&!enabled(env.AI_EXTERNAL_COMMUNICATION_ACTIVE))return{status:"human_handoff" as const,executed:false,reason:"AI external communication is disabled"};
  if(input.toolCode==="finance.vet_payout.calculate"&&!enabled(env.AI_FINANCIAL_MUTATION_ACTIVE))return{status:"human_handoff" as const,executed:false,reason:"AI financial mutation is disabled"};
