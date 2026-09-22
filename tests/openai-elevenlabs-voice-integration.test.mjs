@@ -59,3 +59,22 @@ test("ElevenLabs initiation webhook secret fails closed",()=>{
  assert.throws(()=>eleven.assertElevenLabsInitWebhook(request("Bearer wrong"),{ELEVENLABS_INIT_WEBHOOK_SECRET:"secret"}));
  assert.doesNotThrow(()=>eleven.assertElevenLabsInitWebhook(request("Bearer secret"),{ELEVENLABS_INIT_WEBHOOK_SECRET:"secret"}));
 });
+
+test("ElevenLabs post-call HMAC verification rejects stale and tampered payloads",async()=>{
+ const mod=await import("../lib/elevenlabs-post-call.ts"),secret="post-call-secret",raw='{"type":"post_call_transcription"}',timestamp=1800000000;
+ const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+ const sig=Array.from(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(`${timestamp}.${raw}`)))).map(v=>v.toString(16).padStart(2,"0")).join("");
+ assert.equal((await mod.verifyElevenLabsWebhook(raw,`t=${timestamp},v0=${sig}`,{ELEVENLABS_WEBHOOK_SECRET:secret},timestamp)).verified,true);
+ assert.equal((await mod.verifyElevenLabsWebhook(raw+"x",`t=${timestamp},v0=${sig}`,{ELEVENLABS_WEBHOOK_SECRET:secret},timestamp)).verified,false);
+ assert.equal((await mod.verifyElevenLabsWebhook(raw,`t=${timestamp},v0=${sig}`,{ELEVENLABS_WEBHOOK_SECRET:secret},timestamp+1900)).verified,false);
+});
+
+test("Exotel human transfer readiness stays UAT-gated and points at India residency",async()=>{
+ const mod=await import("../lib/elevenlabs-post-call.ts");
+ const status=mod.elevenLabsTransferReadiness({PAWSPACE_VOICE_RUNTIME:"elevenlabs",PAWSPACE_VOICE_HUMAN_TRANSFER_NUMBER:"+918000000000"});
+ assert.equal(status.enabled,true);
+ assert.equal(status.destinationConfigured,true);
+ assert.equal(status.exotelConnectAppletRequired,true);
+ assert.match(status.connectAppletUrl,/api\.in\.residency\.elevenlabs\.io/);
+ assert.equal(status.productionReady,false);
+});
