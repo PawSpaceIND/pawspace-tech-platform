@@ -53,3 +53,14 @@ test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
  assert.match(worker,/controller\.cron==="15 2 \* \* \*"/);
  assert.match(wrangler,/"15 2 \* \* \*"/);
 });
+
+
+test("Atlas admin HTTP ask is snapshot-first and Tally memory is opt-in secondary context",()=>{
+ assert.match(chat,/answerAtlasBusinessQuestion/);
+ assert.match(chat,/includeTallyMemory===true/);
+ assert.match(chat,/source:"tally_memory"/);
+ assert.match(chat,/businessSnapshot:answer\.snapshot/);
+ assert.match(chat,/narrativeAvailable:answer\.narrativeAvailable/);
+ assert.match(chat,/atlas\.business\.query/);
+ assert.doesNotMatch(chat,/I queried the isolated Tally analytics memory/);
+});
