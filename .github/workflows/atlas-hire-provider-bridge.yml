@@ -1,6 +1,11 @@
 name: Atlas Hire provider bridge
 
 on:
+  push:
+    branches:
+      - chore/atlas-hire-provider-bridge-20260922
+    paths:
+      - .github/workflows/atlas-hire-provider-bridge.yml
   workflow_dispatch:
     inputs:
       confirm:
@@ -13,7 +18,7 @@ permissions:
 
 jobs:
   configure-atlas-hire-staging:
-    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'configure-atlas-hire-staging' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'configure-atlas-hire-staging') }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 10
@@ -77,6 +82,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error https://atlas-hire-india-staging.pages.dev/healthz
+          curl --fail --silent --show-error https://atlas-hire-india-staging.pages.dev/api/health
           echo
           echo "No live provider transport is activated by this workflow."
