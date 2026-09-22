@@ -26,7 +26,8 @@ test("DPDP erasure removes all Atlas PII/behavioral rows and tombstones root ide
  sqlite.prepare("INSERT INTO dpdp_consent_records VALUES (?,?,?,?,?,?)").run("CONSENT-1",customerId,"marketing","granted","sha256:203.0.113.10",now-900);
  sqlite.prepare("INSERT INTO atlas_secure_context_facts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("SECURE-1",customerId,null,"phone","pii","cipher","iv","hash-secure","active","e2e",now-800,now-800);
  sqlite.prepare("INSERT INTO atlas_vector_memories VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run("VECTOR-1",customerId,null,"behavioral","non_sensitive","hash-vector","Dog prefers quiet visits","vec-1","@cf/baai/bge-m3",1024,"cosine","active","e2e",now-700,now-700);
- const result=await eraseCustomerPersonalData(db,{customerId,idempotencyKey:"DPDP-E2E-ERASE-1",requestedBy:"privacy@pawspace.test",reason:"e2e right to erasure proof",now});
+ const deletedVectors=[];const result=await eraseCustomerPersonalData(db,{customerId,idempotencyKey:"DPDP-E2E-ERASE-1",requestedBy:"privacy@pawspace.test",reason:"e2e right to erasure proof",now,runtime:{ATLAS_VECTORIZE:{deleteByIds:async ids=>{deletedVectors.push(...ids)}}}});
+ assert.deepEqual(deletedVectors,["vec-1"]);
  assert.equal(result.status,"COMPLETED");
  assert.equal(result.ledgerPreserved,true);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_secure_context_facts WHERE customer_id=?").get(customerId).count,0);
@@ -51,12 +52,24 @@ test("30-day DPDP transient sweeper purges stale telemetry and deleted-account A
  sqlite.prepare("INSERT INTO universal_provider_location_events VALUES (?,?)").run("GPS-NEW",recent);
  sqlite.prepare("INSERT INTO route_eta_snapshots VALUES (?,?)").run("ETA-OLD",stale);
  sqlite.prepare("INSERT INTO route_eta_snapshots VALUES (?,?)").run("ETA-NEW",recent);
- const result=await runDpdpRetentionSweep(db,{asOf:now});
+ const deletedVectors=[];const result=await runDpdpRetentionSweep(db,{asOf:now,runtime:{ATLAS_VECTORIZE:{deleteByIds:async ids=>{deletedVectors.push(...ids)}}}});
+ assert.deepEqual(deletedVectors,["vec-stale"]);
  assert.equal(result.transient.status,"completed");
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_secure_context_facts WHERE customer_id='DELETED-1'").get().count,0);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_vector_memories WHERE customer_id='DELETED-1'").get().count,0);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM universal_provider_location_events").get().count,1);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM route_eta_snapshots").get().count,1);
  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM app_users WHERE id='DELETED-1'").get().count,1);
+ sqlite.close();
+});
+
+
+test("DPDP erasure fails closed before D1 deletion when Vectorize deletion is unavailable",async()=>{
+ const{sqlite,db}=freshCountingD1();seedSchema(sqlite);
+ sqlite.prepare("INSERT INTO app_users VALUES (?,?,?,?,?,?,?)").run("VECTOR-GATE","gate@example.test","Gate User","customer","active",now-1000,now-1000);
+ sqlite.prepare("INSERT INTO atlas_vector_memories VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run("VECTOR-GATE-ROW","VECTOR-GATE",null,"behavioral","non_sensitive","hash-vector","Private behavioral memory","vec-gate","@cf/baai/bge-m3",1024,"cosine","active","e2e",now-700,now-700);
+ await assert.rejects(()=>eraseCustomerPersonalData(db,{customerId:"VECTOR-GATE",idempotencyKey:"DPDP-E2E-GATE",requestedBy:"privacy@pawspace.test",now}),/requires ATLAS_VECTORIZE\.deleteByIds/);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM atlas_vector_memories WHERE customer_id='VECTOR-GATE'").get().count,1);
+ assert.equal(sqlite.prepare("SELECT status FROM dpdp_erasure_requests WHERE idempotency_key='DPDP-E2E-GATE'").get().status,"FAILED");
  sqlite.close();
 });
