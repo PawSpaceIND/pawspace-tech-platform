@@ -81,7 +81,7 @@ export async function runAtlasCeoSupervisor(db: Db, input: { asOf?: number; rout
     for (const row of targets.results) {
       const goal = Math.max(1, Number(row.daily_goal || 1)), actual = Number(row.achieved_count || 0), elapsed = Math.max(0, Math.min(1, (asOf - Number(row.starts_at)) / Math.max(1, Number(row.ends_at) - Number(row.starts_at))));
       const expected = goal * elapsed, lagRatio = expected > 0 ? Math.max(0, (expected - actual) / expected) : 0;
-      if (lagRatio > 0.25) candidates.push({basisId:text(row.id),instruction:{ manager: "sales", action: "recover_target_pacing", cityId: text(row.city_id) || null, serviceCode: text(row.service_code) || null, reason: "target_pacing_lag_above_25_percent", payload: { targetId: row.id, targetType: row.target_type, goal, actual, expected, lagRatio } }});
+      if (lagRatio > 0.25) candidates.push({basisId:`target:${text(row.id)}:${Math.floor(asOf/(15*60_000))}`,instruction:{ manager: "sales", action: "recover_target_pacing", cityId: text(row.city_id) || null, serviceCode: text(row.service_code) || null, reason: "target_pacing_lag_above_25_percent", payload: { targetId: row.id, targetType: row.target_type, goal, actual, expected, lagRatio } }});
     }
     const capacityWindow=Math.floor(asOf/(15*60_000));
     for (const signal of input.capacitySignals || []) for (const instruction of resolveCapacityConflict(signal)) candidates.push({instruction,basisId:`capacity:${signal.cityId}:${signal.zoneId}:${signal.serviceCode}:${capacityWindow}`});
