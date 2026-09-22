@@ -78,3 +78,20 @@ test("Exotel human transfer readiness stays UAT-gated and points at India reside
  assert.match(status.connectAppletUrl,/api\.in\.residency\.elevenlabs\.io/);
  assert.equal(status.productionReady,false);
 });
+
+test("ElevenLabs custom LLM extracts the latest user input and streams Responses-compatible SSE",async()=>{
+ const mod=await import("../lib/elevenlabs-custom-llm.ts");
+ assert.equal(mod.extractElevenLabsResponsesInput({input:[{role:"assistant",content:[{type:"output_text",text:"hi"}]},{role:"user",content:[{type:"input_text",text:"book grooming tomorrow"}]}]}),"book grooming tomorrow");
+ const sse=mod.responsesSse("I can help with that.");
+ assert.match(sse,/response\.output_text\.delta/);
+ assert.match(sse,/I can help with that\./);
+ assert.match(sse,/data: \[DONE\]/);
+});
+
+test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
+ const mod=await import("../lib/elevenlabs-custom-llm.ts");
+ const make=(auth)=>new Request("https://example.test",{headers:auth?{authorization:auth}:{}});
+ assert.throws(()=>mod.assertElevenLabsLlmAuth(make(),{ELEVENLABS_LLM_SECRET:"secret"}));
+ assert.throws(()=>mod.assertElevenLabsLlmAuth(make("Bearer wrong"),{ELEVENLABS_LLM_SECRET:"secret"}));
+ assert.doesNotThrow(()=>mod.assertElevenLabsLlmAuth(make("Bearer secret"),{ELEVENLABS_LLM_SECRET:"secret"}));
+});

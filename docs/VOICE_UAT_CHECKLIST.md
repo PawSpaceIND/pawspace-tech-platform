@@ -226,3 +226,18 @@ Required staging configuration for the ElevenLabs path:
 Exotel Voicebot should use the ElevenLabs India-residency AgentStream endpoint. The new PawSpace conversation-initiation webhook is `/api/webhooks/elevenlabs/init`; configure its authorization header as `Bearer <ELEVENLABS_INIT_WEBHOOK_SECRET>`.
 
 This slice is **not production authorization**. It provides provider abstraction, OpenAI Responses API support, voice-specific model selection, ElevenLabs readiness, and canonical caller personalization. Live outbound via ElevenLabs, post-call reconciliation, human transfer certification, production recording policy and carrier acceptance remain separate controlled UAT gates.
+
+### ElevenLabs custom LLM
+
+Configure the ElevenLabs agent Custom LLM server to call the PawSpace Responses-compatible endpoint:
+
+`/api/elevenlabs/v1/responses`
+
+Authentication is `Authorization: Bearer <ELEVENLABS_LLM_SECRET>`.
+
+Pass PawSpace identity through ElevenLabs custom LLM extra body using the dynamic variables returned by the initiation webhook:
+- `pawspace_voice_session_id`
+- `pawspace_customer_id`
+- `pawspace_thread_id`
+
+The endpoint returns SSE in OpenAI Responses format and runs every turn through PawSpace's existing grounded voice orchestrator and governed action tools. ElevenLabs owns speech and turn-taking; PawSpace/OpenAI owns business reasoning and action authority.
