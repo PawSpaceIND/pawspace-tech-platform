@@ -1,5 +1,10 @@
 # What is still open before human testing can be called complete (2026-09-21)
 
+> **Update 2026-09-22.** Section 2's ten owner decisions are now **answered** — see that section for each
+> call and the two follow-ups. Section 1 (external setup) and section 3 (verification only a human on
+> staging can close) still stand, and two of the answered decisions cannot be verified until section 1's
+> AI provider and external messaging are in place.
+
 This is the honest residual list for PawSpace V2 on branch `fix/v2-human-test-launch-20260921`.
 Nothing here is a guess: each line names what was actually observed and who has to act.
 
@@ -14,18 +19,38 @@ Nothing here is a guess: each line names what was actually observed and who has 
 | WhatsApp / Haptik / SMS external delivery | `HAPTIK_API_KEY` unset (503), WhatsApp UAT webhook secret unset (503), `PAWSPACE_COMMUNICATION_ENV` unset locally. | Simulated inbound refused honestly; consent gates enforced. | Ops/owner |
 | Native device behaviour (background GPS, camera, notifications, storage) | Not reachable from a headless browser at all. | Browser geolocation including a real `PERMISSION_DENIED` path, geofence refusal and recovery. | Human tester on a device |
 
-## 2. Owner decisions (policy, not code)
+## 2. Owner decisions — ANSWERED 2026-09-22
 
-1. **Sitting Meet & Greet pricing** — the customer card says ₹500, the review line says ₹0, and no ₹499/₹500 rule exists anywhere in the code. The dead control is a defect and is being fixed; the price itself is an owner decision and was not invented.
-2. **Cancellation of unpaid reservations** — an unpaid grooming or boarding reservation cannot be cancelled by the customer ("Cancellation unavailable"); boarding request controls are disabled while unpaid. Intended or not is a policy call.
-3. **Customer AI rollout stage** — currently `staff_only`, so every customer turn is handed off as `rollout_gated`. Moving the stage is an owner decision.
-4. **Human contact channel for web-chat handoffs** — after a staff takeover there is no staff→customer reply path on a non-WhatsApp thread, and the customer is told only that the conversation is being routed. Which channel answers, and what the customer is promised, is an owner decision (the missing reply control is being fixed once the channel is chosen).
-5. **Lead-routing policy key and assignment UI** — assignment policies match on a free-text city label; the CRM stores a city id. The matching now accepts both, but whether policies should be keyed by city id, and whether staff get an assignment screen at all, is an owner decision.
-6. **Employee-AI thread identity** — handoff rows are keyed to CRM contact ids, so the queue shows masked ids instead of canonical customers.
-7. **Completion and payout before cash collection** — providers can complete a pay-after-service job before the cash is collected.
-8. **Trainer compensation rule** — a completed training session is held "pending rate configuration" because no rate exists.
-9. **Seeded sitter/host acceptance window** — three minutes, which expires before a local payment can be made.
-10. **An active leave policy for UAT** — the 500 is fixed and the refusal is governed, but whether a policy is seeded for testers is an HR/owner call.
+All ten were put to the owner (karthik@pawspace.in) and decided. Recorded here so the answers outlive the
+conversation they were given in. Nothing below was invented; each is the owner's own call, and the two
+follow-up questions were raised because the chosen option had a consequence worth closing.
+
+| # | Decision | Owner's answer |
+| --- | --- | --- |
+| 1 | Sitting Meet & Greet price | **₹499.** The card's ₹500 and the review line's ₹0 both become ₹499, backed by a real rule. |
+| 2 | Cancelling unpaid reservations | **Allow it.** The current "Cancellation unavailable" is a defect; the customer may cancel and the slot is released. |
+| 3 | Customer AI rollout stage | **UAT only.** Customers on staging get AI; production stays gated. |
+| 4 | Web-chat handoff reply channel | **WhatsApp**, with consent asked in the web chat first (see below). |
+| 5 | Lead-routing policy key | **Key by city id.** No staff assignment screen this round. |
+| 6 | Employee-AI thread identity | **Key handoffs to the canonical customer**, so staff see who they are answering. |
+| 7 | Completion before cash collection | **Require recorded collection before completion**, with an ops override (see below). |
+| 8 | Trainer compensation | **Seed an obvious placeholder rate** for UAT. Not a real compensation policy and must not be read as one. |
+| 9 | Sitter/host acceptance window | **30 minutes** (was three, which expired before a tester could pay). |
+| 10 | Leave policy for UAT | **Seed a generic sandbox policy**, clearly marked as test data. |
+
+Two follow-ups, raised because the chosen option left a hole:
+
+- **7a. Cash-before-completion release valve — ops authorises.** Requiring recorded collection would otherwise
+  strand a provider at a customer's door when the customer wants to pay later. The provider requests an
+  override, ops approves, the job completes with the reason recorded, and payout stays withheld.
+- **4a. WhatsApp handoff with no consent — ask in the web chat first.** Moving a thread to WhatsApp needs a
+  number and consent, and CRM opt-out is sticky, so some customers have no WhatsApp route. The customer is
+  asked in-thread before the move, which keeps both the consent and the record.
+
+**Two of these are configurable now but not verifiable yet**, because they depend on the external setup in
+section 1: decision 3 (the AI provider is unfunded, so a customer turn still meets a refusal) and decision 4
+(external messaging is not connected, so nothing actually sends). Both should be built so they work the
+moment those land — but neither can be signed off by a tester until then.
 
 ## 3. Verification that only a human on staging can close
 
