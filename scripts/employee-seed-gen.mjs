@@ -139,11 +139,29 @@ const UAT_LEAVE_POLICIES = [
 ];
 for (const lp of UAT_LEAVE_POLICIES) s.push(`INSERT OR IGNORE INTO leave_policies (id,name,version,status,leave_code,allow_negative,entitlement_units,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-LVP-${lp.code}',${q(lp.name)},1,'active_uat',${q(lp.code)},0,${lp.units},'UAT-ONLY-NOT-PRODUCTION',${JOINED},'founder@pawspace.in',${BASE});`);
 
+// UPWARD REPAIR, the same shape as the provider acceptance windows in #968.
+//
+// INSERT OR IGNORE does nothing to a row that already exists, so a staging database carrying an older
+// seeded CL policy - drafted, or with a smaller allowance - keeps it, and /me goes on advertising an
+// entitlement the database will not honour. These UPDATEs are scoped to the rows the SEED owns
+// (created_by='founder@pawspace.in' AND the UAT-ONLY approval reference) so nothing a person configured
+// is touched, and they only ever raise: a policy already active with a larger allowance is left alone.
+for (const lp of UAT_LEAVE_POLICIES) {
+  s.push(`UPDATE leave_policies SET status='active_uat' WHERE id='SEED-LVP-${lp.code}' AND status!='active_uat' AND created_by='founder@pawspace.in' AND approval_reference='UAT-ONLY-NOT-PRODUCTION';`);
+  s.push(`UPDATE leave_policies SET entitlement_units=${lp.units} WHERE id='SEED-LVP-${lp.code}' AND COALESCE(entitlement_units,0)<${lp.units} AND created_by='founder@pawspace.in' AND approval_reference='UAT-ONLY-NOT-PRODUCTION';`);
+}
+
 // ---- Employees + app_users + compensation + payroll results/lines/payslips ----
 for (const e of employees) {
   s.push(`INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (${q("SEEDUSR-" + e.code)},${q(e.email)},${q(e.name)},${q(e.role)},'active',${JOINED},${BASE});`);
   s.push(`INSERT OR IGNORE INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,created_at,updated_at) VALUES (${q(e.id)},${q(e.email)},${q(e.code)},${q(e.name)},${q(e.email)},'0000000000','active',${JOINED},${JOINED},${BASE});`);
-  for (const lp of UAT_LEAVE_POLICIES) s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
+  // Balances get the same upward repair: a tester whose seeded balance was left at 0 by an earlier run
+  // cannot apply for the leave the form offers. Only a balance BELOW the seeded figure is raised, so a
+  // balance a person granted, or one already spent down from a larger grant, is never reset.
+  for (const lp of UAT_LEAVE_POLICIES) {
+    s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
+    s.push(`UPDATE employee_leave_balances SET balance=${lp.units},updated_at=${BASE} WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)} AND balance<${lp.units};`);
+  }
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);
   const c = st.comp, net = money(c.gross - c.deductions);

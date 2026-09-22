@@ -339,3 +339,14 @@ CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=
 INSERT OR IGNORE INTO ai_audience_rollout (id,stage,reason,updated_by,updated_at) VALUES
  (1,'customers','UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.','uat_staging_seed',1789300000000);
 UPDATE ai_audience_rollout SET stage='customers',reason='UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.',updated_by='uat_staging_seed',updated_at=1789300000000 WHERE id=1 AND stage IN ('off','staff_only') AND updated_by IN ('uat_staging_seed','founder_seed','founder@pawspace.in');
+
+-- UPWARD REPAIR for the trainer rate above, the same shape as the provider acceptance windows in #968.
+--
+-- INSERT OR IGNORE leaves an existing row exactly as it was, so a staging database that already carries
+-- UAT-TRAINER-RATE-BLR in a draft or superseded state keeps it, every completed session stays held at
+-- 'pending rate configuration', and trainer earnings remain untestable - which is the whole reason the
+-- row was added. The repair only publishes the seed's OWN row (updated_by='uat_staging_seed', carrying
+-- the UAT-ONLY marker) and does not touch the rate: a rate is a commercial figure, and raising one
+-- automatically would be inventing compensation policy rather than repairing a seed. Finance's own
+-- published rule supersedes this one on version order and is never modified here.
+UPDATE training_compensation_rules SET status='published',updated_at=1789300000000 WHERE id='UAT-TRAINER-RATE-BLR' AND status!='published' AND updated_by='uat_staging_seed' AND reason LIKE 'UAT-ONLY-NOT-PRODUCTION:%';
