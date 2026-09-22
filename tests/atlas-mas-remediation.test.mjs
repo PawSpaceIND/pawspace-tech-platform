@@ -35,3 +35,21 @@ test("marketing budget reallocation compensates a successful source mutation whe
  const source=readFileSync(new URL("../lib/marketing-agent-gateway.ts",import.meta.url),"utf8");
  assert.match(source,/sourceMutated\s*=\s*true/);assert.match(source,/Compensation rollback:/);assert.match(source,/amountMinor:\s*payload\.fromDailyMinor/);assert.match(source,/source_compensated=false/);
 });
+
+
+test("revoking memory consent tombstones existing memory and re-grant never resurrects it",async()=>{
+ const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actorId:actor.email});
+ const vectorEnv={AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async()=>({matches:[]})}};
+ await storeAtlasMemory(db,vectorEnv,{customerId:"C1",petId:"P1",content:"Dog dislikes autos",actorId:actor.email});
+ await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actorId:actor.email,agentId:"ops",securePurpose:"deterministic_dispatch"});
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_vector_memories WHERE customer_id='C1' AND status='active'").get().n,1);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_secure_context_facts WHERE customer_id='C1' AND status='active'").get().n,1);
+ await setAtlasMemoryConsent(db,{customerId:"C1",granted:false,actorId:actor.email});
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_vector_memories WHERE customer_id='C1'").get().status,"revoked");
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_secure_context_facts WHERE customer_id='C1'").get().status,"revoked");
+ await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actorId:actor.email});
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_vector_memories WHERE customer_id='C1'").get().status,"revoked");
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_secure_context_facts WHERE customer_id='C1'").get().status,"revoked");
+ const secure=await readAtlasSecureContext(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{actor,customerId:"C1",petId:"P1",agentId:"ops",purpose:"deterministic_dispatch"});assert.deepEqual(secure.facts,[]);
+ sqlite.close();
+});
