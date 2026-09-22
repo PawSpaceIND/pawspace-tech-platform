@@ -97,6 +97,24 @@ test("executing Atlas approval recovers from canonical active campaign without d
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_governance_events WHERE campaign_id='C-RECOVER' AND event_type='activated'").get().n,0);
 });
 
+test("daily analysis reclaims a stale running lease",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);globalThis.__PAWSPACE_TEST_ENV__={};
+ const dayKey=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(now));
+ sqlite.prepare("INSERT INTO atlas_daily_runs (day_key,run_id,status,summary_json,created_at,completed_at) VALUES (?,?,\'running\',\'{}\',?,NULL)").run(dayKey,"STALE-RUN",now-(31*60*1000));
+ const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});
+ assert.equal(result.status,"completed");assert.equal(result.recoveredStaleRun,true);assert.notEqual(result.runId,"STALE-RUN");
+ const stored=sqlite.prepare("SELECT run_id,status FROM atlas_daily_runs WHERE day_key=?").get(dayKey);assert.equal(stored.run_id,result.runId);assert.equal(stored.status,"completed");
+});
+
+test("daily analysis preserves a fresh running lease",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);globalThis.__PAWSPACE_TEST_ENV__={};
+ const dayKey=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(now));
+ sqlite.prepare("INSERT INTO atlas_daily_runs (day_key,run_id,status,summary_json,created_at,completed_at) VALUES (?,?,\'running\',\'{}\',?,NULL)").run(dayKey,"FRESH-RUN",now-(5*60*1000));
+ const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});
+ assert.deepEqual(result,{status:"already_running",duplicatePrevented:true});
+ assert.equal(sqlite.prepare("SELECT run_id,status FROM atlas_daily_runs WHERE day_key=?").get(dayKey).run_id,"FRESH-RUN");
+});
+
 test("daily retry reuses existing campaign proposal for same day mission and action",async()=>{
  const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
  sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER); INSERT INTO governed_marketing_campaigns VALUES ('C-RETRY','Retry campaign','approved','approved',2000000000000);");
