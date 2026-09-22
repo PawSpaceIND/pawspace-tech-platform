@@ -82,3 +82,27 @@ test("Founder approval transitions only the exact linked Atlas proposal",async()
  const error=await atlasData.executeAtlasApprovedAction(db,{messageId:legacy.messageId,actorEmail:"founder@pawspace.test"}).then(()=>null,e=>e);
  assert.equal(error instanceof Response,true);assert.equal(error.status,409);assert.equal(await error.text(),"Atlas proposal journal link is required");
 });
+
+
+test("executing Atlas approval recovers from canonical active campaign without duplicate activation",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),action={type:"campaign.activate",campaignId:"C-RECOVER"};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Recover",snapshot,basisId:"REC",riskClass:"high",action,createdBy:"atlas"});
+ await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"proposed",to:"approved",actorId:"founder@pawspace.test"});
+ sqlite.prepare("INSERT INTO governed_marketing_campaigns (id,name,objective,service_code,city_id,audience_rule_json,budget_amount,currency,holdout_percent,status,approval_status,approved_by,approved_at,created_by,created_at,updated_at) VALUES ('C-RECOVER','Recover','retention','grooming','blr','{}',1000,'INR',10,'active','approved','founder@pawspace.test',?,'founder@pawspace.test',?,?)").run(now,now,now);
+ const message=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Recover action",action,actionStatus:"executing",proposalId:proposal.id,createdAt:now});
+ const result=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:"founder@pawspace.test"});
+ assert.equal(result.status,"executed");assert.equal(result.recovered,true);assert.equal(result.duplicatePrevented,true);
+ assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"executed");assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"executed");
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_governance_events WHERE campaign_id='C-RECOVER' AND event_type='activated'").get().n,0);
+});
+
+test("daily retry reuses existing campaign proposal for same day mission and action",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
+ sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER); INSERT INTO governed_marketing_campaigns VALUES ('C-RETRY','Retry campaign','approved','approved',2000000000000);");
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MR','Retry mission',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:'company'}),now-10000,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('RC','MR','retry-collected','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);globalThis.__PAWSPACE_TEST_ENV__={};
+ const first=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const count1=sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n;
+ sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);const second=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const count2=sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n;
+ assert.equal(count1,1);assert.equal(count2,1);assert.deepEqual(second.action,{type:'campaign.activate',campaignId:'C-RETRY'});
+});
