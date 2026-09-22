@@ -118,3 +118,14 @@ test("Founder approval rejects proposal/message action mismatch and restores app
  assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"approval_required");
  assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"proposed");
 });
+
+
+test("proposal status helper is exact-id only and enforces lifecycle transitions",async()=>{
+ const{db,now}=world(),snapshot={asOf:now,mission:{value:null,source:"fixture",asOf:now,reason:"fixture"},bookings:{value:[],source:"fixture",asOf:now},ops:{open_cases:{value:0,source:"fixture",asOf:now},sla_breaches:{value:0,source:"fixture",asOf:now},sitting_pending_accepts:{value:0,source:"fixture",asOf:now},boarding_pending_accepts:{value:0,source:"fixture",asOf:now},cash_collection_holds:{value:null,source:"fixture",asOf:now,reason:"not_available"}},finance:{invoice_completed_gap:{value:null,source:"fixture",asOf:now,reason:"fixture"},trainer_earnings:{value:null,source:"fixture",asOf:now,reason:"fixture"}},integrations:{payments:{value:false,source:"fixture",asOf:now},maps:{value:false,source:"fixture",asOf:now},whatsapp:{value:false,source:"fixture",asOf:now},ai:{value:false,source:"fixture",asOf:now}},limitations:["fixture"],insufficient_data:true,production_ready:false};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"staffing_hold",summary:"Hold",snapshot,basisId:"STATE",riskClass:"medium",createdBy:"atlas"});
+ assert.equal((await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"proposed",to:"rejected",actorId:"founder@pawspace.test"})).updated,true);
+ await assert.rejects(()=>atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"rejected",to:"approved",actorId:"founder@pawspace.test"}),/Invalid Atlas proposal transition rejected->approved/);
+ await assert.rejects(()=>atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"rejected",to:"executed",actorId:"founder@pawspace.test"}),/Invalid Atlas proposal transition rejected->executed/);
+ const source=(await import("node:fs")).readFileSync(new URL("../lib/intelligence/atlas-business-snapshot.ts",import.meta.url),"utf8");
+ assert.doesNotMatch(source,/proposalType\?:string/);assert.doesNotMatch(source,/actionJson\?:Record/);assert.match(source,/WHERE id=\? AND status=\?/);
+});
