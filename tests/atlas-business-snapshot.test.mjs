@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {DatabaseSync} from "node:sqlite";
 import {installWorkersHooks} from "./helpers/module-hooks.mjs";
-installWorkersHooks();
+installWorkersHooks("__ATLAS_SNAPSHOT_DB__","__PAWSPACE_TEST_ENV__");
 const atlas=await import("../lib/intelligence/atlas-business-snapshot.ts");
 const atlasData=await import("../lib/intelligence/atlas-data.ts");
 const revenue=await import("../lib/revenue-mission-control.ts");
@@ -14,8 +14,8 @@ function makeD1(sqlite){
 }
 function world(){
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite),now=2_000_000_000_000;
- sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
- sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
+ sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,booking_id TEXT,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
+ sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1','B2',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
  return{sqlite,db,now};
 }
 test("snapshot mission math matches revenueMissionSummary and keeps pipeline outside achieved",async()=>{
@@ -143,4 +143,31 @@ test("daily retry never re-offers rejected or executed terminal proposals",async
  const latest=sqlite.prepare("SELECT action_status,proposal_id,content FROM atlas_chat_messages WHERE role='atlas' ORDER BY created_at DESC LIMIT 1").get();assert.equal(latest.action_status,null);assert.equal(latest.proposal_id,null);assert.match(latest.content,/already rejected; Atlas will not re-offer/);
  sqlite.prepare("UPDATE atlas_proposals SET status='executed' WHERE id=?").run(proposal.id);sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);
  const third=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});assert.equal(third.action,null);const latest2=sqlite.prepare("SELECT action_status,proposal_id,content FROM atlas_chat_messages WHERE role='atlas' ORDER BY created_at DESC LIMIT 1").get();assert.equal(latest2.action_status,null);assert.equal(latest2.proposal_id,null);assert.match(latest2.content,/already executed; Atlas will not re-offer/);
+});
+
+
+test("invoice gap counts only invoices linked to completed canonical bookings",async()=>{
+ const{db,now}=world();const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.deepEqual(snapshot.finance.invoice_completed_gap.value,{completed_jobs:1,issued_invoices:0,gap:1});
+ assert.equal(snapshot.finance.invoice_completed_gap.source,"canonical_bookings + booking_invoices");
+});
+
+test("integration flags reuse canonical credential detectors instead of partial secret heuristics",async()=>{
+ const{db,now}=world();
+ globalThis.__PAWSPACE_TEST_ENV__={
+  PAWSPACE_PAYMENT_ENV:"sandbox",
+  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
+  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  PAWSPACE_COMMUNICATION_ENV:"uat",
+  META_WHATSAPP_UAT_DELIVERY_ENABLED:"true",
+  GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps",
+  PAWSPACE_AI_PROVIDER_API_KEY:"ai-key"
+ };
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.payments.value,false,"payment env alone is not sandbox readiness");
+ assert.equal(snapshot.integrations.whatsapp.value,false,"token + phone alone are not Meta UAT readiness");
+ assert.equal(snapshot.integrations.maps.value,true);
+ assert.equal(snapshot.integrations.ai.value,true);
+ assert.match(snapshot.integrations.whatsapp.source,/integration-readiness credential detector/);
+ globalThis.__PAWSPACE_TEST_ENV__={};
 });
