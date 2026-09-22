@@ -58,7 +58,7 @@ test("daily founder analysis uses canonical mission snapshot and ignores mislead
  assert.equal(result.facts.missionId,'MD');assert.equal(result.facts.target,1000);assert.equal(result.facts.net,400);assert.equal(Math.round(result.facts.achievedPercent),40);
  assert.ok(Math.abs(result.facts.elapsedPercent-50)<0.01);assert.equal(result.facts.expectedToDate,500);assert.equal(result.facts.pacingGapPercent,-20);
  assert.equal('priorYearRevenue' in result.facts,false);assert.equal('historicalImportedRevenue' in result.facts,false);assert.equal('targetToDate' in result.facts,false);assert.equal(result.tallyMemoryUsed,false);assert.equal(result.productionReady,false);
- assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);
+ assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);assert.ok(result.operatingTasks.length>=2);const autoRows=sqlite.prepare("SELECT action_code,artifact_type FROM atlas_operating_artifacts ORDER BY created_at").all();assert.ok(autoRows.some(row=>row.action_code==='brief.generate'&&row.artifact_type==='brief'));assert.ok(autoRows.some(row=>row.action_code==='task.draft'&&row.artifact_type==='task_draft'));
  const proposal=sqlite.prepare("SELECT proposal_type,status,basis_id FROM atlas_proposals ORDER BY created_at DESC LIMIT 1").get();
  assert.equal(proposal.proposal_type,'campaign_activation');assert.equal(proposal.status,'proposed');assert.match(proposal.basis_id,/^daily:.*:MD$/);
 });
@@ -95,6 +95,24 @@ test("executing Atlas approval recovers from canonical active campaign without d
  assert.equal(result.status,"executed");assert.equal(result.recovered,true);assert.equal(result.duplicatePrevented,true);
  assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,"executed");assert.equal(sqlite.prepare("SELECT action_status FROM atlas_chat_messages WHERE id=?").get(message.messageId).action_status,"executed");
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_governance_events WHERE campaign_id='C-RECOVER' AND event_type='activated'").get().n,0);
+});
+
+test("daily analysis reclaims a stale running lease",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);globalThis.__PAWSPACE_TEST_ENV__={};
+ const dayKey=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(now));
+ sqlite.prepare("INSERT INTO atlas_daily_runs (day_key,run_id,status,summary_json,created_at,completed_at) VALUES (?,?,\'running\',\'{}\',?,NULL)").run(dayKey,"STALE-RUN",now-(31*60*1000));
+ const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});
+ assert.equal(result.status,"completed");assert.equal(result.recoveredStaleRun,true);assert.notEqual(result.runId,"STALE-RUN");
+ const stored=sqlite.prepare("SELECT run_id,status FROM atlas_daily_runs WHERE day_key=?").get(dayKey);assert.equal(stored.run_id,result.runId);assert.equal(stored.status,"completed");
+});
+
+test("daily analysis preserves a fresh running lease",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);globalThis.__PAWSPACE_TEST_ENV__={};
+ const dayKey=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(now));
+ sqlite.prepare("INSERT INTO atlas_daily_runs (day_key,run_id,status,summary_json,created_at,completed_at) VALUES (?,?,\'running\',\'{}\',?,NULL)").run(dayKey,"FRESH-RUN",now-(5*60*1000));
+ const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});
+ assert.deepEqual(result,{status:"already_running",duplicatePrevented:true});
+ assert.equal(sqlite.prepare("SELECT run_id,status FROM atlas_daily_runs WHERE day_key=?").get(dayKey).run_id,"FRESH-RUN");
 });
 
 test("daily retry reuses existing campaign proposal for same day mission and action",async()=>{
