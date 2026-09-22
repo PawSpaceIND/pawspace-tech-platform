@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {classifyAtlasMemory,storeAtlasMemory,retrieveAtlasMemoryForLlm,ATLAS_VECTOR_MEMORY_MODEL,ATLAS_VECTOR_DIMENSIONS,ATLAS_VECTOR_METRIC} from "../lib/atlas-vector-memory.ts";
 
 class DbMock{
- constructor(){this.calls=[];this.rows=[]}
- prepare(sql){const call={sql,binds:[]};this.calls.push(call);return{bind:(...binds)=>{call.binds=binds;return{run:async()=>({meta:{changes:1}}),all:async()=>({results:this.rows}),first:async()=>sql.includes("atlas_memory_consents")?{status:"granted"}:null}},run:async()=>({meta:{changes:1}})}}
+ constructor(consentStatus="granted"){this.calls=[];this.rows=[];this.consentStatus=consentStatus}
+ prepare(sql){const call={sql,binds:[]};this.calls.push(call);return{bind:(...binds)=>{call.binds=binds;return{run:async()=>({meta:{changes:1}}),all:async()=>({results:this.rows}),first:async()=>sql.includes("atlas_memory_consents")?(this.consentStatus?{status:this.consentStatus}:null):null}},run:async()=>({meta:{changes:1}})}}
 }
 const secureKey=Buffer.alloc(32,7).toString("base64");
 const embedding=Array.from({length:1024},(_,i)=>i/1024);
@@ -53,4 +53,19 @@ test("customer-only retrieval is scoped to customer-global memories, never every
  const db=new DbMock();let filter=null;
  await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async(_v,options)=>{filter=options.filter;return{matches:[]}}}},{actor,customerId:"C1",query:"What should staff remember?"});
  assert.deepEqual(filter,{customer_id:"C1",pet_id:"",sensitivity:"non_sensitive"});
+});
+
+
+test("memory storage requires granted consent before secure or vector writes",async()=>{
+ for(const consentStatus of ["revoked",null]){
+  const db=new DbMock(consentStatus);let aiCalls=0,vectorCalls=0;
+  const env={ATLAS_SECURE_CONTEXT_KEY:secureKey,AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{vectorCalls++},query:async()=>({matches:[]})}};
+  for(const content of ["Dog is afraid of autos","Gate code is 1234"]){
+   const error=await storeAtlasMemory(db,env,{customerId:"C1",petId:"P1",content,actorId:"ops@test"}).then(()=>null,e=>e);
+   assert.equal(error instanceof Response,true);assert.equal(error.status,403);assert.equal(await error.text(),"Atlas memory consent is required before storage");
+  }
+  assert.equal(aiCalls,0);assert.equal(vectorCalls,0);
+  assert.equal(db.calls.some(c=>c.sql.includes("INSERT INTO atlas_vector_memories")),false);
+  assert.equal(db.calls.some(c=>c.sql.includes("INSERT INTO atlas_secure_context_facts")),false);
+ }
 });
