@@ -299,3 +299,20 @@ CREATE TABLE IF NOT EXISTS booking_punctuality_policies (id TEXT PRIMARY KEY,ser
 INSERT OR IGNORE INTO booking_punctuality_policies (id,service_code,city_id,provider_model,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,grace_minutes,customer_alert_minutes,ops_escalation_minutes,reassignment_minutes,evidence_requirements_json,excluded_reasons_json,raw_gps_retention_days,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES
  ('UAT-GPS-GROOMING','grooming',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000),
  ('UAT-GPS-DOG-TRAINING','dog_training',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- UAT-ONLY placeholder trainer compensation rule (LP-N17, owner decision 2026-09-22).
+--
+-- Why this exists: a completed Training session resolves its rate through training_compensation_rules
+-- (city, optional provider, optional package, published, inside its effective window). Staging had no
+-- published rule at all, so every completed session was held at 'pending rate configuration - No
+-- published trainer compensation rule matches this completed session' and trainer earnings, payout
+-- statements and the Finance training views could not be exercised by a tester at all.
+--
+-- THIS IS NOT A COMPENSATION POLICY. The rate is a round, obviously synthetic sandbox number so the
+-- flow can be driven end to end; provider_id and package_code are NULL so it covers every seeded
+-- trainer and package. Finance publishes the real rule, which supersedes this one on version order.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS training_compensation_rules (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,provider_id TEXT,package_code TEXT,rate_type TEXT NOT NULL DEFAULT 'per_completed_session',rate_value REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'published',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,reason TEXT NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO training_compensation_rules (id,city_id,provider_id,package_code,rate_type,rate_value,currency,status,version,effective_from,effective_to,updated_by,reason,updated_at) VALUES
+ ('UAT-TRAINER-RATE-BLR','blr',NULL,NULL,'per_completed_session',1000,'INR','published',1,'2026-01-01',NULL,'uat_staging_seed','UAT-ONLY-NOT-PRODUCTION: placeholder sandbox rate so trainer earnings can be tested. Not a compensation policy.',1789300000000);
