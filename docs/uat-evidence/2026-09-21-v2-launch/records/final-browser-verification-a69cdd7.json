@@ -1,0 +1,42 @@
+{
+  "activity": {
+    "hasFreshFood": true,
+    "hasRelocation": true,
+    "ist": false
+  },
+  "otpSend": {
+    "status": 200,
+    "existingCustomer": true
+  },
+  "relocationForm": {
+    "hasAge": true,
+    "hasSize": true,
+    "hasDestCountry": true
+  },
+  "taxiQuote": {
+    "status": 409,
+    "namesSecret": false,
+    "body": "{\"error\":\"Pet Taxi Gate 1 uses sandbox-deferred UAT payment only\"}"
+  },
+  "whatsapp": {
+    "rendered": true
+  },
+  "sales": {
+    "height": 3072,
+    "showMore": 1
+  },
+  "crmSearchByRealPhone": "1 shown",
+  "apis": {
+    "revenueCrm": 200,
+    "launchReadiness": 200,
+    "businessView": 200,
+    "bccStream": 200
+  },
+  "leadRefusal": {
+    "status": 404,
+    "body": "{\"error\":\"Lead not found\"}"
+  },
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 409 (Conflict)"
+  ]
+}

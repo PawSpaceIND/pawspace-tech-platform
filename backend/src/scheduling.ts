@@ -94,7 +94,8 @@ export function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const requested=recurring?(input.occurrences??1):1;
   if(requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});
   if(recurring&&(input.cadenceDays??7)<1)throw Object.assign(new Error("Recurring cadence must be at least one day"),{statusCode:422});
-  if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Recurring weekdays must use values 0–6"),{statusCode:422});
+  // An empty optional list means no weekday filter, just like omitting it for a one-time walk.
+  if(input.weekdays?.some(day=>!Number.isInteger(day)||day<0||day>6))throw Object.assign(new Error("Recurring weekdays must use integer values 0–6"),{statusCode:422});
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw Object.assign(new Error("Scheduled end must be after start"),{statusCode:422});
   const geofenceRequested=input.serviceRadiusKm!==undefined;

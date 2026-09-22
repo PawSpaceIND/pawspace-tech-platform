@@ -4,3 +4,6 @@ d3bff97d182c7f1e72b887e3029f88bbf3ad4504:tests/razorpay-capture-confirms-payment
 7b18955a2cab2db38e49a893b0abfbd070958c39:tests/partner-app-login-gate.test.mjs:generic-api-key:30
 7b18955a2cab2db38e49a893b0abfbd070958c39:tests/partner-app-login-gate.test.mjs:generic-api-key:31
 4c972f139990ce084a64955a3fa75d0b85560a16:e2e/v2-grooming.spec.ts:pawspace-payment-secret-key:78
+
+# Synthetic test-only signing value replaced with per-run randomness. Exact historical finding only.
+372489f0a9b5194da5688174d52a535753325861:tests/partner-otp-hotpath.test.mjs:generic-api-key:52

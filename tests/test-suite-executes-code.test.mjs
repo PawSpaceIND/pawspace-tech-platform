@@ -50,7 +50,9 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
  * schema-column-reference-contract.test.mjs above — it reads source to find routes that SELECT from
  * a table nothing on their import path creates, which is precisely the defect that executing a
  * module cannot reveal, because the failing query only runs against a cold database. */
-const STATIC_FILE_BUDGET = 165;
+/* Lowered from 165 once the helper clause above stopped counting eleven harness-driven suites as
+ * static and the launch-pass tests that only read source were converted to execute their modules. */
+const STATIC_FILE_BUDGET = 156;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
@@ -90,9 +92,28 @@ const TRANSPILE     = /typescript|transpile/;
  * opposite of what this ratchet exists to encourage. */
 const LIB_LOADER    = /importLibModule\s*\(/;
 
+/* A test that drives real routes through a shared harness in tests/helpers/ is executing product
+ * code just as surely as one that imports the module itself - tests/helpers/grooming-journey-harness
+ * runs the actual grooming routes against a real database, and its callers named no lib/ or app/ path
+ * of their own, so they were counted static. Same reasoning as the LIB_LOADER clause above: follow
+ * the helper and ask whether IT executes. One level deep is enough for every helper in the tree, and
+ * a missing helper simply does not count. */
+const HELPER_IMPORT = /from\s*["'`](\.\/helpers\/[a-z0-9.-]+\.mjs)["'`]/g;
+const helperExecutes = (src) => {
+  for (const match of src.matchAll(HELPER_IMPORT)) {
+    try {
+      const helper = readFileSync(join(TESTS_DIR, match[1].replace("./", "")), "utf8");
+      if (STATIC_IMPORT.test(helper) || HARNESS.test(helper) || LIB_LOADER.test(helper) ||
+          ((LOADER.test(helper) || TRANSPILE.test(helper)) && PRODUCT_PATH.test(helper))) return true;
+    } catch { /* a helper that is not there cannot be executing anything */ }
+  }
+  return false;
+};
+
 const executes = (src) =>
   STATIC_IMPORT.test(src) || HARNESS.test(src) || LIB_LOADER.test(src) ||
-  ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src));
+  ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src)) ||
+  helperExecutes(src);
 
 /*
  * Excluded from the count. These are meta-tests ABOUT the source - reading it is the whole job, not

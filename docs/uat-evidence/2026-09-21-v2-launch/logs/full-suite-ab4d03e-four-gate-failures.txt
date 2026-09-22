@@ -1,0 +1,10 @@
+FROZEN_TREE_SHA=ab4d03ead9a78ca0aae9e34a79eb8868b35a9f85 START=2026-09-21T17:06:02Z
+# failed   -> captured_amount=0 net_customer_amount=0
+# tests 6539
+# pass 6535
+# fail 4
+EXIT=1 END=2026-09-21T17:18:40Z
+not ok 4935 - no table is declared with two different column sets
+not ok 612 - tests/schema-query-plan.test.mjs
+not ok 5241 - NO file in the repository gives any UAT credential a committed fallback
+not ok 5513 - the number of test files that never execute code does not grow

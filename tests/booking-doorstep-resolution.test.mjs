@@ -72,3 +72,20 @@ test("no coordinates anywhere resolves to null, and a missing table is not an er
   onlyTravel.seedTravelAddress("BK-1", 12.9611, 77.6387);
   assert.deepEqual(await resolveBookingDoorstep(onlyTravel.db, "BK-1"), { latitude: 12.9611, longitude: 77.6387, source: "booking_service_addresses" });
 });
+
+function seedReservation(w,request){
+ w.sqlite.exec("CREATE TABLE canonical_bookings(id TEXT,customer_id TEXT,service_code TEXT,schedule_group_id TEXT); CREATE TABLE scheduling_assignment_decisions(group_id TEXT,shortlist_json TEXT); INSERT INTO canonical_bookings VALUES('W1','C1','dog_walking','G1');");
+ w.sqlite.prepare('INSERT INTO scheduling_assignment_decisions VALUES(?,?)').run('G1',JSON.stringify({request}));
+}
+test('Walking resolves the server-geocoded reservation snapshot without a Grooming location write',async()=>{
+ const w=world();seedReservation(w,{customerId:'C1',serviceCode:'dog_walking',latitude:12.97,longitude:77.59});
+ assert.deepEqual(await resolveBookingDoorstep(w.db,'W1'),{latitude:12.97,longitude:77.59,source:'scheduling_assignment_decisions'});
+});
+for(const patch of [{customerId:'OTHER'},{serviceCode:'grooming'},{latitude:null},{longitude:181}])test('mismatched or invalid reservation cannot provide a doorstep: '+JSON.stringify(patch),async()=>{
+ const w=world();seedReservation(w,{customerId:'C1',serviceCode:'dog_walking',latitude:12.97,longitude:77.59,...patch});
+ assert.equal(await resolveBookingDoorstep(w.db,'W1'),null);
+});
+test('explicit customer location still overrides the reservation snapshot',async()=>{
+ const w=world();seedReservation(w,{customerId:'C1',serviceCode:'dog_walking',latitude:12.97,longitude:77.59});w.seedLocation('W1',null,null);
+ assert.equal(await resolveBookingDoorstep(w.db,'W1'),null);
+});

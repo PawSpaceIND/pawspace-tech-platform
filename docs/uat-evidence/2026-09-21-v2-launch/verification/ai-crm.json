@@ -1,0 +1,737 @@
+[
+  {
+    "id": "AICRM-R01",
+    "priorId": "AI-D01 (P1-08 fixed claim)",
+    "title": "Employee AI mobile: refused (409) and failed (network loss) turns now render an inline alert",
+    "persona": "founder@pawspace.in (Pixel 7), jyoti.manager39 (iPhone 14)",
+    "url": "/mobile-app -> AI tab, POST /api/mobile-employee-ai",
+    "steps": [
+      "Open /mobile-app, complete location welcome, open AI tab",
+      "Select Demo Rahul Menon (UATD-CUS-2-CRM), send 'What grooming packages can I offer this customer and what is the price?'",
+      "Send a second message on the same customer while the handoff is queued",
+      "Select UATD-CUS-5-CRM, abort the POST at network level, send; then retry"
+    ],
+    "expected": "First turn hands off honestly; second turn 409 shows an inline alert; network loss shows an alert; retry succeeds",
+    "actual": "Turn 1: 200 handoff 'I'm routing this conversation to a PawSpace team member…' meta 'handoff · human_handoff · provider_unavailable'. Turn 2: 409 'AI replies are paused while the conversation is owned by staff' rendered as [role=alert] under the composer (also for the manager). Network loss: alert 'Failed to fetch' shown; retry with a new idempotency key: 200 handoff. Textarea is cleared on failure (user bubble keeps the text).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-03-turn1.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-04-turn2-409.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-05-network-loss.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-06-retry.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/manager-04-turn2-409.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "AICRM-R02",
+    "priorId": "AI-D02",
+    "title": "'AI' bottom-nav tab now sits inside the nav bar (6-column grid)",
+    "persona": "founder (Pixel 7), jyoti.manager39 (iPhone 14), anita.associate17 (Pixel 7)",
+    "url": "/mobile-app",
+    "steps": [
+      "Open /mobile-app as each persona",
+      "Measure nav grid columns and each button's bounding box against the nav"
+    ],
+    "expected": "All tabs inside the 70px nav",
+    "actual": "nav[data-employee-ai=enabled] grid-template-columns has 6 tracks; all 6 buttons (incl. AI) insideNav=true on Pixel 7 and iPhone 14; associate gets 5 tracks / no AI tab.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-01-nav.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/manager-01-nav.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/associate-01-nav.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "AICRM-R03",
+    "priorId": "AI-D03",
+    "title": "Manager still sees an unexplained 'Voice request refused' alert on the AI Voice panel",
+    "persona": "jyoti.manager39@tkpetcare.in (iPhone 14)",
+    "url": "/mobile-app -> AI tab -> AI Voice; GET /api/voice-outbound?scope=ai_browser_test",
+    "steps": [
+      "Open AI tab as the manager",
+      "Read the AI Voice panel and the readiness/ticket responses"
+    ],
+    "expected": "Either no voice panel for a role without settings.manage, or an explanation of why voice is unavailable",
+    "actual": "Panel shows 'State: idle' with no reason and a red alert 'Voice request refused'; readiness GET 403 {error:'Voice request refused'}, ticket POST 403. Bootstrap still advertises capabilities.voice=true.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/manager-02-voice.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R04",
+    "priorId": "AI-D04",
+    "title": "409-refused employee-AI turns persist the inbound message but write no mobile.employee_ai.chat audit row",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/mobile-employee-ai",
+    "steps": [
+      "Send turn 1 (200) and turn 2 (409) on THREAD-96626B5C-48C",
+      "Read communication_messages and security_audit_events (read-only sqlite)"
+    ],
+    "expected": "One audit row per accepted or refused turn",
+    "actual": "communication_messages has 2 inbound rows for THREAD-96626B5C-48C (MSG-CHAT-C047798E-D86, MSG-CHAT-9379D46A-0F1) but only 1 security_audit_events row action='mobile.employee_ai.chat' for that thread; the route returns the 409 from the catch block before securityAudit runs (app/api/mobile-employee-ai/route.ts).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R05",
+    "priorId": "AI-D05",
+    "title": "Employee-AI handoffs are keyed to CRM contact ids and show as 'C•••••' in the handoff queue",
+    "persona": "founder@pawspace.in (desktop)",
+    "url": "/team/ai/handoff, GET /api/ai-human-handoff?mode=queue",
+    "steps": [
+      "Create employee-AI turns for UATD-CUS-2-CRM / -5-CRM / -3-CRM",
+      "Open /team/ai/handoff"
+    ],
+    "expected": "Queue rows resolve to the customer",
+    "actual": "3 rows labelled 'C•••••' (customerId UATD-CUS-2-CRM, UATD-CUS-5-CRM, UATD-CUS-3-CRM); panel shows 'THREAD-93FDBBE7-06E C••••• Assignment: cx-ai-handoff'. Seeded canonical threads (UATD-CUS-3) render a masked name. Take over / Return to AI still work on these rows (200).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/queue-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/queue-02-masked-panel.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-06-emp-taken-over.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R06",
+    "priorId": "AI-E01",
+    "title": "AI provider not connected: every staff turn hands off (provider_unavailable); every customer turn hands off (rollout_gated, stage staff_only)",
+    "persona": "all",
+    "url": "/mobile-app AI tab, /chat, /v2/chat",
+    "steps": [
+      "Send turns as staff and as customers"
+    ],
+    "expected": "Honest handoff, no fabricated answers",
+    "actual": "Staff turns: provider 'not_connected', outcome handoff/provider_unavailable. Customer turns: handoff reason 'rollout_gated' (ai_audience_rollout.stage=staff_only). Public /chat answers from knowledge without prices. No 5xx.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/G-02-public.png"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "env-gated"
+  },
+  {
+    "id": "AICRM-R07",
+    "priorId": "AI-E02 / AI-E03",
+    "title": "Voice self-test states: browser mic and carrier self-test blocked by environment; outbound calling disabled",
+    "persona": "founder@pawspace.in (desktop), founder/manager (mobile)",
+    "url": "/team/voice/ai-test, /team/voice, /mobile-app AI Voice, POST /api/voice-outbound",
+    "steps": [
+      "Open /team/voice/ai-test; read readiness; POST uat_ai_self_test and uat_ai_browser_ticket",
+      "Open /team/voice"
+    ],
+    "expected": "Exact, honest blocked states",
+    "actual": "BROWSER MIC: 'Cloudflare Workers AI binding (AI) is not configured' (readiness enabled:false, ticket 409, audit voice.ai_browser_test.ticket=blocked). CARRIER SELF-TEST: 'AI voice self-test requires exactly one PAWSPACE_VOICE_UAT_ALLOWLIST recipient' (409, audit voice.ai_self_test.request=blocked). Buttons 'Test via Browser Mic' and 'Call my allow-listed number now' disabled. /team/voice: 'CALLING DISABLED — Voice calling is not approved for this environment (set PAWSPACE_VOICE_UAT_APPROVED=\"true\")'. Mobile: 'State: idle · Cloudflare Workers AI binding (AI) is not configured', Start voice disabled.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/voice-selftest-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/voice-selftest-02-after.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/voice-console-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-07-voice.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "env-gated"
+  },
+  {
+    "id": "AICRM-R08",
+    "priorId": "ORCH-1 (bottom nav hidden until location welcome completed)",
+    "title": "Bottom nav is not hidden under the location welcome for staff with Employee AI enabled (only covered by the splash)",
+    "persona": "founder (Pixel 7) vs anita.associate17 (Pixel 7)",
+    "url": "/mobile-app",
+    "steps": [
+      "Open /mobile-app; sample [data-location-welcome] and nav display every 500ms; hit-test the last nav button"
+    ],
+    "expected": "Nav hidden until the welcome is completed for every role",
+    "actual": "Associate: nav display:none while the welcome shows (0/14 samples visible). Founder/manager: nav display:grid, height 76 during the whole welcome (19 samples) because app/prototype-convergence.css:18 hides only nav:not([data-employee-ai=\"enabled\"]); it is not clickable only because the fixed 'Opening PawSpace' splash (z-index 1000) covers it (elementFromPoint = splash). The welcome form variant is not covered by the splash.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01b-welcome-nav/founder-welcome-3s.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01b-welcome-nav/associate-welcome-3s.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01b-welcome-nav/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R09",
+    "priorId": "AI-O02",
+    "title": "Location welcome splash blocks the app for ~6.5-9 s when geolocation is unanswered",
+    "persona": "all mobile personas",
+    "url": "/mobile-app",
+    "steps": [
+      "Open /mobile-app in a fresh session without answering geolocation"
+    ],
+    "expected": "Fast first render",
+    "actual": "'Opening PawSpace' logo splash persists >6.5 s on every persona before the home and nav appear.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01b-welcome-nav/result.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R10",
+    "priorId": "AI-P08 / AI-P06 / AI-P11",
+    "title": "Handoff lifecycle end to end: customer web chat -> queue -> Take over -> Return to AI -> customer resumes with the bot; replay idempotent; seeded and employee threads round-trip",
+    "persona": "E2E-CUS-UI-001 (Pixel 7) + founder@pawspace.in (desktop)",
+    "url": "/chat, /v2/chat, /team/ai/handoff, POST /api/ai-human-handoff, POST /api/ai-web-chat",
+    "steps": [
+      "Customer: My account -> 'What is the status of my booking E2E-BK-UI-001…' (200 handoff) -> 'Any update on this?' (409 alert, text kept)",
+      "Replay POST with the same idempotencyKey twice",
+      "Founder: select THREAD-F2939238-B04, Take over, then Return to AI",
+      "Customer sends again on /chat; /v2/chat account mode second turn"
+    ],
+    "expected": "Every state visible and durable",
+    "actual": "Queue row 'E•• U• C• … Waiting for staff · rollout gated'; Take over 200 -> ai_handoffs staff_active, thread assigned_to founder, event staff_takeover; Return to AI 200 -> resumed, assigned_to ai-orchestrator; customer turn after return: 200 (bot answers again, new handoff queued). Replay: duplicatePrevented:true both times (also with different text on the same key). /v2/chat: 409 rendered as alert, text kept. Seeded UATD-TH-3 take over / UATD-TH-1 return and employee thread THREAD-9AF76F7A-564 take over + return all 200 with matching DB rows. Audit rows ai.web_chat.turn / ai.handoff.takeover / ai.handoff.resume present.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/A-02-turn1.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/A-03-turn2-409.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-01-A-selected.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-02-A-taken-over.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-05-A-returned.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/A-01-resume-turn.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/A-02-v2chat-account.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/A-03-v2chat-409.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-R11",
+    "priorId": "AI-P03 / ownership boundary",
+    "title": "Ownership boundary: customer B cannot read or write customer A's thread; guest cannot chat in account mode",
+    "persona": "CUS-OTP-… (9800000777) and guest",
+    "url": "POST /api/ai-web-chat, GET /api/conversations, /api/crm/chat, /api/ai-human-handoff, /api/customer-360",
+    "steps": [
+      "As B: POST authenticated chat with customerId=A; POST with A's idempotencyKey; GET A's thread on 4 APIs",
+      "As guest: My account mode; POST authenticated"
+    ],
+    "expected": "403/401, no data",
+    "actual": "B with A's customerId -> 403 'Customer ownership denied'; A's key -> 403 'Chat request key belongs to another customer'; conversations/crm-chat/queue/customer-360 -> 403 'Permission denied'; B's own turn opens a separate thread THREAD-F5D274C5-2C7. Guest: Send disabled with 'Sign in to your customer account…'; POST -> 401.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/B-01-own-chat.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/G-01-guest-account-mode.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/result.json"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-R12",
+    "priorId": "EMP-07",
+    "title": "Lead assignment / SLA governance still answer 500 for every business-validation refusal and have no UI; policy city labels must substring-match the contact area",
+    "persona": "founder@pawspace.in, sunita.manager37, uat.demo.sales1/2",
+    "url": "POST /api/lead-assignment-governance, POST /api/lead-sla-governance, POST /api/revenue-crm advance_day",
+    "steps": [
+      "assign LEAD-1790001487758 with no active policy; assign unknown lead; assign without idempotencyKey; activate_policy without approvalReference; reassign a lead without assignment; accept_assignment unknown id; start_clock without assignment; record_action without clock; pause_clock unknown id",
+      "Seed policy v1 with cityIds ['blr'] (the CRM organizational city id) -> assign",
+      "Seed policy v2 with cityIds ['Bangalore'] (the contact area label) -> assign/replay/accept/reassign; SLA policy v2 -> start_clock/record_action"
+    ],
+    "expected": "Governed 4xx JSON with the reason; assignment matches the CRM city scope",
+    "actual": "All nine validation cases -> HTTP 500 {error:'Unable to update lead assignment governance' | 'Unable to update lead SLA governance'} (server log: 'Lead not found', 'No active lead assignment policy matches this lead service/city', 'Assignment policy activation requires an approval reference', 'Lead has no current assignment to replace', 'No active SLA clock exists for this lead', …). Policy with cityIds ['blr'] never matches (cityMatches() substring-matches the contact area 'Bangalore'). With ['Bangalore'] the flow works: assign 200 LAS-9AE2187C-C9A (sales1), replay duplicatePrevented, accept 200 (+replay), reassign 200 (sales2, previous superseded), start_clock 200 SLAC-EF40CB66-0B9, record_action 200 (clock met), advance_day 200 sla:'canonical'. advance_day on a lead with no matching policy -> 500. No screen offers assignment/SLA controls (the /team home also fetches these APIs).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03c-governance-conversion/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03d-sla-conversion/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json"
+    ],
+    "severity": "P1",
+    "class": "backend",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R13",
+    "priorId": "P1-02 (Revenue CRM 500 / due callbacks)",
+    "title": "Revenue CRM reads work again: /api/revenue-crm 200, lead_callbacks repaired additively, dueCallbacks list loads",
+    "persona": "founder@pawspace.in, sunita.manager37, uat.demo.sales1/2",
+    "url": "/crm, /team/daily-revenue, /team, GET /api/revenue-crm",
+    "steps": [
+      "Open /crm, /team/daily-revenue and /team; GET /api/revenue-crm as founder, sunita and sales users",
+      "Inspect PRAGMA table_info(lead_callbacks) before/after"
+    ],
+    "expected": "200 and no 5xx",
+    "actual": "200 for every role (keys incl. dueCallbacks, leads:31); lead_callbacks gained requested_at, scheduled_by, completed_at, completed_outcome, missed_at next to the intake columns; lead_callback_events created; no 5xx on the three screens.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-01-crm.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-02-daily-revenue.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "AICRM-R14",
+    "priorId": "sticky opt-out (fixed claim)",
+    "title": "Sticky opt-out: an Opt-out attempt closes the lead, records the contact preference and later attempts cannot reopen it",
+    "persona": "founder@pawspace.in (sales lead created by sunita.manager37)",
+    "url": "POST /api/revenue-crm log_attempt",
+    "steps": [
+      "log_attempt call/Connected",
+      "log_attempt call/Opt-out",
+      "log_attempt call/Interested, whatsapp/RNR",
+      "Read lead_work_items, customer_contact_preferences, crm_contacts, lead_attempts; open the contact on /crm"
+    ],
+    "expected": "Lead closed and stays closed; preference opt_out=1; CRM shows do-not-contact",
+    "actual": "Opt-out -> {status:'closed'}; lead opt_out=1 last_outcome 'Opt-out'; customer_contact_preferences opt_out=1 marketing 0 whatsapp 0 source lead_attempt; crm_contacts stage 'Closed', next_action 'Do not contact — opted out'. Interested afterwards -> status stays 'closed'; WhatsApp RNR -> still closed (attempt recorded, uat_queued). /crm detail shows 'Do not contact — opted out'. Revenue CRM lead view: status closed, opt_out 1.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/F-02-crm-detail-optout.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "AICRM-R15",
+    "priorId": "EMP-10",
+    "title": "/team/whatsapp still 404",
+    "persona": "founder@pawspace.in",
+    "url": "/team/whatsapp",
+    "steps": [
+      "Open /team/whatsapp"
+    ],
+    "expected": "WhatsApp hub or redirect to /team/whatsapp/analytics",
+    "actual": "'We couldn't find that page' (404); analytics/templates/automation sub-routes render.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-07-team-whatsapp.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R16",
+    "priorId": "EMP-09",
+    "title": "CRM search by phone still shows '0 shown' although the API returns the contact; detail values illegible; Appearance pill overlaps the CTA",
+    "persona": "sunita.manager37, founder",
+    "url": "/crm, GET /api/crm?query=",
+    "steps": [
+      "Create lead via '+ Add lead' (CU-71628, phone 9800000556)",
+      "Type 9800000556 in 'Search customer, phone or pet'",
+      "GET /api/crm?query=9800000556 and ?query=Rohan"
+    ],
+    "expected": "The new lead is listed",
+    "actual": "List shows '0 shown' for the phone and for the name (names/phones are masked in the list, e.g. 'U•• S• L• R• +91 ••••••0556'); API GET returns the contact for both queries (hits:true). Detail tiles render dark-red on dark (Lead source / Stage / owner unreadable); '◐ Appearance' pill overlaps 'Book this customer →'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/F-01-crm-search-phone.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-04-search-phone.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R17",
+    "priorId": "EMP-02 / EMP-11",
+    "title": "Manager organizational scope now provisioned: sales manager works /crm; out-of-scope modules show an honest denial",
+    "persona": "sunita.manager37 (sales), jyoti.manager39 (operations)",
+    "url": "/crm, /booking-command-center",
+    "steps": [
+      "sunita: open /crm, '+ Add lead'",
+      "sunita: open /booking-command-center",
+      "jyoti: open /crm"
+    ],
+    "expected": "Scoped access with honest refusals",
+    "actual": "sunita /crm renders with '+ Add lead'; POST /api/crm 201 (CU-71628 / LEAD-1790001487758, owner neha.kulkarni auto-assigned, first-response task). sunita /booking-command-center: 'Booking Command Center is outside the manager's organizational scope' (but /api/booking-command-center/stream answers 500 — EMP-15, patch pending). jyoti /crm: 'CRM is outside the manager's organizational scope', API 403.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-01-crm.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-03-add-lead-submitted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-05-bcc-scope.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/J-01-crm-scope.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "fixed-verified"
+  },
+  {
+    "id": "AICRM-R18",
+    "priorId": "EMP-14",
+    "title": "/team/sales still renders the whole customer list in one column (22,771 px, 245 controls)",
+    "persona": "sunita.manager37",
+    "url": "/team/sales",
+    "steps": [
+      "Open /team/sales"
+    ],
+    "expected": "Search-first or paginated list",
+    "actual": "236 records rendered, page height 22,771 px; new leads (Rohan, Kavya) do appear.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-06-team-sales.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-R19",
+    "priorId": "SW-024",
+    "title": "/team/customer-experience still probes WhatsApp conversation-control for the selected non-WhatsApp thread (1 x 409 per load/selection) but now explains it",
+    "persona": "founder@pawspace.in",
+    "url": "/team/customer-experience",
+    "steps": [
+      "Open the page; select THREAD-F2939238-B04 (web chat)"
+    ],
+    "expected": "No probe for non-WhatsApp threads",
+    "actual": "1 conversation-control GET on load and 1 after selection, each 409 'Conversation is not a WhatsApp thread' (console error). UI shows 'Non-WhatsApp conversation — WhatsApp routing controls apply only to canonical WhatsApp threads'. Reduced from 'every open thread'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-03-cx-load.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-04-cx-thread-A.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/result.json"
+    ],
+    "severity": "P3",
+    "class": "wiring",
+    "status": "still-open"
+  },
+  {
+    "id": "AICRM-D01",
+    "title": "Retention callbacks cannot be scheduled: schedule_callback fails on the intake-shape NOT NULL columns and leaks the raw D1 error",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/revenue-crm {action:'schedule_callback'}",
+    "steps": [
+      "Create a web lead via /contact (LEAD-b0fba372-…)",
+      "POST schedule_callback {leadId, requestedAt: now+30min, reason:'Customer asked for an evening call about grooming'}",
+      "GET /api/revenue-crm dueCallbacks"
+    ],
+    "expected": "201/200 with a callback id; the callback appears in dueCallbacks; complete_callback works",
+    "actual": "409 {error:'D1_ERROR: NOT NULL constraint failed: lead_callbacks.phone: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)'} every time (twice, two leads). lib/lead-callback-governance.ts scheduleLeadCallback inserts (id,lead_id,requested_at,reason,status,scheduled_by,created_at,updated_at) only, while drizzle 0021 created phone/source/requested_by NOT NULL — the same table shape the staging deploy applies; the P1-02 repair fixed reads but not writes. lead_callbacks count stays 0, dueCallbacks always empty, complete_callback 409 'Callback not found'. Validation refusals are correct (past time, short reason, unknown lead -> 409 with clear text).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03c-governance-conversion/result.json"
+    ],
+    "severity": "P1",
+    "class": "backend",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-D02",
+    "title": "No staff -> customer reply channel for web-chat handoffs; the customer is never told how the human will reach them",
+    "persona": "founder@pawspace.in (desktop) + E2E-CUS-UI-001 (Pixel 7)",
+    "url": "/team/ai/handoff, /team/customer-experience, POST /api/whatsapp/conversation-control, POST /api/crm/chat, /chat, /v2/chat",
+    "steps": [
+      "Customer asks an account question on /chat -> handoff queued",
+      "Founder takes over THREAD-F2939238-B04 on /team/ai/handoff",
+      "Try to reply: handoff panel, customer-experience composer, conversation-control human_reply, crm/chat send_message",
+      "Customer reopens /chat and /v2/chat"
+    ],
+    "expected": "Staff can send a reply the customer can read on the surface they used",
+    "actual": "Handoff panel has no reply control (0 textboxes). Customer-experience composer is 'Add a staff note for this conversation' with Send disabled ('WhatsApp routing controls apply only to canonical WhatsApp threads'). conversation-control human_reply -> 409 'Conversation is not a WhatsApp thread'. /api/crm/chat send_message -> HTTP 400 with body {ok:true,data:{queued:false,staffFallbackRequired:true,reason:'whatsapp_consent_required'}}. /chat and /v2/chat never fetch thread history (only the current page's turns), so no staff message could be displayed; the customer only sees 'I'm routing this conversation to a PawSpace team member so it can be handled safely.' with no channel or ETA. The 'Please call me back' path is honest ('received … does not confirm that a call has been placed'; dial blocked by PAWSPACE_VOICE_UAT_APPROVED).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-02-A-taken-over.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/F-04-cx-thread-A.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/A-02-turn1.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/A-04-callback.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/result.json"
+    ],
+    "severity": "P1",
+    "class": "wiring",
+    "status": "defect",
+    "ownerDecision": "Decide the human contact channel for web-chat handoffs (WhatsApp/phone/email) and the customer-facing copy; until then the takeover is invisible to the customer."
+  },
+  {
+    "id": "AICRM-D03",
+    "title": "/api/crm/chat send_message answers HTTP 400 with an ok:true success-shaped body",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/crm/chat {action:'send_message'}",
+    "steps": [
+      "POST send_message on a web-chat thread with a stable clientRequestId"
+    ],
+    "expected": "A governed 4xx with error text, or 200/202 with queued:false",
+    "actual": "400 {ok:true,data:{queued:false,staffFallbackRequired:true,reason:'whatsapp_consent_required',externalDelivery:false}} — status and body disagree; the CRM live-chat panel treats it as an error.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/result.json"
+    ],
+    "severity": "P3",
+    "class": "backend",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-D04",
+    "title": "Employee AI network-loss alert shows the raw browser error 'Failed to fetch' and every failure clears the composer",
+    "persona": "founder@pawspace.in (Pixel 7)",
+    "url": "/mobile-app -> AI tab",
+    "steps": [
+      "Abort the chat POST at network level and send"
+    ],
+    "expected": "Plain-language alert and the draft kept in the composer (as /chat does: 'The reply is taking too long. Your message is saved here…')",
+    "actual": "Alert text is 'Failed to fetch'; the textarea is emptied before the request (setMessage('') precedes fetch), so the staff member must retype from the bubble.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/founder-05-network-loss.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-D05",
+    "title": "CRM contact 'Relationship owner' diverges from the canonical lead assignment and is overwritten with a queue code by the chat handoff",
+    "persona": "founder@pawspace.in",
+    "url": "/crm detail, lead_work_items vs crm_contacts vs lead_assignments",
+    "steps": [
+      "Web lead Kavya: chat handoff, then assign/reassign via governance"
+    ],
+    "expected": "One owner projection",
+    "actual": "After the chat handoff crm_contacts.owner = 'cx-ai-handoff' and lead_work_items.owner = 'cx-ai-handoff'; after assign/reassign lead_work_items.owner follows the assignment (sales1 -> sales2) but crm_contacts.owner stays 'cx-ai-handoff'; the CRM screen shows a queue code as the relationship owner.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03c-governance-conversion/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "P3",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-D06",
+    "title": "Guest POST to the customer chat in authenticated mode returns the staff sign-in message",
+    "persona": "guest",
+    "url": "POST /api/ai-web-chat {mode:'authenticated'}",
+    "steps": [
+      "Without any session POST an authenticated turn"
+    ],
+    "expected": "401 with customer wording",
+    "actual": "401 {error:'Your staging sign-in has expired. Open /staging-login to sign in again.', code:'sign_in_required', signInUrl:'/staging-login'} — staff copy on a customer surface. The /chat UI itself disables Send and shows the correct customer notice, so exposure is API-only.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/G-01-guest-account-mode.png"
+    ],
+    "severity": "P3",
+    "class": "auth",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-D07",
+    "title": "Customer 360 does not surface the open lead or the chat thread for a web-lead customer",
+    "persona": "founder@pawspace.in",
+    "url": "GET /api/customer-360?customerId=CU-be35d107-…",
+    "steps": [
+      "Web lead Kavya logs in with the enquiry phone, chats, handoff queued",
+      "GET customer-360 for the canonical/CRM id"
+    ],
+    "expected": "Lead and conversation visible in the 360 view",
+    "actual": "200; records mention the CRM contact but not LEAD-b0fba372-… nor THREAD-DF8AF209-9F9 (the thread does carry lead_id and the queue resolves the name 'U•• W• L• K•').",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/F-04-queue-kavya.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "P3",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "AICRM-P01",
+    "title": "Role gating: associate has no AI tab and gets 403 'Permission denied' on both bootstrap and chat",
+    "persona": "anita.associate17 (Pixel 7)",
+    "url": "/mobile-app, /api/mobile-employee-ai",
+    "steps": [
+      "Open /mobile-app; inspect nav; GET/POST the API"
+    ],
+    "expected": "No AI surface, governed 403",
+    "actual": "5-tab nav, no AI; GET 403, POST 403 {error:'Permission denied'}; no 5xx.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/associate-01-nav.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/01-employee-ai/result.json"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P02",
+    "title": "Public lead intake via /contact: 201 with governance, replay-safe by requestId, conflict on changed payload, durable CRM rows",
+    "persona": "guest (Pixel 7)",
+    "url": "/contact, POST /api/public-contact",
+    "steps": [
+      "Fill name/phone/email/service Grooming/message, WhatsApp consent, 'Send message'",
+      "Re-click Send; POST the same request twice; POST the same requestId with a changed message"
+    ],
+    "expected": "One lead; idempotent; conflict on tamper",
+    "actual": "201 leadId LEAD-b0fba372-… (owner 'AI Orchestrator', governance assignment ai_first / sla policy_unavailable, whatsappAi setup_required:approved_template_required); page shows 'Thanks — we've got it. Our team will reach out within a couple of hours.'; second click sends nothing; same request -> 200 duplicatePrevented:true; changed payload -> 409 contact_submission_conflict. crm_contacts CU-be35d107-…, lead_work_items active/day_1, public_contact_submissions 1. An enquiry from the seeded customer's phone binds to the canonical id E2E-CUS-UI-001.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/G-01-contact-form.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/G-02-contact-submitted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P03",
+    "title": "Staff lead intake via /crm '+ Add lead' as the sales manager",
+    "persona": "sunita.manager37",
+    "url": "/crm, POST /api/crm",
+    "steps": [
+      "+ Add lead -> Full name, 10-digit number, Pet name, service -> 'Save lead & create follow-up'"
+    ],
+    "expected": "Lead + contact + task created, owner assigned",
+    "actual": "201 CU-71628 / LEAD-1790001487758, owner neha.kulkarni@pawspace.in, first-response task 10 min, whatsappAi blocked 'explicit_whatsapp_consent_required' (honest). Row appears in the list and in /team/sales.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-02-add-lead-form.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-03-add-lead-submitted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P04",
+    "title": "Lead conversation bot -> staff handoff: the web-lead customer's chat lands in the handoff queue with the lead linked",
+    "persona": "UAT Web Lead Kavya (9800000555) + founder",
+    "url": "/chat, /team/ai/handoff",
+    "steps": [
+      "OTP login with the enquiry phone (canonical id = CRM contact id CU-be35d107-…), My account, ask to book",
+      "Open /team/ai/handoff"
+    ],
+    "expected": "Queue row resolvable to the lead",
+    "actual": "200 handoff (rollout_gated); communication_threads.lead_id = LEAD-b0fba372-…; queue row 'U•• W• L• K• … Waiting for staff'; panel 'THREAD-DF8AF209-9F9 U•• W• L• K• Assignment: cx-ai-handoff'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/K-01-lead-chat.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/F-04-queue-kavya.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P05",
+    "title": "Daily revenue target save and Revenue CRM views after the lead steps",
+    "persona": "founder, sunita.manager37",
+    "url": "/team/daily-revenue, /crm, /v2/crm, /team/sales",
+    "steps": [
+      "Set target 250000 -> Save target",
+      "Reload /crm, /team/daily-revenue, /v2/crm; /team/sales as sunita"
+    ],
+    "expected": "200, durable, no 5xx",
+    "actual": "POST set_daily_target 200 {targetAmount:250000}; daily_revenue_targets row; page shows '₹0 of ₹2,50,000'. All views render; the only 5xx seen on these screens are my in-page governance probes (R12) and /api/booking-command-center/stream (EMP-15).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03b-crm-governance/F-03-daily-target.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-04-crm-after.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-05-daily-revenue-after.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/F-06-v2-crm.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/S-07-daily-revenue.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P06",
+    "title": "Public chat: knowledge answers without prices; public lead capture writes ai_web_leads",
+    "persona": "guest (desktop)",
+    "url": "/chat 'Our services', POST /api/ai-web-chat mode public",
+    "steps": [
+      "Ask 'How much does dog grooming cost?'",
+      "POST public lead {sessionKey,message,name,phone}"
+    ],
+    "expected": "No fabricated prices; lead captured",
+    "actual": "Answer from 'PawSpace services' knowledge, no price digits; lead 201 captured -> ai_web_leads AIWEBLEAD-8747285A-DF4 status new.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/G-02-public.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02-customer-chat/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-P07",
+    "title": "Lead routing works end to end once an assignment policy whose city label matches the contact area is active",
+    "persona": "founder, uat.demo.sales1, uat.demo.sales2",
+    "url": "POST /api/lead-assignment-governance, POST /api/lead-sla-governance",
+    "steps": [
+      "save_policy cityIds ['Bangalore'] -> activate_policy (approval ref) -> save_member sales1/sales2",
+      "assign LEAD-b0fba372-… -> replay -> accept as sales1 -> reassign to sales2 -> replay",
+      "SLA policy v2 -> start_clock -> replay -> record_action -> replay -> run_governance"
+    ],
+    "expected": "Idempotent, durable, audited",
+    "actual": "Every call 200 with duplicatePrevented on replay; lead_assignments current/superseded rows, lead_assignment_events, lead_sla_clocks (met), lead_sla_events, security_audit_events lead.assignment.* / lead.sla.*; revenue-crm lead owner follows the assignment; integrity projectionMismatches 0. Sandbox governance rows created: LAP-A2C26359-D3F, LAP-A03C5038-F5A, SLAP-4E2454E7-DDC, SLAP-62BE7BBA-931.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03c-governance-conversion/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03d-sla-conversion/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "AICRM-E01",
+    "title": "WhatsApp / Haptik / inbound simulation surfaces are environment-gated locally",
+    "persona": "founder, anonymous",
+    "url": "POST /api/haptik, POST /api/whatsapp-uat-webhook, POST /api/crm/chat simulate_inbound",
+    "steps": [
+      "POST each endpoint"
+    ],
+    "expected": "Honest 503/403",
+    "actual": "Haptik 503 'Haptik integration is not connected (HAPTIK_API_KEY not configured)'; WhatsApp UAT webhook 503 'WhatsApp UAT webhook secret is not configured'; crm/chat simulate_inbound 403 'Inbound simulation requires an explicitly configured test environment' (needs PAWSPACE_COMMUNICATION_ENV=uat, which scripts/stage-config.mjs sets for staging, not set locally). WhatsApp AI lead automation reports setup_required/approved_template_required and explicit consent gating.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03-crm-leads/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/02b-staff-takeover/result.json"
+    ],
+    "severity": "n/a",
+    "class": "infrastructure",
+    "status": "env-gated"
+  },
+  {
+    "id": "AICRM-O01",
+    "title": "Owner decisions",
+    "persona": "owner",
+    "url": "n/a",
+    "steps": [],
+    "expected": "",
+    "actual": "(1) AI rollout stage is staff_only: every customer chat turn is handed off as 'rollout_gated' — decide the launch stage. (2) Web-chat handoff contact channel and customer copy (D02). (3) Lead routing policy semantics: city labels substring-match the contact area, not the CRM city_id; decide the canonical key and add a UI (R12). (4) Employee-AI thread identity (CRM contact id vs canonical id, R05).",
+    "evidence": [],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "owner-decision"
+  },
+  {
+    "id": "AICRM-N01",
+    "title": "Not exercised: lead -> booking conversion, real AI answers, voice STT/TTS, WhatsApp inbound",
+    "persona": "n/a",
+    "url": "POST /api/canonical-bookings, /team/voice/ai-test",
+    "steps": [
+      "Published grooming package dog-basic via PATCH /api/pricing-control (reason 'UAT publish' — staging needs it too)",
+      "Posted a governed-price booking (live quote 1747) for E2E-CUS-UI-001 who has an open web lead"
+    ],
+    "expected": "attributeBookingToOpenLead converts the lead",
+    "actual": "Booking API refuses my hand-built body with 409 'Scheduling must be assigned before booking confirmation' (needs the customer app's scheduling reservation flow — customer agent's area), so lead conversion is unverified here; the hook exists in app/api/canonical-bookings and the web lead binds to the canonical customer id. Real AI answers, voice STT/TTS, ticket 401/reuse paths and WhatsApp inbound need the provider key, Workers AI binding, allow-list and webhook secret.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03e-conversion/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/ai-crm/03d-sla-conversion/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "not-retested"
+  }
+]

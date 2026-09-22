@@ -11,7 +11,14 @@ async function runtime(){const{env}=await import("cloudflare:workers");return en
 export async function GET(request:Request){try{const db=await database(),url=new URL(request.url),query=url.searchParams.get("q")||"";const data=await publicAiWebKnowledge(db,{query});return json({data});}catch(error){return authError(error,"Unable to load public AI chat knowledge");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const db=await database(),body=await request.json()as Body,mode=body.mode||"public";if(mode!=="public"&&mode!=="authenticated")return json({error:"Unsupported chat mode"},400);if(mode==="public"){if(body.message&&body.sessionKey){const lead=await captureAiWebLead(db,{sessionKey:body.sessionKey,message:body.message,name:body.name,email:body.email,phone:body.phone});return json({data:{mode:"public",lead,customerDataAccess:false,toolExecution:false,callbackAutomation:false}},201);}const data=await publicAiWebKnowledge(db,{query:body.query||body.message||""});return json({data});}
- const actor=await resolveActor(request),session=await resolvePlatformSession(db,request);body.customerId=body.customerId||(session?.subjectType==="customer"?session.subjectId:undefined);if(!body.customerId||!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
+ let actor;
+ try{actor=await resolveActor(request);}
+ catch(error){
+  // A signed-out visitor on the customer chat: answer in customer terms, never with the staff sign-in copy.
+  if(error instanceof Response&&error.status===401)return json({error:"Sign in to your PawSpace account to chat about your bookings.",code:"customer_sign_in_required",signInUrl:"/mobile-app"},401);
+  throw error;
+ }
+ const session=await resolvePlatformSession(db,request);body.customerId=body.customerId||(session?.subjectType==="customer"?session.subjectId:undefined);if(!body.customerId||!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay
  // capture-only so an internet user cannot type somebody else's number and cause PawSpace to dial it.
  if(isCustomerCallbackRequest(body.message)){

@@ -210,6 +210,7 @@ test("GSTR-9 net tax payable is output plus adjustments minus eligible credit", 
   sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,gross_amount,tax_amount,status,issued_at) VALUES ('binv_1','bkg_1',11800,1800,'issued',?)").run(issuedAt);
   sqlite.prepare("INSERT INTO provider_payout_computations (id,booking_id,platform_fee,platform_gst,provider_gst_deducted) VALUES ('ppc_1','bkg_1',2000,360,1800)").run();
 
+  sqlite.prepare("INSERT INTO service_invoice_ownership VALUES ('binv_1',?,?,?,?,?)").run(ENTITY,REG,MAKER,"Explicit test invoice ownership",Date.now());
   const withService = await gst.generateAnnualReturn(db, { entityId: ENTITY, registrationId: REG, financialYear: FY }, MAKER);
   assert.equal(withService.summary.serviceOutputTax, 360, "only the commission GST is PawSpace's own output tax");
   assert.equal(withService.summary.providerSupplyGstCollectedOnBehalf, 1440, "the provider's Rs 1,440 is disclosed, not filed here");

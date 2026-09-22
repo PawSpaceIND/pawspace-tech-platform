@@ -33,7 +33,7 @@ const futureStart = () => new Date(Date.now() + 7 * DAY).toISOString();
 const STAGES = [];
 const stage = (name, status, detail) => STAGES.push({ name, status, detail });
 
-const trnWorld = (env = {}) => world("__TRN_DB__", "__TRN_ENV__", env);
+const trnWorld = (env = {}) => world("__TRN_DB__", "__TRN_ENV__", {PAWSPACE_PAYMENT_ENV:"sandbox",...env});
 
 // --- 1. CATALOGUE + QUOTE ----------------------------------------------------
 test("TRN-01 catalogue: the governed training plans are what the customer is offered", async () => {
@@ -192,7 +192,7 @@ async function programmeWorld(over = {}) {
   w.sqlite.prepare("INSERT OR REPLACE INTO canonical_customers VALUES (?,?,?,?,?,?,'active',?,?)")
     .run(CUSTOMER, "Training Customer", "9800000222", "trn@example.test", CITY, '{}', now, now);
   w.sqlite.prepare(`INSERT OR REPLACE INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,pet_ids_json,created_by,created_at,updated_at)
-    VALUES (?,?,?,?,'training',?,?,'TRN-SG-1',?,?,?,'in_progress','customer_app',6000,'INR','{}','["TRN-PET-1"]','test',?,?)`)
+    VALUES (?,?,?,?,'dog_training',?,?,'TRN-SG-1',?,?,?,'in_progress','customer_app',6000,'INR','{}','["TRN-PET-1"]','test',?,?)`)
     .run(BOOKING, CUSTOMER, CITY, ZONE, PACKAGE, PACKAGE_NAME, TRAINER, start, end, now, now);
   w.sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('TRN-PAY-1',?,?,6000,3000,'INR','card','split','captured','razorpay','trn-idem-1','{}',?,?)")
     .run(BOOKING, CUSTOMER, now, now);
@@ -213,6 +213,10 @@ async function programmeWorld(over = {}) {
               new Date(now + n * 7 * DAY).toISOString(), new Date(now + n * 7 * DAY + 3600000).toISOString(), now, now).run();
     }
   }
+  const commercial=await import("../lib/training-commercial-governance.ts");
+  const quote=await commercial.createTrainingQuote(w.db,{packageCode:PACKAGE,petCount:1,scheduledStart:futureStart(),paymentMode:"split"});
+  await commercial.captureTrainingQuoteSandbox(w.db,{quoteId:quote.quoteId,amount:quote.amountDueNow,paymentKey:"programme-fixture-deposit"});
+  await commercial.trainingQuoteLinkStatement(w.db,quote.quoteId,BOOKING).run();
   return { ...w, start, end };
 }
 
@@ -255,7 +259,7 @@ test("TRN-06 arrival geofence: a trainer must actually be at the customer's door
 
   const noCoords = await act("arrive");
   assert.equal(noCoords.ok, false, "arriving without coordinates must be refused");
-  assert.match(String(noCoords.body ?? ""), /requires provider latitude and longitude/i);
+  assert.match(String(noCoords.body ?? ""), /Allow location access to confirm arrival/i);
 
   // ~2.2 km away - a trainer marking themselves arrived from the next neighbourhood.
   const farAway = await act("arrive", { latitude: DOORSTEP.lat + 0.02, longitude: DOORSTEP.lng });
@@ -295,7 +299,7 @@ async function evidence(db, purpose, id) {
   const now = Date.now();
   const media = await import("../lib/service-media-security.ts");
   await media.ensureServiceMediaTable(db);
-  await db.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,'k','image/jpeg',2048,'sha','clean','ready','active',0,?,?,?)")
+  await db.prepare("INSERT OR REPLACE INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,'k','image/jpeg',2048,'sha','clean','ready','active',0,?,?,?,'approved','scanner_clean')")
     .bind(id, BOOKING, TRAINER, purpose, TRAINER, now, now).run();
   await db.prepare("INSERT OR REPLACE INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
     .bind(id, SESSION, PROGRAMME, BOOKING, TRAINER, now).run();
@@ -406,7 +410,7 @@ test("TRN-09 evidence: closing needs before AND after proof, scan-approved and b
 });
 
 test("TRN-10 final balance: the last session of a split plan cannot close until the balance is paid", async () => {
-  /* assertFinalBalancePaid applies ONLY on the last session (sequence_no === total_sessions), which
+  /* Full-balance eligibility applies ONLY on the last session (sequence_no === total_sessions), which
    * is the commercial point: the customer pays the second half before the programme is delivered.
    * Both directions are pinned here, because a gate that fires on every session would be just as
    * wrong as one that never fires. */
@@ -421,6 +425,7 @@ test("TRN-10 final balance: the last session of a split plan cannot close until 
     });
     const quoteId = String(quote.quoteId ?? quote.id);
     await com.captureTrainingQuoteSandbox(w.db, { quoteId, amount: 3000, paymentKey: `fb-${Math.random()}` });
+    await w.db.prepare("DELETE FROM training_booking_quote_links WHERE booking_id=?").bind(BOOKING).run();
     await com.trainingQuoteLinkStatement(w.db, quoteId, BOOKING).run();
     if (payBalance) {
       await com.collectTrainingRemainingBalanceSandbox(w.db, { quoteId, amount: 3000, paymentKey: `fb2-${Math.random()}` });
@@ -435,7 +440,7 @@ test("TRN-10 final balance: the last session of a split plan cannot close until 
 
   const unpaid = await closeLast(false);
   assert.equal(unpaid.res.ok, false, "the final session must not close while half the fee is outstanding");
-  assert.match(String(unpaid.res.body ?? ""), /Final Training session is blocked/i);
+  assert.match(String(unpaid.res.body ?? ""), /pay the remaining Training balance before the final session can be completed/i);
   assert.equal(unpaid.w.sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(SESSION).status, "in_session",
     "a blocked completion must leave the session open");
 
@@ -601,6 +606,7 @@ test("TRN-14 invoice: not until fully paid, then arithmetically right, once, and
   const quoteId = String(quote.quoteId ?? quote.id);
   await com.captureTrainingQuoteSandbox(db, { quoteId, amount: 3000, paymentKey: "inv-dep" });
   await com.collectTrainingRemainingBalanceSandbox(db, { quoteId, amount: 3000, paymentKey: "inv-bal" });
+  await db.prepare("DELETE FROM training_booking_quote_links WHERE booking_id=?").bind(BOOKING).run();
   await com.trainingQuoteLinkStatement(db, quoteId, BOOKING).run();
   assert.equal((await com.trainingQuotePaymentState(db, quoteId)).status, "FULLY_PAID",
     "the fixture must genuinely be paid in full before this half means anything");

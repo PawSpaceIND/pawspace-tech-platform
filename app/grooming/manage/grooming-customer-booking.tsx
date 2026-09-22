@@ -5,11 +5,12 @@ import GroomingChangePolicy from "./grooming-change-policy";
 import {useEffect,useState} from "react";
 import {loadCustomerAccount} from "../../../lib/customer-account-client";
 import type {CustomerAccountRecord} from "../../../lib/customer-account";
+import {formatIndiaDateTimeMedium} from "../../../lib/india-time";
 import styles from "./grooming-customer-booking.module.css";
 
 type Booking=CustomerAccountRecord["bookings"][number];
-const formatDate=(value:string)=>new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));
-export default function GroomingCustomerBooking({bookingId}:{bookingId:string}) {
+const formatDate=formatIndiaDateTimeMedium;
+export default function GroomingCustomerBooking({bookingId,routeScope="legacy"}:{bookingId:string;routeScope?:"legacy"|"v2"}) {
  const[customerId,setCustomerId]=useState(""),[notice,setNotice]=useState<{bookingId:string;text:string}|null>(null);
  const [booking,setBooking]=useState<Booking|null>(null),[loadedId,setLoadedId]=useState(""),[error,setError]=useState(""),[refresh,setRefresh]=useState(0);
  useEffect(()=>{
@@ -23,13 +24,19 @@ export default function GroomingCustomerBooking({bookingId}:{bookingId:string}) 
  const reload=()=>{setLoadedId("");setError("");setRefresh(value=>value+1);};
  const loaded=loadedId===bookingId;
  return <main className={styles.page}><div className={styles.content}>
-  <Link href="/mobile-app">← Back to PawSpace</Link>
+  <Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>← Back to PawSpace</Link>
   <header><p className={styles.eyebrow}>YOUR CARE</p><h1>Your Grooming booking</h1></header>
-  {!bookingId?<p>Open a Grooming booking from your Activity to view its details.</p>:!loaded?<p role="status">Loading your booking…</p>:error?<section className={styles.card}><p role="alert">{error}</p><button onClick={reload}>Try again</button><Link href="/mobile-app">Open your account</Link></section>:!booking?<section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not available on your account. Check that you are signed in to the account that made the booking.</p></section>:<>
+  {!bookingId?<p>Open a Grooming booking from your Activity to view its details.</p>:!loaded?<p role="status">Loading your booking…</p>:error?<section className={styles.card}><p role="alert">{error}</p><button onClick={reload}>Try again</button><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>Open your account</Link></section>:!booking?<section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not available on your account. Check that you are signed in to the account that made the booking.</p></section>:<>
    {notice?.bookingId===booking.id&&<p role="status">{notice.text}</p>}
    <section className={styles.card} aria-label="Booking details"><p className={styles.status}>{booking.status.replaceAll("_"," ")}</p><h2>{booking.packageName}</h2><p className={styles.reference}>Booking reference · {booking.id}</p>
     <dl><div><dt>Starts</dt><dd>{formatDate(booking.scheduledStart)} IST</dd></div><div><dt>Ends</dt><dd>{formatDate(booking.scheduledEnd)} IST</dd></div><div><dt>Booking total</dt><dd>{new Intl.NumberFormat("en-IN",{style:"currency",currency:booking.currency}).format(booking.totalAmount)}</dd></div></dl>
     <p className={styles.note}>The booking total is not a receipt or confirmation of payment.</p>
+    {
+     /* [CUST-L-D05] a payment_pending booking had Refresh controls and "Cancellation unavailable" but
+      * no way back to payment. This reuses the same mobile booking-confirmation payment surface the
+      * customer paid from originally — no cancellation policy is invented here. */
+     booking.status==="payment_pending"&&<Link href={`/mobile-app/booking-confirmation?bookingId=${encodeURIComponent(booking.id)}`}>Continue to payment</Link>
+    }
    </section>
    {booking.status==="completed"&&<GroomingCareSummary key={booking.id} bookingId={booking.id}/>}
    <GroomingChangePolicy key={`${booking.id}:${booking.scheduledStart}:${booking.status}`} bookingId={booking.id} customerId={customerId} onChanged={message=>{setNotice({bookingId:booking.id,text:message});reload();}}/>

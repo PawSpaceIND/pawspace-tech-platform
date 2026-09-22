@@ -8,6 +8,7 @@ type DevOtpSession = {
   phone: string;
   challengeId: string;
   sandboxCode: string;
+  existingCustomer: boolean;
 };
 
 const DEV_OTP_SESSION_KEY = "pawspace:customer-login:otp";
@@ -21,6 +22,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState("");
   const [sandboxCode, setSandboxCode] = useState("");
+  const [existingCustomer, setExistingCustomer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,6 +44,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
         setPhone(saved.phone || "");
         setChallengeId(saved.challengeId);
         setSandboxCode(saved.sandboxCode || "");
+        setExistingCustomer(Boolean(saved.existingCustomer));
         setStage("code");
       } catch {
         sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
@@ -55,15 +58,18 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
     setBusy(true);
     try {
       const r = await fetch("/api/customer-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "request", phone }) });
-      const b = (await r.json()) as { data?: { challengeId: string; sandboxCode: string }; error?: string };
+      const b = (await r.json()) as { data?: { challengeId: string; sandboxCode: string; existingCustomer?: boolean }; error?: string };
       if (!r.ok || !b.data) throw new Error(b.error || "Unable to send OTP");
       setChallengeId(b.data.challengeId);
       setSandboxCode(b.data.sandboxCode);
+      setExistingCustomer(Boolean(b.data.existingCustomer));
+      setName("");
       if (persistDevOtpSession) {
         sessionStorage.setItem(DEV_OTP_SESSION_KEY, JSON.stringify({
           phone,
           challengeId: b.data.challengeId,
           sandboxCode: b.data.sandboxCode,
+          existingCustomer: Boolean(b.data.existingCustomer),
         } satisfies DevOtpSession));
       }
       setStage("code");
@@ -79,7 +85,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
     if (!/^\d{6}$/.test(code)) { setError("Enter the 6-digit code"); return; }
     setBusy(true);
     try {
-      const r = await fetch("/api/customer-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "verify", challengeId, code, name: name || undefined, cityId: "blr" }) });
+      const r = await fetch("/api/customer-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "verify", challengeId, code, name: existingCustomer ? undefined : (name || undefined), cityId: "blr" }) });
       const b = (await r.json()) as { data?: LoggedInCustomer; error?: string };
       if (!r.ok || !b.data) throw new Error(b.error || "Incorrect code");
       if (persistDevOtpSession) sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
@@ -134,14 +140,16 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 10, fontSize: 14, textAlign: "center" }}
                 />
-                <input
-                  type="text"
-                  aria-label="Your name"
-                  placeholder="Your name (first time only)"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 8, fontSize: 14, textAlign: "center" }}
-                />
+                {!existingCustomer && (
+                  <input
+                    type="text"
+                    aria-label="Your name"
+                    placeholder="Your name (first time only)"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 8, fontSize: 14, textAlign: "center" }}
+                  />
+                )}
                 {error && <p style={{ color: "#b3261e", fontSize: 11, marginTop: 8 }}>{error}</p>}
                 <button className={styles.primary} disabled={busy} onClick={() => void verifyOtp()}>
                   {busy ? "Verifying…" : "Verify & continue"}
@@ -151,6 +159,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                   setStage("phone");
                   setChallengeId("");
                   setSandboxCode("");
+                  setExistingCustomer(false);
                   setCode("");
                   setError("");
                 }}>

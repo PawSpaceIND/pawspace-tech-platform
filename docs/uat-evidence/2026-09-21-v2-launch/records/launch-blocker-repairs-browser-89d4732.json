@@ -1,0 +1,74 @@
+{
+  "crm": {
+    "revenueCrm": [],
+    "errorBanner": false
+  },
+  "dailyRevenue": {
+    "revenueCrm": [
+      200
+    ],
+    "errorBanner": false,
+    "excerpt": "← Team PAWSPACE · DAILY REVENUE PRIORITY Today's prioritised revenue opportunities Real customer scoring, real open inbound leads and real subscription renewals"
+  },
+  "control": {
+    "launchReadiness": [
+      200
+    ],
+    "subscriptionView": [],
+    "launchError": false,
+    "launchItems": 10,
+    "subscriptionViewAfterTab": [
+      200
+    ],
+    "business360Error": false
+  },
+  "founderErrors": {
+    "pageErrors": [],
+    "failed5xx": []
+  },
+  "jyoti": {
+    "bccApi": [
+      200,
+      200
+    ],
+    "bccText": "Booking Command Center ▦ Live calendar ⚡ Revenue & CX ◇ Launch essentials ◎ System",
+    "crmApi": [
+      403
+    ],
+    "crmText": "Legacy CRM screen"
+  },
+  "sunita": {
+    "bccApi": [
+      403,
+      500
+    ],
+    "bccText": "Booking Command Center ▦ Live calendar ⚡ Revenue & CX ◇ Launch essentials ◎ System",
+    "crmApi": [
+      200
+    ],
+    "crmText": "Legacy CRM screen"
+  },
+  "leave": {
+    "status": 200,
+    "body": "{\"data\":{\"id\":\"LVR-DF5A32D0-58F\",\"status\":\"pending\"},\"productionReady\":false}"
+  },
+  "ai": {
+    "welcome": {
+      "sawWelcome": true,
+      "welcomeMs": 1094
+    },
+    "tab": true,
+    "first": {
+      "status": 200,
+      "lastRole": "assistant",
+      "meta": "handoff · human_handoff · provider_unavailable"
+    },
+    "second": {
+      "status": 409,
+      "articlesAdded": 1
+    },
+    "alert": [
+      "AI replies are paused while the conversation is owned by staff"
+    ]
+  }
+}

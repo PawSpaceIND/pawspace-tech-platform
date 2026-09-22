@@ -69,8 +69,10 @@ function invoice(sqlite, { num, customer, issueDate, subtotal, tax, lineTax }) {
   return invId;
 }
 function serviceInvoice(sqlite, gross, tax, issuedAt) {
+  const invoiceId=`bi_${crypto.randomUUID().slice(0,8)}`;
+  sqlite.prepare("INSERT INTO service_invoice_ownership VALUES (?,?,?,?,?,?)").run(invoiceId,ENTITY,REG,ACTOR,"Explicit fixture ownership",Date.now());
   sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at) VALUES (?,?,?,?,?,?,?,?,?)")
-    .run(`bi_${crypto.randomUUID().slice(0, 8)}`, "bk", `GRM-${Math.random()}`, "issued", "INR", gross, tax, gross - tax, issuedAt);
+    .run(invoiceId, "bk", `GRM-${Math.random()}`, "issued", "INR", gross, tax, gross - tax, issuedAt);
 }
 
 test("GSTR-1 splits B2B / B2CS, builds an HSN summary, and reconciles aggregate service supplies", async () => {
@@ -158,4 +160,16 @@ test("generated returns require maker/checker before review", async () => {
   const approved = await returns.approveGstReturn(db, { id: gen.id, approvalReference: "CA-1" }, CHECKER);
   assert.equal(approved.status, "reviewed");
   assert.equal(approved.liveFilingEnabled, false);
+});
+
+test('GSTR-1 uses the selected registration and excludes another registration of the same entity',async()=>{
+ const{sqlite,db,returns}=await world();activeRegistration(sqlite);
+ sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,approved_by,approved_at,created_at,updated_at) VALUES ('OTHER',?,'MH','gstin','27AAAAA0000A1Z5','active','2020-01-01','qa',9999999999999,1,1)").run(ENTITY);
+ customerProfile(sqlite,'c','', 'consumer','29');
+ const own=invoice(sqlite,{num:'OWN',customer:'c',issueDate:'2026-07-15',subtotal:1000,tax:180,lineTax:{description:'QA service',serviceCode:'grooming',hsn:'999799',components:[{code:'cgst',rate:9},{code:'sgst',rate:9}]}});
+ const other=invoice(sqlite,{num:'OTHER',customer:'c',issueDate:'2026-07-15',subtotal:9000,tax:1620,lineTax:{description:'Other registration',serviceCode:'grooming',hsn:'999799',components:[{code:'igst',rate:18}]}});
+ sqlite.prepare("UPDATE finance_invoices SET registration_id='OTHER' WHERE id=?").run(other);
+ const result=await returns.generateGstr1(db,{entityId:ENTITY,registrationId:REG,periodCode:'2026-07'},ACTOR);
+ const stored=JSON.parse(sqlite.prepare('SELECT payload_json FROM gst_return_documents WHERE id=?').get(result.id).payload_json);
+ assert.equal(stored.gstin,HOME_GSTIN);assert.equal(stored.gt,1000);assert.ok(own);
 });

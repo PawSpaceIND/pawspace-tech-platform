@@ -7,7 +7,7 @@ const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123
 const QUICK=[
   {label:"Founder (full access)",email:"founder@pawspace.in"},
   {label:"Finance (payroll, GST, payouts)",email:"anjali.finance33@tkpetcare.in"},
-  {label:"Manager (people & performance)",email:"jyoti.manager39@tkpetcare.in"},
+  {label:"Manager (operations · Booking Command Center & scheduling)",email:"jyoti.manager39@tkpetcare.in"},
   {label:"Employee — groomer (self-service)",email:"asha.groomer1@tkpetcare.in"},
   {label:"Employee — sales associate",email:"anita.associate17@tkpetcare.in"},
 ];

@@ -21,7 +21,7 @@ test("approved live staging OTP is sent out-of-band, response strips the code, a
   const sent=await route.POST(request({action:"request",phone:APPROVED}));const sentBody=await sent.text();assert.equal(sent.status,200,sentBody);const payload=JSON.parse(sentBody);
   assert.equal(payload.data?.sandboxDelivery,false);assert.equal(payload.data?.liveSmsDelivered,true);assert.equal("sandboxCode" in (payload.data||{}),false);assert.equal(JSON.stringify(payload).includes("api-key-must-never-be-returned"),false);
   assert.equal(providerRequest?.url,"https://www.fast2sms.com/dev/bulkV2");assert.equal(providerRequest?.init?.method,"POST");const providerBody=new URLSearchParams(String(providerRequest?.init?.body||""));assert.equal(providerBody.get("numbers"),APPROVED);const message=String(providerBody.get("message")||"");const code=/\b(\d{6})\b/.exec(message)?.[1];assert.match(String(code),/^\d{6}$/);
-  const verified=await route.POST(request({action:"verify",challengeId:payload.data.challengeId,code,cityId:"blr"}));assert.equal(verified.status,200,await verified.text());assert.match(String(verified.headers.get("set-cookie")),/pawspace_identity_session=/);
+  const verified=await route.POST(request({action:"verify",challengeId:payload.data.challengeId,code,cityId:"blr"}));assert.equal(verified.status,200,await verified.text());assert.match(String(verified.headers.get("set-cookie")),/pawspace_identity_session=/);const {clearUatCookie}=await import("../lib/uat-staging-auth.ts");assert.ok(verified.headers.getSetCookie().includes(clearUatCookie()),"verified customer login must clear the previous staff persona");
  }finally{globalThis.fetch=originalFetch;}
 });
 

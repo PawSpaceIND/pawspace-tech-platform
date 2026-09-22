@@ -1,0 +1,18 @@
+Deploy staging run 35609497578 (workflow_dispatch, ref fix/v2-human-test-launch-20260921)
+inputs: confirm=staging, expected_sha=ad4c56e864c8e361700e0aa4042ebe7d7e8430da, sms_smoke=disabled
+Overall conclusion: success (job "deploy" completed 2026-09-21T14:08:10Z)
+Steps: checkout exact sha clean; install; build (vinext); configure staging (name + D1 + sandbox); apply D1 migrations (122 queries, 31 rows written);
+       record rollback reference 545ef38b-0516-4999-8e14-2678751eb595; deploy; certify isolation; PII-safe Sentry check; load staff directory;
+       load human-UAT provider roster; certify the staging deploy. SMS smoke / live OTP steps skipped by design (sms_smoke=disabled).
+Certification (tests/e2e/staging-certification.mjs): CERTIFIED — 28/28 checks passed
+  PASS isolated staging worker + dedicated D1 (pawspace-staging)
+  PASS exact commit sha requested; LIVE version published for exactly ad4c56e864c8e361700e0aa4042ebe7d7e8430da
+  PASS PAWSPACE_PAYMENT_ENV=sandbox, FORBID_PRODUCTION=true, PAWSPACE_PAYMENT_LIVE_APPROVED=false, PAWSPACE_UAT_LOGIN=on; no production/live flag
+  PASS no UAT credential serialized into the deployed configuration
+  PASS human-UAT provider roster 30/30 service-zone pairs; 71 seeded rows assignable; 54 radius-gated providers located
+  PASS founder / finance / manager / service_provider / associate seeded active + sign in at /api/staging-login; customer sandbox OTP session; 6/6 personas
+  PASS human-UAT checkout dependencies configured (Razorpay TEST and Maps/GPS UAT are configured on staging)
+  PASS hosted smoke pack 6/6 answered for a real staff session; every route refused an anonymous caller
+  PASS rollback reference recorded before this deploy
+Evidence artifact: staging-certification-ad4c56e864c8e361700e0aa4042ebe7d7e8430da (artifact id 10643947089)
+Not covered by this run: browser journeys on the staging host (egress-blocked from the sandbox that produced this branch); a visual/human sweep workflow, if any, is reported separately.
