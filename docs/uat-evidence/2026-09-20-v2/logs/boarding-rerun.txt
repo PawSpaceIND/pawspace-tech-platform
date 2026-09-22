@@ -1,0 +1,5 @@
+  ✘  1 [chromium] › e2e/boarding-persistent-closure.spec.ts:26:1 › boarding: persisted customer → host → Ops replacement → replacement host keeps one booking (28.5s)
+    Error: expect(locator).toBeVisible() failed
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-boarding-rerun/e2e-boarding-persistent-cl-1e075-ment-host-keeps-one-booking-chromium/test-faile
+  1 failed
+EXIT=1
