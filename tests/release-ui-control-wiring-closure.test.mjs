@@ -387,6 +387,13 @@ test("signed-in customer acceptance isolates each journey in a fresh page while 
   assert.match(source, /Fresh Food journey.*withPage/);
 });
 
+test("customer acceptance launches the Chromium this container actually ships", () => {
+  const source = read("../scripts/customer-ui-acceptance-v2.mjs");
+  assert.match(source, /const chromiumExecutable=\(\)=>/);
+  assert.match(source, /process\.env\.PLAYWRIGHT_CHROMIUM/);
+  assert.match(source, /const executablePath=chromiumExecutable\(\),browser=await chromium\.launch\(executablePath\?\{headless:true,executablePath\}:\{headless:true\}\)/);
+});
+
 test("signed-in customer acceptance waits for quote-gated service address controls to enable", () => {
   const source = read("../scripts/customer-ui-acceptance-v2.mjs");
   assert.match(source, /async function enabled\(locator,label,timeout=SERVER_TIMEOUT\)/);
