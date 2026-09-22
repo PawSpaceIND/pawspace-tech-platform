@@ -1,4 +1,4 @@
-import {AtlasExecutiveDomain} from "./atlas-executive-governance";
+import type {AtlasExecutiveDomain} from "./atlas-executive-governance";
 
 export type AtlasCapabilityStatus="reuse_existing"|"extend_existing"|"new";
 export type AtlasBusinessCapability={
