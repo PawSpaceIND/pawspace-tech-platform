@@ -24,9 +24,10 @@ export type AtlasCeoBrief={
  approvalQueue:AtlasCeoBriefItem[];
  blocked:AtlasCeoBriefItem[];
  advisory:AtlasCeoBriefItem[];
+ autoExecuteQueue:AtlasCeoBriefItem[];
  conflicts:Array<{proposalIds:string[];resourceKey:string}>;
  coverage:{represented:string[];missing:string[]};
- autonomousExecution:false;
+ autonomousExecution:"low_risk_internal_only";
 };
 
 const REQUIRED_CEO_COVERAGE=["ceo","sales","marketing","operations","customer_success","finance","gst_tax","legal","hr","risk","groomer","trainer"] as const;
@@ -45,7 +46,7 @@ export function buildAtlasCeoBrief(candidates:AtlasExecutiveCandidate[],options:
   if(!Number.isFinite(item.priorityScore)||item.priorityScore<0||item.priorityScore>100)throw new Error("Atlas priority score must be between 0 and 100");
  }
  const evaluated=candidates.map(item=>({...item,evaluation:evaluateAtlasProposal(item.proposal,{now,policy}),rank:0,overdue:item.deadlineAt!==undefined&&item.deadlineAt<now}));
- const dispositionWeight=(item:typeof evaluated[number])=>item.evaluation.disposition==="approval_required"?4:item.evaluation.disposition==="ready_for_confirmation"?3:item.evaluation.disposition==="advice_only"?2:1;
+ const dispositionWeight=(item:typeof evaluated[number])=>item.evaluation.disposition==="approval_required"?5:item.evaluation.disposition==="ready_for_confirmation"?4:item.evaluation.disposition==="auto_execute_internal"?3:item.evaluation.disposition==="advice_only"?2:1;
  evaluated.sort((a,b)=>Number(b.overdue)-Number(a.overdue)||dispositionWeight(b)-dispositionWeight(a)||b.priorityScore-a.priorityScore||a.proposal.proposalId.localeCompare(b.proposal.proposalId));
  const items=evaluated.map((item,index)=>({...item,rank:index+1}));
  const groups=new Map<string,string[]>();
@@ -55,5 +56,5 @@ export function buildAtlasCeoBrief(candidates:AtlasExecutiveCandidate[],options:
  const conflicts=[...groups.entries()].filter(([,proposalIds])=>proposalIds.length>1).map(([resourceKey,proposalIds])=>({resourceKey,proposalIds:[...proposalIds].sort()}));
  for(const pair of declared.values())conflicts.push({resourceKey:"declared_conflict",proposalIds:[...pair]});
  const represented=[...new Set(items.map(item=>item.proposal.domain))].sort();
- return{generatedAt:now,policyVersion:policy.version,tenantId,items,approvalQueue:items.filter(item=>item.evaluation.disposition==="approval_required"||item.evaluation.disposition==="ready_for_confirmation"),blocked:items.filter(item=>item.evaluation.disposition==="blocked"),advisory:items.filter(item=>item.evaluation.disposition==="advice_only"),conflicts,coverage:{represented,missing:REQUIRED_CEO_COVERAGE.filter(domain=>!represented.includes(domain))},autonomousExecution:false};
+ return{generatedAt:now,policyVersion:policy.version,tenantId,items,approvalQueue:items.filter(item=>item.evaluation.disposition==="approval_required"||item.evaluation.disposition==="ready_for_confirmation"),blocked:items.filter(item=>item.evaluation.disposition==="blocked"),advisory:items.filter(item=>item.evaluation.disposition==="advice_only"),autoExecuteQueue:items.filter(item=>item.evaluation.disposition==="auto_execute_internal"),conflicts,coverage:{represented,missing:REQUIRED_CEO_COVERAGE.filter(domain=>!represented.includes(domain))},autonomousExecution:"low_risk_internal_only"};
 }
