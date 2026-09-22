@@ -54,6 +54,19 @@ test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
  assert.match(wrangler,/"15 2 \* \* \*"/);
 });
 
+test("Atlas daily founder brief uses only the canonical business snapshot for mission truth",()=>{
+ assert.match(data,/runAtlasDailyAnalysis/);
+ assert.match(data,/buildAtlasBusinessSnapshot\(db,\{asOf\}\)/);
+ assert.match(data,/expectedToDate=mission\.target\*elapsed/);
+ assert.match(data,/pacingGapPercent=expectedToDate>0/);
+ assert.match(data,/diagnostic only and is not achieved revenue/);
+ assert.match(data,/atlasSnapshotHash\(snapshot\)/);
+ assert.doesNotMatch(data,/liveMonthMetrics/);
+ assert.doesNotMatch(data,/targetToDate/);
+ assert.doesNotMatch(data,/used imported Tally revenue/);
+ assert.doesNotMatch(data,/SUM\(total_amount\)/);
+});
+
 
 test("Atlas admin HTTP ask is snapshot-first and Tally memory is opt-in secondary context",()=>{
  assert.match(chat,/answerAtlasBusinessQuestion/);
@@ -63,4 +76,15 @@ test("Atlas admin HTTP ask is snapshot-first and Tally memory is opt-in secondar
  assert.match(chat,/narrativeAvailable:answer\.narrativeAvailable/);
  assert.match(chat,/atlas\.business\.query/);
  assert.doesNotMatch(chat,/I queried the isolated Tally analytics memory/);
+});
+
+
+test("Atlas daily founder analysis is canonical-snapshot-first and never defaults to Tally",()=>{
+ assert.match(data,/const snapshot=await buildAtlasBusinessSnapshot/);
+ assert.match(data,/tallyMemoryUsed:false/);
+ assert.match(data,/diagnostic only and is not achieved revenue/);
+ assert.match(data,/existing Founder approval path/);
+ assert.doesNotMatch(data,/No target-to-date is configured, so I used imported Tally revenue/);
+ assert.doesNotMatch(data,/targetToDate\(/);
+ assert.doesNotMatch(data,/monthMetrics\(/);
 });

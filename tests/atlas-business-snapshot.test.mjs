@@ -4,6 +4,7 @@ import {DatabaseSync} from "node:sqlite";
 import {installWorkersHooks} from "./helpers/module-hooks.mjs";
 installWorkersHooks();
 const atlas=await import("../lib/intelligence/atlas-business-snapshot.ts");
+const atlasData=await import("../lib/intelligence/atlas-data.ts");
 const revenue=await import("../lib/revenue-mission-control.ts");
 
 function makeD1(sqlite){
@@ -43,4 +44,20 @@ test("proposal journal supports proposed approved rejected executed lifecycle wi
  assert.equal((await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"proposed",to:"approved",actorId:"founder@pawspace.test"})).updated,true);
  assert.equal((await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:"approved",to:"executed",actorId:"founder@pawspace.test"})).updated,true);
  const rows=await atlas.listAtlasProposals(db,5);assert.equal(rows[0].status,"executed");assert.equal(typeof rows[0].source_ids_json,"string");
+});
+
+test("daily founder analysis uses canonical mission snapshot and ignores misleading Tally benchmarks",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
+ sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER); INSERT INTO governed_marketing_campaigns VALUES ('CAMP1','Approved UAT campaign','approved','approved',2000000000000);");
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MD','Daily UAT mission',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:"company"}),now-10000,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('DC','MD','daily-collected','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);
+ sqlite.prepare("INSERT INTO analytics_historical_financials (id,source_kind,source_file,source_row,entry_date,period_month,currency,revenue_amount,cost_amount,payment_amount,net_amount,raw_json,ingest_batch_id,ingested_at) VALUES ('T1','tally','fake.csv',1,'2033-05-01','2033-05','INR',999999,0,0,999999,'{}','BATCH',?)").run(now);
+ globalThis.__PAWSPACE_TEST_ENV__={};
+ const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});
+ assert.equal(result.facts.missionId,'MD');assert.equal(result.facts.target,1000);assert.equal(result.facts.net,400);assert.equal(Math.round(result.facts.achievedPercent),40);
+ assert.ok(Math.abs(result.facts.elapsedPercent-50)<0.01);assert.equal(result.facts.expectedToDate,500);assert.equal(result.facts.pacingGapPercent,-20);
+ assert.equal('priorYearRevenue' in result.facts,false);assert.equal('historicalImportedRevenue' in result.facts,false);assert.equal('targetToDate' in result.facts,false);assert.equal(result.tallyMemoryUsed,false);assert.equal(result.productionReady,false);
+ assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);
+ const proposal=sqlite.prepare("SELECT proposal_type,status,basis_id FROM atlas_proposals ORDER BY created_at DESC LIMIT 1").get();
+ assert.equal(proposal.proposal_type,'campaign_activation');assert.equal(proposal.status,'proposed');assert.match(proposal.basis_id,/^daily:.*:MD$/);
 });
