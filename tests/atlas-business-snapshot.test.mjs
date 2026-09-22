@@ -58,7 +58,7 @@ test("daily founder analysis uses canonical mission snapshot and ignores mislead
  assert.equal(result.facts.missionId,'MD');assert.equal(result.facts.target,1000);assert.equal(result.facts.net,400);assert.equal(Math.round(result.facts.achievedPercent),40);
  assert.ok(Math.abs(result.facts.elapsedPercent-50)<0.01);assert.equal(result.facts.expectedToDate,500);assert.equal(result.facts.pacingGapPercent,-20);
  assert.equal('priorYearRevenue' in result.facts,false);assert.equal('historicalImportedRevenue' in result.facts,false);assert.equal('targetToDate' in result.facts,false);assert.equal(result.tallyMemoryUsed,false);assert.equal(result.productionReady,false);
- assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);
+ assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);assert.ok(result.operatingTasks.length>=2);const autoRows=sqlite.prepare("SELECT action_code,artifact_type FROM atlas_operating_artifacts ORDER BY created_at").all();assert.ok(autoRows.some(row=>row.action_code==='brief.generate'&&row.artifact_type==='brief'));assert.ok(autoRows.some(row=>row.action_code==='task.draft'&&row.artifact_type==='task_draft'));
  const proposal=sqlite.prepare("SELECT proposal_type,status,basis_id FROM atlas_proposals ORDER BY created_at DESC LIMIT 1").get();
  assert.equal(proposal.proposal_type,'campaign_activation');assert.equal(proposal.status,'proposed');assert.match(proposal.basis_id,/^daily:.*:MD$/);
 });
