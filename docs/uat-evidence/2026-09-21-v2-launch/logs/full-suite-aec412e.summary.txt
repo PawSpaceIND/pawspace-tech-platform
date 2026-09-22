@@ -1,0 +1,9 @@
+FROZEN_TREE_SHA=aec412e4f2151f5cf5be7a04aa18f2b30cc9a9de START=2026-09-22T04:05:40Z
+# failed   -> captured_amount=0 net_customer_amount=0
+# tests 6559
+# pass 6559
+# fail 0
+# skipped 0
+# duration_ms 742907.72397
+EXIT=0 END=2026-09-22T04:18:03Z
+Working tree clean and frozen for the whole run; no repository edits while it executed.

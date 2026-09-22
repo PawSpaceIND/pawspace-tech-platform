@@ -68,6 +68,9 @@ Thirty-seven entries, every one with an executable regression test. The register
 | Browser E2E personas (CI) | `469edbb` | **Failed**, 1 of 13 — `e2e/customer-booking.spec.ts:421`. Recorded as found; see V2-082 below. |
 | Frozen full suite | `b1f4d39` | **6,547 tests, 0 failures, 0 skipped**, 925 s |
 | Browser E2E personas (CI) | `b1f4d39` | Run 35647702969 **success** |
+| Frozen full suite | `aec412e` | **6,559 tests, 0 failures, 0 skipped**, 743 s |
+| CodeQL | `aec412e` | **Success** — alert #55 was pre-existing on `main`, fixed there in #964 |
+| Staging deploy and certification | `aec412e` | Run 35685717304 **succeeded**; SMS and live-OTP steps skipped |
 | Staging deploy and certification | `b1f4d39` | Run 35649768568 **succeeded**; certified at the staging URL, evidence artifact 10660889872, SMS and live-OTP steps skipped |
 
 The four failures at `ab4d03e` were mine and are fixed in `a69cdd7`: a table declared two ways, a
