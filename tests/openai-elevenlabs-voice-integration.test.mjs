@@ -6,8 +6,8 @@ installAiHooks();
 const adapter=await import("../lib/ai-provider-adapter.ts");
 const eleven=await import("../lib/elevenlabs-voice-integration.ts");
 
-test("OpenAI is the default intelligence provider and voice uses the low-latency model",async()=>{
- globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER_API_KEY:"test-openai-key"};
+test("OpenAI uses a dedicated credential and voice uses the low-latency model when explicitly selected",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
  const stub=stubFetch(()=>jsonResponse({id:"resp_1",status:"completed",output:[{type:"message",content:[{type:"output_text",text:"Hi from PawSpace"}]}],usage:{input_tokens:10,output_tokens:4,total_tokens:14}}));
  try{
   const result=await adapter.requestAiDraft({systemPrompt:"system",userPrompt:"hello",channel:"voice"});
@@ -26,6 +26,30 @@ test("OpenAI is the default intelligence provider and voice uses the low-latency
  }finally{stub.restore();}
 });
 
+
+test("legacy generic AI credential remains Anthropic until OpenAI cutover is explicit",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER_API_KEY:"test-anthropic-key"};
+ const stub=stubFetch(()=>jsonResponse({type:"message",stop_reason:"end_turn",content:[{type:"text",text:"legacy-safe"}]}));
+ try{
+  const result=await adapter.requestAiDraft({systemPrompt:"system",userPrompt:"hello"});
+  assert.equal(result.connected,true);
+  assert.equal(result.providerRef,"anthropic");
+  assert.equal(stub.calls[0].url,"https://api.anthropic.com/v1/messages");
+  assert.equal(stub.calls[0].init.headers["x-api-key"],"test-anthropic-key");
+ }finally{stub.restore();}
+});
+
+test("explicit OpenAI selection fails closed without the dedicated OpenAI credential",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_AI_PROVIDER_API_KEY:"legacy-anthropic-key"};
+ const stub=stubFetch(()=>jsonResponse({output_text:"must not be called"}));
+ try{
+  const result=await adapter.requestAiDraft({systemPrompt:"system",userPrompt:"hello"});
+  assert.equal(result.connected,false);
+  assert.equal(result.failure,"not_configured");
+  assert.equal(stub.calls.length,0);
+ }finally{stub.restore();}
+});
+
 test("Anthropic remains an explicit fallback during migration",async()=>{
  globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"anthropic",PAWSPACE_AI_PROVIDER_API_KEY:"test-anthropic-key"};
  const stub=stubFetch(()=>jsonResponse({type:"message",stop_reason:"end_turn",content:[{type:"text",text:"fallback"}]}));
@@ -38,7 +62,7 @@ test("Anthropic remains an explicit fallback during migration",async()=>{
  }finally{stub.restore();}
 });
 
-test("ElevenLabs readiness defaults to India Exotel and OpenAI voice intelligence",()=>{
+test("ElevenLabs readiness preserves the legacy Anthropic provider until OpenAI cutover is explicit",()=>{
  const ready=eleven.elevenLabsVoiceReadiness({
   PAWSPACE_VOICE_RUNTIME:"elevenlabs",
   ELEVENLABS_API_KEY:"x",
@@ -49,12 +73,19 @@ test("ElevenLabs readiness defaults to India Exotel and OpenAI voice intelligenc
  assert.equal(ready.enabled,true);
  assert.equal(ready.configured,true);
  assert.equal(ready.indiaResidency,true);
- assert.equal(ready.intelligenceProvider,"openai");
- assert.equal(ready.intelligenceModel,"gpt-5.6-luna");
+ assert.equal(ready.intelligenceProvider,"anthropic");
+ assert.equal(ready.intelligenceModel,"claude-sonnet-4-6");
  assert.equal(ready.exotelWebSocket,eleven.ELEVENLABS_EXOTEL_INDIA_WS);
  assert.equal(ready.productionReady,false);
 });
 
+
+test("ElevenLabs readiness reports OpenAI voice intelligence after explicit cutover",()=>{
+ const ready=eleven.elevenLabsVoiceReadiness({PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"openai-key",PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"x",ELEVENLABS_AGENT_ID:"agent",ELEVENLABS_INIT_WEBHOOK_SECRET:"secret",ELEVENLABS_RESIDENCY:"india"});
+ assert.equal(ready.intelligenceProvider,"openai");
+ assert.equal(ready.intelligenceModel,"gpt-5.6-luna");
+ assert.equal(ready.indiaResidency,true);
+});
 
 test("ElevenLabs readiness refuses ambiguous residency and reflects the selected AI provider/model",()=>{
  const ready=eleven.elevenLabsVoiceReadiness({PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"x",ELEVENLABS_AGENT_ID:"agent",ELEVENLABS_INIT_WEBHOOK_SECRET:"secret",ELEVENLABS_RESIDENCY:"global",PAWSPACE_AI_PROVIDER:"anthropic",PAWSPACE_AI_VOICE_MODEL:"claude-voice-test"});
