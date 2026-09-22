@@ -206,3 +206,63 @@ here is about proving the *provider* behaves as the contract assumes, not about 
 variables are configured; the callback receiver has verified at least one real signed provider callback;
 and at least one allow-listed call has completed with a full audit trail. Until then, the honest
 statement is the one at the top of this document.
+
+## OpenAI + ElevenLabs migration slice
+
+The governed PawSpace business plane remains authoritative. The voice migration changes providers, not booking/payment/consent authority.
+
+Required staging configuration for the ElevenLabs path:
+
+- `PAWSPACE_AI_PROVIDER=openai`
+- `PAWSPACE_AI_PROVIDER_API_KEY` = OpenAI API key
+- `PAWSPACE_AI_PROVIDER_MODEL=gpt-5.6-terra` (general grounded AI)
+- `PAWSPACE_AI_VOICE_MODEL=gpt-5.6-luna` (latency-sensitive voice turns)
+- `PAWSPACE_VOICE_RUNTIME=elevenlabs`
+- `ELEVENLABS_API_KEY`
+- `ELEVENLABS_AGENT_ID`
+- `ELEVENLABS_INIT_WEBHOOK_SECRET`
+- `ELEVENLABS_RESIDENCY=india`
+
+Exotel Voicebot should use the ElevenLabs India-residency AgentStream endpoint. The new PawSpace conversation-initiation webhook is `/api/webhooks/elevenlabs/init`; configure its authorization header as `Bearer <ELEVENLABS_INIT_WEBHOOK_SECRET>`.
+
+This slice is **not production authorization**. It provides provider abstraction, OpenAI Responses API support, voice-specific model selection, ElevenLabs readiness, and canonical caller personalization. Live outbound via ElevenLabs, post-call reconciliation, human transfer certification, production recording policy and carrier acceptance remain separate controlled UAT gates.
+
+### ElevenLabs custom LLM
+
+Configure the ElevenLabs agent Custom LLM server to call the PawSpace Responses-compatible endpoint:
+
+`/api/elevenlabs/v1/responses`
+
+Authentication is `Authorization: Bearer <ELEVENLABS_LLM_SECRET>`.
+
+Pass PawSpace identity through ElevenLabs custom LLM extra body using the dynamic variables returned by the initiation webhook:
+- `pawspace_voice_session_id`
+- `pawspace_customer_id`
+- `pawspace_thread_id`
+
+The endpoint returns SSE in OpenAI Responses format and runs every turn through PawSpace's existing grounded voice orchestrator and governed action tools. ElevenLabs owns speech and turn-taking; PawSpace/OpenAI owns business reasoning and action authority.
+
+### Complete ElevenLabs staging configuration
+
+Additional secrets/IDs required for the full governed path:
+
+- `ELEVENLABS_AGENT_PHONE_NUMBER_ID` — the imported Exotel number ID inside ElevenLabs
+- `ELEVENLABS_LLM_SECRET` — bearer secret used by ElevenLabs when calling PawSpace custom LLM
+- `ELEVENLABS_WEBHOOK_SECRET` — HMAC secret for signed post-call webhooks
+- optional `ELEVENLABS_API_BASE=https://api.in.residency.elevenlabs.io`
+- optional `PAWSPACE_VOICE_HUMAN_TRANSFER_NUMBER` — approved human transfer destination
+- optional `ELEVENLABS_EXOTEL_CONNECT_URL=https://api.in.residency.elevenlabs.io/v1/convai/exotel/connect-applet`
+
+For Exotel human transfer, the ExoML flow must place a Connect applet immediately after Voicebot and point it at the ElevenLabs India-residency Connect endpoint. Code readiness alone does not certify carrier transfer.
+
+### Reuse contract for other PawSpace builds
+
+Keep these layers shared:
+
+1. `TelephonyProvider` — Exotel / ElevenLabs-Exotel / simulator; Twilio can be another adapter.
+2. ElevenLabs initiation + post-call webhooks — provider authentication, context bootstrap, transcript reconciliation.
+3. OpenAI-compatible custom LLM endpoint — voice turn enters the product's grounded orchestrator.
+4. Product business adapter — customer/lead lookup, availability, booking, payment status, CRM/case actions.
+5. Product governance adapter — consent, DND, sensitive-action policy, human handoff and idempotency.
+
+Do not copy ElevenLabs/OpenAI vendor logic into each product. Reuse the provider/runtime layer and implement only the product-specific business/governance adapter.

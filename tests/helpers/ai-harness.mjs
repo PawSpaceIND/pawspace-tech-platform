@@ -169,6 +169,7 @@ export function oversizedResponse(bytes) {
 }
 
 export const UAT_AI_ENV = {
+  PAWSPACE_AI_PROVIDER: "anthropic",
   PAWSPACE_AI_PROVIDER_API_KEY: "uat-test-key-not-a-real-credential",
   PAWSPACE_AI_PROVIDER_TIMEOUT_MS: "150",
 };
