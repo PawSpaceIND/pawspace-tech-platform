@@ -53,7 +53,31 @@ async function validateChangeQuote(db:D1Database,stay:Row,quoteId:string,start:s
 export async function mutateBoardingFinance(db:D1Database,input:BoardingFinanceInput){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});await ensureBoardingFinanceTables(db);const existing=await prior(db,input.idempotencyKey);if(existing)return{...existing,duplicatePrevented:true};const stay=await context(db,input.bookingId),now=Date.now(),bookingStatus=String(stay.booking_status),stayStatus=String(stay.stay_status);
 
  if(input.action==="request_cancel"){
-  if(["cancelled","completed"].includes(bookingStatus)||stayStatus==="completed")throw new Response("Closed Boarding bookings cannot accept a cancellation request",{status:409});const why=reason(input),id=crypto.randomUUID();await db.prepare("INSERT INTO boarding_cancellation_requests (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?,?,'policy_review_required',?,?)").bind(id,input.bookingId,stay.stay_id,input.actorId,why,now,now).run();await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancellation_requested",input.actorId,JSON.stringify({requestId:id,reason:why,refundPolicy:"configuration_required"}),now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true});
+  if(["cancelled","completed"].includes(bookingStatus)||stayStatus==="completed")throw new Response("Closed Boarding bookings cannot accept a cancellation request",{status:409});const why=reason(input),id=crypto.randomUUID();
+  /* Owner decision 2026-09-22: a customer may cancel a RESERVATION they have not paid for. Filing a
+   * policy-review request for one was the defect - the stay stayed open, the capacity stayed locked, and
+   * only support could release it. Nothing here is a refund decision: there is no collected money to
+   * return, so no boarding_refund_ledger row is written and approve_cancel's segregation of duties and
+   * refund ceiling stay exactly where they are, guarding stays that HAVE taken money.
+   *
+   * The word reservation is load-bearing. A stay that has been checked in is being DELIVERED, and a
+   * pay-after-service or unsettled stay reads as unpaid right up to its last day - so "nothing collected"
+   * alone would have let a customer close an in-progress stay themselves, at zero liability, past the
+   * Operations incident workflow that approve_cancel insists on below. Those still take the
+   * policy_review_required path. `collectedForBooking` rather than booking_payments.status because a
+   * split stay's collected truth lives in its payment schedule, not in that column. */
+  const started=stayStatus==="in_progress"||String(stay.check_in_status)==="complete";
+  if(!started&&await collectedForBooking(db,input.bookingId)<=0){
+   await db.batch([
+    db.prepare("INSERT INTO boarding_cancellation_requests (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?,?,'cancelled',?,?)").bind(id,input.bookingId,stay.stay_id,input.actorId,why,now,now),
+    db.prepare("UPDATE boarding_stays SET status='cancelled',updated_at=? WHERE id=?").bind(now,stay.stay_id),
+    db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status!='completed'").bind(now,input.bookingId),
+    db.prepare("UPDATE boarding_capacity_locks SET status='released',updated_at=? WHERE stay_id=? AND status='active'").bind(now,stay.stay_id),
+    db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status NOT IN ('completed','cancelled')").bind(input.bookingId),
+   ]);
+   await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancelled",input.actorId,JSON.stringify({requestId:id,reason:why,unpaidCustomerCancellation:true,approvedRefundAmount:0,refundId:null,policySource:"unpaid_customer_cancellation"}),now).run();
+   return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:0,refundId:null,refundStatus:"not_required",capacityReleased:true,bookingPreserved:false});
+  }await db.prepare("INSERT INTO boarding_cancellation_requests (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?,?,'policy_review_required',?,?)").bind(id,input.bookingId,stay.stay_id,input.actorId,why,now,now).run();await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancellation_requested",input.actorId,JSON.stringify({requestId:id,reason:why,refundPolicy:"configuration_required"}),now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true});
  }
 
  if(input.action==="approve_cancel"){

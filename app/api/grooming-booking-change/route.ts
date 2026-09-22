@@ -1,5 +1,5 @@
 import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governance";
-import{groomingChangePreview}from"../../../lib/grooming-change-preview";
+import{CUSTOMER_CANCELLABLE_WORK_STATUSES,groomingChangePreview}from"../../../lib/grooming-change-preview";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement,type AuthenticatedActor}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{bridgeLifecycleCommunications}from"../../../lib/lifecycle-communications";
@@ -124,7 +124,7 @@ export async function executeGroomingBookingChange(request:Request,actorOverride
     if(!policyEvaluation.allowed)return json({error:`Booking change is blocked by policy ${policyEvaluation.policyVersion}`,policy:policyEvaluation},409);
 
     if(input.action==="cancel"){
-      if(!["confirmed","assigned","awaiting_acceptance"].includes(String(work.status)))return json({error:"Provider work has progressed or changed. Refresh the booking and contact support for cancellation review."},409);
+      if(!(CUSTOMER_CANCELLABLE_WORK_STATUSES as readonly string[]).includes(String(work.status)))return json({error:"Provider work has progressed or changed. Refresh the booking and contact support for cancellation review."},409);
       const reason=(input.reason||"Customer cancelled from PawSpace").trim();
       if(!refundEvaluation)return json({error:"The cancellation refund policy could not be evaluated"},409);
       const refundAmount=refundEvaluation.customerRefundAmount;
