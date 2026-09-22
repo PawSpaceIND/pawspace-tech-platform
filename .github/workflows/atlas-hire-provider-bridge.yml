@@ -1,0 +1,77 @@
+name: Atlas Hire provider bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type configure-atlas-hire-staging'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  configure-atlas-hire-staging:
+    if: ${{ github.ref == 'refs/heads/chore/atlas-hire-provider-bridge-20260922' && github.event.inputs.confirm == 'configure-atlas-hire-staging' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+      EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+      EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+      EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+      EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+      EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+      META_WHATSAPP_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+      META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+      META_WHATSAPP_WEBHOOK_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate required secret presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_SID EXOTEL_CALLER_ID EXOTEL_VOICE_APP_ID EXOTEL_WEBHOOK_SECRET META_WHATSAPP_TOKEN META_WHATSAPP_PHONE_NUMBER_ID META_WHATSAPP_WEBHOOK_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "MISSING: $name"
+              missing=1
+            else
+              echo "PRESENT: $name"
+            fi
+          done
+          [ "$missing" -eq 0 ]
+      - name: Configure Atlas Hire staging provider secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          put_secret() {
+            local name="$1"
+            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name atlas-hire-india-staging >/dev/null
+            echo "CONFIGURED: $name"
+          }
+          for name in EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_SID EXOTEL_CALLER_ID EXOTEL_VOICE_APP_ID EXOTEL_WEBHOOK_SECRET META_WHATSAPP_TOKEN META_WHATSAPP_PHONE_NUMBER_ID META_WHATSAPP_WEBHOOK_SECRET; do
+            put_secret "$name"
+          done
+      - name: Verify secret names only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 pages secret list --project-name atlas-hire-india-staging | tee "$RUNNER_TEMP/secret-list.txt"
+          for name in EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_SID EXOTEL_CALLER_ID EXOTEL_VOICE_APP_ID EXOTEL_WEBHOOK_SECRET META_WHATSAPP_TOKEN META_WHATSAPP_PHONE_NUMBER_ID META_WHATSAPP_WEBHOOK_SECRET; do
+            grep -q "$name" "$RUNNER_TEMP/secret-list.txt" || { echo "Secret missing after configuration: $name"; exit 1; }
+          done
+          echo "Atlas Hire staging provider credentials configured; values withheld."
+      - name: Confirm application remains fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error https://atlas-hire-india-staging.pages.dev/api/health
+          echo
+          echo "No live provider transport is activated by this workflow."
