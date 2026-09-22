@@ -88,3 +88,13 @@ test("Atlas daily founder analysis is canonical-snapshot-first and never default
  assert.doesNotMatch(data,/targetToDate\(/);
  assert.doesNotMatch(data,/monthMetrics\(/);
 });
+
+
+test("Atlas campaign approval transitions one exact proposal journal row",()=>{
+ assert.match(data,/proposal_id TEXT/);
+ assert.match(data,/proposalId:proposal\?\.id\?\?null/);
+ assert.match(data,/updateAtlasProposalStatus\(db,\{id:proposalId,from:"proposed",to:"approved"/);
+ assert.match(data,/updateAtlasProposalStatus\(db,\{id:proposalId,from:"approved",to:"executed"/);
+ assert.match(data,/Atlas proposal journal link is required/);
+ assert.doesNotMatch(data,/proposalType:"campaign_activation",actionJson:action,from:"proposed"/);
+});
