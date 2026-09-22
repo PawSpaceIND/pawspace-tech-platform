@@ -34,13 +34,55 @@ export async function saveLeadAssignmentMember(db:Db,input:{employeeEmail:string
 
 export async function setLeadAssignmentAvailability(db:Db,input:{employeeEmail:string;availableFrom:number;availableUntil:number;status?:"available"|"unavailable";reason?:string;actorId:string}){await ensureLeadAssignmentTables(db);const email=input.employeeEmail.trim().toLowerCase();if(!email||!Number.isFinite(input.availableFrom)||!Number.isFinite(input.availableUntil)||input.availableUntil<=input.availableFrom)throw governedRefusal("Valid employee availability window is required");const now=Date.now(),id=uid("LAV");await db.prepare("INSERT INTO lead_assignment_availability (id,employee_email,available_from,available_until,status,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,email,input.availableFrom,input.availableUntil,input.status||"available",input.reason?.trim()||null,input.actorId,now).run();return{id,employeeEmail:email,availableFrom:input.availableFrom,availableUntil:input.availableUntil,status:input.status||"available"};}
 
-async function leadContext(db:Db,leadId:string){const lead=await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>();if(!lead)throw governedRefusal("Lead not found");return{id:text(lead.id),customerId:text(lead.customer_id),service:normalizeLeadServiceCode(lead.service),city:text(lead.area)||"Bengaluru",source:text(lead.source),status:text(lead.status),legacyOwner:text(lead.owner),phone:text(lead.primary_phone),email:text(lead.email)};}
+async function leadContext(db:Db,leadId:string){const lead=await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email,k.city_id canonical_city_id FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id LEFT JOIN canonical_customers k ON k.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>().catch(()=>null)
+ ??await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email,NULL canonical_city_id FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>();
+ if(!lead)throw governedRefusal("Lead not found");
+ /* The canonical customer's city_id is the city id the rest of the platform routes on, so it wins where
+  * there is one. crm_contacts.area is an area LABEL ("Indiranagar, Bengaluru") and is the fallback, run
+  * through the same resolver. The "Bengaluru" default is unchanged: it is the only city UAT operates in,
+  * and removing it would refuse every lead whose contact record has no area at all. */
+ const city=leadCityId(lead.canonical_city_id)||leadCityId(lead.area)||"Bengaluru";
+ return{id:text(lead.id),customerId:text(lead.customer_id),service:normalizeLeadServiceCode(lead.service),city,source:text(lead.source),status:text(lead.status),legacyOwner:text(lead.owner),phone:text(lead.primary_phone),email:text(lead.email)};}
 const LEAD_CITY_ALIASES:Record<string,string>={bangalore:"blr",bengaluru:"blr",hyderabad:"hyd",chennai:"maa",mumbai:"mum",pune:"pnq"};
-const leadCityKey=(value:string)=>{const key=value.trim().toLowerCase();return LEAD_CITY_ALIASES[key]??key;};
-/** A policy/member city scope ("blr", "Bengaluru", "Bangalore") covers a lead whose CRM area names that city in any of those spellings. */
-export function leadCityCovers(scopeCity:string,leadCity:string){const scope=scopeCity.trim().toLowerCase(),lead=leadCity.trim().toLowerCase();if(!scope||!lead)return false;if(lead.includes(scope))return true;const scopeKey=leadCityKey(scope);if(leadCityKey(lead)===scopeKey)return true;return Object.entries(LEAD_CITY_ALIASES).some(([label,id])=>id===scopeKey&&lead.includes(label));}
+const LEAD_CITY_IDS=[...new Set(Object.values(LEAD_CITY_ALIASES))];
+
+/**
+ * The CITY ID a value names, whichever way it is spelled (owner decision 2026-09-22, decision 5).
+ *
+ * Lead routing is keyed on the city id the rest of the platform already uses - `blr`, the same value
+ * canonical_bookings and canonical_customers carry - while a lead's city reaches this module as whatever
+ * free text sits in `crm_contacts.area`, which is an area label like "Indiranagar, Bengaluru". One
+ * resolver turns both into an id so the three places that match a city cannot answer differently.
+ *
+ * An unrecognised value is returned normalised rather than mapped to anything, so a city nobody has
+ * configured matches only itself and never silently falls into another city's queue.
+ */
+export function leadCityId(value:unknown){
+ const raw=String(value??"").trim().toLowerCase();
+ if(!raw)return "";
+ if(LEAD_CITY_ALIASES[raw])return LEAD_CITY_ALIASES[raw];
+ if(LEAD_CITY_IDS.includes(raw))return raw;
+ for(const[label,id]of Object.entries(LEAD_CITY_ALIASES))if(raw.includes(label))return id;
+ // A bare id inside a longer label ("blr-east", "BLR / south") - matched on a word boundary so a city
+ // id can never be found inside an unrelated word.
+ for(const id of LEAD_CITY_IDS)if(new RegExp(`(^|[^a-z0-9])${id}([^a-z0-9]|$)`).test(raw))return id;
+ return raw;
+}
+
+/**
+ * Does a policy/member city scope cover this lead's city?
+ *
+ * City ids first, which is the decision. The substring rule underneath it is the behaviour scopes
+ * written as labels have always relied on ("Bengaluru" covering "Indiranagar, Bengaluru"), kept so that
+ * keying on ids widens what matches and never narrows it: no scope that routes a lead today stops.
+ */
+export function leadCityCovers(scopeCity:string,leadCity:string){const scope=scopeCity.trim().toLowerCase(),lead=leadCity.trim().toLowerCase();if(!scope||!lead)return false;const scopeId=leadCityId(scope);if(scopeId&&scopeId===leadCityId(lead))return true;return lead.includes(scope);}
 function cityMatches(memberCities:string[],leadCity:string,policyCities:string[]){return memberCities.some(city=>leadCityCovers(city,leadCity))&&policyCities.some(city=>leadCityCovers(city,leadCity));}
-async function activePolicy(db:Db,lead:{service:string;city:string},asOf:number){const rows=await db.prepare("SELECT * FROM lead_assignment_policies WHERE status='active_uat' AND effective_from<=? AND (effective_until IS NULL OR effective_until>=?) ORDER BY updated_at DESC").bind(asOf,asOf).all<Row>();return rows.results.find(row=>list(row.service_codes_json).includes(lead.service)&&list(row.city_ids_json).some(city=>lead.city.toLowerCase().includes(city.toLowerCase())))||null;}
+async function activePolicy(db:Db,lead:{service:string;city:string},asOf:number){const rows=await db.prepare("SELECT * FROM lead_assignment_policies WHERE status='active_uat' AND effective_from<=? AND (effective_until IS NULL OR effective_until>=?) ORDER BY updated_at DESC").bind(asOf,asOf).all<Row>();// The member matcher below has always used leadCityCovers; this one compared substrings only, so a
+ // policy scoped to the city ID "blr" never matched a lead whose CRM area reads "Bengaluru" and the
+ // assignment was refused with "No active lead assignment policy matches this lead service/city" while
+ // an eligible rep sat in the same city. Same matcher in both places now.
+ return rows.results.find(row=>list(row.service_codes_json).includes(lead.service)&&list(row.city_ids_json).some(city=>leadCityCovers(city,lead.city)))||null;}
 async function candidateRows(db:Db,policy:Row,lead:{service:string;city:string},asOf:number,excludeEmployeeEmail?:string|null){const memberships=await db.prepare("SELECT m.*,u.status user_status,u.name user_name FROM lead_assignment_memberships m JOIN app_users u ON u.email=m.employee_email WHERE m.team_code=? AND m.active=1 AND u.status='active' ORDER BY m.employee_email").bind(policy.team_code).all<Row>();const result:Array<Row&{activeLoad:number;lastAssignedAt:number;effectiveCap:number;available:boolean}>=[];for(const member of memberships.results){if(excludeEmployeeEmail&&text(member.employee_email).toLowerCase()===excludeEmployeeEmail.toLowerCase())continue;const services=list(member.service_codes_json),cities=list(member.city_ids_json);if(!services.includes(lead.service)||!cityMatches(cities,lead.city,list(policy.city_ids_json)))continue;let available=true;if(Number(policy.require_shift)===1){const availability=await db.prepare("SELECT status FROM lead_assignment_availability WHERE employee_email=? AND available_from<=? AND available_until>=? ORDER BY created_at DESC LIMIT 1").bind(member.employee_email,asOf,asOf).first<Row>();available=text(availability?.status)==="available";}if(!available)continue;const load=await db.prepare("SELECT COUNT(*) count,COALESCE(MAX(assigned_at),0) last_assigned FROM lead_assignments WHERE employee_email=? AND status='current'").bind(member.employee_email).first<Row>();const effectiveCap=member.workload_cap_override==null?Number(policy.max_active_workload):Number(member.workload_cap_override);result.push({...member,activeLoad:Number(load?.count||0),lastAssignedAt:Number(load?.last_assigned||0),effectiveCap,available});}return result.filter(item=>item.activeLoad<item.effectiveCap).sort((a,b)=>a.activeLoad-b.activeLoad||a.lastAssignedAt-b.lastAssignedAt||text(a.employee_email).localeCompare(text(b.employee_email)));}
 async function currentAssignment(db:Db,leadId:string){return db.prepare("SELECT * FROM lead_assignments WHERE lead_id=? AND status='current'").bind(leadId).first<Row>();}
 async function assignmentEvent(db:Db,assignmentId:string,leadId:string,eventType:string,actorId:string,detail:unknown){await db.prepare("INSERT INTO lead_assignment_events (id,assignment_id,lead_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("LAE"),assignmentId,leadId,eventType,actorId,JSON.stringify(detail||{}),Date.now()).run();}
