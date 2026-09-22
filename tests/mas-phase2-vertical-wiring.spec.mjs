@@ -49,3 +49,23 @@ test("Marketing approval path pins SHA-256 and atomic single-use claim",()=>{
  assert.match(src,/status='executing'.*status='approved'.*executed_at IS NULL/);
  assert.match(src,/gce_budget_envelopes/);
 });
+
+test("Atlas is read-only across Phase 2 even when mutation runtimes are enabled",async()=>{
+ const mutationTools=["ops.voice.dispatch","ops.provisioning.execute","marketing.proposal.submit","marketing.ads.budget.reallocate","marketing.ads.keyword.mutate","vet.prescription.digitize","finance.vet_payout.calculate"];
+ const env={PAWSPACE_AI_EXECUTIVE_ACTIVE:"true",AI_ATLAS_ACTIVE:"true",AI_OPS_ACTIVE:"true",AI_MARKETING_ACTIVE:"true",AI_HEALTHCARE_ACTIVE:"true",AI_FINANCE_ACTIVE:"true",AI_EXTERNAL_COMMUNICATION_ACTIVE:"true",AI_FINANCIAL_MUTATION_ACTIVE:"true"};
+ for(const tool of mutationTools){
+  assert.equal(phase2ToolSchemas[tool].allowedAgents.includes("atlas"),false,tool+" schema must exclude Atlas");
+  const result=await call(tool,"atlas",env,{});
+  assert.equal(result.status,"human_handoff",tool);
+  assert.equal(result.executed,false,tool);
+  assert.match(result.reason,/recommendation-only/);
+ }
+ for(const tool of ["ops.inventory.check","ops.fleet.track","marketing.ads.read_metrics","finance.yield.calculate_surge","finance.ledger.reconcile","vet.triage.evaluate"])assert.equal(phase2ToolSchemas[tool].allowedAgents.includes("atlas"),true,tool+" read schema should retain Atlas");
+});
+
+test("Atlas sales gateway exposes quote only, not negotiate or payment-link mutation",()=>{
+ const src=readFileSync(new URL("../lib/atlas-tool-gateway.ts",import.meta.url),"utf8");
+ assert.match(src,/"sales\.quote\.generate".*allowedAgents:\["sales","atlas"\]/s);
+ assert.match(src,/"sales\.offer\.negotiate".*allowedAgents:\["sales"\]/s);
+ assert.match(src,/"sales\.payment_link\.create".*allowedAgents:\["sales"\]/s);
+});
