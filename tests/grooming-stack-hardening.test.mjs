@@ -273,7 +273,10 @@ test("every partner-app grooming button maps to a live API action", () => {
 });
 
 test("grooming stack permission mapping stays enforced in-route", () => {
-  assert.match(lifecycleRoute, /if\(input\.action==="mark_paid"\)requirePermission\(actorIdentity,"payments\.manage"\);else requirePermission\(actorIdentity,"bookings\.view"\)/);
+  // authorise_completion_without_collection joined mark_paid on payments.manage (owner decision
+  // 2026-09-22, decision 7): authorising a completion with the money unaccounted for is an Operations
+  // action, not one a provider may take on their own job.
+  assert.match(lifecycleRoute, /if\(input\.action==="mark_paid"\|\|input\.action==="authorise_completion_without_collection"\)requirePermission\(actorIdentity,"payments\.manage"\);else requirePermission\(actorIdentity,"bookings\.view"\)/);
   assert.match(lifecycleRoute, /requireProviderOwnership\(db,actorIdentity,String\(work\.provider_id\)\)/, "providers can only act on their own work orders");
   assert.match(partnerJobsRoute, /requireProviderOwnership\(actor\?\.|requireProviderOwnership\(db,actor,providerId\)/, "partners can only list their own jobs");
   assert.match(changeRoute, /requirePermission\(actor,"scheduling\.book"\)/);
