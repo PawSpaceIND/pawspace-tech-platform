@@ -27,7 +27,17 @@ type HandoffCurrent = Record<string, unknown> & {
   summary?: { transcript?: TranscriptMessage[] };
 };
 
-type QueueEntry = { threadId: string; customerId: string; reason: string; queueCode: string; status: string; createdAt: number };
+type QueueEntry = {
+  threadId: string;
+  customerId: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  identitySource?: string;
+  reason: string;
+  queueCode: string;
+  status: string;
+  createdAt: number;
+};
 
 type Handoff = {
   current?: HandoffCurrent | null;
@@ -218,6 +228,40 @@ export default function AiHandoffPage() {
                   : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
               </div>
             </div>
+            {
+              /* Every escalation, named, and reachable.
+               *
+               * The queue used to be read ONLY to badge a thread already in the list below, so a
+               * customer whose thread is not in the open-conversations list - closed, or simply past
+               * the list's limit - counted towards "waiting" with no row to click and no name to read.
+               * Staff saw that somebody needed them and could not find out who. Selecting a row here
+               * opens that thread directly, whether or not it is in the list below. */
+              queue.length > 0 && (
+                <div style={{ borderBottom: "1px solid #eee6f5", background: "#fffaf4" }}>
+                  <div style={{ padding: "12px 16px 4px", fontSize: 12, fontWeight: 700, color: "#a35b00", textTransform: "uppercase", letterSpacing: ".06em" }}>Escalated to a human</div>
+                  {queue.map((entry) => (
+                    <button
+                      key={entry.threadId}
+                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined })}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", border: 0, background: selected?.id === entry.threadId ? "#f7e9d5" : "transparent" }}
+                    >
+                      <strong>{entry.customerName || entry.customerId || "Customer"}</strong>
+                      <div style={{ fontSize: 12, color: "#746b7d", marginTop: 2 }}>
+                        {/* The id stays visible beside the name: staff match it against CRM and Customer 360. */}
+                        {entry.customerId}
+                        {entry.customerPhone ? ` · ${entry.customerPhone}` : ""}
+                      </div>
+                      <div style={{ fontSize: 12, marginTop: 2 }}>
+                        {entry.status === "queued" ? "Waiting for staff" : "With staff"} · {label(entry.reason)}
+                        {/* Never present a CRM contact's name as the canonical identity, or the absence
+                          * of one as if the customer were nameless. */}
+                        {entry.identitySource === "crm_contact" ? " · CRM contact record" : entry.identitySource === "unresolved" ? " · no customer record found" : ""}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )
+            }
             {threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
             {threads.map((thread) => (
               <button

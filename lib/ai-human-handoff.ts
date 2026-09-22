@@ -98,6 +98,36 @@ export async function aiHumanHandoffSnapshot(db:D1Database,input:{actor:Authenti
  * had escalations waiting. Cold-DB safe: an environment that has never run a turn returns an empty
  * queue rather than an error.
  */
-export async function listAiHandoffQueue(db:D1Database,input:{limit?:number;actor?:AuthenticatedActor}={}){await ensureAiHumanHandoff(db);const limit=Math.min(100,Math.max(1,input.limit||50)),access=input.actor?(await ensureConversationAccessTables(db),conversationAccessPredicate(input.actor,"t")):{sql:"1=1",binds:[]as unknown[]};const [visibleRows,totalRows]=await Promise.all([db.prepare(`SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`).bind(...access.binds,limit).all<Row>(),db.prepare(`SELECT h.status,COUNT(*) count FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} GROUP BY h.status`).bind(...access.binds).all<Row>()]);const totals=new Map<string,number>();for(const row of totalRows.results||[])totals.set(text(row.status),Number(row.count||0));return{queue:(visibleRows.results||[]).map(row=>({id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null})),byStatus:Object.fromEntries(totals),waiting:totals.get("queued")||0,withStaff:totals.get("staff_active")||0};}
+/**
+ * The live escalation queue, with the CANONICAL identity of each waiting customer.
+ *
+ * Owner decision 2026-09-22 (decision 6 of 10). The queue used to carry `customer_id` and nothing else,
+ * so a row read "UATD-CUS-1-CRM is waiting" and a member of staff could not tell whose conversation it
+ * was without opening it - and could not open it at all unless that thread happened to appear in the
+ * open-conversations list beside it, which a closed or older thread does not. A count of people waiting
+ * that you cannot put a name to is not a queue.
+ *
+ * canonical_customers is the identity of record, so its name wins. crm_contacts is the fallback for a
+ * conversation that only ever existed as a CRM contact, and `identitySource` says which one answered so
+ * a name is never presented as more canonical than it is. Neither table is required: both joins are
+ * dropped on a database that has not created them yet, exactly as lib/conversation-governance.ts does
+ * for the same join, because a cold database must still be able to show that someone is waiting.
+ */
+export async function listAiHandoffQueue(db:D1Database,input:{limit?:number;actor?:AuthenticatedActor}={}){
+ await ensureAiHumanHandoff(db);
+ const limit=Math.min(100,Math.max(1,input.limit||50)),access=input.actor?(await ensureConversationAccessTables(db),conversationAccessPredicate(input.actor,"t")):{sql:"1=1",binds:[]as unknown[]};
+ const identified=`SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at,c.name canonical_name,c.primary_phone canonical_phone,g.name crm_name FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id LEFT JOIN canonical_customers c ON c.id=h.customer_id LEFT JOIN crm_contacts g ON g.id=h.customer_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`;
+ const anonymous=`SELECT h.id,h.thread_id,h.customer_id,h.reason,h.queue_code,h.status,h.confidence,h.created_at,h.taken_over_by,h.taken_over_at,t.booking_id,t.sla_due_at,NULL canonical_name,NULL canonical_phone,NULL crm_name FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} ORDER BY h.created_at LIMIT ?`;
+ const visibleRows=await db.prepare(identified).bind(...access.binds,limit).all<Row>().catch((error:unknown)=>{
+  if(!/no such table: (canonical_customers|crm_contacts)/i.test(error instanceof Error?error.message:String(error)))throw error;
+  return db.prepare(anonymous).bind(...access.binds,limit).all<Row>();
+ });
+ const totalRows=await db.prepare(`SELECT h.status,COUNT(*) count FROM ai_handoffs h JOIN communication_threads t ON t.id=h.thread_id WHERE h.status IN ('queued','staff_active') AND ${access.sql} GROUP BY h.status`).bind(...access.binds).all<Row>();
+ const totals=new Map<string,number>();for(const row of totalRows.results||[])totals.set(text(row.status),Number(row.count||0));
+ return{queue:(visibleRows.results||[]).map(row=>{
+  const canonicalName=text(row.canonical_name),crmName=text(row.crm_name);
+  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||null,identitySource:canonicalName?"canonical_customer":crmName?"crm_contact":"unresolved",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};
+ }),byStatus:Object.fromEntries(totals),waiting:totals.get("queued")||0,withStaff:totals.get("staff_active")||0};
+}
 
 export async function assertAiMayReply(db:D1Database,threadId:string){await ensureAiHumanHandoff(db);const active=await db.prepare("SELECT id,status FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();if(active)throw new Response("AI replies are paused while the conversation is owned by staff",{status:409});}
