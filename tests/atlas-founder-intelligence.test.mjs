@@ -57,7 +57,9 @@ test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
 test("Atlas daily founder brief uses only the canonical business snapshot for mission truth",()=>{
  assert.match(data,/runAtlasDailyAnalysis/);
  assert.match(data,/buildAtlasBusinessSnapshot\(db,\{asOf\}\)/);
- assert.match(data,/mission\?mission\.percent-100:null/);
+ assert.match(data,/expectedToDate=mission\.target\*elapsed/);
+ assert.match(data,/pacingGapPercent=expectedToDate>0/);
+ assert.match(data,/diagnostic only and is not achieved revenue/);
  assert.match(data,/atlasSnapshotHash\(snapshot\)/);
  assert.doesNotMatch(data,/liveMonthMetrics/);
  assert.doesNotMatch(data,/targetToDate/);
