@@ -44,13 +44,28 @@ test("ElevenLabs readiness defaults to India Exotel and OpenAI voice intelligenc
   ELEVENLABS_API_KEY:"x",
   ELEVENLABS_AGENT_ID:"agent_123",
   ELEVENLABS_INIT_WEBHOOK_SECRET:"secret",
+  ELEVENLABS_RESIDENCY:"india",
  });
  assert.equal(ready.enabled,true);
  assert.equal(ready.configured,true);
+ assert.equal(ready.indiaResidency,true);
  assert.equal(ready.intelligenceProvider,"openai");
  assert.equal(ready.intelligenceModel,"gpt-5.6-luna");
  assert.equal(ready.exotelWebSocket,eleven.ELEVENLABS_EXOTEL_INDIA_WS);
  assert.equal(ready.productionReady,false);
+});
+
+
+test("ElevenLabs readiness refuses ambiguous residency and reflects the selected AI provider/model",()=>{
+ const ready=eleven.elevenLabsVoiceReadiness({PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"x",ELEVENLABS_AGENT_ID:"agent",ELEVENLABS_INIT_WEBHOOK_SECRET:"secret",ELEVENLABS_RESIDENCY:"global",PAWSPACE_AI_PROVIDER:"anthropic",PAWSPACE_AI_VOICE_MODEL:"claude-voice-test"});
+ assert.equal(ready.indiaResidency,false);
+ assert.equal(ready.intelligenceProvider,"anthropic");
+ assert.equal(ready.intelligenceModel,"claude-voice-test");
+});
+
+test("ElevenLabs initiation requires the full integration configuration",()=>{
+ assert.throws(()=>eleven.assertElevenLabsVoiceConfigured({ELEVENLABS_INIT_WEBHOOK_SECRET:"secret"}));
+ assert.doesNotThrow(()=>eleven.assertElevenLabsVoiceConfigured({ELEVENLABS_API_KEY:"x",ELEVENLABS_AGENT_ID:"agent",ELEVENLABS_INIT_WEBHOOK_SECRET:"secret"}));
 });
 
 test("ElevenLabs initiation webhook secret fails closed",()=>{

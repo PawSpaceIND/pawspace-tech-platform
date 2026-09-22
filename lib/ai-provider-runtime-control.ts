@@ -8,6 +8,7 @@ export type AiRuntimePreflight={allowed:true;reservation:AiRuntimeReservation}|{
 
 const integer=(env:Env,key:string,fallback:number,min:number,max:number)=>{const raw=Number(text(env[key]));if(!Number.isFinite(raw)||raw<=0)return fallback;return Math.min(max,Math.max(min,Math.floor(raw)));};
 const dayStart=(now:number)=>Math.floor(now/86_400_000)*86_400_000;
+const reservationTtlMs=(env:Env)=>integer(env,"PAWSPACE_AI_RESERVATION_TTL_MS",180_000,30_000,3_600_000);
 
 export async function ensureAiProviderRuntimeControl(db:D1Database){
  await db.batch([
@@ -27,6 +28,7 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
  const now=input.asOf??Date.now();
  try{
   await ensureAiProviderRuntimeControl(db);
+  await db.prepare("UPDATE ai_provider_runtime_requests SET status='abandoned',failure_class='reservation_expired',updated_at=? WHERE status='reserved' AND created_at<?").bind(now,now-reservationTtlMs(env)).run();
   const circuit=await db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>();
   if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
 
