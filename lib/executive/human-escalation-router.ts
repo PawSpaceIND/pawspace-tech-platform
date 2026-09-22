@@ -44,7 +44,6 @@ export async function ensureHumanEscalationTables(db: Db) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS ai_human_escalations (id TEXT PRIMARY KEY,signal_key TEXT,kind TEXT NOT NULL,source_agent TEXT NOT NULL,summary TEXT NOT NULL,booking_id TEXT,city_id TEXT,zone_id TEXT,metadata_json TEXT NOT NULL DEFAULT '{}',status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_ai_human_escalations_open ON ai_human_escalations(status,created_at)"),
-    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_human_escalations_open_signal ON ai_human_escalations(signal_key) WHERE status='open' AND signal_key IS NOT NULL"),
   ]);
   try{await db.prepare("ALTER TABLE ai_human_escalations ADD COLUMN signal_key TEXT").run()}catch(error){if(!/duplicate column|already exists/i.test(error instanceof Error?error.message:String(error)))throw error}
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_human_escalations_open_signal ON ai_human_escalations(signal_key) WHERE status='open' AND signal_key IS NOT NULL").run();
