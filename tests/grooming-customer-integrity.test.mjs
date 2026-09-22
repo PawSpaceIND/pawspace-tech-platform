@@ -13,6 +13,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./helpers/grooming-journey-harness.mjs";
 import { seedOwnedPet } from "./helpers/saved-pet-fixture.mjs";
 
@@ -327,4 +328,49 @@ test("a cat cannot receive tick treatment even if the client calls the saved ani
   assert.equal(result.status,409,JSON.stringify(result.body));
   assert.match(result.body.error,/species|Tick/);
   assert.equal(bookingCount(ctx),0);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// CodeQL alert #55, js/user-controlled-bypass (CWE-290 / CWE-807). /api/grooming-payment-sandbox is one
+// endpoint serving five actions, and the caller supplies the action in the request body. That value
+// selects the authorization branch: "request_after_service" runs under bookings.view plus provider
+// ownership, everything else under payments.manage. Each branch does enforce the permission its own
+// work needs, so there is no escalation — but the action itself was only checked for emptiness, so an
+// unrecognised value fell past every branch and was served by the gateway-event simulator at the end.
+//
+// The remedy CodeQL itself prescribes is to validate against a fixed list of expected values before the
+// value can reach a security decision. These cases execute that: the route is driven with real bodies
+// and the persisted state is read back.
+// ---------------------------------------------------------------------------------------------------
+
+test("an unrecognised payment-sandbox action is refused, not silently treated as a gateway event", async (t) => {
+  const ctx = await world(t), c = config();
+  const { bookingId } = await runCompletedJourney(ctx, c);
+  const before = ctx.sqlite.prepare("SELECT COUNT(*) n FROM payment_gateway_events").get().n;
+
+  for (const action of ["escalate", "SIMULATE_EVENT", "simulate_event ", "", "__proto__"]) {
+    const response = await routeCall(SANDBOX, "POST", "/api/grooming-payment-sandbox", {
+      action, bookingId, eventType: "payment.captured", eventId: `evt_reject_${action || "empty"}`, amount: 1899, currency: "INR",
+    });
+    assert.equal(response.status, 400, `${JSON.stringify(action)} must be refused, got ${response.status}: ${JSON.stringify(response.body)}`);
+  }
+
+  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM payment_gateway_events").get().n, before,
+    "a refused action must not reach the gateway-event simulator");
+});
+
+test("the five supported payment-sandbox actions are a fixed list the request body cannot extend", () => {
+  const source = fs.readFileSync(new URL("../app/api/grooming-payment-sandbox/route.ts", import.meta.url), "utf8");
+  assert.match(source, /const POST_ACTIONS=\["create_order","initiate_refund","link_order","simulate_event","request_after_service"\] as const;/);
+  assert.match(source, /const action=POST_ACTIONS\.find\(candidate=>candidate===input\.action\);/,
+    "the body value must be resolved against the fixed list before it decides anything");
+  // Every branch, including the authorization fork, must read the validated literal - never the raw
+  // body field, which is what made this a user-controlled security decision.
+  const post = source.slice(source.indexOf("export async function POST"));
+  assert.doesNotMatch(post, /if\(input\.action===/, "no branch may dispatch on the unvalidated body field");
+  for (const branch of ["request_after_service", "create_order", "initiate_refund", "link_order"]) {
+    assert.match(post, new RegExp(`if\\(action==="${branch}"\\)`), `${branch} must dispatch on the validated action`);
+  }
+  assert.match(post, /if\(action!=="simulate_event"\)return json\(\{error:"Unsupported action"\},400\);/,
+    "the final branch must be named, so a newly added action cannot inherit the gateway-event simulator");
 });
