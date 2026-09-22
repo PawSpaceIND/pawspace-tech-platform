@@ -29,10 +29,10 @@ test("AI activation is a single, reversible, fail-safe key switch", () => {
   const credentialNames = envNames.filter(name => /(?:API_KEY|TOKEN|SECRET)$/.test(name));
   assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY"],
     `AI activation must remain one credential switch; found ${credentialNames.join(", ") || "none"}`);
-  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_DEPLOYMENT_ENV"],
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER", "PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_AI_VOICE_MODEL", "PAWSPACE_DEPLOYMENT_ENV"],
     `the adapter reads an unexpected environment input: ${envNames.join(", ")}`);
-  assert.match(adapter, /https:\/\/api\.anthropic\.com\/v1\/messages/);
-  assert.match(adapter, /"x-api-key": apiKey/);
+  assert.ok(adapter.includes('const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";'));
+  assert.match(adapter, /authorization: `Bearer \$\{apiKey\}`/);
   // No local generation: an offline fallback string would make a silent provider look like an answer.
   assert.doesNotMatch(adapter, /connected: true,\s*text: "/, "the adapter must never return text it made up itself");
 });
