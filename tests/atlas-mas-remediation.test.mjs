@@ -9,15 +9,15 @@ const secureKey=Buffer.alloc(32,9).toString("base64"),embedding=Array.from({leng
 const actor={email:"ops@test",name:"Ops",roleCode:"admin",permissions:["customers.manage"],developmentPreview:false,identitySource:"session",principalType:"staff",principalKey:"staff:ops@test"};
 function world(){const sqlite=new DatabaseSync(":memory:"),db=d1(sqlite);return{sqlite,db}}
 test("secure context is consent-gated and AES-GCM AAD rejects tenant tampering",async()=>{
- const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actorId:actor.email});
- await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actorId:actor.email,agentId:"ops",securePurpose:"deterministic_dispatch"});
+ const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actor});
+ await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actor,agentId:"ops",securePurpose:"deterministic_dispatch"});
  const ok=await readAtlasSecureContext(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{actor,customerId:"C1",petId:"P1",agentId:"ops",purpose:"deterministic_dispatch"});assert.equal(ok.facts[0].value,"Gate code is 1234");assert.equal(ok.aadBound,true);
  const cross=await readAtlasSecureContext(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{actor,customerId:"C1",petId:"P1",agentId:"sales",purpose:"deterministic_dispatch"});assert.deepEqual(cross.facts,[]);
- sqlite.prepare("UPDATE atlas_secure_context_facts SET customer_id='C2'").run();await setAtlasMemoryConsent(db,{customerId:"C2",granted:true,actorId:actor.email});
+ sqlite.prepare("UPDATE atlas_secure_context_facts SET customer_id='C2'").run();await setAtlasMemoryConsent(db,{customerId:"C2",granted:true,actor});
  await assert.rejects(()=>readAtlasSecureContext(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{actor,customerId:"C2",petId:"P1",agentId:"ops",purpose:"deterministic_dispatch"}));
  sqlite.close();
 });test("revoked memory consent returns an empty vector result before AI or Vectorize",async()=>{
- const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:false,actorId:actor.email});let ai=0,vector=0;
+ const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:false,actor});let ai=0,vector=0;
  const result=await retrieveAtlasMemoryForLlm(db,{AI:{run:async()=>{ai++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{},query:async()=>{vector++;return{matches:[]}}}},{actor,customerId:"C1",petId:"P1",query:"Dog preferences"});
  assert.deepEqual(result,{matches:[],secureContextExcluded:true,consentDenied:true});assert.equal(ai,0);assert.equal(vector,0);sqlite.close();
 });
@@ -38,16 +38,16 @@ test("marketing budget reallocation compensates a successful source mutation whe
 
 
 test("revoking memory consent tombstones existing memory and re-grant never resurrects it",async()=>{
- const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actorId:actor.email});
+ const{sqlite,db}=world();await ensureAtlasMemoryTables(db);await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actor});
  const vectorEnv={AI:{run:async()=>({data:[embedding]})},ATLAS_VECTORIZE:{upsert:async()=>{},query:async()=>({matches:[]})}};
- await storeAtlasMemory(db,vectorEnv,{customerId:"C1",petId:"P1",content:"Dog dislikes autos",actorId:actor.email});
- await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actorId:actor.email,agentId:"ops",securePurpose:"deterministic_dispatch"});
+ await storeAtlasMemory(db,vectorEnv,{customerId:"C1",petId:"P1",content:"Dog dislikes autos",actor});
+ await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actor,agentId:"ops",securePurpose:"deterministic_dispatch"});
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_vector_memories WHERE customer_id='C1' AND status='active'").get().n,1);
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_secure_context_facts WHERE customer_id='C1' AND status='active'").get().n,1);
- await setAtlasMemoryConsent(db,{customerId:"C1",granted:false,actorId:actor.email});
+ await setAtlasMemoryConsent(db,{customerId:"C1",granted:false,actor});
  assert.equal(sqlite.prepare("SELECT status FROM atlas_vector_memories WHERE customer_id='C1'").get().status,"revoked");
  assert.equal(sqlite.prepare("SELECT status FROM atlas_secure_context_facts WHERE customer_id='C1'").get().status,"revoked");
- await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actorId:actor.email});
+ await setAtlasMemoryConsent(db,{customerId:"C1",granted:true,actor});
  assert.equal(sqlite.prepare("SELECT status FROM atlas_vector_memories WHERE customer_id='C1'").get().status,"revoked");
  assert.equal(sqlite.prepare("SELECT status FROM atlas_secure_context_facts WHERE customer_id='C1'").get().status,"revoked");
  const secure=await readAtlasSecureContext(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey},{actor,customerId:"C1",petId:"P1",agentId:"ops",purpose:"deterministic_dispatch"});assert.deepEqual(secure.facts,[]);
