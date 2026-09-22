@@ -6,6 +6,7 @@ installWorkersHooks();
 const atlas=await import("../lib/intelligence/atlas-business-snapshot.ts");
 const atlasData=await import("../lib/intelligence/atlas-data.ts");
 const revenue=await import("../lib/revenue-mission-control.ts");
+const marketing=await import("../lib/marketing-governance.ts");
 
 function makeD1(sqlite){
  const statement=(sql,args=[])=>({bind:(...values)=>statement(sql,values),first:async()=>sqlite.prepare(sql).get(...args)??null,all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>{const r=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(r.changes)}}}});
@@ -60,4 +61,24 @@ test("daily founder analysis uses canonical mission snapshot and ignores mislead
  assert.deepEqual(result.action,{type:'campaign.activate',campaignId:'CAMP1'});assert.equal(result.externalMutation,false);
  const proposal=sqlite.prepare("SELECT proposal_type,status,basis_id FROM atlas_proposals ORDER BY created_at DESC LIMIT 1").get();
  assert.equal(proposal.proposal_type,'campaign_activation');assert.equal(proposal.status,'proposed');assert.match(proposal.basis_id,/^daily:.*:MD$/);
+});
+
+
+test("Founder approval transitions only the exact linked Atlas proposal",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),action={type:"campaign.activate",campaignId:"C-EXACT"};
+ const p1=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Proposal one",snapshot,basisId:"B1",riskClass:"high",action,createdBy:"atlas"});
+ const p2=await atlas.recordAtlasProposal(db,{proposalType:"campaign_activation",summary:"Proposal two",snapshot,basisId:"B2",riskClass:"high",action,createdBy:"atlas"});
+ sqlite.prepare("INSERT INTO governed_marketing_campaigns (id,name,objective,service_code,city_id,audience_rule_json,budget_amount,currency,holdout_percent,status,approval_status,approved_by,approved_at,created_by,created_at,updated_at) VALUES ('C-EXACT','Exact binding','retention','grooming','blr','{}',1000,'INR',10,'approved','approved','founder@pawspace.test',?,'founder@pawspace.test',?,?)").run(now,now,now);
+ sqlite.prepare("INSERT INTO marketing_audience_snapshots (id,campaign_id,snapshot_at,total_candidates,eligible_count,holdout_count,suppressed_count,policy_json,created_by) VALUES ('AUD-EXACT','C-EXACT',?,0,0,0,0,'{}','founder@pawspace.test')").run(now);
+ const m1=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Activate exact campaign?",action,actionStatus:"approval_required",proposalId:p1.id,createdAt:now});
+ const m2=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Same action, second proposal",action,actionStatus:"approval_required",proposalId:p2.id,createdAt:now+1});
+ const result=await atlasData.executeAtlasApprovedAction(db,{messageId:m1.messageId,actorEmail:"founder@pawspace.test"});
+ assert.equal(result.status,"executed");assert.equal(result.proposalId,p1.id);assert.equal(result.journalUpdated,true);
+ const rows=sqlite.prepare("SELECT id,status FROM atlas_proposals WHERE id IN (?,?) ORDER BY id").all(p1.id,p2.id);const byId=Object.fromEntries(rows.map(r=>[r.id,r.status]));
+ assert.equal(byId[p1.id],"executed");assert.equal(byId[p2.id],"proposed");
+ const second=sqlite.prepare("SELECT action_status,proposal_id FROM atlas_chat_messages WHERE id=?").get(m2.messageId);assert.equal(second.action_status,"approval_required");assert.equal(second.proposal_id,p2.id);
+ const legacy=await atlasData.recordAtlasMessage(db,{role:"atlas",actorEmail:"system:atlas",content:"Legacy action",action,actionStatus:"approval_required",createdAt:now+2});
+ const error=await atlasData.executeAtlasApprovedAction(db,{messageId:legacy.messageId,actorEmail:"founder@pawspace.test"}).then(()=>null,e=>e);
+ assert.equal(error instanceof Response,true);assert.equal(error.status,409);assert.equal(await error.text(),"Atlas proposal journal link is required");
 });
