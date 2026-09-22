@@ -16,6 +16,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__SEED_REPAIR_DB__", "__SEED_REPAIR_ENV__");
+
+function makeD1(sqlite) {
+  const statement = (sql, args = []) => ({
+    bind: (...bound) => statement(sql, bound),
+    first: async () => sqlite.prepare(sql).get(...args) ?? null,
+    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
+    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+  });
+  return { prepare: (sql) => statement(sql), batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; }, exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; } };
+}
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -114,4 +127,55 @@ test("employee-seed.sql is still exactly what the generator produces", async () 
   const committed = read("scripts/employee-seed.sql");
   execFileSync(process.execPath, [new URL("../scripts/employee-seed-gen.mjs", import.meta.url).pathname], { stdio: "pipe" });
   assert.equal(read("scripts/employee-seed.sql"), committed, "regenerating the seed must change nothing");
+});
+
+test("after the repair, the real leave module accepts the request the /me form offers", async () => {
+  /*
+   * The point of the repair, stated as the thing a tester actually does.
+   *
+   * lib/attendance-leave.ts requestLeave looks the policy up as
+   * `WHERE leave_code=? AND status='active_uat'` and refuses 409 "Active leave policy configuration is
+   * required" when it finds none — which is exactly what a drafted seed row produces. Reading the rows
+   * back with SQL proves the UPDATE ran; driving the real module proves the UPDATE fixed the thing the
+   * tester was blocked on.
+   */
+  const seed = read("scripts/employee-seed.sql");
+  const employeeId = /INSERT OR IGNORE INTO employee_leave_balances \(employee_id,leave_code,balance,updated_at\) VALUES \('([^']+)','CL'/.exec(seed)?.[1];
+  assert.ok(employeeId, "the seed must carry at least one employee balance");
+
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__SEED_REPAIR_DB__ = db;
+  globalThis.__SEED_REPAIR_ENV__ = {};
+  const leave = await import("../lib/attendance-leave.ts");
+  await leave.ensureAttendanceLeaveTables(db);
+
+  // The staging state the repair exists for: a seeded CL policy left drafted, with a token allowance,
+  // and the tester's balance emptied.
+  sqlite.prepare("INSERT INTO leave_policies (id,name,version,status,leave_code,allow_negative,entitlement_units,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-LVP-CL','UAT Casual Leave',1,'draft','CL',0,1,'UAT-ONLY-NOT-PRODUCTION',1,'founder@pawspace.in',1)").run();
+  sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (?,'CL',0,1)").run(employeeId);
+
+  const apply = () => leave.requestLeave(db, { employeeId, leaveCode: "CL", startDate: "2026-10-01", endDate: "2026-10-02", units: 2, reason: "Family function", actorId: "tester@pawspace.in" });
+
+  let blocked = null;
+  try { await apply(); } catch (error) { blocked = error; }
+  assert.ok(blocked instanceof Response, "without the repair the tester is refused, which is the defect");
+  assert.equal(blocked.status, 409);
+
+  // Now run the seed's own leave statements over that same database, exactly as a redeploy would.
+  for (const statement of seed.split(";\n").map((line) => line.trim()).filter((line) => /leave_policies|employee_leave_balances/.test(line))) {
+    if (/^CREATE /i.test(statement)) continue;
+    sqlite.exec(`${statement};`);
+  }
+
+  const granted = await apply();
+  assert.equal(granted.status, "pending", "after the repair the leave the /me form advertises can actually be applied for");
+  assert.ok(granted.id);
+
+  // And an unknown code is still refused, per the decision: seeding CL/SL/EL does not open everything.
+  let unknown = null;
+  try { await leave.requestLeave(db, { employeeId, leaveCode: "ZZ", startDate: "2026-10-01", endDate: "2026-10-02", units: 1, reason: "Unknown code", actorId: "tester@pawspace.in" }); }
+  catch (error) { unknown = error; }
+  assert.ok(unknown instanceof Response);
+  assert.equal(unknown.status, 409, "an unknown leave code still answers 409");
 });
