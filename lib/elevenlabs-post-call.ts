@@ -70,8 +70,8 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
  }
  const analysis=(data.analysis||{})as Row,summary=text(analysis.transcript_summary||analysis.summary);
  const metadata=(data.metadata||{})as Row;
- if(session)await db.prepare("UPDATE ai_voice_calls SET transcript_ref=?,disposition=COALESCE(NULLIF(?,''),disposition),outcome=COALESCE(outcome,'completed'),ended_at=COALESCE(ended_at,?) WHERE id=?")
-  .bind(conversationId,summary.slice(0,1000),now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run().catch(()=>undefined);
+ if(session)await db.prepare("UPDATE ai_voice_calls SET disposition=COALESCE(NULLIF(?,''),disposition),outcome=COALESCE(outcome,'completed'),ended_at=COALESCE(ended_at,?) WHERE id=?")
+  .bind(summary.slice(0,1000),now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run().catch(()=>undefined);
  const completion=sessionId?await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_completed"}).catch(()=>null):null;
  const voiceCompletion=voiceCallId?await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:true,asOf:now}).catch(()=>null):null;
  await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?")

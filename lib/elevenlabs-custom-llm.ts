@@ -56,7 +56,7 @@ async function voiceContext(db:D1Database,body:Row){
   const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
   if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call context was not found",{status:409});
   const customerId=text(call.customer_id);
-  let thread=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
+  const thread=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
   let threadId=text(thread?.id);
   if(!threadId){
    threadId=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
