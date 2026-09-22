@@ -1,18 +1,19 @@
 name: Atlas Hire provider read-only probe
 
 on:
-  push:
-    branches:
-      - chore/atlas-hire-provider-bridge-20260922
-    paths:
-      - .github/workflows/atlas-hire-provider-bridge.yml
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type probe-atlas-hire-staging'
+        required: true
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   probe-providers:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'probe-atlas-hire-staging' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 10
@@ -35,7 +36,8 @@ jobs:
           set -euo pipefail
           missing=0
           for name in EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_SID EXOTEL_CALLER_ID META_WHATSAPP_UAT_ACCESS_TOKEN META_WHATSAPP_PHONE_NUMBER_ID META_WHATSAPP_WABA_ID; do
-            if [ -z "${!name:-}" ]; then
+            value="${!name:-}"
+            if [ -z "${value//[[:space:]]/}" ]; then
               echo "MISSING: $name"
               missing=1
             else
@@ -75,6 +77,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error https://atlas-hire-india-staging.pages.dev/api/health
+          curl --fail --silent --show-error https://atlas-hire-india-staging.pages.dev/healthz
           echo
           echo "Provider credentials were probed read-only from PawSpace Actions; Atlas Hire live transports were not enabled."
