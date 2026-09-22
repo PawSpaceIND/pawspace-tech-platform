@@ -7,3 +7,24 @@ d3bff97d182c7f1e72b887e3029f88bbf3ad4504:tests/razorpay-capture-confirms-payment
 
 # Synthetic test-only signing value replaced with per-run randomness. Exact historical finding only.
 372489f0a9b5194da5688174d52a535753325861:tests/partner-otp-hotpath.test.mjs:generic-api-key:52
+
+# Synthetic UAT test fixtures and one documentation reference, all from #960 (1dc15704), which is
+# already merged to main. Verified individually before listing, none is a credential:
+#   taxi checkout controller fixture   a Razorpay TEST-mode key id (`rzp_test_` prefix) whose body is
+#                                      the single word "taxiFixture" - a stubbed fetch response, not a key
+#   two OTP test constants             `uat-assertion-secret-` and `uat-signing-key-` followed by
+#                                      repeating hex; local to the test that signs and verifies with them
+#   OPEN_ITEMS.md prose                a sentence describing that fixture's FORMAT, not a value
+#
+# The literals are deliberately NOT reproduced here. Writing one into this file made it a finding in its
+# own right on the first attempt: the comment explaining the suppression tripped the rule it suppresses.
+# None appears in lib/, app/ or worker/ — they exist only inside tests and one register entry.
+#
+# Listed rather than renamed because these findings are pinned to a historical commit: gitleaks scans
+# commit history, so editing today's files cannot clear them. Fingerprints are exact (commit:file:rule:
+# line), so the rules stay armed for anything new in these files or anywhere else.
+1dc15704917df6645cd80091bad4ba1df953c67c:tests/taxi-checkout-controller.test.mjs:pawspace-payment-secret-key:29
+1dc15704917df6645cd80091bad4ba1df953c67c:tests/taxi-checkout-controller.test.mjs:pawspace-payment-secret-key:39
+1dc15704917df6645cd80091bad4ba1df953c67c:tests/customer-otp-returning-customer-name-prompt.test.mjs:generic-api-key:48
+1dc15704917df6645cd80091bad4ba1df953c67c:tests/customer-otp-returning-customer-name-prompt.test.mjs:generic-api-key:49
+1dc15704917df6645cd80091bad4ba1df953c67c:docs/uat-evidence/2026-09-21-v2-launch/OPEN_ITEMS.md:pawspace-payment-secret-key:42

@@ -87,11 +87,16 @@ saying no message was sent. Neither can be signed off by a tester before those k
 
 ## 4. Repository gates that need a human decision
 
-- **Gitleaks Secret Scan** is red for this PR's commit range: ten test-only literals (QA idempotency labels, a test
-  signing value, and the `rzp_test_taxiFixture` key-id **format** fixture). The current source no longer contains
-  key-shaped literals, but the historical commits in the range still do. The repo's convention for exactly this case
-  is to list the exact fingerprints in `.gitleaksignore`; that file was deliberately **not** touched here because it
-  is a security-policy gate. A maintainer should decide.
+- **Gitleaks Secret Scan — RESOLVED 2026-09-22 by owner decision.** It was red for this PR's commit range: test-only
+  literals (QA idempotency labels, a test signing value, and the Razorpay test-mode key-id **format** fixture (`rzp_test_` prefix, body `taxiFixture`)).
+  The current source no longer contains key-shaped literals, but the historical commits in the range still do, and
+  because gitleaks scans commit history, editing today's files cannot clear a finding pinned to an old commit.
+  This file previously recorded that `.gitleaksignore` was deliberately left untouched because it is a
+  security-policy gate, and that a maintainer should decide. The owner made that call: the five findings on #971
+  (all in `1dc15704`, already on `main`) were each verified as synthetic and listed as exact
+  `commit:file:rule:line` fingerprints in `.gitleaksignore`, alongside the six entries the repo already carried for
+  the same reason. Exact fingerprints were used, not path or rule exclusions, so the rules stay armed for anything
+  new in those same files.
 - **CodeQL — RESOLVED.** This previously read as an open item: one new high-severity alert whose rule
   could not be read from the build sandbox. The owner opened the alert page and supplied the detail, and
   it turned out to be alert #55, `js/user-controlled-bypass` (CWE-290 / CWE-807), at
