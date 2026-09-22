@@ -88,6 +88,7 @@ const SERVICES = [
       sqlite.prepare("INSERT INTO boarding_stays VALUES ('STAY-1','BK-1','PRV-1','confirmed','pending','pending',1,'blr','blr-east','2026-08-01T09:00:00.000Z','2026-08-04T09:00:00.000Z',3,'ready',0)").run();
     },
     requestAction: "request_cancel",
+    requestTable: "boarding_cancellation_requests",
   },
   {
     name: "Pet Sitting",
@@ -100,7 +101,18 @@ const SERVICES = [
   },
 ];
 
-/** Sets up a booking, raises a cancellation request, and returns a caller for approve_cancel. */
+/**
+ * Sets up a booking, raises a cancellation request, and returns a caller for approve_cancel.
+ *
+ * Boarding's request_cancel now cancels an UNPAID reservation outright (owner decision 2026-09-22):
+ * there is no collected money to make a policy decision about, so for the unpaid cases below it
+ * deliberately leaves nothing awaiting review. The refund ceiling still has to hold for the review
+ * requests that DO exist — the ones raised before that change and still sitting in staging, and the ones
+ * Operations raise against a stay that has already started. So when the customer path self-resolves, the
+ * request is written in the state approve_cancel actually reads and the booking is put back to the
+ * pre-cancellation state an approval is given from. What is under test here is the ceiling, not the
+ * route the request took to reach it; tests/boarding-unpaid-cancellation.test.mjs covers the route.
+ */
 async function readyToApprove(service, state) {
   const { sqlite, db } = scenario(service.serviceCode, state);
   service.extra(sqlite);
@@ -109,6 +121,15 @@ async function readyToApprove(service, state) {
   assert.equal(typeof govern, "function", `${service.name}: ${service.entry} must be exported — no fallback, because guessing an export picked ensure*Tables and every refusal "passed" against a no-op`);
 
   await govern(db, { bookingId: "BK-1", action: service.requestAction, actorId: REQUESTER, idempotencyKey: `req-${Math.abs(TOTAL)}-${service.serviceCode}`, reason: "Customer asked to cancel" });
+  if (service.requestTable) {
+    const awaiting = sqlite.prepare(`SELECT COUNT(*) n FROM ${service.requestTable} WHERE booking_id='BK-1' AND status='policy_review_required'`).get().n;
+    if (!awaiting) {
+      const now = Date.UTC(2026, 6, 1);
+      sqlite.prepare(`INSERT INTO ${service.requestTable} (id,booking_id,stay_id,requested_by,reason,status,created_at,updated_at) VALUES ('REVIEW-1','BK-1','STAY-1',?,'Raised for policy review','policy_review_required',?,?)`).run(REQUESTER, now, now);
+      sqlite.prepare("UPDATE canonical_bookings SET status='confirmed' WHERE id='BK-1'").run();
+      sqlite.prepare("UPDATE boarding_stays SET status='confirmed' WHERE id='STAY-1'").run();
+    }
+  }
 
   const approve = (approvedRefundAmount, key = "app-1") =>
     govern(db, { bookingId: "BK-1", action: "approve_cancel", actorId: APPROVER, idempotencyKey: `${key}-${service.serviceCode}`, reason: "Policy reviewed", approvedRefundAmount });

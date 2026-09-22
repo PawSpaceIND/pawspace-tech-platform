@@ -1,0 +1,6 @@
+# failed   -> captured_amount=0 net_customer_amount=0
+# tests 6314
+# pass 6314
+# fail 0
+# skipped 0
+EXIT=0

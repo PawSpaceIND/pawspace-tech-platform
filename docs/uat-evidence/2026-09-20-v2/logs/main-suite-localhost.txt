@@ -1,0 +1,17 @@
+  ✘   1 [chromium] › e2e/boarding-persistent-closure.spec.ts:26:1 › boarding: persisted customer → host → Ops replacement → replacement host keeps one booking (27.2s)
+  ✓   2 [chromium] › e2e/customer-booking.spec.ts:80:1 › customer: sandbox sign-in -> grooming checkout -> persisted booking (57.4s)
+UAT-SCHEDULING 200 {"data":{"groupId":"groom-CUS-OTP-DEAFECA646128EBD71F4969A-u2tr38","status":"assigned","provider":{"id":"uatcap_groom_ft","cityId":"blr","name":"PawSpace Grooming Team (UAT)","model":"full_time","servi
+  ✓   4 [chromium] › e2e/customer-booking.spec.ts:224:1 › customer can select next month when grooming opens on the last evening of this month (22.1s)
+  ✓   3 [chromium] › e2e/uat-cross-module-wiring.spec.ts:102:1 › grooming sandbox checkout propagates to Admin and CRM (58.5s)
+  ✓   5 [chromium] › e2e/customer-booking.spec.ts:245:1 › address choice: customer can recover from a wrong map match and editing clears verification (21.6s)
+  ✓   6 [chromium] › e2e/uat-grooming-checkout-ui.spec.ts:117:1 › optional address line 2, alternative phone and special instructions are present, optional, and persist through checkout (23.2s)
+  ✓   7 [chromium] › e2e/customer-booking.spec.ts:289:51 › boarding: customer-selected afternoon and evening times reach the real quote (24.1s)
+  ✓   8 [chromium] › e2e/uat-grooming-checkout-ui.spec.ts:139:1 › leaving every optional field empty never blocks grooming checkout (23.0s)
+  ✓   9 [chromium] › e2e/customer-booking.spec.ts:289:51 › sitting: customer-selected afternoon and evening times reach the real quote (21.9s)
+  ✓  10 [chromium] › e2e/customer-booking.spec.ts:421:1 › grooming truth test exposes Pay securely before mounting Razorpay from payment_pending (19.8s)
+  ✓  11 [chromium] › e2e/customer-booking.spec.ts:438:1 › grooming: Cat selects saved cat and package empty state can select it directly (15.4s)
+    Error: expect(locator).toBeVisible() failed
+    ../../../tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/repo-e2e/results-main-localhost/e2e-boarding-persistent-cl-1e075-ment-host-keeps-one-booking-chromium/test-faile
+  1 failed
+  10 passed (3.1m)
+EXIT=1

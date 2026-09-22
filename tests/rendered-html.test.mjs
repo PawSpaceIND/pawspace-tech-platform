@@ -236,7 +236,13 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due 24 hours before check-in/);
   assert.match(stays, /3-hour host-home trial · Included/);
-  assert.match(stays, /2-hour sitter Meet & Greet · ₹500/);
+  // Owner decision 2026-09-22 (decision 1 of 10) made the Sitting Meet & Greet ₹499 everywhere the
+  // customer sees it. This pinned the ₹500 literal that was the defect. It now pins the thing that
+  // stops the defect returning: the screen reads the price from lib/meet-and-greet.ts and never writes
+  // a Meet & Greet figure of its own. tests/sitting-meet-greet-price.test.mjs executes the rule.
+  assert.match(stays, /2-hour sitter Meet & Greet · \$\{meetFeeLabel\}/);
+  assert.match(stays, /meetGreetPrice\("house_visit"/);
+  assert.doesNotMatch(stays.replaceAll(/\/\*[\s\S]*?\*\//g, ""), /₹\s*50[0-9]/, "no hardcoded Meet & Greet price may survive outside a comment");
   assert.match(stays, /4 hours/);
   assert.match(stays, /12 hours/);
   assert.match(stays, /serviceAddress:serviceLocation.address/);

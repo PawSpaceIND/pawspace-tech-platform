@@ -1,6 +1,6 @@
 type Row=Record<string,unknown>;
 type ModuleCode="razorpay"|"sms_otp"|"meta_whatsapp"|"maps_gps"|"ai";
-type ModuleDefinition={code:ModuleCode;label:string;integrationCode:string;modeChecks:Array<[string,string]>;secretNames:string[];requiresSmsConfig?:boolean;requiresStaffOnly?:boolean;requiresApprovedAi?:boolean};
+type ModuleDefinition={code:ModuleCode;label:string;integrationCode:string;modeChecks:Array<[string,string]>;secretNames:string[];requiresSmsConfig?:boolean;requiresRolloutEnabled?:boolean;requiresApprovedAi?:boolean};
 type Evidence={readinessState:string;evidenceReference:string|null;evidenceId?:string|null;matched?:boolean};
 
 const text=(value:unknown)=>String(value??"").trim();
@@ -11,7 +11,7 @@ const MODULES:ModuleDefinition[]=[
  {code:"sms_otp",label:"SMS / OTP test channel",integrationCode:"INT-COMMS-02",modeChecks:[["PAWSPACE_COMMUNICATION_ENV","uat"]],secretNames:["PAWSPACE_COMMUNICATION_PROVIDER_URL","PAWSPACE_COMMUNICATION_PROVIDER_TOKEN","PAWSPACE_COMMUNICATION_WEBHOOK_SECRET","PAWSPACE_COMMUNICATION_UAT_ALLOWLIST"],requiresSmsConfig:true},
  {code:"meta_whatsapp",label:"Meta WhatsApp test number",integrationCode:"INT-COMMS-01",modeChecks:[["PAWSPACE_COMMUNICATION_ENV","uat"],["META_WHATSAPP_UAT_DELIVERY_ENABLED","true"]],secretNames:["META_WHATSAPP_UAT_ACCESS_TOKEN","META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID","META_WHATSAPP_APP_SECRET","META_WHATSAPP_VERIFY_TOKEN","META_WHATSAPP_UAT_ALLOWLIST","META_WHATSAPP_TEMPLATE_ALLOWLIST"]},
  {code:"maps_gps",label:"Maps / GPS test routes",integrationCode:"INT-MAPS-01",modeChecks:[["PAWSPACE_MAPS_ENV","sandbox"]],secretNames:["GOOGLE_MAPS_SERVER_API_KEY_UAT"]},
- {code:"ai",label:"Approved AI test provider",integrationCode:"INT-AI-01",modeChecks:[],secretNames:["PAWSPACE_AI_PROVIDER_API_KEY"],requiresStaffOnly:true,requiresApprovedAi:true},
+ {code:"ai",label:"Approved AI test provider",integrationCode:"INT-AI-01",modeChecks:[],secretNames:["PAWSPACE_AI_PROVIDER_API_KEY"],requiresRolloutEnabled:true,requiresApprovedAi:true},
 ];
 
 export function evaluateUatSandboxReadiness(runtime:Record<string,unknown>,input:{aiRolloutStage?:string;aiProviderRef?:string;aiModelRef?:string;smsAdapterConfigured?:boolean;evidence?:Record<string,Evidence>}={}){
@@ -19,7 +19,10 @@ export function evaluateUatSandboxReadiness(runtime:Record<string,unknown>,input
   const failedModes=definition.modeChecks.filter(([name,wanted])=>text(runtime[name]).toLowerCase()!==wanted).map(([name,wanted])=>`${name} must be ${wanted}`);
   const missingConfiguration=definition.secretNames.filter(name=>!present(runtime,name));
   if(definition.requiresSmsConfig&&!input.smsAdapterConfigured)missingConfiguration.push("D1 sandbox SMS adapter configuration");
-  if(definition.requiresStaffOnly&&text(input.aiRolloutStage).toLowerCase()!=="staff_only")failedModes.push("AI rollout must be staff_only");
+  // Owner decision 2026-09-22 opened the AI to CUSTOMERS on UAT deployments, so 'customers' is now a
+  // configured UAT state too. Requiring staff_only alone would have reported the owner's own decision as
+  // a readiness blocker. 'off' still blocks: an AI that answers nobody is not ready to be tested.
+  if(definition.requiresRolloutEnabled&&!["staff_only","customers"].includes(text(input.aiRolloutStage).toLowerCase()))failedModes.push("AI rollout must be staff_only or customers");
   if(definition.requiresApprovedAi&&(text(input.aiProviderRef).toLowerCase()!=="anthropic"||!text(input.aiModelRef)))missingConfiguration.push("approved active Anthropic model configuration");
   const configuredForExternalTest=failedModes.length===0&&missingConfiguration.length===0;
   const evidence=input.evidence?.[definition.integrationCode];

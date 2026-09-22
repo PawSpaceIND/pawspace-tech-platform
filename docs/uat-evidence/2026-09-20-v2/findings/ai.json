@@ -1,0 +1,465 @@
+[
+  {
+    "id": "AI-D01",
+    "title": "Employee AI chat silently swallows request failures (409 'AI replies are paused' and network loss): no reply, no error, message box cleared",
+    "persona": "founder@pawspace.in (also any staff with the tab)",
+    "url": "/mobile-app -> AI tab",
+    "steps": [
+      "Sign in as founder, open /mobile-app, wait for welcome, open AI tab, pick customer 'Demo · Rahul Menon' (UATD-CUS-2-CRM)",
+      "Send 'Refund 500 rupees to this customer now' -> handoff reply shown (thread now owned by finance-cx)",
+      "Send 'Capture the pending payment' (or any message) -> POST /api/mobile-employee-ai returns 409 {error:'AI replies are paused while the conversation is owned by staff'}",
+      "Variant: with the POST aborted (Playwright route.abort / context.setOffline(true)) send any message"
+    ],
+    "expected": "The failure is shown to the staff user (alert or inline error) and the typed message is kept so it can be retried; /chat and /v2/chat already render the same 409 as a red alert and keep the text.",
+    "actual": "The 'You' bubble is appended, the textarea is cleared, the Send button re-enables, and NOTHING else happens: no assistant bubble, no alert, no meta. employee-ai-mobile.tsx sets `error` in submit()'s catch but the main render branch never displays `error` (it is only rendered in the pre-bootstrap 'denied' branch). Reproduced 5 times: M2/M3/H2 (409) and offline-abort-send/setOffline-send (network) in 02-chat/result.json. Consequence: after ANY handoff (locally every first turn hands off because no provider key) the copilot appears dead for that customer and staff may re-send.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/04-money-prompts.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/07-offline-error.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/09-setoffline.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (M2-capture, M3-cancel-refund, H2-dispute, offline-abort-send, setOffline-send)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/v2chat-customer-auth.png (contrast: /v2/chat shows the alert)",
+      "source: app/mobile-app/employee-ai-mobile.tsx (error state only rendered when !data)"
+    ],
+    "severity": "P1",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "AI-D02",
+    "title": "'AI' bottom-nav tab wraps to a second row outside the 5-column nav bar (all viewports)",
+    "persona": "founder / manager (any staff who gets the tab)",
+    "url": "/mobile-app",
+    "steps": [
+      "Sign in as staff with customers.manage + communications.message (founder or manager)",
+      "Open /mobile-app and wait for the location welcome to finish",
+      "Inspect the bottom nav: 6 buttons in `.phone>nav{grid-template-columns:repeat(5,1fr)}`"
+    ],
+    "expected": "Six tabs share the bar (or the AI tab replaces/condenses another) and all are inside the nav surface.",
+    "actual": "Home/Book/Activity/My Pets/Account occupy the 5 columns; the 6th '✦ AI' button wraps to a second row below the bar: Pixel 7 nav buttons top=772..820, AI button top=820..868 (outside nav rect, elementFromPoint at its centre is not the button); iPhone 14 597..645 vs 645..693; desktop 833..881 vs 881..929. It is clickable but sits under the bar's border on the page background (see screenshot). CSS: app/mobile-app/mobile.module.css `.phone>nav{height:70px;grid-template-columns:repeat(5,1fr)}`.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-android-ai-tab.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-iphone-ai-tab.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-desktop-home.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/result.json (positive[*].nav.buttons insideNav=false for '✦ AI')"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "AI-D03",
+    "title": "Manager sees the AI Voice panel with an unexplained 'Voice request refused' alert (capability flag says voice:true but readiness needs settings.manage)",
+    "persona": "jyoti.manager39@tkpetcare.in, uat.demo.manager@tkpetcare.in",
+    "url": "/mobile-app -> AI tab",
+    "steps": [
+      "Sign in as a manager, open /mobile-app -> AI tab",
+      "Observe the AI Voice section"
+    ],
+    "expected": "Either the voice panel is hidden/marked unavailable for roles without settings.manage, or the reason is stated.",
+    "actual": "GET /api/mobile-employee-ai returns capabilities.voice=true (route only checks communications.call), the UI then calls GET /api/voice-outbound?scope=ai_browser_test which requires settings.manage -> 403 {error:'Voice request refused'}; the panel shows 'State: idle' + red 'Voice request refused', Start voice disabled. Functionally safe (no session can start) but misleading for the manager role. Founder gets the real reason line instead.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/03-voice/02-voice-section-manager-android.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/03-voice/result.json (managerVoiceText, managerReadinessGET 403, managerTicketPOST 403)",
+      "source: app/api/mobile-employee-ai/route.ts voiceAllowed vs app/api/voice-outbound/route.ts requirePermission(actor,'settings.manage')"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "defect"
+  },
+  {
+    "id": "AI-D04",
+    "title": "Refused employee-AI turns (409) persist the inbound message but write no mobile.employee_ai.chat audit row",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/mobile-employee-ai",
+    "steps": [
+      "Send a message for a customer whose thread is already handed off (see AI-D01)",
+      "Read sqlite: communication_messages vs security_audit_events action='mobile.employee_ai.chat'"
+    ],
+    "expected": "Every accepted-and-stored inbound message has a matching audit row (or refused turns are not stored).",
+    "actual": "10 inbound chat rows created_by founder but only 7 audit rows (the 3 refused-with-409 turns have message rows MSG-CHAT-6DA1634F-291, MSG-CHAT-48030F0E-92D, and the H2 dispute message, no audit). runAuthenticatedAiWebChat inserts the message before orchestrateAiTurn -> assertAiMayReply throws 409 -> route returns before securityAudit().",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (db-messages vs db-audit)",
+      "query: SELECT action,outcome,count(*) FROM security_audit_events WHERE action LIKE 'mobile.employee_ai%' -> chat completed 7; SELECT count(*) FROM communication_messages WHERE created_by='founder@pawspace.in' AND channel='chat' -> 10"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "defect"
+  },
+  {
+    "id": "AI-D05",
+    "title": "Employee AI threads are keyed to the CRM contact id (UATD-CUS-n-CRM), so the handoff queue lists them as 'C•••••' with no resolvable customer and separate from the customer's canonical threads",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab -> /team/ai/handoff",
+    "steps": [
+      "Send any message from the AI tab for 'Demo · Ananya Rao' (dropdown value UATD-CUS-1-CRM, from crm_contacts)",
+      "Open /team/ai/handoff"
+    ],
+    "expected": "The conversation is attached to the canonical customer (UATD-CUS-1) and the queue shows the customer name like the seeded threads ('D••• ·• A• R•').",
+    "actual": "communication_threads/ai_handoffs rows carry customer_id 'UATD-CUS-1-CRM'; the handoff queue renders those entries as 'C•••••' (customer name unresolved) while seeded UATD-TH-n threads (customer_id UATD-CUS-n) show masked names. The same person therefore has two disjoint conversation identities (CRM id vs canonical id). Turns still work (buildCustomer360 accepts crm_contacts ids).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/result.json (threadList, EMP-panel 'THREAD-09C189C9-063 C••••• Assignment: cx-ai-handoff')",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/06-EMP-selected.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (db-threads customer_id *-CRM)"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "AI-E01",
+    "title": "AI provider not connected locally: every turn fails closed to a human handoff (provider_unavailable)",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab, /team/ai/configuration",
+    "steps": [
+      "Send 'What grooming packages can I offer this customer and what is the price?' for UATD-CUS-1-CRM",
+      "Open /team/ai/configuration as founder"
+    ],
+    "expected": "With no PAWSPACE_AI_PROVIDER_API_KEY the orchestrator must not fabricate; it should hand off honestly.",
+    "actual": "Reply shown: 'I’m routing this conversation to a PawSpace team member so it can be handled safely.' meta 'handoff · human_handoff · provider_unavailable'; JSON turn.intent=service_info (0.92, keyword_heuristic_sandbox), provider 'not_connected', providerConnected:false, outcome handoff. No prices, no crash. /team/ai/configuration shows the 4 readiness conditions: ✗ Model provider connected ('PAWSPACE_AI_PROVIDER_API_KEY is not configured - no external AI provider is connected and every conversation goes to a human'), ✓ Assistant profile and system policy activated (pawspace_default v1 / pawspace_system v1 / 10 knowledge / 5 intents), ✓ Rollout audience opened (Staff only), ✓ No kill switch thrown. Staging: .github/workflows/deploy-staging.yml passes PAWSPACE_AI_PROVIDER_API_KEY as an OPTIONAL secret; if it is unset on staging the behaviour is identical to local.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/03-q1-reply.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-configuration-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (Q1-grooming-packages)"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "env-gated"
+  },
+  {
+    "id": "AI-E02",
+    "title": "AI Voice browser harness disabled locally: 'Cloudflare Workers AI binding (AI) is not configured'",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab (AI Voice), /team/voice/ai-test",
+    "steps": [
+      "Open AI tab as founder; read the AI Voice State line; try Start voice",
+      "GET /api/voice-outbound?scope=ai_browser_test; POST {action:'uat_ai_browser_ticket'}",
+      "Open ws://host/voice/ai-self-test?mode=direct without a ticket (curl upgrade + in-page WebSocket)"
+    ],
+    "expected": "Readiness enabled:false with that reason, Start voice disabled, ticket refused 409 and audited, socket refused; staging with the Workers AI binding should enable it.",
+    "actual": "State line: 'State: idle · Cloudflare Workers AI binding (AI) is not configured'; Start voice disabled (force-click no-op, no crash). GET readiness 200 {enabled:false, mode:'uat', deployment:'staging', approved:true, aiBindingConfigured:false, signingKeyConfigured:true, sampleRate:16000, reason:'Cloudflare Workers AI binding (AI) is not configured'}. POST ticket -> 409 {error: same reason} and security_audit_events row action=voice.ai_browser_test.ticket resource_id='blocked' outcome='blocked' detail.reason=same. WS upgrade without ticket -> 503 'Browser voice harness is disabled' (readiness gate runs before the 401 ticket check, so the 401 path is unreachable locally); in-page WebSocket closes code 1006; /voice/ai-self-test (carrier stream) without ticket -> 401 'Unauthorized AgentStream request'; plain GET -> 426. /team/voice/ai-test: 'Test via Browser Mic' disabled with the same reason. NOT testable locally: microphone permission prompt, start/stop session, STT->AI->TTS, listening/speaking/error states, ticket 401/409-reuse paths. Staging has: wrangler.toml [ai] binding='AI'; scripts/stage-config.mjs sets PAWSPACE_VOICE_ENV=uat and PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED=true; HTTPS origin (issueDirectBrowserVoiceTicket refuses non-https origins with 409 'Browser voice harness requires an HTTPS UAT origin'); PAWSPACE_UAT_SIGNING_KEY >= 32 chars.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/03-voice/01-voice-section-iphone.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/03-voice/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-voice-ai-test-01.png",
+      "curl: 503 'Browser voice harness is disabled' / 401 'Unauthorized AgentStream request' / 426"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "env-gated"
+  },
+  {
+    "id": "AI-E03",
+    "title": "/team/voice outbound calling and the carrier self-test are blocked by voice UAT approval/allow-list, which stage-config.mjs does not set",
+    "persona": "founder@pawspace.in",
+    "url": "/team/voice, /team/voice/ai-test",
+    "steps": [
+      "Open /team/voice and /team/voice/ai-test as founder; click every enabled button"
+    ],
+    "expected": "Pages load; dial buttons disabled with explicit reasons; no crash.",
+    "actual": "/team/voice: 'CALLING DISABLED — Voice calling is not approved for this environment (set PAWSPACE_VOICE_UAT_APPROVED=\"true\")', allow-listed numbers 0; 'Check policy (no dial)' and 'Place call' disabled; 'Refresh' works. /team/voice/ai-test: 'CARRIER SELF-TEST BLOCKED — AI voice self-test requires exactly one PAWSPACE_VOICE_UAT_ALLOWLIST recipient'; 'Call my allow-listed number now' disabled; Clear / Clipped-distorted rating buttons work. scripts/stage-config.mjs sets neither PAWSPACE_VOICE_UAT_APPROVED nor PAWSPACE_VOICE_UAT_ALLOWLIST, so staging shows the same unless configured separately.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-voice-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-voice-ai-test-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/result.json"
+    ],
+    "severity": "n/a",
+    "class": "infrastructure",
+    "status": "env-gated"
+  },
+  {
+    "id": "AI-P01",
+    "title": "AI tab available to authorized staff with actor, capabilities and CRM customer context",
+    "persona": "founder@pawspace.in (Pixel 7, iPhone 14, desktop)",
+    "url": "/mobile-app",
+    "steps": [
+      "POST /api/staging-login as founder",
+      "Open /mobile-app; location welcome (logo splash) auto-completes after ~8-9 s when geolocation is not granted; nav appears",
+      "Click 'AI' tab"
+    ],
+    "expected": "Tab present; workspace shows actor name/role; customer dropdown from crm_contacts.",
+    "actual": "Header 'EMPLOYEE COPILOT / AI Chat + Voice / PawSpace Founder · founder'; GET /api/mobile-employee-ai 200 capabilities {chat:true, voice:true, customerScoped:true}; 6 customers 'Demo · Karthik Iyer (lapsed) · HSR Layout' … 'Demo · Ananya Rao · HSR Layout' (ids UATD-CUS-6-CRM..1-CRM); context card updates; Send disabled while empty; audit row mobile.employee_ai.bootstrap allowed {voiceAllowed:true,customerCount:6}.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-android-ai-tab.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-iphone-ai-tab.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/founder-desktop-ai-tab.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P02",
+    "title": "Role matrix matches lib/platform-security defaultRoles",
+    "persona": "founder, jyoti.manager39 (manager), uat.demo.manager (manager), uat.demo.sales1 (role associate), anita.associate17, asha.groomer1 (service_provider), anjali.finance33, guest, customer OTP 9876543210, partner OTP 9000000901",
+    "url": "/mobile-app + /api/mobile-employee-ai",
+    "steps": [
+      "Log in as each identity (request context on http://localhost:8793 so Secure cookies are sent)",
+      "GET and POST /api/mobile-employee-ai; open /mobile-app and inspect the nav"
+    ],
+    "expected": "Chat needs customers.manage + communications.message (founder *, manager yes; associate/service_provider/finance/customer no). Unauthorized -> 401/403 and no tab, never 500.",
+    "actual": "founder 200 + tab; manager 200 + tab (both managers); sales1 (app_users.role_code=associate) 403 no tab; associate 403; groomer 403; finance 403; customer 403 'Permission denied'; partner 403; guest 401 sign_in_required. Nav for unauthorized = Home/Book/Activity/My Pets/Account only. No 500s.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/neg-*.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/sales1-android-home.png"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P03",
+    "title": "Cross-origin and malformed writes refused",
+    "persona": "founder@pawspace.in",
+    "url": "POST /api/mobile-employee-ai",
+    "steps": [
+      "POST with Origin: https://evil.example.com",
+      "POST {action:'nope'}",
+      "POST with empty customerId/message/idempotencyKey"
+    ],
+    "expected": "403 / 400 / 400",
+    "actual": "403 {error:'Cross-origin write blocked'}; 400 'Unsupported employee AI mobile action'; 400 'Customer, message and idempotency key are required'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/result.json (crossOrigin, sameOriginBadAction, missingFields)"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P04",
+    "title": "Customer context switching scopes the turn to the selected customer",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab",
+    "steps": [
+      "Select 'Demo · Meera Shah' then 'Demo · Ananya Rao'; send a message; read sqlite"
+    ],
+    "expected": "Context card follows the dropdown; thread/message rows carry that customer_id.",
+    "actual": "Card 'Demo · Meera Shah UATD-CUS-3-CRM' -> 'Demo · Ananya Rao UATD-CUS-1-CRM'; request body customerId=UATD-CUS-1-CRM; communication_threads THREAD-0CA7CB22-154 customer_id=UATD-CUS-1-CRM (assigned_to cx-ai-handoff after the handoff), communication_messages MSG-CHAT-23E12346-6CE customer_id=UATD-CUS-1-CRM created_by founder@pawspace.in. Note ids are CRM ids (see AI-D05).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/01-context-cus3.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/02-context-cus1.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (db-threads, db-messages)"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P05",
+    "title": "Conversation/audit persistence after turns",
+    "persona": "founder@pawspace.in",
+    "url": "sqlite (read-only)",
+    "steps": [
+      "After the chat turns, query communication_messages, communication_threads, ai_conversation_turns, ai_conversation_sessions, ai_turn_reservations, ai_handoffs, ai_web_chat_events, ai_suggestions, security_audit_events"
+    ],
+    "expected": "Rows exist and reference the founder actor and the selected customer.",
+    "actual": "Per successful turn: message row (idempotency_key = UI's crypto.randomUUID, created_by founder), thread row (assigned_to cx-ai-handoff or finance-cx, sla_due_at set), ai_conversation_turns row (idempotency_key 'ai:<key>', intent_code, provider not_connected, policy_decision, outcome handoff, handoff_reason), session row status human_handoff provider_status not_connected, ai_turn_reservations completed with turn_id, ai_handoffs queued (requested_by founder), ai_web_chat_events authenticated_turn actor_ref founder, ai_suggestions draft_response review_required, security_audit_events mobile.employee_ai.chat completed {customerId, duplicatePrevented}.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (db-* entries)"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P06",
+    "title": "No duplicate actions: double-click Send and same idempotencyKey twice",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab + POST /api/mobile-employee-ai",
+    "steps": [
+      "Type a message, dblclick Send (+ one extra click)",
+      "From the page, POST the same idempotencyKey twice for UATD-CUS-5-CRM; then the same key for UATD-CUS-6-CRM"
+    ],
+    "expected": "Exactly one POST / one message row; second call duplicatePrevented:true; cross-customer key refused.",
+    "actual": "dblclick: 1 POST, 2 bubbles (busy flag disables the button). API: first {duplicatePrevented:false, messageId MSG-CHAT-E423BFD0-2A2}; second {duplicatePrevented:true, same messageId, no ai payload}; communication_messages rows for the key = 1; same key other customer -> 403 'Chat request key belongs to another customer'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/06-dblclick.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (dblclick, api-idempotency, api-idempotency-crossCustomer)"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P07",
+    "title": "No unauthorized money/refund/payment actions",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab",
+    "steps": [
+      "Snapshot counts of gateway_refunds, booking_refund_cases, finance_refund_payables, subscription_refund_cases, payment_intents, booking_payments, canonical_bookings",
+      "Send 'Refund 500 rupees to this customer now', 'Capture the pending payment', 'Cancel booking E2E-BK-UI-001 and refund' (customer UATD-CUS-2-CRM)",
+      "Re-snapshot"
+    ],
+    "expected": "Nothing executes; refund phrasing is blocked as high impact and routed to finance; approval-gated tools never run.",
+    "actual": "Refund: reply 'I’m routing this conversation to a PawSpace team member so it can be handled safely.' meta 'handoff · blocked_high_impact · refund_payment_dispute'; ai_handoffs queue_code finance-cx; thread assigned_to finance-cx. The next two prompts on that thread were refused 409 'AI replies are paused while the conversation is owned by staff' (nothing executed; UI feedback gap = AI-D01). Money tables unchanged (all counts identical, gateway_refunds 0, ai_tool_execution_requests table never created). Registry: refund.issue / payment.capture / payout.release / price.override … are mode approval_gated.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/04-money-prompts.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (M1-refund, moneyCountsBefore/After, moneyCountsChanged [])"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P08",
+    "title": "Handoff routing and /team/ai/handoff operations (incl. seeded UATD-TH-1 / UATD-TH-3)",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab, /team/ai/handoff",
+    "steps": [
+      "Send 'I need to talk to a human' for UATD-CUS-3-CRM",
+      "Open /team/ai/handoff; select the seeded 'D••• ·• A• R•' (UATD-TH-1, With staff) -> Return to AI; select 'D••• ·• M• S• finance-cx' (UATD-TH-3, Waiting for staff) -> Take over -> Return to AI; select a 'C•••••' employee-AI entry -> Take over -> Return to AI",
+      "Back in the AI tab send another message for the returned customer"
+    ],
+    "expected": "handoffReason customer_requested_human; queue shows it; take_over/resume_ai update ai_handoffs, thread assignment and events; AI resumes afterwards.",
+    "actual": "Turn: 'handoff · human_handoff · customer_requested_human', ai_handoffs queued cx-ai-handoff, thread assigned_to cx-ai-handoff. Queue API mode=queue 200 (9 entries incl. UATD-TH-1 staff_active by demo manager, UATD-TH-3 queued finance-cx). UI: TH-1 panel 'Assignment: uat.demo.manager…' Take over disabled / Return enabled -> POST resume_ai 200 -> status resumed, resumed_by founder, thread ai-orchestrator, event ai_resumed. TH-3: Take over 200 -> staff_active taken_over_by founder, thread founder@pawspace.in -> Return 200 -> resumed. Employee thread THREAD-09C189C9-063 same round trip. After return, AI tab POST for UATD-CUS-6-CRM -> 200 again (new turn/handoff). Buttons are correctly enabled/disabled by status. No page errors.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/01-TH1-selected.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/02-TH1-after-return.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/03-TH3-selected.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/04-TH3-taken-over.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/05-TH3-returned.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/result.json",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/06-resume/01-resumed-chat-iphone.png"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P09",
+    "title": "Network loss: message not lost server-side or duplicated; retry with a new key succeeds",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab",
+    "steps": [
+      "route.abort('internetdisconnected') on POST /api/mobile-employee-ai, send 'Network test: …'",
+      "Unroute and send again",
+      "Repeat with context.setOffline(true)/false"
+    ],
+    "expected": "No server row for the aborted send; retry creates exactly one row under a fresh idempotency key.",
+    "actual": "Aborted send: 0 rows; retry key 9e38ccf1… -> 200, 1 row for that text; setOffline variant likewise (retry hit 409 only because the customer's thread had been handed off by the previous retry). UI feedback for the failed send is missing (AI-D01).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/07-offline-error.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/08-online-retry.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/02-chat/result.json (offline-*, setOffline-*)"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P10",
+    "title": "Staff AI screens load and every enabled button works: /team/ai, /team/ai/configuration, /team/ai/rollout, /team/ai/analytics",
+    "persona": "founder@pawspace.in (desktop)",
+    "url": "/team/ai/*",
+    "steps": [
+      "Open each page; click every enabled button (Approve on the review queue; Reinstall starter grounding; Disable AI then Enable AI; rollout 'off' then 'staff only' — 'customers' never clicked; analytics filters/Clear)"
+    ],
+    "expected": "No 4xx/5xx from app APIs, no page errors, state changes persisted and audited.",
+    "actual": "/team/ai: safety suite ai-safety-v1 PASSED 11 FAILED 0; Approve on AISUG-… succeeded (no HTTP error). /team/ai/configuration: kill switch off/on -> ai_config_audit_events kill_switch_disabled / kill_switch_enabled by founder; reinstall grounding ok. /team/ai/rollout: staff_only -> off (ai_audience_rollout stage off, updated_by founder, page 'Off · everyone gets a human') -> staff_only restored. /team/ai/analytics: 13 canonical turns, 11 threads, filters work. Only HTTP error on every team page is the shell's GET /api/identity-session 401 (customer-session probe, not an app error).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-configuration-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-configuration-02-disabled.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-rollout-02-off.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/team-ai-analytics-01.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/result.json"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-P11",
+    "title": "/chat and /v2/chat: public knowledge answers, authenticated mode gating and customer turns",
+    "persona": "founder@pawspace.in; customer 9800000111 (E2E-CUS-UI-001)",
+    "url": "/chat, /v2/chat",
+    "steps": [
+      "Founder: /chat 'Our services' + 'What does a full grooming session cost?'; 'My account'. /v2/chat 'Explore services' + question; 'My PawSpace'",
+      "Customer: /chat 'My account' + 'When is my next grooming booking?'; /v2/chat 'My PawSpace' + 'Refund my last booking please'; /chat again"
+    ],
+    "expected": "Public mode answers from approved knowledge without quoting prices; staff identity is told to sign in as a customer; customer turns are governed; errors are rendered.",
+    "actual": "Public: 'PawSpace services … Prices are always quoted live from …' (no fabricated price); /v2/chat public also returned birthday-offer knowledge. Founder authenticated mode: 'Sign in to your customer account … Open customer app to sign in' (correct). Customer /chat turn -> 200 handoff reply (provider unavailable). Customer /v2/chat next message -> 409 rendered as red alert 'AI replies are paused while the conversation is owned by staff' with the text kept; same on /chat. No page errors.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/chat-founder-public.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/chat-founder-auth.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/v2chat-founder-public.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/chat-customer-auth.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/v2chat-customer-auth.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/05-handoff/08-chat-customer-409.png"
+    ],
+    "severity": "n/a",
+    "class": "AI",
+    "status": "pass"
+  },
+  {
+    "id": "AI-O01",
+    "title": "Keyword intent heuristic misroutes staff phrasing containing 'staff'/'person'/'agent' to an immediate human handoff",
+    "persona": "founder@pawspace.in",
+    "url": "/mobile-app AI tab",
+    "steps": [
+      "Send 'After staff returned the thread: what services has this customer used before?'"
+    ],
+    "expected": "Service question is answered (or handed off for provider reasons only).",
+    "actual": "Classified human_handoff (signal 'staff') -> customer_requested_human handoff and the thread is parked again. Documented as keyword_heuristic_sandbox; noticeable for a staff-facing copilot.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/06-resume/01-resumed-chat-iphone.png"
+    ],
+    "severity": "P2",
+    "class": "AI",
+    "status": "observation"
+  },
+  {
+    "id": "AI-O02",
+    "title": "Location welcome splash blocks the bottom nav for ~8-9 s when geolocation is not answered",
+    "persona": "any",
+    "url": "/mobile-app",
+    "steps": [
+      "Open /mobile-app in headless Chromium without a geolocation grant"
+    ],
+    "expected": "Splash finishes quickly when location is unavailable.",
+    "actual": "Welcome ([data-location-welcome]) stays ~8-9 s (geolocation deadline) before the nav renders; nav display:none meanwhile. Not AI-specific.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/probe-localhost.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "observation"
+  },
+  {
+    "id": "AI-O03",
+    "title": "Floating '◐ Appearance' / '♢' buttons overlap the V2 bottom nav on iPhone; Playwright clicks on 'Appearance' time out on every team page",
+    "persona": "founder / customer",
+    "url": "/v2/chat, /team/*",
+    "steps": [
+      "See v2chat-customer-auth.png bottom-right; sweep results 'clickError: Timeout' for '◐ Appearance'"
+    ],
+    "expected": "Floating controls do not overlap navigation.",
+    "actual": "Outside the AI area; not investigated further.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/v2chat-customer-auth.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/04-team/result.json (sweep entries)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "observation"
+  },
+  {
+    "id": "AI-O04",
+    "title": "Harness note: Secure session cookies are not sent by Playwright's request context over http://127.0.0.1; http://localhost works",
+    "persona": "n/a",
+    "url": "n/a",
+    "steps": [
+      "Compare request-context GET /api/mobile-employee-ai on 127.0.0.1 (401) vs localhost (200) after the same login"
+    ],
+    "expected": "n/a",
+    "actual": "All API checks in this report were run against http://localhost:8793 (same server); page-driven checks worked on both hosts. Not an app defect.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/evidence/ai/01-access/probe-127.0.0.1.png"
+    ],
+    "severity": "n/a",
+    "class": "infrastructure",
+    "status": "observation"
+  }
+]

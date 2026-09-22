@@ -7,6 +7,7 @@ import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
 import { createTestTransaction } from "../../lib/test-transaction";
+import { meetGreetPrice } from "../../lib/meet-and-greet";
 import SittingCustomerPanel from "./sitting-customer-panel";
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
@@ -222,7 +223,20 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const extra = mode === "boarding" ? extraPets*boardingUnitPrice*boardingUnits : extraPets*(sittingQuote?.extraPetPrice??0)*(sittingQuote?.billableUnits??0);
   const protection = 0;
   const taxiFee = 0;
-  const meetFee = 0;
+  /* Owner decision 2026-09-22 (decision 1 of 10): the Sitting Meet & Greet price is Rs 499 everywhere
+   * the customer sees a price. It read Rs 500 on the option card and Rs 0 on the review line and the
+   * bill, and the split-payment note below told the customer a Rs 500 fee was "collected now" - three
+   * different answers, none of them the real one, for the same thing on one screen.
+   *
+   * The number comes from lib/meet-and-greet.ts, which is where the platform's Meet & Greet price
+   * actually lives (phone calls free, house visits Rs 499, waived for a stay of 5 days or more). Nothing
+   * is hardcoded here, so the screen cannot drift from the rule again.
+   *
+   * The waiver is NAMED rather than shown as Rs 0: the price is Rs 499 whether or not this particular
+   * stay is long enough to have it waived, and a silent Rs 0 is what made the old screen unreadable. */
+  const meetFee = meetGreetPrice("house_visit", 0).amount;
+  const meetFeeWaived = meetGreetPrice("house_visit", nights).waived;
+  const meetFeeLabel = meetFeeWaived ? `${money(meetFee)} · waived for stays of 5 nights or more` : money(meetFee);
   const total = mode === "boarding" ? boardingQuote?.totalAmount??0 : sittingQuote?.totalAmount??0;
   const splitEligible = careWindow === "24 hours" && nights > 4;
   const reserveAmount = mode === "boarding" ? boardingQuote?.amountDueNow??0 : sittingQuote?.amountDueNow??0;
@@ -622,7 +636,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 <b>
                   {mode === "boarding"
                     ? "3-hour host-home trial · Included"
-                    : "2-hour sitter Meet & Greet · ₹500"}
+                    : `2-hour sitter Meet & Greet · ${meetFeeLabel}`}
                 </b>
                 <small>
                   {mode === "boarding"
@@ -638,7 +652,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   <small>Speak with the {mode === "boarding" ? "host" : "sitter"}, understand routines and ask questions before booking.</small>
                 </button>
                 <button className={meetFormat === "visit" ? styles.selected : ""} onClick={() => setMeetFormat("visit")}>
-                  <b>{mode === "boarding" ? "3-hour host-home trial · Included" : "2-hour home Meet & Greet · ₹500"}</b>
+                  <b>{mode === "boarding" ? "3-hour host-home trial · Included" : `2-hour home Meet & Greet · ${meetFeeLabel}`}</b>
                   <small>{mode === "boarding" ? "Visit the home with your pet and check comfort before the stay." : "Meet the sitter at home, explain access and walk through the care routine."}</small>
                 </button>
               </div>
@@ -704,7 +718,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                     ? "10-minute phone call · Included"
                     : mode === "boarding"
                       ? "3 hours · Included"
-                      : `2 hours · ${money(meetFee)}`
+                      : `2 hours · ${meetFeeLabel}`
                   : "Skipped"}
               </b>
             </span>
@@ -737,7 +751,11 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   : mode === "boarding"
                     ? "3-hour host-home trial"
                     : "2-hour sitter Meet & Greet"}
-                <b>{meetFormat === "call" || mode === "boarding" ? "Included" : money(meetFee)}</b>
+                {/* The lines in this panel add up to the booking total beneath them, and a Sitting Meet
+                  * & Greet is not in that total - it is its own request with its own price. Showing
+                  * ₹499 here without saying so would make the arithmetic look broken; showing ₹0, which
+                  * is what it used to do, hid the price altogether. */}
+                <b>{meetFormat === "call" || mode === "boarding" ? "Included" : `${meetFeeLabel} · paid separately`}</b>
               </span>
             )}
             <strong>
@@ -778,8 +796,12 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               </button>
               {meet && mode === "sitting" && meetFormat === "visit" && (
                 <p>
-                  The ₹500 meeting fee is collected now; only the stay value is
-                  split 50/50.
+                  {/* This used to read "The ₹500 meeting fee is collected now", which was wrong twice
+                    * over: the fee is ₹499, and it is not collected here at all. A Meet & Greet is its
+                    * own request with its own price (meet_greet_requests.price_charged) and never joins
+                    * the stay's quote, so the booking total below neither includes it nor splits it. */}
+                  The {money(meetFee)} Meet &amp; Greet is arranged and paid separately from this
+                  booking, so it is not part of the booking total and is not split 50/50.
                 </p>
               )}
             </section>
