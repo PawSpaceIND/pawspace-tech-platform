@@ -9,6 +9,10 @@ const TIMEOUT=Number(readArg("timeout","18000"));
 const SERVER_TIMEOUT=Number(readArg("server-timeout","60000"));
 if(!BASE)throw new Error("--base or PREVIEW_URL is required");
 
+// This container ships Chromium at a pinned revision the installed playwright package will not match,
+// and it forbids downloading another. Launch the binary that is actually here.
+const chromiumExecutable=()=>[process.env.PLAYWRIGHT_CHROMIUM,"/opt/pw-browsers/chromium-1194/chrome-linux/chrome",...fs.existsSync("/opt/pw-browsers")?fs.readdirSync("/opt/pw-browsers").filter(name=>name.startsWith("chromium")).map(name=>`/opt/pw-browsers/${name}/chrome-linux/chrome`):[]].filter(Boolean).find(candidate=>fs.existsSync(candidate));
+
 const report={generatedAt:new Date().toISOString(),base:BASE,pincode:PIN,cases:[],failures:[],sittingProfileRateEvidence:[],sittingDiscoveryRetries:0};
 const persist=()=>{report.summary={total:report.cases.length,passed:report.cases.filter(x=>x.ok).length,failed:report.cases.filter(x=>!x.ok).length};fs.writeFileSync(OUT,`${JSON.stringify(report,null,2)}\n`);};
 const die=(message)=>{throw new Error(message);};
@@ -130,7 +134,7 @@ async function food(page){
 
 async function relocation(page){await openService(page,"Relocation");await text(page,"PET RELOCATION · ENQUIRY");await page.getByLabel("Email").fill("ui-acceptance@pawspace.test");await page.getByLabel("Pickup location").fill("Koramangala, Bengaluru");await page.getByLabel("Drop location").fill("Indiranagar, Bengaluru");const seen=await observeFinal(page,page.getByRole("button",{name:"Request relocation plan & quote"}),/POST \/api\/relocation-enquiry/);return`enquiry-only wiring (${seen}); no payment endpoint`;}
 
-async function main(){const browser=await chromium.launch({headless:true}),context=await browser.newContext({viewport:{width:390,height:844}}),pageErrors=[];
+async function main(){const executablePath=chromiumExecutable(),browser=await chromium.launch(executablePath?{headless:true,executablePath}:{headless:true}),context=await browser.newContext({viewport:{width:390,height:844}}),pageErrors=[];
  const withPage=async(fn)=>{const page=await context.newPage();page.on("pageerror",error=>pageErrors.push(String(error.message).slice(0,240)));try{return await fn(page);}finally{await page.close().catch(()=>undefined);}};
  try{
   await runCase("real customer OTP/session",()=>withPage(page=>login(page,context)));
