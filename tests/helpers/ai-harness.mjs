@@ -59,6 +59,23 @@ export function applyOwnedDdl(sqlite, path, sourceOverride) {
   }
 }
 
+/**
+ * The same database, on a UAT deployment.
+ *
+ * lib/ai-audience-rollout.ts honours the 'customers' stage only where PAWSPACE_DEPLOYMENT_ENV names a
+ * UAT deployment (owner decision 2026-09-22) and fails closed otherwise, so a suite that drives the
+ * CUSTOMER assistant has to say which deployment it is standing on or it quietly exercises the refusal
+ * instead of the path it claims to cover.
+ *
+ * Deliberately opt-in rather than the default for every AI suite: lib/development-preview.ts treats ANY
+ * value of PAWSPACE_DEPLOYMENT_ENV as "not a local preview" and switches off the preview auth path, so
+ * defaulting it here turned unrelated CRM and CX suites' 200s into 401s. A suite takes this only when it
+ * actually needs the customer rollout.
+ */
+export function freshUatAiDb(env = {}) {
+  return freshAiDb({ PAWSPACE_DEPLOYMENT_ENV: "staging", ...env });
+}
+
 /** A database with the identity/auth/canonical tables every AI path touches, and the env bound. */
 export function freshAiDb(env = {}) {
   const sqlite = new DatabaseSync(":memory:");

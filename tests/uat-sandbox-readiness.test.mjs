@@ -41,12 +41,32 @@ test("all five modules become sandbox verified only with test configuration staf
  for(const value of sensitiveValues)assert.ok(!serialized.includes(value),"a credential value reached the readiness response");
 });
 
-test("AI customer rollout and production-shaped environment values cannot satisfy the UAT indicator",()=>{
- const result=evaluateUatSandboxReadiness({...completeEnv,PAWSPACE_PAYMENT_ENV:"live",PAWSPACE_MAPS_ENV:"production"},{...configured,aiRolloutStage:"customers",evidence:verified});
+test("production-shaped environment values cannot satisfy the UAT indicator",()=>{
+ const result=evaluateUatSandboxReadiness({...completeEnv,PAWSPACE_PAYMENT_ENV:"live",PAWSPACE_MAPS_ENV:"production"},{...configured,evidence:verified});
  assert.equal(result.status,"blocked");
  assert.equal(result.modules.find(module=>module.code==="razorpay").configuredForExternalTest,false);
  assert.equal(result.modules.find(module=>module.code==="maps_gps").configuredForExternalTest,false);
- assert.equal(result.modules.find(module=>module.code==="ai").configuredForExternalTest,false);
+});
+
+/*
+ * This case used to bundle a customer AI rollout in with live payments and production Maps and call all
+ * three "cannot satisfy the UAT indicator". Owner decision 2026-09-22 opened the AI to customers on UAT
+ * deployments, so that premise no longer holds for the AI module and keeping it would have reported the
+ * owner's own decision as a readiness blocker. What still has to block is an AI that answers nobody:
+ * 'off' is not a testable state. Both directions are asserted here so neither can quietly invert.
+ */
+test("the AI module is ready to test at either rollout stage that answers somebody, and never at 'off'",()=>{
+ for(const aiRolloutStage of ["staff_only","customers"]){
+  const result=evaluateUatSandboxReadiness(completeEnv,{...configured,aiRolloutStage,evidence:verified});
+  const ai=result.modules.find(module=>module.code==="ai");
+  assert.equal(ai.configuredForExternalTest,true,`a '${aiRolloutStage}' rollout is a configured UAT state`);
+  assert.deepEqual(ai.blockers,[],`a '${aiRolloutStage}' rollout must raise no blocker`);
+ }
+ const off=evaluateUatSandboxReadiness(completeEnv,{...configured,aiRolloutStage:"off",evidence:verified});
+ const blocked=off.modules.find(module=>module.code==="ai");
+ assert.equal(blocked.configuredForExternalTest,false,"an AI that answers nobody is not ready to be tested");
+ assert.ok(blocked.blockers.some(blocker=>/rollout/i.test(blocker)),"the blocker must name the rollout, not something else");
+ assert.equal(off.status,"blocked");
 });
 
 test("a free-text evidence claim cannot satisfy strict sandbox verification",()=>{

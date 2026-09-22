@@ -299,3 +299,54 @@ CREATE TABLE IF NOT EXISTS booking_punctuality_policies (id TEXT PRIMARY KEY,ser
 INSERT OR IGNORE INTO booking_punctuality_policies (id,service_code,city_id,provider_model,tracking_enabled,eta_freshness_seconds,allowed_accuracy_meters,grace_minutes,customer_alert_minutes,ops_escalation_minutes,reassignment_minutes,evidence_requirements_json,excluded_reasons_json,raw_gps_retention_days,approval_state,effective_from,effective_to,approved_by,updated_at) VALUES
  ('UAT-GPS-GROOMING','grooming',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000),
  ('UAT-GPS-DOG-TRAINING','dog_training',NULL,NULL,1,300,50,10,15,20,30,'["foreground_gps"]','[]',30,'approved','2026-01-01',NULL,'founder_seed',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- UAT-ONLY placeholder trainer compensation rule (LP-N17, owner decision 2026-09-22).
+--
+-- Why this exists: a completed Training session resolves its rate through training_compensation_rules
+-- (city, optional provider, optional package, published, inside its effective window). Staging had no
+-- published rule at all, so every completed session was held at 'pending rate configuration - No
+-- published trainer compensation rule matches this completed session' and trainer earnings, payout
+-- statements and the Finance training views could not be exercised by a tester at all.
+--
+-- THIS IS NOT A COMPENSATION POLICY. The rate is a round, obviously synthetic sandbox number so the
+-- flow can be driven end to end; provider_id and package_code are NULL so it covers every seeded
+-- trainer and package. Finance publishes the real rule, which supersedes this one on version order.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS training_compensation_rules (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,provider_id TEXT,package_code TEXT,rate_type TEXT NOT NULL DEFAULT 'per_completed_session',rate_value REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'published',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,reason TEXT NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO training_compensation_rules (id,city_id,provider_id,package_code,rate_type,rate_value,currency,status,version,effective_from,effective_to,updated_by,reason,updated_at) VALUES
+ ('UAT-TRAINER-RATE-BLR','blr',NULL,NULL,'per_completed_session',1000,'INR','published',1,'2026-01-01',NULL,'uat_staging_seed','UAT-ONLY-NOT-PRODUCTION: placeholder sandbox rate so trainer earnings can be tested. Not a compensation policy.',1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- AI AUDIENCE ROLLOUT (owner decision 2026-09-22, decision 3 of 10).
+--
+-- The customer AI is open to CUSTOMERS in UAT only. Staging defaulted to 'off', so a tester talking to
+-- the assistant on /chat reached a human handoff every time and the customer AI could not be exercised
+-- at all - the rollout stage was never something a tester could get past, because widening it is a
+-- settings.manage action on /team/ai/rollout that no UAT persona holds.
+--
+-- Opening it here is safe because the stage is NOT a standing permission: lib/ai-audience-rollout.ts
+-- only honours 'customers' on a UAT deployment (PAWSPACE_DEPLOYMENT_ENV in local/preview/staging/uat/e2e)
+-- and fails closed everywhere else, so this row cannot open the AI to customers if the database is ever
+-- restored or promoted somewhere it should not be. The provider gate is untouched: with no provider key
+-- the assistant still hands off honestly rather than inventing an answer.
+--
+-- The UPDATE is the upward repair for staging databases that already carry a seeded row. It is scoped to
+-- rows the SEEDS own, so a human who deliberately set the stage on /team/ai/rollout keeps their choice -
+-- a seed must never overrule a person, in either direction.
+-- ---------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=1),stage TEXT NOT NULL DEFAULT 'off',reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO ai_audience_rollout (id,stage,reason,updated_by,updated_at) VALUES
+ (1,'customers','UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.','uat_staging_seed',1789300000000);
+UPDATE ai_audience_rollout SET stage='customers',reason='UAT-ONLY: owner decision 2026-09-22 opens the assistant to customers on UAT deployments so human testers can exercise it. Honoured only where PAWSPACE_DEPLOYMENT_ENV is a UAT environment.',updated_by='uat_staging_seed',updated_at=1789300000000 WHERE id=1 AND stage IN ('off','staff_only') AND updated_by IN ('uat_staging_seed','founder_seed','founder@pawspace.in');
+
+-- UPWARD REPAIR for the trainer rate above, the same shape as the provider acceptance windows in #968.
+--
+-- INSERT OR IGNORE leaves an existing row exactly as it was, so a staging database that already carries
+-- UAT-TRAINER-RATE-BLR in a draft or superseded state keeps it, every completed session stays held at
+-- 'pending rate configuration', and trainer earnings remain untestable - which is the whole reason the
+-- row was added. The repair only publishes the seed's OWN row (updated_by='uat_staging_seed', carrying
+-- the UAT-ONLY marker) and does not touch the rate: a rate is a commercial figure, and raising one
+-- automatically would be inventing compensation policy rather than repairing a seed. Finance's own
+-- published rule supersedes this one on version order and is never modified here.
+UPDATE training_compensation_rules SET status='published',updated_at=1789300000000 WHERE id='UAT-TRAINER-RATE-BLR' AND status!='published' AND updated_by='uat_staging_seed' AND reason LIKE 'UAT-ONLY-NOT-PRODUCTION:%';

@@ -95,6 +95,15 @@ CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQ
     method: "POST", headers: { "content-type": "application/json", ...STAFF },
     body: JSON.stringify({ bookingId: "BK-SESS", action: "add_proof", beforePhotoRef: "uat://proof/BK-SESS/before", afterPhotoRef: "uat://proof/BK-SESS/after", checklist: ["bath", "dry"] }),
   }));
+  // This booking is mode='pay_after_service' with nothing captured, which is exactly the case the owner
+  // decision of 2026-09-22 (decision 7) says may not complete until the collection is recorded. These
+  // cases are about subscription-session consumption and the legibility of a missing commercial term,
+  // not about the collection gate, so the provider records the collection here the way they would on the
+  // doorstep. tests/service-cash-collection.test.mjs owns the gate itself.
+  await route.POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
+    method: "POST", headers: { "content-type": "application/json", ...STAFF },
+    body: JSON.stringify({ bookingId: "BK-SESS", action: "record_cash_collection", collectedAmount: 1899, collectionMethod: "cash" }),
+  }));
   sqlite.prepare("INSERT INTO customer_grooming_subscriptions (id,customer_id,plan_code,service_package_code,total_sessions,sessions_reserved,sessions_consumed,status,started_at,expires_at,source_booking_id,catalogue_version,created_at,updated_at) VALUES ('GSUB-1','CUS-SESS','groom10','dog-basic',10,1,0,'active',?,?,'BK-SUB-PURCHASE','v1',?,?)").run(now, now + 365 * 86400000, now, now);
   sqlite.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES ('BSU-1','BK-SESS','CUS-SESS','GSUB-1',1,0,'reserved',?,?)").run(now, now);
 

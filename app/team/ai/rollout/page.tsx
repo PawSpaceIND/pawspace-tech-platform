@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Snap = { stage?: string; stages?: string[]; staffEnabled?: boolean; customersEnabled?: boolean; updatedBy?: string | null };
+type Snap = { stage?: string; stages?: string[]; staffEnabled?: boolean; customersEnabled?: boolean; updatedBy?: string | null; customerRolloutUatOnly?: boolean; customerRolloutApprovedHere?: boolean };
 const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
 const card = { background: "white", border: "1px solid #e5dcef", borderRadius: 14, padding: 18 } as const;
 const LABEL: Record<string, string> = { off: "Off · everyone gets a human", staff_only: "Staff only · internal preview", customers: "Customers · full rollout" };
@@ -22,6 +22,12 @@ export default function AiRolloutPage() {
       <div style={{ fontSize: 13, color: "#746b7d", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em" }}>Current stage</div>
       <div style={{ fontSize: 24, fontWeight: 800, margin: "6px 0 4px" }}>{LABEL[stage] || stage}</div>
       <div style={{ fontSize: 12, color: "#746b7d" }}>staff {snap.staffEnabled ? "on" : "off"} · customers {snap.customersEnabled ? "on" : "off"}{snap.updatedBy ? ` · by ${snap.updatedBy}` : ""}</div>
+      {
+        /* Owner decision 2026-09-22: the customer stage is honoured on UAT deployments only. Without
+         * this line, setting "customers" here on any other deployment left the status reading
+         * "customers off" with nothing to explain why, which reads as a broken button. */
+        snap.customerRolloutUatOnly && snap.customerRolloutApprovedHere === false && <p role="note" style={{ fontSize: 12, color: "#8a5a00", background: "#fff6ec", border: "1px solid #f3d9b4", borderRadius: 10, padding: 10, marginTop: 12 }}>The customer stage is approved for UAT deployments only. On this deployment, selecting it keeps the AI at staff-only and customers continue to reach a human.</p>
+      }
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>{stages.map(s => <button key={s} disabled={Boolean(busy) || s === stage} onClick={() => set(s)} style={{ flex: "1 1 30%", padding: 14, border: s === stage ? "2px solid #F6920A" : "1px solid #e5dcef", background: s === stage ? "#fff6ec" : "white", borderRadius: 12, fontWeight: 800, cursor: s === stage ? "default" : "pointer" }}>{busy === s ? "…" : s.replace("_", " ")}</button>)}</div>
     </div>
     <p style={{ fontSize: 12, color: "#746b7d", marginTop: 14 }}>This never overrides a stricter control — if the AI provider isn&apos;t connected or a kill-switch is thrown, the AI stays off regardless of stage.</p>

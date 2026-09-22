@@ -1,6 +1,17 @@
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"./grooming-policy-governance";
 import{evaluateCancellationRefund,resolveRefundPolicy}from"./refund-policy-governance";
 type Row=Record<string,unknown>;
+/**
+ * Work-order states a CUSTOMER may still cancel from.
+ *
+ * `payment_pending` is here deliberately (owner decision 2026-09-22). An unpaid reservation used to be
+ * the one thing a customer could NOT cancel: the preview resolved "unavailable" and the cancel form was
+ * not rendered at all, so a slot they no longer wanted could only be released by support. It is also the
+ * cheapest cancellation there is - evaluateCancellationRefund already returns 0 for an uncaptured
+ * payment, so no refund case is opened and no money moves.
+ */
+export const CUSTOMER_CANCELLABLE_WORK_STATUSES=["confirmed","assigned","awaiting_acceptance","payment_pending"] as const;
+
 export type GroomingChangePreview={consentRevision:string;bookingId:string;currency:string;durationMinutes:number;reschedule:{allowed:boolean;feeAmount:number;reasons:string[]};cancellation:{mode:"cancel"|"review"|"unavailable";refundAmount:number|null;reasons:string[]};policyVersion:string;refundPolicyVersion:string};
 export async function groomingChangePreview(db:D1Database,booking:Row,work:Row,payment:Row,now=Date.now()):Promise<GroomingChangePreview>{
  let pricing:Record<string,unknown>={};try{pricing=JSON.parse(String(booking.pricing_json||"{}"));}catch{}
@@ -14,7 +25,7 @@ export async function groomingChangePreview(db:D1Database,booking:Row,work:Row,p
  const reasons=[...reschedule.reasons];if(!intact)reasons.push("The existing booking schedule requires review");if(!movable)reasons.push("This service has progressed and cannot be rescheduled directly");
  const refundPolicy=await resolveRefundPolicy(db,{serviceCode:"grooming",cityId:String(booking.city_id||"")});
  const refund=evaluateCancellationRefund(refundPolicy,{scheduledStart:String(booking.scheduled_start),bookingStatus:String(booking.status),cancelledBy:"customer",amountPaid:["captured","paid"].includes(String(payment.status))?Number(payment.amount||0):0,couponValue:Number(pricing?.discount??0),now});
- const mode=!refund.automatic&&refund.requiresApproval?"review":cancel.allowed&&["confirmed","assigned","awaiting_acceptance"].includes(String(work.status))?"cancel":"unavailable";
+ const mode=!refund.automatic&&refund.requiresApproval?"review":cancel.allowed&&(CUSTOMER_CANCELLABLE_WORK_STATUSES as readonly string[]).includes(String(work.status))?"cancel":"unavailable";
  const result={bookingId:String(booking.id),currency:String(booking.currency||"INR"),durationMinutes:intact?duration/60000:0,reschedule:{allowed:reschedule.allowed&&intact&&movable,feeAmount:reschedule.feeAmount,reasons},cancellation:{mode:mode as "cancel"|"review"|"unavailable",refundAmount:mode==="cancel"?refund.customerRefundAmount:null,reasons:mode==="unavailable"?cancel.reasons:refund.reasons},policyVersion:reschedule.policyVersion,refundPolicyVersion:refund.policyVersion};
  const basis=JSON.stringify({preview:result,booking:{status:booking.status,start:booking.scheduled_start,end:booking.scheduled_end,updatedAt:booking.updated_at},work:{status:work.status,provider:work.provider_id,updatedAt:work.updated_at},payment:{status:payment.status,amount:payment.amount,updatedAt:payment.updated_at}});
  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(basis));

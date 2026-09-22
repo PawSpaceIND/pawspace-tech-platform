@@ -29,3 +29,69 @@ test("preview gateway admits customer scope and refuses a provider scope",async 
  const provider=await sessionCookie(f.db,"provider","groom_arun","provider:preview-test");const denied=await authorizePlatformSessionRequest(new Request(`https://uat.pawspace.in${f.path}`,{headers:{cookie:provider}}),f.db);assert.equal(denied.status,403);
 });
 test("preview requires a booking ID and rejects unknown bookings",async t=>{const f=await fixture(t);for(const [path,status] of [["/api/grooming-booking-change",400],["/api/grooming-booking-change?bookingId=MISSING",404]]){const p=await routeCall("../../app/api/grooming-booking-change/route.ts","GET",path,null,f.result.customerCookie);assert.equal(p.status,status);}});
+
+// ---------------------------------------------------------------------------------------------------
+// Owner decision 2026-09-22: a customer MAY cancel a reservation they have not paid for. Until now an
+// unpaid booking was the one thing they could not cancel - provider_work_orders.status='payment_pending'
+// was missing from the allowed list, so the preview resolved "unavailable", grooming-cancel-form.tsx
+// rendered nothing, and only support could release the slot.
+//
+// These cases drive the real preview and the real POST, then read the database back: the slot must
+// actually be freed and no money may move, because there was none to move.
+// ---------------------------------------------------------------------------------------------------
+
+test("a customer can cancel an unpaid grooming reservation, and the slot is released", async t => {
+  const f = await fixture(t);
+  // Put the booking back into the state a customer reaches by booking and not paying.
+  f.sqlite.prepare("UPDATE provider_work_orders SET status='payment_pending' WHERE booking_id=?").run(f.result.bookingId);
+  f.sqlite.prepare("UPDATE canonical_bookings SET status='payment_pending' WHERE id=?").run(f.result.bookingId);
+  f.sqlite.prepare("UPDATE booking_payments SET status='created' WHERE booking_id=?").run(f.result.bookingId);
+
+  const preview = await f.read();
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body.data.cancellation.mode, "cancel", "an unpaid booking must offer cancellation");
+
+  const cancelled = await routeCall("../../app/api/grooming-booking-change/route.ts", "POST", "/api/grooming-booking-change",
+    { bookingId: f.result.bookingId, customerId: "PREVIEW-CUSTOMER", action: "cancel", reason: "Plans changed before paying", consentRevision: preview.body.data.consentRevision },
+    f.result.customerCookie);
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+
+  assert.equal(f.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(f.result.bookingId).status, "cancelled");
+  assert.equal(f.sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id=?").get(f.result.bookingId).status, "cancelled");
+  const held = f.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status NOT IN ('cancelled','completed')").get(f.result.bookingId).n;
+  assert.equal(held, 0, "the slot must be released, not left holding the provider");
+});
+
+test("cancelling an unpaid grooming reservation moves no money and opens no refund case", async t => {
+  const f = await fixture(t);
+  f.sqlite.prepare("UPDATE provider_work_orders SET status='payment_pending' WHERE booking_id=?").run(f.result.bookingId);
+  f.sqlite.prepare("UPDATE canonical_bookings SET status='payment_pending' WHERE id=?").run(f.result.bookingId);
+  f.sqlite.prepare("UPDATE booking_payments SET status='created' WHERE booking_id=?").run(f.result.bookingId);
+
+  const preview = await f.read();
+  assert.equal(preview.body.data.cancellation.refundAmount ?? 0, 0, "an uncaptured payment can refund nothing");
+
+  // The refund-case table is created lazily, only when a case is actually opened - so "still absent"
+  // is a stronger result than "count unchanged". Count either way.
+  const refundCases = () => {
+    const exists = f.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='booking_refund_cases'").get().n;
+    return exists ? f.sqlite.prepare("SELECT COUNT(*) n FROM booking_refund_cases").get().n : 0;
+  };
+  const before = refundCases();
+  const cancelled = await routeCall("../../app/api/grooming-booking-change/route.ts", "POST", "/api/grooming-booking-change",
+    { bookingId: f.result.bookingId, customerId: "PREVIEW-CUSTOMER", action: "cancel", reason: "Plans changed before paying", consentRevision: preview.body.data.consentRevision },
+    f.result.customerCookie);
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+
+  assert.equal(refundCases(), before, "no refund case may be opened for money never taken");
+  const payment = f.sqlite.prepare("SELECT status,amount FROM booking_payments WHERE booking_id=?").get(f.result.bookingId);
+  assert.notEqual(payment.status, "captured", "cancelling must never capture");
+  assert.notEqual(payment.status, "refund_pending", "there is nothing to refund");
+});
+
+test("a booking whose provider has already started is still refused, so the new state is not a blanket pass", async t => {
+  const f = await fixture(t);
+  f.sqlite.prepare("UPDATE provider_work_orders SET status='on_the_way' WHERE booking_id=?").run(f.result.bookingId);
+  const preview = await f.read();
+  assert.notEqual(preview.body.data.cancellation.mode, "cancel", "an in-progress job must not become customer-cancellable");
+});

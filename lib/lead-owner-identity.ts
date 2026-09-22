@@ -8,6 +8,7 @@
  *   Do not weaken masking because the owner could not be resolved.
  */
 import{ensureLeadAssignmentTables}from"./lead-assignment-governance";
+import{leadCityId}from"./lead-assignment-governance";
 import{normalizeLeadServiceCode}from"./lead-lifecycle-governance";
 
 type Db=D1Database;
@@ -38,7 +39,9 @@ export async function resolveLeadOwner(db:Db,hint:string|null|undefined):Promise
 export type LeadOwnerAssignment={owner:string;resolved:boolean;reason?:string};
 type LeadOwnerScope={serviceCode:string;cityId:string;teamCode:string};
 function scopeList(value:unknown):string[]{let parsed:unknown;try{parsed=JSON.parse(String(value??"[]"));}catch{throw new Error("Lead assignment membership scope could not be read");}if(!Array.isArray(parsed)||!parsed.every(v=>typeof v==="string"&&v.trim()))throw new Error("Lead assignment membership scope is malformed");return parsed as string[];}
-function scopeCity(value:unknown){const key=text(value).toLowerCase();const aliases:Record<string,string>={bangalore:"blr",bengaluru:"blr",hyderabad:"hyd",chennai:"maa",mumbai:"mum",pune:"pnq"};return aliases[key]??key;}
+// A second copy of the alias map used to live here, so the three places that match a lead's city could
+// drift apart silently. One resolver now, owned by lib/lead-assignment-governance.ts.
+const scopeCity=(value:unknown)=>leadCityId(value);
 function matchesLeadScope(row:Row,scope:LeadOwnerScope){
  return text(row.team_code).toLowerCase()===text(scope.teamCode).toLowerCase()
   &&scopeList(row.service_codes_json).some(service=>normalizeLeadServiceCode(service)===normalizeLeadServiceCode(scope.serviceCode))

@@ -52,6 +52,30 @@ section 1: decision 3 (the AI provider is unfunded, so a customer turn still mee
 (external messaging is not connected, so nothing actually sends). Both should be built so they work the
 moment those land — but neither can be signed off by a tester until then.
 
+### What shipped for each, and what a tester needs before they can see it
+
+Recorded 2026-09-22, after the decisions above were built. Decisions 8, 9 and 10 shipped in #968;
+1-7 in #971. Four depend on seeded rows, so a **staging redeploy** must run before a tester can see them -
+`INSERT OR IGNORE` does nothing to a row staging already carries, which is why each seed now also carries
+an upward repair scoped to the rows the seeds own.
+
+| # | Built | Redeploy first |
+| --- | --- | --- |
+| 1 | Card, review line and bill all read Rs 499 from `lib/meet-and-greet.ts`; no rupee figure is typed into the screen. The bill says "paid separately" because a Meet & Greet is its own request and never joins the stay quote. | |
+| 2 | Grooming and boarding. Boarding releases the stay, the capacity lock and the scheduling reservation; no refund row is written. A booking that HAS taken money still goes to policy review, and a checked-in stay is still an Operations incident. | |
+| 3 | The stage is honoured only on a UAT deployment and fails closed elsewhere. | yes |
+| 4 | Web chat had no staff reply path at all; it has one now. Consent is asked in-thread on takeover. | yes (rollout row) |
+| 5 | One resolver shared by all three matchers; `lead-owner-identity`'s duplicate alias map is gone. | |
+| 6 | The queue carries the canonical name, with the CRM contact as a named fallback, and opens the thread directly. | |
+| 7 | Provider records the collection; the ops override needs `payments.manage` plus a stored reason and writes `withheld_pending_collection`, never `accrued`. | |
+| 8 | Placeholder rate published, marked UAT-ONLY-NOT-PRODUCTION. The repair publishes a stale row without touching the figure. | yes |
+| 9 | 30 minutes for the named UAT roster. Taxi and walking stay at 3 minutes, deliberately. | yes |
+| 10 | CL, SL and EL exactly as the /me placeholder advertises. An unknown code still answers 409. | yes |
+
+The caveat above still holds for decisions 3 and 4: both are built to work the moment the external setup in
+section 1 lands, and until then a customer turn meets an honest refusal and a WhatsApp move answers 503
+saying no message was sent. Neither can be signed off by a tester before those keys exist.
+
 ## 3. Verification that only a human on staging can close
 
 - Browser journeys **on the deployed staging host**. The sandbox that produced this branch cannot reach it, so every
@@ -63,11 +87,16 @@ moment those land — but neither can be signed off by a tester until then.
 
 ## 4. Repository gates that need a human decision
 
-- **Gitleaks Secret Scan** is red for this PR's commit range: ten test-only literals (QA idempotency labels, a test
-  signing value, and the `rzp_test_taxiFixture` key-id **format** fixture). The current source no longer contains
-  key-shaped literals, but the historical commits in the range still do. The repo's convention for exactly this case
-  is to list the exact fingerprints in `.gitleaksignore`; that file was deliberately **not** touched here because it
-  is a security-policy gate. A maintainer should decide.
+- **Gitleaks Secret Scan — RESOLVED 2026-09-22 by owner decision.** It was red for this PR's commit range: test-only
+  literals (QA idempotency labels, a test signing value, and the Razorpay test-mode key-id **format** fixture (`rzp_test_` prefix, body `taxiFixture`)).
+  The current source no longer contains key-shaped literals, but the historical commits in the range still do, and
+  because gitleaks scans commit history, editing today's files cannot clear a finding pinned to an old commit.
+  This file previously recorded that `.gitleaksignore` was deliberately left untouched because it is a
+  security-policy gate, and that a maintainer should decide. The owner made that call: the five findings on #971
+  (all in `1dc15704`, already on `main`) were each verified as synthetic and listed as exact
+  `commit:file:rule:line` fingerprints in `.gitleaksignore`, alongside the six entries the repo already carried for
+  the same reason. Exact fingerprints were used, not path or rule exclusions, so the rules stay armed for anything
+  new in those same files.
 - **CodeQL — RESOLVED.** This previously read as an open item: one new high-severity alert whose rule
   could not be read from the build sandbox. The owner opened the alert page and supplied the detail, and
   it turned out to be alert #55, `js/user-controlled-bypass` (CWE-290 / CWE-807), at

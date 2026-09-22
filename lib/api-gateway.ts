@@ -12,7 +12,8 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
   env.DB.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
-async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();
+/** Exported so the mapping can be asserted by executing it, rather than by matching this file's text. */
+export async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();
   // V2 customer reads still need a verified customer/session or an authorized staff actor.
   // Unknown V2 paths and unsupported methods must keep the existing default-deny permission.
   if(method==="GET"&&(url.pathname==="/api/v2/grooming-catalogue"||url.pathname==="/api/v2/grooming-checkout"))return "scheduling.book";
@@ -172,10 +173,16 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
     // continue to require Finance authority; requesting customer payment never grants that power.
     return body.action==="request_after_service"?"bookings.view":"payments.manage";
   }
+  // Staff replying on a web chat thread, and the in-thread WhatsApp consent that precedes any move
+  // (owner decision 2026-09-22, decision 4). Same permission the WhatsApp conversation control carries.
+  if(url.pathname==="/api/chat-human-reply")return "communications.manage";
   if(url.pathname==="/api/grooming-lifecycle"){
     if(method==="GET")return "bookings.view";
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
-    return body.action==="mark_paid"?"payments.manage":"bookings.view";
+    // authorise_completion_without_collection closes a job with the money unaccounted for (owner
+    // decision 2026-09-22, decision 7). It is an Operations action, so it carries mark_paid's
+    // permission here as well as in the route - the two layers must not disagree about who may do it.
+    return body.action==="mark_paid"||body.action==="authorise_completion_without_collection"?"payments.manage":"bookings.view";
   }
   if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";if(body.action==="apply_package_upgrade")return "pricing.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue","rebook_requested","refund_requested"].includes(String(body.action))?"communications.message":"bookings.manage";}
   if(url.pathname==="/api/meet-and-greet")return method==="POST"?null:"bookings.manage";

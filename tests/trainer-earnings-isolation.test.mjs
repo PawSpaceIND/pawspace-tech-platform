@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {freshWorld,seedBooking,TRAINER,OTHER_TRAINER,routeCall,sessionCookie} from "./helpers/training-lifecycle-harness.mjs";
 const {materializeTrainingBooking}=await import("../lib/training-programme.ts");
 const {ensureTrainingFinanceTables,listTrainerEarnings,refreshTrainingFinanceReadModel}=await import("../lib/training-finance.ts");
@@ -46,4 +47,46 @@ test("earnings error and loading states never masquerade as zero earnings and of
  const error=render({loading:false,error:"Unable to load Training earnings",loaded:false});assert.match(error,/Retry earnings/);assert.doesNotMatch(error,/₹0|No earnings ledger yet/);
  const loading=render({loading:true,error:"",loaded:false});assert.match(loading,/Loading Training earnings/);assert.doesNotMatch(loading,/₹0/);
  assert.match(render({loading:false,error:"",loaded:true}),/₹0/);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// LP-N17. Every completed Training session on staging was held at "pending rate configuration - No
+// published trainer compensation rule matches this completed session", so trainer earnings, payout
+// statements and the Finance training views could not be exercised at all. The cases above seed a rule
+// by hand, which proves the calculation but not that a tester on staging ever gets one.
+//
+// Owner decision 2026-09-22: seed a placeholder. These cases load the REAL staging seed and drive the
+// real read model through it, so a seed that stops publishing the rule fails here.
+// ---------------------------------------------------------------------------------------------------
+
+test("LP-N17: the staging seed publishes a trainer rate, so a completed session stops being held", async () => {
+  const world = await seeded(), now = Date.now();
+  world.sqlite.prepare("UPDATE training_programmes SET city_id='blr' WHERE booking_id='OTHER'").run();
+  world.sqlite.prepare("UPDATE training_sessions SET status='completed',completed_at=?").run(now);
+
+  const before = await listTrainerEarnings(world.db, TRAINER);
+  assert.ok(before.earnings.every(e => e.status === "pending_rate_configuration"),
+    "precondition: with no published rule every completed session is held");
+  assert.match(String(before.earnings[0].hold_reason), /No published trainer compensation rule/);
+
+  // The real file the staging deploy loads - not a hand-written rule.
+  world.sqlite.exec(fs.readFileSync(new URL("../scripts/uat-staging-provider-capacity.sql", import.meta.url), "utf8"));
+
+  const after = await listTrainerEarnings(world.db, TRAINER);
+  assert.equal(after.earnings.length, 2);
+  assert.ok(after.earnings.every(e => e.status !== "pending_rate_configuration"),
+    "the seeded rule must resolve every completed session");
+  assert.ok(after.earnings.every(e => Number(e.gross_earning) > 0), "a resolved session must carry a real figure");
+  assert.ok(after.earnings.every(e => e.rule_id === "UAT-TRAINER-RATE-BLR"), "it must be the seeded rule that matched");
+});
+
+test("LP-N17: the seeded rate is unmistakably sandbox data, not a compensation policy", () => {
+  const seed = fs.readFileSync(new URL("../scripts/uat-staging-provider-capacity.sql", import.meta.url), "utf8");
+  const row = seed.split("\n").find(line => line.includes("UAT-TRAINER-RATE-BLR"));
+  assert.ok(row, "the staging seed must publish a trainer rate");
+  assert.match(row, /UAT-ONLY-NOT-PRODUCTION/, "the row must say plainly that it is not a policy");
+  assert.match(row, /'per_completed_session'/, "the placeholder must use the rate type the calculation expects");
+  // provider_id and package_code stay NULL so every seeded trainer and package is covered, and a real
+  // Finance-published rule outranks this one rather than colliding with it.
+  assert.match(row, /'blr',NULL,NULL,/, "the placeholder must not be pinned to one trainer or package");
 });
