@@ -1,0 +1,26 @@
+RUN=35649768568 WORKFLOW=Deploy staging CONCLUSION=success
+EXPECTED_SHA=b1f4d39639c6e996bcd60a8aa28e7db41eb57eed CONFIRM=staging SMS_SMOKE=disabled
+START=2026-09-21T20:18:39Z END=2026-09-21T20:23:32Z
+
+Steps, in order, all success unless marked:
+  Verify the checkout is exactly the requested sha and is clean  success
+  Verify optional Razorpay sandbox relay target                  success (none supplied)
+  Build (vinext)                                                 success
+  Configure staging (name + D1 + sandbox)                        success
+  Apply D1 migrations to staging                                 success
+  Record the currently deployed staging version (rollback ref)   success
+  Deploy to staging                                              success
+  Certify deployed isolation before any D1 write                 success
+  Verify PII-safe Sentry delivery with a controlled exception    success
+  Load the staff directory into the staging D1                   success
+  Load the human-UAT provider roster into the staging D1         success
+  Certify the staging deploy                                     success
+  Send one approved Fast2SMS smoke                               SKIPPED (sms_smoke=disabled)
+  Validate live customer OTP prerequisites                       SKIPPED
+  Redeploy exact SHA with live customer OTP activation           SKIPPED
+  Re-certify exact SHA and isolated D1 after live activation     SKIPPED
+  Certify live OTP guard without sending an SMS                  SKIPPED
+  Upload the sanitized certification evidence                    success (artifact 10660889872)
+
+Final line: "Certified staging deploy of b1f4d39639c6e996bcd60a8aa28e7db41eb57eed at the staging URL".
+No real SMS was sent and no live customer OTP was activated in this run.

@@ -130,9 +130,7 @@ test("the fields that were being dropped are specifically present on both sides"
 });
 
 test("handling requirements, add-ons and the amount to collect are rendered, not merely typed", () => {
-  assert.match(page, /selected\.safetyRequirements\.length/, "declaring a field is not showing it");
-  assert.match(page, /Handling requirements/);
-  assert.match(page, /selected\.addOns\.length/);
+  assert.match(page, /<PartnerJobNotes safetyRequirements={selected.safetyRequirements} addOns={selected.addOns}/, "shared notes are rendered by the component covered by the executable Training projection test");
   // The two amounts must not be conflated. amount_due_now is what was owed ONLINE at booking and the
   // grooming flow sets it to 0 for pay_after_service, which is precisely when the partner collects -
   // so labelling amountDueNow "collect" was backwards and showed nothing on the one job that needs it.

@@ -157,8 +157,9 @@ test("statutory package + monthly close count only PawSpace's commission GST as 
   booking(sqlite, "BK1", { serviceCode: "boarding", providerId: "P1", amount: 1000, start: "2026-07-10" });
   await terms.computeOrderPayout(db, { bookingId: "BK1", actorId: FINANCE });
   sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at) VALUES ('bi1','BK1','GRM-1','issued','INR',1000,152.54,847.46,?)").run(istMs(2026, 7, 10));
+  sqlite.prepare("INSERT INTO service_invoice_ownership VALUES ('bi1','pawspace_india','reg_ka_29',?,?,?)").run(MAKER,"Explicit test invoice ownership",Date.now());
 
-  const pkg = await gst.generateStatutoryPackage(db, { entityId: "e", registrationId: "r", periodCode: "2026-07", reason: "close" }, MAKER);
+  const pkg = await gst.generateStatutoryPackage(db, { entityId: "pawspace_india", registrationId: "reg_ka_29", periodCode: "2026-07", reason: "close" }, MAKER);
   assert.equal(pkg.summary.serviceOutputTax, 45.76, "package own output = commission GST only");
   assert.equal(pkg.summary.outputTax, 45.76, "no B2B ledger output, so total own output = commission GST");
   assert.equal(pkg.summary.taxCollectedFromCustomers, 152.54);
@@ -186,6 +187,7 @@ test("GSTR-3B counts only PawSpace's commission GST as output; the provider-supp
   await terms.computeOrderPayout(db, { bookingId: "BK1", actorId: FINANCE });
   // The customer invoice carries the full inclusive GST (152.54 on a ₹1000 inclusive order).
   sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at) VALUES ('bi1','BK1','GRM-1','issued','INR',1000,152.54,847.46,?)").run(istMs(2026, 7, 10));
+  sqlite.prepare("INSERT INTO service_invoice_ownership VALUES ('bi1','pawspace_india','reg_ka_29',?,?,?)").run(MAKER,"Explicit test invoice ownership",Date.now());
 
   const r = await returns.generateGstr3b(db, { entityId: ENTITY, registrationId: REG, periodCode: "2026-07" }, MAKER);
   assert.equal(r.summary.serviceVerticalTax, 45.76, "PawSpace's own output GST = the commission GST only");

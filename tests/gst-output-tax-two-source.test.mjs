@@ -62,8 +62,10 @@ function createBookingInvoices(sqlite) {
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,invoice_number TEXT,status TEXT,currency TEXT,gross_amount REAL,tax_amount REAL,net_amount REAL,issued_at INTEGER,created_at INTEGER,updated_at INTEGER)");
 }
 function seedServiceInvoice(sqlite, tax, issuedAt, status = "issued") {
+  const invoiceId=`bi_${crypto.randomUUID().slice(0, 8)}`;
+  sqlite.prepare("INSERT INTO service_invoice_ownership VALUES (?,?,?,?,?,?)").run(invoiceId,ENTITY,REG,ACTOR,"Explicit test invoice owner",Date.now());
   sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at) VALUES (?,?,?,?,?,?,?,?,?)")
-    .run(`bi_${crypto.randomUUID().slice(0, 8)}`, `bk_${crypto.randomUUID().slice(0, 6)}`, `GRM-${Math.random()}`, status, "INR", tax * 6, tax, tax * 5, issuedAt);
+    .run(invoiceId, `bk_${crypto.randomUUID().slice(0, 6)}`, `GRM-${Math.random()}`, status, "INR", tax * 6, tax, tax * 5, issuedAt);
 }
 
 test("GSTR-3B monthly package sums ledger output + service booking-invoice tax", async () => {
@@ -97,4 +99,38 @@ test("output-tax roll-up degrades to ledger-only when booking_invoices is absent
   const res = await gst.generateStatutoryPackage(db, { entityId: ENTITY, registrationId: REG, periodCode: PERIOD, reason: "monthly close" }, ACTOR);
   assert.equal(res.summary.serviceOutputTax, 0);
   assert.equal(res.summary.outputTax, 720);
+});
+
+test('statutory service output stays isolated by entity and registration',async()=>{
+ const {sqlite,db,gst}=await world();createBookingInvoices(sqlite);
+ seedServiceInvoice(sqlite,360,istMs(2026,7,15));
+ const otherInvoice='OTHER-INVOICE';
+ sqlite.prepare("INSERT INTO booking_invoices(id,booking_id,status,gross_amount,tax_amount,issued_at) VALUES(?,?,'issued',118,18,?)").run(otherInvoice,'OTHER-BOOKING',istMs(2026,7,15));
+ sqlite.prepare('INSERT INTO service_invoice_ownership VALUES(?,?,?,?,?,?)').run(otherInvoice,'OTHER-ENTITY','OTHER-REG',ACTOR,'Other entity invoice',Date.now());
+ const first=await gst.generateStatutoryPackage(db,{entityId:ENTITY,registrationId:REG,periodCode:PERIOD},ACTOR);
+ const other=await gst.generateStatutoryPackage(db,{entityId:'OTHER-ENTITY',registrationId:'OTHER-REG',periodCode:PERIOD},ACTOR);
+ assert.equal(first.summary.serviceOutputTax,360);assert.equal(first.summary.serviceInvoiceCount,1);
+ assert.equal(other.summary.serviceOutputTax,18);assert.equal(other.summary.serviceInvoiceCount,1);
+ const wrongRegistration=await gst.generateStatutoryPackage(db,{entityId:ENTITY,registrationId:'OTHER-REG',periodCode:PERIOD},ACTOR);
+ assert.equal(wrongRegistration.summary.serviceOutputTax,0);
+});
+test('unassigned service invoices block statutory generation instead of appearing in every entity',async()=>{
+ const {sqlite,db,gst}=await world();createBookingInvoices(sqlite);
+ sqlite.prepare("INSERT INTO booking_invoices(id,booking_id,status,gross_amount,tax_amount,issued_at) VALUES('UNASSIGNED','B','issued',118,18,?)").run(istMs(2026,7,15));
+ await assert.rejects(gst.generateStatutoryPackage(db,{entityId:ENTITY,registrationId:REG,periodCode:PERIOD},ACTOR),/Assign each service invoice/);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM finance_statutory_packages').get().n,0);
+});
+
+test('invoice assignment is immutable, entity scoped and refused for a locked period',async()=>{
+ const{sqlite,db}=await world();createBookingInvoices(sqlite);
+ const{assignServiceInvoiceOwnership}=await import('../lib/service-invoice-ownership.ts');
+ sqlite.exec("INSERT INTO finance_entities VALUES ('E1','Test Entity','IN','active','qa',1,1,1);INSERT INTO tax_registrations VALUES ('R1','E1','KA','gstin','TESTONLY','active','2026-01-01',NULL,'qa',1,1,1)");
+ sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,issued_at) VALUES ('I1','B1','QA-1','issued',?)").run(istMs(2026,7,15));
+ const input={invoiceId:'I1',entityId:'E1',registrationId:'R1',reason:'Synthetic invoice assignment'};
+ const rejectStatus=status=>error=>error instanceof Response&&error.status===status;
+ await assert.rejects(assignServiceInvoiceOwnership(db,{...input,entityId:'OTHER'},ACTOR),rejectStatus(409));
+ await assignServiceInvoiceOwnership(db,input,ACTOR);await assignServiceInvoiceOwnership(db,input,ACTOR);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM service_invoice_ownership WHERE invoice_id='I1'").get().n,1);
+ sqlite.exec("INSERT INTO finance_close_periods VALUES ('2026-07','locked','{}',1,'checker',1)");
+ await assert.rejects(assignServiceInvoiceOwnership(db,input,ACTOR),rejectStatus(409));
 });

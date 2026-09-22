@@ -61,7 +61,7 @@ async function world({ publishPolicy = true, noShowTreatment = "refundable", com
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__TRAIN_CANCEL_DB__ = db;
-  globalThis.__TRAIN_CANCEL_ENV__ = { APP_ENV: "staging" };
+  globalThis.__TRAIN_CANCEL_ENV__ = { APP_ENV: "staging", PAWSPACE_PAYMENT_ENV: "sandbox" };
 
   const cancel = await import("../lib/training-cancellation.ts");
   const programme = await import("../lib/training-programme.ts");

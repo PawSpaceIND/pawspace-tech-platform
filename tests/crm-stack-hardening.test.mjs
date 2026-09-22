@@ -281,7 +281,7 @@ test("real execution: revenue-crm lead list joins CRM contact names and log_atte
   assert.equal(leads.length, 1);
   assert.equal(leads[0].customer_name, "Join Test", "the staff list shows the real joined customer name");
 
-  const attemptUpdate = findStatement(revenueRoute, "UPDATE lead_work_items SET ${field}=?").replaceAll("${field}", "call_attempts");
+  const attemptUpdate = findStatement(fs.readFileSync("lib/lead-attempt.ts","utf8"), "UPDATE lead_work_items SET ${field}=?").replaceAll("${field}", "call_attempts");
   db.prepare(attemptUpdate).run(1, now, "RNR", "active", 0, now + 4 * 3600000, now, "LEAD-9001");
   const lead = db.prepare("SELECT call_attempts,last_outcome FROM lead_work_items WHERE id=?").get("LEAD-9001");
   assert.equal(lead.call_attempts, 1);

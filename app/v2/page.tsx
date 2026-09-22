@@ -334,9 +334,9 @@ export default function PawSpaceV2() {
               </>
             ) : (
               <>
-                {challenge?.sandboxCode && <div className={styles.sandboxCode}><span>UAT CODE</span><b>{challenge.sandboxCode}</b><small>No real SMS is sent in sandbox.</small></div>}
+                {challenge?.sandboxCode && <div className={styles.sandboxCode}><span>Sandbox code (no real SMS yet)</span><b>{challenge.sandboxCode}</b><small>No real SMS is sent in sandbox.</small></div>}
                 <label className={styles.field}><span>Verification code</span><input className={styles.codeInput} autoFocus inputMode="numeric" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="••••••" aria-label="Verification code" /></label>
-                <label className={styles.field}><span>Your name <em>first visit only</em></span><input value={name} onChange={event => setName(event.target.value)} placeholder="How should PawSpace greet you?" aria-label="Your name" /></label>
+                {!challenge?.existingCustomer && <label className={styles.field}><span>Your name <em>first visit only</em></span><input value={name} onChange={event => setName(event.target.value)} placeholder="How should PawSpace greet you?" aria-label="Your name" /></label>}
                 <button className={styles.authPrimary} disabled={authBusy} onClick={() => void verifyOtp()}>{authBusy ? "Opening PawSpace…" : "Open my PawSpace"}<span>→</span></button>
                 <button className={styles.changeNumber} onClick={resetAuth}>← Use a different number</button>
               </>

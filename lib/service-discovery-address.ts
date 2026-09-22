@@ -2,6 +2,7 @@ import{cityFulfilmentVerdict}from"./city-coverage-authority";
 import{geocodeAddress}from"./address-autocomplete";
 import{validateIndianPincode}from"./pincode-validation";
 import{resolveZoneByPincode}from"./service-zones";
+import{serviceAddressText}from"./service-address-text";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -15,7 +16,7 @@ async function ensureAddressTables(db:Db){
   await db.prepare("CREATE TABLE IF NOT EXISTS customer_service_address_geocodes (address_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pincode TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,resolved_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_service_geocodes_customer ON customer_service_address_geocodes(customer_id,updated_at DESC)").run();
 }
-function completeAddress(row:Row,pincode:string){return[String(row.line1||"").trim(),String(row.line2||"").trim(),String(row.area||"").trim(),String(row.city||"").trim(),pincode,"India"].filter(Boolean).join(", ");}
+function completeAddress(row:Row,pincode:string){return serviceAddressText({line1:String(row.line1||""),line2:String(row.line2||""),area:String(row.area||""),city:String(row.city||""),postalCode:pincode,country:"India"});}
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
 async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
@@ -42,7 +43,7 @@ async function ensureTestProviderHomeBases(db:Db){
  * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
 export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
-  const suppliedAddress=String(input.serviceAddress||"").trim(),suppliedPincode=String(input.servicePincode||"").trim();
+  let suppliedAddress=String(input.serviceAddress||"").trim();const suppliedPincode=String(input.servicePincode||"").trim();
   let row:Row|null=null;
   if(suppliedAddress||suppliedPincode){
     const pin=validateIndianPincode(suppliedPincode);if(!pin.ok)throw new Response("A valid 6-digit service PIN code is required",{status:400});
@@ -57,7 +58,11 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const resolved=await resolveZoneByPincode(db,validated.pincode);if(!resolved||!resolved.zone.serviceAvailable)throw Response.json({error:"PawSpace is not currently serving this address",code:"service_zone_unavailable"},{status:409});
   const cityId=String(resolved.assignment.cityId||"").trim().toLowerCase();if(!cityId)throw new Response("The service address has no governed city",{status:409});
   const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw Response.json({error:"PawSpace is not currently serving this address",code:cityVerdict.reason,cityId:cityVerdict.cityCode},{status:409});
-  const address=suppliedAddress?`${suppliedAddress}, ${validated.pincode}, India`:completeAddress(row,validated.pincode);
+  if(suppliedAddress){
+    suppliedAddress=serviceAddressText({line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode});
+    row={...row,id:addressId(input.customerId,validated.pincode,suppliedAddress),line1:suppliedAddress};
+  }
+  const address=completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});

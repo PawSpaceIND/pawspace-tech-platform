@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {freshWorld,seedBooking,completeSession,DOORSTEP,TRAINER,sessionCookie,routeCall} from './helpers/training-lifecycle-harness.mjs';
+const {materializeTrainingBooking}=await import('../lib/training-programme.ts');
+const {mutateTrainingSession}=await import('../lib/training-session-lifecycle.ts');
+const route=await import('../app/api/training-sessions/route.ts');
+async function world(options={}){const w=freshWorld(options.env);seedBooking(w,{id:'PAY-GATE',group:'PAY-GROUP',sessions:2,...options});const p=await materializeTrainingBooking(w.db,{bookingId:'PAY-GATE',actorId:'qa'});return {...w,...p};}
+function action(w,name,extra={}){return mutateTrainingSession(w.db,{sessionId:w.sessions[0].id,action:name,actorId:'qa',idempotencyKey:'qa-'+name,...extra});}
+function noPayment(w){w.sqlite.prepare("DELETE FROM training_quote_payment_attestations").run();w.sqlite.prepare("UPDATE booking_payments SET status='created'").run();w.sqlite.prepare("UPDATE canonical_bookings SET status='payment_pending'").run();}
+function reconciliation(w,{captured=8000,refunded=0,environment='sandbox'}={}){w.sqlite.exec("CREATE TABLE IF NOT EXISTS payment_reconciliation_records (payment_id TEXT PRIMARY KEY,booking_id TEXT,gateway TEXT,environment TEXT,captured_amount REAL,refunded_amount REAL,currency TEXT,gateway_status TEXT,reconciliation_status TEXT,variance_amount REAL)");w.sqlite.prepare("INSERT OR REPLACE INTO payment_reconciliation_records VALUES ('PAY-PAY-GATE','PAY-GATE','razorpay',?,?,?,'INR','captured','matched',0)").run(environment,captured,refunded);w.sqlite.prepare("UPDATE booking_payments SET status='captured',gateway='razorpay'").run();}
+
+test('unpaid ordinary programme refuses provider acceptance through the real route and retains scheduled state',async()=>{const w=await world();noPayment(w);const r=await routeCall(route.POST,'POST','/api/training-sessions',{cookie:await sessionCookie(w.db,'provider',TRAINER),body:{sessionId:w.sessions[0].id,action:'accept',idempotencyKey:'unpaid'}});assert.equal(r.status,409);assert.equal(r.body.code,'training_payment_required');assert.match(r.body.error,/required Training payment/);assert.equal(w.sqlite.prepare('SELECT status FROM training_sessions WHERE id=?').get(w.sessions[0].id).status,'scheduled');});
+for(const [name,status] of [['on_the_way','accepted'],['arrive','on_the_way'],['start','arrived'],['complete','in_session']])test(`unpaid ordinary programme cannot ${name} from an existing ${status} state`,async()=>{const w=await world();noPayment(w);w.sqlite.prepare('UPDATE training_sessions SET status=? WHERE id=?').run(status,w.sessions[0].id);await assert.rejects(action(w,name,DOORSTEP),e=>e instanceof Response&&e.status===409);assert.equal(w.sqlite.prepare('SELECT status FROM training_sessions WHERE id=?').get(w.sessions[0].id).status,status);});
+test('valid split deposit completes a nonfinal session, while the final session still requires the full balance',async()=>{const w=await world();const first=await completeSession(w,w.sessions[0],'split-first');assert.equal(first.status,'completed');await assert.rejects(completeSession(w,w.sessions[1],'split-final'),e=>e instanceof Response&&e.status===409);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM training_session_consumptions').get().n,1);});
+test('canonical Razorpay reconciliation permits an assessment without a legacy Training attestation',async()=>{const w=await world({packageCode:'trainer-meet-greet',sessions:1,total:500,dueNow:500});noPayment(w);reconciliation(w,{captured:500});const done=await completeSession(w,w.sessions[0],'gateway-assessment');assert.equal(done.status,'completed');assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM training_quote_payment_attestations').get().n,0);});
+for(const [name,edit] of [
+ ['client-style captured flag',w=>{noPayment(w);w.sqlite.prepare("UPDATE booking_payments SET status='captured'").run();}],
+ ['underpaid deposit',w=>{w.sqlite.prepare("UPDATE training_quote_payment_attestations SET amount=3999").run();}],
+ ['refunded gateway overrides old attestation',w=>reconciliation(w,{captured:8000,refunded:8000})],
+ ['wrong gateway environment',w=>reconciliation(w,{environment:'live'})],
+ ['failed gateway overrides old attestation',w=>{reconciliation(w);w.sqlite.prepare("UPDATE payment_reconciliation_records SET gateway_status='failed'").run();}],
+])test(name+' cannot authorize service',async()=>{const w=await world();edit(w);await assert.rejects(action(w,'accept'),e=>e instanceof Response&&e.status===409);});
+test('a sandbox attestation never authorizes a production/live service action',async()=>{const w=await world({env:{PAWSPACE_PAYMENT_ENV:'live',FORBID_PRODUCTION:'false'}});await assert.rejects(action(w,'accept'),e=>e instanceof Response&&e.status===409);});
+test('payment reversal between preflight and lifecycle transaction rolls back acceptance and events',async()=>{const w=await world();reconciliation(w);const batch=w.db.batch.bind(w.db);let injected=false;w.db.batch=async statements=>{if(!injected&&statements.some(s=>s.sql.startsWith("UPDATE training_sessions SET status='accepted'"))){injected=true;w.sqlite.prepare('UPDATE payment_reconciliation_records SET refunded_amount=captured_amount').run();}return batch(statements);};await assert.rejects(action(w,'accept'),e=>e instanceof Response&&e.status===409);assert.equal(injected,true);assert.equal(w.sqlite.prepare('SELECT status FROM training_sessions WHERE id=?').get(w.sessions[0].id).status,'scheduled');assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM training_session_events').get().n,0);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM provider_lifecycle_events').get().n,0);});
+
+test('real canonical capture transaction writes the payment evidence consumed by Training',async()=>{
+ const w=await world({packageCode:'trainer-meet-greet',sessions:1,total:500,dueNow:500});noPayment(w);
+ const {ensurePaymentReconciliationTables}=await import('../lib/grooming-payment-reconciliation.ts');await ensurePaymentReconciliationTables(w.db);
+ const {commitRazorpayCaptureAtomic}=await import('../lib/razorpay-capture-atomic.ts');
+ await commitRazorpayCaptureAtomic(w.db,{authority:'provider_api',eventId:'qa-local-capture',environment:'sandbox',bookingId:'PAY-GATE',paymentId:'PAY-PAY-GATE',gatewayOrderId:'order_qa_training',gatewayPaymentId:'pay_qa_training',amountPaise:50000,currency:'INR',payloadHash:'isolated-local-provider-fixture'});
+ assert.equal(w.sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE booking_id='PAY-GATE'").get().captured_amount,500);
+ assert.equal((await action(w,'accept')).status,'accepted');
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM training_quote_payment_attestations').get().n,0);
+});

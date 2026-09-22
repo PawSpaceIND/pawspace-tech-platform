@@ -20,7 +20,8 @@
 // computed. Missing Finance/CA-approved configuration throws ConfigurationRequired (HTTP 409), never
 // a default. Import-safe for `node --experimental-strip-types` (no TS parameter properties).
 
-import{ConfigurationRequired,ensureGstAccountingTables}from"./gst-accounting";
+import{ConfigurationRequired}from"./gst-accounting";
+import{ensureFinanceEntityScope}from"./finance-filing-closeout";
 import{serviceVerticalOutputTax}from"./service-output-tax";
 
 type Db=D1Database;
@@ -46,7 +47,7 @@ async function ensureColumn(db:Db,table:string,column:string,definition:string){
 const returnTablesEnsured=new WeakSet<Db>();
 export async function ensureGstReturnTables(db:Db){
  if(returnTablesEnsured.has(db))return;
- await ensureGstAccountingTables(db);
+ await ensureFinanceEntityScope(db);
  // Full-fidelity GSTR-1 needs an HSN/SAC per line. Older invoice lines predate the column, so add it
  // additively and backfill from the classification code already captured in tax_classifications.
  await ensureColumn(db,"finance_invoice_lines","hsn_sac","TEXT");
@@ -62,8 +63,8 @@ async function audit(db:Db,actor:string,entityId:string,action:string,after:unkn
   .bind(idOf("ga_audit"),"gst_return",entityId,action,JSON.stringify(after),actor,reason,now()).run();
 }
 
-async function registration(db:Db,entityId:string,onDate:string){
- const r=await db.prepare("SELECT * FROM tax_registrations WHERE entity_id=? AND status='active' AND (effective_from IS NULL OR effective_from<=?) AND (effective_to IS NULL OR effective_to>=?) ORDER BY approved_at DESC LIMIT 1").bind(entityId,onDate,onDate).first<Row>();
+async function registration(db:Db,entityId:string,registrationId:string,onDate:string){
+ const r=await db.prepare("SELECT * FROM tax_registrations WHERE entity_id=? AND id=? AND status='active' AND (effective_from IS NULL OR effective_from<=?) AND (effective_to IS NULL OR effective_to>=?) ORDER BY approved_at DESC LIMIT 1").bind(entityId,registrationId,onDate,onDate).first<Row>();
  if(!r)throw new ConfigurationRequired("active_tax_registration");
  return r;
 }
@@ -98,9 +99,9 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
  await ensureGstReturnTables(db);
  const entityId=text(input.entityId),regId=text(input.registrationId),period=text(input.periodCode),reason=text(input.reason)||"Generate GSTR-1 outward-supply draft";
  if(!entityId||!/^\d{4}-\d{2}$/.test(period))throw new Error("gstr1_scope_required");
- const reg=await registration(db,entityId,`${period}-28`);
+ const reg=await registration(db,entityId,regId,`${period}-28`);
  const gstin=text(reg.registration_reference),homeState=stateCode(gstin);
- const invoices=await db.prepare("SELECT * FROM finance_invoices WHERE entity_id=? AND substr(issue_date,1,7)=? AND status!='cancelled' ORDER BY issue_date,invoice_number").bind(entityId,period).all<Row>();
+ const invoices=await db.prepare("SELECT * FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled' ORDER BY issue_date,invoice_number").bind(entityId,regId,period).all<Row>();
  const b2b=new Map<string,Row>();const b2csMap=new Map<string,{sply_ty:string;pos:string;typ:string;rt:number;txval:number;iamt:number;camt:number;samt:number;csamt:number}>();
  const hsnMap=new Map<string,{hsn_sc:string;desc:string;txval:number;iamt:number;camt:number;samt:number;csamt:number;num:number}>();
  let canonicalTaxable=0,canonicalTax=0,b2bCount=0,b2cCount=0;
@@ -120,14 +121,14 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
   else{b2cCount+=1;const sply_ty=pos===homeState?"INTRA":"INTER";for(const it of itms){const d=it.itm_det as Row;const rt=num(d.rt);const key=`${sply_ty}:${pos}:${rt}`;const bucket=b2csMap.get(key)||{sply_ty,pos,typ:"OE",rt,txval:0,iamt:0,camt:0,samt:0,csamt:0};bucket.txval=round2(bucket.txval+num(d.txval));bucket.iamt=round2(bucket.iamt+num(d.iamt));bucket.camt=round2(bucket.camt+num(d.camt));bucket.samt=round2(bucket.samt+num(d.samt));bucket.csamt=round2(bucket.csamt+num(d.csamt));b2csMap.set(key,bucket);}}
  }
  // Credit/debit notes against B2B registered counterparties -> cdnr; against consumers -> cdnur.
- const notes=await db.prepare("SELECT a.document_number,a.kind,a.amount,a.tax_amount,a.created_at,i.invoice_number,i.issue_date,i.total,i.customer_id FROM finance_adjustment_documents a JOIN finance_invoices i ON i.id=a.invoice_id WHERE i.entity_id=? AND substr(i.issue_date,1,7)=? AND a.status='issued'").bind(entityId,period).all<Row>();
+ const notes=await db.prepare("SELECT a.document_number,a.kind,a.amount,a.tax_amount,a.created_at,i.invoice_number,i.issue_date,i.total,i.customer_id FROM finance_adjustment_documents a JOIN finance_invoices i ON i.id=a.invoice_id WHERE i.entity_id=? AND i.registration_id=? AND substr(i.issue_date,1,7)=? AND a.status='issued'").bind(entityId,regId,period).all<Row>();
  const cdnr:Row[]=[],cdnur:Row[]=[];
  for(const n of notes.results){const profile=await safeFirst(db,"SELECT registration_reference,customer_type FROM finance_customer_tax_profiles WHERE customer_id=?",[text(n.customer_id)]);const cgstin=text(profile?.registration_reference);const ntty=text(n.kind)==="credit_note"?"C":"D";const nt_det={ntty,nt_num:text(n.document_number),nt_dt:text(n.issue_date),val:round2(num(n.amount)+num(n.tax_amount)),itms:[{num:1,itm_det:{txval:round2(num(n.amount)),iamt:round2(num(n.tax_amount))}}]};if(cgstin&&text(profile?.customer_type)!=="consumer")cdnr.push({ctin:cgstin,...nt_det});else cdnur.push(nt_det);}
  // Service verticals: aggregate-only in booking_invoices; cannot be compliant GSTR-1 line detail. Only
  // PawSpace's OWN output GST (commission / principal) belongs in PawSpace's outward tax; the provider-supply
  // GST is the provider's, routed to s52 GST TCS / GSTR-8 (see serviceVerticalOutputTax).
  const{startMs,endMs}=periodMs(period);
- const svc=await serviceVerticalOutputTax(db,startMs,endMs);
+ const svc=await serviceVerticalOutputTax(db,startMs,endMs,{entityId,registrationId:regId});
  const serviceTax=svc.pawspaceOwnOutputTax,serviceGross=svc.grossTotal,serviceCount=svc.invoiceCount;
  const payload={gstin,fp:returnPeriod(period),gt:round2(canonicalTaxable),cur_gt:round2(canonicalTaxable),
   b2b:[...b2b.values()],b2cs:[...b2csMap.values()],cdnr,cdnur,hsn:{data:[...hsnMap.values()]}};
@@ -146,18 +147,18 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  await ensureGstReturnTables(db);
  const entityId=text(input.entityId),regId=text(input.registrationId),period=text(input.periodCode),reason=text(input.reason)||"Generate GSTR-3B summary draft";
  if(!entityId||!/^\d{4}-\d{2}$/.test(period))throw new Error("gstr3b_scope_required");
- const reg=await registration(db,entityId,`${period}-28`);const gstin=text(reg.registration_reference);
+ const reg=await registration(db,entityId,regId,`${period}-28`);const gstin=text(reg.registration_reference);
  // Output tax by component from the canonical ledger (B2B), aggregate service tax from booking_invoices.
  const components=await db.prepare("SELECT component,COALESCE(SUM(amount),0) total FROM finance_tax_ledger WHERE entity_id=? AND registration_id=? AND period_code=? AND ledger_type='output' GROUP BY component").bind(entityId,regId,period).all<Row>();
  let ledgerTaxable=0;const iamt0={iamt:0,camt:0,samt:0,csamt:0};for(const c of components.results){const code=text(c.component).toLowerCase(),amt=round2(num(c.total));if(code.includes("igst"))iamt0.iamt+=amt;else if(code.includes("cgst"))iamt0.camt+=amt;else if(code.includes("sgst")||code.includes("utgst"))iamt0.samt+=amt;else if(code.includes("cess"))iamt0.csamt+=amt;else iamt0.iamt+=amt;}
- const taxableRow=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'",[entityId,period]);ledgerTaxable=round2(num(taxableRow?.txval));
+ const taxableRow=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'",[entityId,regId,period]);ledgerTaxable=round2(num(taxableRow?.txval));
  const{startMs,endMs}=periodMs(period);
  // Only PawSpace's OWN service-vertical output GST (commission/principal) is its 3B liability; the
  // provider-supply GST collected on their behalf goes to s52 GST TCS / GSTR-8, not here.
- const svc=await serviceVerticalOutputTax(db,startMs,endMs);
+ const svc=await serviceVerticalOutputTax(db,startMs,endMs,{entityId,registrationId:regId});
  const serviceTax=svc.pawspaceOwnOutputTax,serviceTaxable=svc.pawspaceOwnTaxableValue;
  // Eligible ITC only from approved vendor reviews (never claim unreviewed credit).
- const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE v.review_status='eligible' AND substr(b.bill_date,1,7)=?",[period]);
+ const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7)=?",[entityId,period]);
  const eligibleItc=round2(num(itc?.total));
  const outputTaxLedger=round2(iamt0.iamt+iamt0.camt+iamt0.samt+iamt0.csamt);
  const totalOutputTax=round2(outputTaxLedger+serviceTax);
@@ -180,13 +181,13 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
  const entityId=text(input.entityId),regId=text(input.registrationId),reason=text(input.reason)||"Generate GSTR-9C reconciliation draft";
  const startYear=Number(text(input.financialYear).slice(0,4));if(!Number.isInteger(startYear)||startYear<2000||startYear>2100)throw new Error("valid_financial_year_required");
  const fyLabel=`${startYear}-${String((startYear+1)%100).padStart(2,"0")}`,fromPeriod=`${startYear}-04`,toPeriod=`${startYear+1}-03`;
- const reg=await registration(db,entityId,`${startYear+1}-03-28`);const gstin=text(reg.registration_reference);
+ const reg=await registration(db,entityId,regId,`${startYear+1}-03-28`);const gstin=text(reg.registration_reference);
  // Books turnover + tax: canonical invoices (accrual) + service verticals; the same two sources. Only
  // PawSpace's OWN service output GST is its liability (commission/principal); the provider-supply GST is
  // reconciled separately (routed to s52 GST TCS / GSTR-8), never in PawSpace's own books output tax.
- const canonical=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval,COALESCE(SUM(tax_total),0) tax FROM finance_invoices WHERE entity_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'",[entityId,fromPeriod,toPeriod]);
+ const canonical=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval,COALESCE(SUM(tax_total),0) tax FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'",[entityId,regId,fromPeriod,toPeriod]);
  const fyStartMs=Date.UTC(startYear,3,1)-330*60_000,fyEndMs=Date.UTC(startYear+1,3,1)-330*60_000;
- const svc=await serviceVerticalOutputTax(db,fyStartMs,fyEndMs);
+ const svc=await serviceVerticalOutputTax(db,fyStartMs,fyEndMs,{entityId,registrationId:regId});
  const booksTaxable=round2(num(canonical?.txval)+svc.pawspaceOwnTaxableValue);
  const booksOutputTax=round2(num(canonical?.tax)+svc.pawspaceOwnOutputTax);
  // The annual return (GSTR-9) as filed/drafted, if present.
@@ -195,7 +196,7 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
  const returnOutputTax=annualSummary?round2(num(annualSummary.totalOutputTax)):null;
  const returnItc=annualSummary?round2(num(annualSummary.totalEligibleItc)):null;
  // Eligible ITC per books (approved vendor reviews) for the FY.
- const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ?",[fromPeriod,toPeriod]);
+ const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ?",[entityId,fromPeriod,toPeriod]);
  const booksItc=round2(num(itc?.total));
  const outputTaxDelta=returnOutputTax===null?null:round2(booksOutputTax-returnOutputTax);
  const itcDelta=returnItc===null?null:round2(booksItc-returnItc);

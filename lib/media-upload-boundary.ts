@@ -236,8 +236,10 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
   // partner picking the same photo again would otherwise open a fresh registration whose upload becomes a
   // second review-queue entry for one photo. The refusal is a permanent 4xx, so the Partner app's flush
   // discards the row instead of retrying it. A rejected photo does not block: rejection asks for another.
-  const arrived=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=? LIMIT 1")
-    .bind(bookingId,providerId,category,sha256,input.supersedes??"").first<Row>();
+  const scopePredicate=input.scopeType==="training_session"?" AND EXISTS (SELECT 1 FROM media_upload_grants scoped WHERE scoped.media_id=service_media_assets.id AND scoped.scope_type=? AND scoped.scope_id=?)":"";
+  const scopeBinds=input.scopeType==="training_session"?[input.scopeType,scopeId]:[];
+  const arrived=await db.prepare("SELECT id FROM service_media_assets WHERE booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=?"+scopePredicate+" LIMIT 1")
+    .bind(bookingId,providerId,category,sha256,input.supersedes??"",...scopeBinds).first<Row>();
   if(arrived)refuse("This photo has already been uploaded for this booking and purpose; it is waiting for review",409,{code:"media_already_registered",mediaId:String(arrived.id)});
 
   const mediaId=`MEDIA-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
@@ -249,10 +251,10 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
 
   // Re-check arrival and retire pending twins in the SAME D1 transaction as insertion.
   // The optimistic precheck above is only an early explanation, never the race-control boundary.
-  const arrivedPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=?";
-  const arrivedBinds=[bookingId,providerId,category,sha256,input.supersedes??""];
-  const pendingPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND access_status='pending_upload' AND retention_status='active' AND rowid<(SELECT rowid FROM service_media_assets WHERE id=?)";
-  const pendingBinds=[bookingId,providerId,category,sha256,mediaId];
+  const arrivedPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND retention_status='active' AND access_status IN ('quarantined','ready') AND COALESCE(review_status,'')!='rejected' AND id!=?"+scopePredicate;
+  const arrivedBinds=[bookingId,providerId,category,sha256,input.supersedes??"",...scopeBinds];
+  const pendingPredicate="booking_id=? AND provider_id=? AND purpose=? AND sha256=? AND access_status='pending_upload' AND retention_status='active' AND rowid<(SELECT rowid FROM service_media_assets WHERE id=?)"+scopePredicate;
+  const pendingBinds=[bookingId,providerId,category,sha256,mediaId,...scopeBinds];
   const retirementDetail=JSON.stringify({reason:"the same bytes were registered again before this upload arrived",supersededBy:mediaId,sha256,category});
   await db.batch([
     db.prepare(`INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,supersedes) SELECT ?,?,?,?,?,?,?,?,'pending','pending_upload','active',0,?,?,?,'pending_review',? WHERE NOT EXISTS (SELECT 1 FROM service_media_assets WHERE ${arrivedPredicate})`)
@@ -357,17 +359,21 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   }
 
   const mediaId=String(grant!.media_id),bookingId=String(grant!.booking_id);
+  // Honest per-asset fact, not the environment's current status: what THIS confirmation actually verified.
+  // Connected means headStoredObject just matched the grant; disconnected means only a caller-reported
+  // digest was checked and no bytes exist anywhere. [LP-N09]
+  const objectStored=storage.connected;
   const [claimed,published]=await db.batch([
     db.prepare("UPDATE media_upload_grants SET status='consumed',consumed_at=? WHERE id=? AND status='issued' AND EXISTS (SELECT 1 FROM service_media_assets a WHERE a.id=media_upload_grants.media_id AND a.retention_status='active' AND a.access_status='pending_upload')").bind(now,grantId),
-    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',updated_at=? WHERE id=? AND retention_status='active' AND access_status='pending_upload' AND EXISTS (SELECT 1 FROM media_upload_grants g WHERE g.id=? AND g.status='consumed' AND g.consumed_at=?)").bind(now,mediaId,grantId,now),
+    db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',object_stored=?,updated_at=? WHERE id=? AND retention_status='active' AND access_status='pending_upload' AND EXISTS (SELECT 1 FROM media_upload_grants g WHERE g.id=? AND g.status='consumed' AND g.consumed_at=?)").bind(objectStored?1:0,now,mediaId,grantId,now),
   ]);
   if(Number(claimed?.meta?.changes??0)!==1||Number(published?.meta?.changes??0)!==1){
     const current=await db.prepare("SELECT status FROM media_upload_grants WHERE id=?").bind(grantId).first<Row>();
     if(String(current?.status)==="superseded")refuse("This upload was superseded by a newer registration of the same photo",409,{code:"upload_token_superseded"});
     refuse("This media upload grant is no longer pending",409,{code:"upload_token_consumed"});
   }
-  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected});
-  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected};
+  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected,objectStored});
+  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected,objectStored};
 }
 
 async function asset(db:Db,mediaId:string){

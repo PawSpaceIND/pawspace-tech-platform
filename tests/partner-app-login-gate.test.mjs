@@ -241,7 +241,12 @@ test("the Partner app offers Sign out and only ever re-asks the server after it"
   assert.match(page, /fetch\("\/api\/identity-session", \{ method: "DELETE", credentials:"same-origin"/, "sign out is the server's revoke, not a cookie trick");
   assert.match(page, /clearProviderProofQueue\(\)\]\);\s*if \(!response\.ok && response\.status !== 401\)[^\n]*\n[^\n]*\n\s*setSessionState\("checking"\); setIdentityKey\(\(value\) => value \+ 1\);/,
     "after the revoke the identity check runs again and decides; a failed revoke stays in revocation_failed");
-  assert.equal(page.split('setSessionState("unauthenticated")').length, 2, "only the server-refusal path opens the gate");
+  // [LP-D08] A superseded session (signed in again on another device) used to leave the dashboard
+  // mounted with stale "Verified"/"Online" pills until a background poll's 401 was silently swallowed
+  // into a generic error banner. handleUnauthorized() is the second, deliberate path that now opens the
+  // gate from a background 401; still an exact count, so a THIRD path would still be caught here.
+  assert.equal(page.split('setSessionState("unauthenticated")').length, 3,
+    "only the initial server-refusal path and handleUnauthorized (a background 401) may open the gate");
   assert.match(page, /<b>\{signingOut \? "Signing out…" : "Sign out \/ switch partner"\}<\/b>/, "Sign out is in the More menu, named for what a tester looks for");
   assert.match(page, /\{identity\?\.subjectId && <button type="button" className=\{styles\.headerSignOut\} onClick=\{\(\) => void signOut\(\)\} disabled=\{accountBusy\}>/, "and in the header of a signed-in shell");
   // Every per-account state is dropped when the session changes hands (sign-out and switch alike).

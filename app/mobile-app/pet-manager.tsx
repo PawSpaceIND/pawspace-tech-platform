@@ -6,6 +6,8 @@ import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
 import { loadCustomerPets, upsertCustomerPet, type CustomerPet } from "../../lib/customer-account-client";
 import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromDateOfBirth, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
+// Canonical pets carry "vaccinated" (seed + customer-account API); the profile form historically wrote "verified". Both mean vaccinated.
+const VACCINATED_STATUSES = new Set(["vaccinated", "verified"]);
 
 type PetForm = {
   id?: string;
@@ -113,7 +115,7 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
       breed: profile?.breed ?? legacyBreed,
       ageBand: profile?.ageBand ?? ageBandFromYears(pet.ageYears),
       dateOfBirth: profile?.dateOfBirth ?? "",
-      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : pet.vaccinationStatus === "verified" ? "yes" : pet.vaccinationStatus === "not_provided" ? "no" : "",
+      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : VACCINATED_STATUSES.has(pet.vaccinationStatus) ? "yes" : pet.vaccinationStatus === "not_provided" ? "no" : "",
       vaccinationDose: profile?.vaccinationDose ?? "",
       aggression: profile?.aggression ?? "",
       weightBand: profile?.weightBand ?? weightBandFromKg(pet.weightKg),
@@ -329,7 +331,7 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
   };
   const vaccinationTag = (pet: CustomerPet) => {
     if (pet.profile) return pet.profile.vaccinated ? `Vaccinated${pet.profile.vaccinationDose ? ` · ${pet.profile.vaccinationDose}` : ""}` : "Not vaccinated";
-    return pet.vaccinationStatus === "verified" ? "Vaccination verified" : pet.vaccinationStatus === "pending" ? "Vaccination pending" : "Vaccination not provided";
+    return VACCINATED_STATUSES.has(pet.vaccinationStatus) ? "Vaccination verified" : pet.vaccinationStatus === "pending" ? "Vaccination pending" : "Vaccination not provided";
   };
 
   return (

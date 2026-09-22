@@ -206,3 +206,19 @@ test("probeStatus() after a failed return publishes only a verified capture and 
   assert.equal(c.requests.length, 2, "a verified capture stops further calls");
   await c.controller.start(); assert.equal(c.opened.length, 0, "a verified booking cannot open another checkout");
 });
+
+
+test("V2 checkout keeps success, failure and status returns in V2 without allowing open redirects", async () => {
+  assert.equal(checkoutReturnUrl("BK-1", origin, "/v2/booking"), `${origin}${CHECKOUT_RETURN_PATH}?bookingId=BK-1&scope=v2`);
+  assert.equal(checkoutReturnUrl("BK-1", origin, "/v20/booking"), `${origin}${CHECKOUT_RETURN_PATH}?bookingId=BK-1`);
+  for (const fields of [{razorpay_payment_id:"pay_v2",razorpay_order_id:"order_v2",razorpay_signature:signature},{"error[code]":"BAD_REQUEST_ERROR"},{}]) {
+    const response = await route.POST(new Request(`${origin}${CHECKOUT_RETURN_PATH}?bookingId=BK-1&scope=v2`, {method:"POST", headers:{"content-type":"application/x-www-form-urlencoded"},body:form(fields)}));
+    const location = new URL(response.headers.get("location"));
+    assert.equal(response.status,303);assert.equal(location.origin,origin);assert.equal(location.pathname,"/v2/booking-confirmation");assert.equal(location.searchParams.get("bookingId"),"BK-1");
+    assert.equal(location.searchParams.get("payment"),fields.razorpay_payment_id?"returned":fields["error[code]"]?"failed":null);
+  }
+  for (const scope of ["https://attacker.example", "//attacker.example", "/v2/../../team", "v2evil"]) {
+    const response=await route.GET(new Request(`${origin}${CHECKOUT_RETURN_PATH}?bookingId=BK-1&scope=${encodeURIComponent(scope)}`));
+    const location=new URL(response.headers.get("location"));assert.equal(location.origin,origin);assert.equal(location.pathname,BOOKING_CONFIRMATION_PATH);
+  }
+});

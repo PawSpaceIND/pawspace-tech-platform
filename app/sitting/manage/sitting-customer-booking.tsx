@@ -4,9 +4,9 @@ import {useState,type ReactNode} from "react";
 import SittingCustomerPanel from "../../mobile-app/sitting-customer-panel";
 import {requestCustomerSittingDateChange} from "../../../lib/sitting-customer-view";
 
-export default function SittingCustomerBooking({bookingId,children}:{bookingId:string;children?:ReactNode}){
- if(!bookingId.trim())return <main style={{padding:24}}><h1>Manage Sitting booking</h1><p>Open a booking from your PawSpace activity.</p><Link href="/mobile-app">Back to PawSpace</Link></main>;
- return <main style={{maxWidth:980,margin:"0 auto",padding:16}}><Link href="/mobile-app">Back to PawSpace</Link><SittingCustomerPanel key={bookingId} bookingId={bookingId}>{booking=><><SittingDateChange key={booking.id} bookingId={booking.id} status={booking.status}/>{children}</>}</SittingCustomerPanel></main>;
+export default function SittingCustomerBooking({bookingId,children,routeScope="legacy"}:{bookingId:string;children?:ReactNode;routeScope?:"legacy"|"v2"}){
+ if(!bookingId.trim())return <main style={{padding:24}}><h1>Manage Sitting booking</h1><p>Open a booking from your PawSpace activity.</p><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>Back to PawSpace</Link></main>;
+ return <main style={{maxWidth:980,margin:"0 auto",padding:16}}><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>Back to PawSpace</Link><SittingCustomerPanel key={bookingId} bookingId={bookingId}>{booking=><><SittingDateChange key={booking.id} bookingId={booking.id} status={booking.status}/>{children}</>}</SittingCustomerPanel></main>;
 }
 function SittingDateChange({bookingId,status}:{bookingId:string;status:string}){
  const[start,setStart]=useState(""),[end,setEnd]=useState(""),[reason,setReason]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");

@@ -337,3 +337,12 @@ test("verifyAiProvider produces evidence with no response text in it, and refuse
     assert.equal(evidence.providerRef, null, "an unconfigured provider is not attributed to a vendor");
   } finally { unconfigured.restore(); }
 });
+
+for(const [message,status,failure] of [
+ ["Your credit balance is too low. Please purchase credits.",400,"billing_required"],
+ ["Model claude-retired was not found",404,"model_unavailable"],
+ ["request invalid: SECRET_CUSTOMER_CONTEXT",400,"client_error"],
+])test(`classifies provider ${failure} without exposing provider detail`,async()=>{
+ withEnv();const stub=stubFetch(()=>jsonResponse({error:{message}},status));
+ try{const result=await adapter.requestAiDraft({systemPrompt:"sys",userPrompt:"hi"});assert.equal(result.connected,false);assert.equal(result.failure,failure);assert.ok(!JSON.stringify(result).includes(message));}finally{stub.restore();}
+});

@@ -1,4 +1,4 @@
-import { authorize, database } from "../../../../lib/server-auth";
+import { authError, authorize, database } from "../../../../lib/server-auth";
 import { ensureCanonicalBookingCoreTables } from "../../../../lib/canonical-booking-core-schema";
 import { OPERATIONS_MANAGER_DOMAIN, requireManagerDomain, resolveManagerOrganizationalScope } from "../../../../lib/organizational-scope";
 
@@ -19,6 +19,7 @@ async function snapshot(db: D1Database, cityId?: string) {
 }
 
 export async function GET(request: Request) {
+  try {
   const actor = await authorize(request, "bookings.manage");
   const db = await database();
   const scope = await resolveManagerOrganizationalScope(db, actor); requireManagerDomain(scope, OPERATIONS_MANAGER_DOMAIN);
@@ -40,4 +41,9 @@ export async function GET(request: Request) {
     cancel() { closed = true; if (timer) clearInterval(timer); },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store, no-transform", connection: "keep-alive", "x-accel-buffering": "no" } });
+  } catch (error) {
+    // authorize()/requireManagerDomain() refuse with governed Response objects; an uncaught throw here
+    // surfaced as a 500 for every staff role outside the operations scope (EMP-15 / V2-052).
+    return authError(error, "Unable to open Booking Command Center stream");
+  }
 }

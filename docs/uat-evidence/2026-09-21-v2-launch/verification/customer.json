@@ -1,0 +1,1158 @@
+[
+  {
+    "id": "CUST-L-P01",
+    "title": "V2 Relocation: explicit country/age/size form, domestic Road Bengaluru→Pune with age 0 and international Air →Dubai created with the right countries",
+    "persona": "customer (new, Pixel 7)",
+    "url": "/v2/relocation",
+    "steps": [
+      "Sign in (sandbox OTP)",
+      "Open /v2/relocation, submit the empty form",
+      "Fill Rex/Indie/age 0/medium/road/India→India, Bengaluru→Pune, Create relocation inquiry",
+      "Reload the case page",
+      "Fill Mia/Persian/2/small/air/India→United Arab Emirates, Bengaluru→Dubai, create"
+    ],
+    "expected": "Field-level refusals before any write; both cases persist the explicit countries, age 0 and size; reload keeps them",
+    "actual": "Empty submit: 7 field alerts, 0 POST calls. Domestic: 201 RLC-8DF802921C37311ADD0A612DB7B09BFA origin 'Bengaluru, India' destination 'Pune, India' age 0 size medium mode road, page shows 'Domestic move · road · Bengaluru, India → Pune, India' and 'Rex · Indie · 0 years · medium'; reload keeps Pune/India (no UAE). International: 201 RLC-64F28B48F40C379A55D489933D482CB4 'Dubai, United Arab Emirates' air small. API replay with the same idempotencyKey returned the same id (RLC-AEBEE8F49E8E71F14F7B4B6F064209A7 twice); missing countries → 400 with per-field errors; another customer's case id → 404.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/01-reloc-form-empty.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/02-reloc-empty-refused.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/04-reloc-domestic-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/05-reloc-domestic-reload.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/08-reloc-intl-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/result.json",
+      "D1 relocation_cases rows for both ids (origin_country/destination_country as above)"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "fixed-verified",
+    "priorId": "CUST-D04"
+  },
+  {
+    "id": "CUST-L-P02",
+    "title": "V2 Activity lists relocation inquiries with countries and reopens the case by link",
+    "persona": "customer",
+    "url": "/v2/activity",
+    "steps": [
+      "Open /v2/activity",
+      "Click 'Open inquiry <id>'"
+    ],
+    "expected": "Inquiries listed with route and status; link opens the case",
+    "actual": "Three inquiries listed ('Bengaluru, India → Pune, India · 2026-11-05 Status: lead'), links /v2/relocation?caseId=…; reopened page still shows Pune, India.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/10-activity-list.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/11-activity-reopened-case.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P03",
+    "title": "Relocation customer case controls: placeholder document registration, support ticket, quote acceptance and refund request work end to end with staff progression",
+    "persona": "customer + founder@pawspace.in staff context",
+    "url": "/v2/relocation?caseId=… and /team/relocation",
+    "steps": [
+      "Customer: Register UAT document ×5 (placeholder objectId 'uat-doc-<type>', objectStored=false), Open support ticket",
+      "Staff (founder, /team/relocation): Qualify lead, Assign UAT vendor, Verify ×5, Issue ₹75,000 UAT quote",
+      "Customer reload: Accept quote",
+      "Staff: record_payment (API only), Mark transport booked, Confirm origin handover",
+      "Customer reload: Request refund"
+    ],
+    "expected": "Each governed action persists and the customer view reflects status after reload",
+    "actual": "All 200: documents uploaded→verified (updated_by founder@pawspace.in), case lead→documents_pending→quote_pending→quote_sent→payment_pending→transport_ready; customer page shows 'Status: quote sent · Quote: ₹75,000 · sent · Accept quote', after accept 'Status: payment pending … Quote ₹75,000 · accepted · Payment: due · provider internal_uat. Live money is disabled.', after staff milestones 'Status: transport ready' with 'transport booked · complete · origin handover · complete'; Request refund → relocation_refunds RLR-AEE735B2-0 status requested; replay of Request refund → 409. Accept quote is hidden before a quote exists; Request refund hidden before payment. Documents are placeholders: objectStored=false (object_id 'uat-doc-…', no upload).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/06-reloc-doc-registered.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/13-staff-team-relocation-queue.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/14-staff-after-actions.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/02-staff-quote-issued.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/03-customer-quote-sent.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/04-customer-quote-accepted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/06-customer-after-transport.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/07-customer-refund-requested.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/result.json",
+      "D1 relocation_documents/relocation_quotes/relocation_payments/relocation_refunds/relocation_events rows for RLC-8DF802921C37311ADD0A612DB7B09BFA"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-D01",
+    "title": "Relocation milestones never complete for documents review, quote issued and payment confirmed — customer page shows them 'pending' while 'transport booked' and 'origin handover' are 'complete'",
+    "persona": "customer (also visible to staff)",
+    "url": "/v2/relocation?caseId=RLC-8DF802921C37311ADD0A612DB7B09BFA",
+    "steps": [
+      "Complete the staff flow: verify all 5 documents, issue quote, customer accepts, record_payment, Mark transport booked, Confirm origin handover",
+      "Reload the customer case page"
+    ],
+    "expected": "Milestones reflect the governed transitions: documents review, quote issued and payment confirmed complete before transport booked",
+    "actual": "relocation_milestones rows: lead_captured complete, documents_review pending, quote_issued pending, payment_confirmed pending, transport_booked complete (founder), origin_handover complete (founder). Customer page 'Milestones: … documents review · pending · quote issued · pending · payment confirmed · pending · transport booked · complete · origin handover · complete' although 'Quote: ₹75,000 · accepted · Payment: paid'. The status transitions (review_document/issue_quote/accept_quote/record_payment) do not mark their milestones.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/06-customer-after-transport.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/result.json (staff-record-payment-api-then-transport-ui.milestones)"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-D02",
+    "title": "Governed relocation refusals reach the staff and customer pages as the generic 'Unable to update relocation case' (409 reason redacted)",
+    "persona": "founder@pawspace.in on /team/relocation; also customer Request refund replay",
+    "url": "/team/relocation → POST /api/relocation",
+    "steps": [
+      "Select a lead case with unverified documents",
+      "Click 'Issue ₹75,000 UAT quote' or 'Mark transport booked' (before payment) or 'Confirm delivery' (out of order)",
+      "Customer: click Request refund twice"
+    ],
+    "expected": "The governed reason ('A relocation quote can only be issued once all documents are verified', 'Paid customer funds and an assigned vendor are required before transport booking', 'Destination handover must complete before delivery confirmation', 'No pending relocation refund request') is shown",
+    "actual": "Every refusal is 409 {\"error\":\"Unable to update relocation case\"} and the page alert repeats that text. lib/relocation-governance throws plain Response(message,{status:409}); lib/server-auth authError() treats it as an ungoverned client error and redacts the message to the fallback. Operators cannot tell which precondition failed.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/14-staff-after-actions.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/result.json (staff-team-relocation-progress.results)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/result.json (transportBeforePayment, deliveryOutOfOrder, refundReplay)",
+      "wrangler serve.log: POST /api/relocation 409"
+    ],
+    "severity": "P2",
+    "class": "backend",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-D03",
+    "title": "/team/relocation case list keeps the stale status after actions and 'Issue quote' can be replayed (second quote_sent event)",
+    "persona": "founder@pawspace.in",
+    "url": "/team/relocation",
+    "steps": [
+      "Select a case, Qualify lead, Assign vendor, verify documents, Issue quote twice"
+    ],
+    "expected": "Case list status refreshes with the detail pane; a second Issue quote is refused or idempotent without a new event",
+    "actual": "Aside list still shows 'RLC-8DF… · documents_pending' after the detail pane moved to quote_sent; second Issue quote returned 200 and appended a second 'quote_sent' event (relocation_events) — the quote row itself stayed one (UNIQUE case_id).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/02-staff-quote-issued.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/result.json (staffText, apiEvents)"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-OBS-01",
+    "title": "Relocation observations: no staff UI control for record_payment (API-only finance action); customer has no pay control for the relocation quote (ops-recorded payment); no per-event attribution on the customer page (events carry actor ids in the API: customer:<id> / founder@pawspace.in)",
+    "persona": "customer / founder",
+    "url": "/v2/relocation, /team/relocation",
+    "steps": [
+      "Complete the case flow"
+    ],
+    "expected": "n/a (observation)",
+    "actual": "Team page buttons: Qualify lead, Assign UAT vendor, Issue quote, milestones, Verify — no Record payment; POST /api/relocation {action:'record_payment'} as founder → 200 (relocation_payments RLP-2C67CA5D-5 paid, provider internal_uat). Customer sees 'Payment: due · provider internal_uat. Live money is disabled.' and then 'Payment: paid'. Customer page shows document status and milestones but not who acted; API events list actor_id per event.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P04",
+    "title": "Mobile-app Relocation enquiry (Enquire now) submits and reaches the staff enquiry list",
+    "persona": "customer (Pixel 7) + founder",
+    "url": "/mobile-app → Relocation 'Enquire now' → POST /api/relocation-enquiry; /team/relocation-enquiries",
+    "steps": [
+      "Home → Relocation → Enquire now",
+      "Fill name, phone, email, pickup date/time, pickup/drop, travel date, Dog, Domestic",
+      "Request relocation plan & quote"
+    ],
+    "expected": "Enquiry stored and visible to staff",
+    "actual": "200 RELQ-2091FF26-1 (relocation_kind domestic, status new) shown as 'Relocation enquiry received Reference RELQ-2091FF26-1 · Domestic move for your dog … Nothing is charged now.'; /team/relocation-enquiries lists it with pickup/drop/travel. Note: this mobile enquiry has no age/size/country fields and is a separate record from V2 relocation cases (not in V2 Activity).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/09-mobile-relocation-filled.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/10-mobile-relocation-submitted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01b-relocation-progress/11-staff-relocation-enquiries.png",
+      "D1 relocation_enquiries RELQ-2091FF26-1"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-ENV-01",
+    "title": "Grooming catalogue was empty on this database; published dog-basic (+2/3/4-pet bundles), dog-bath, dog-makeover, dog-trim, cat-basic (+2 pets) as founder via PATCH /api/pricing-control — staging needs the same publish",
+    "persona": "founder@pawspace.in",
+    "url": "PATCH /api/pricing-control {entity:'package', id, changes:{active:1}, reason:'UAT publish'}",
+    "steps": [
+      "GET /api/v2/grooming-catalogue → packages: [] (all 42 service_packages active=0)",
+      "PATCH the 9 package ids",
+      "GET catalogue again"
+    ],
+    "expected": "Catalogue lists the published packages",
+    "actual": "All 9 PATCH → 200; catalogue now returns cat-basic, dog-basic, dog-bath, dog-makeover, dog-trim; service_packages.active=1 for the 9 ids. Prior CUST-D01 (empty V2 grooming catalogue) is a data/publish gate, not code: after publishing, /v2/grooming shows the packages and books.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/result.json (founder-publish-grooming-packages)"
+    ],
+    "severity": "n/a",
+    "class": "data",
+    "status": "env-gated",
+    "priorId": "CUST-D01"
+  },
+  {
+    "id": "CUST-L-P05",
+    "title": "V2 grooming: pet → package → doorstep → slot → live price → groomer → Reserve creates exactly one payment_pending booking; Pay refuses honestly (503), booking recoverable on reload",
+    "persona": "customer (new, Pixel 7)",
+    "url": "/v2/grooming",
+    "steps": [
+      "Select Rocky, Bath & Basic ₹1,899",
+      "42 Indiranagar Double Road / 560038 → Verify doorstep",
+      "Thu 24 Sept 11:00 AM–1:00 PM → Check live price & groomers",
+      "Choose groomer, double-click Reserve & review payment",
+      "Pay securely with Razorpay ×2, Check verified status, reload"
+    ],
+    "expected": "One booking, honest refusal, no fake success, pending state recoverable",
+    "actual": "Doorstep 'East Bengaluru is covered'; live price ₹1,747 (pricing_control); 'Available for this exact slot' groomers; 1 POST /api/canonical-bookings → 201 PS-UAT-MUBC02TE-51E4 payment_pending; checkout page 'BOOKING TOTAL ₹1,747.00 · Awaiting verified payment'; Pay → POST /api/customer-checkout 503 'Razorpay test checkout is not configured. Contact billing support.' shown inline twice (alert), no Razorpay iframe, no success wording; second click 503 again; reload keeps /v2/grooming?bookingId=… with Pay + Check verified status; customer-account status payment_pending.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/02-v2g-quote.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/03-v2g-checkout.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/04-v2g-after-pay.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/05-v2g-reload.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/result.json"
+    ],
+    "severity": "n/a",
+    "class": "payment",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-ENV-02",
+    "title": "Payments: Razorpay sandbox keys absent locally — every Pay control (grooming ₹1,747, training ₹500, boarding, taxi) returns 503 'Razorpay test checkout is not configured' inline; bookings stay payment_pending",
+    "persona": "customer",
+    "url": "POST /api/customer-checkout",
+    "steps": [
+      "Press any Pay control"
+    ],
+    "expected": "Honest refusal (environment gate)",
+    "actual": "503 with the same message on every surface; no iframe, no fake success; 17 5xx lines in serve.log are all these 503s. No harness 'ProxyWorker' 500 occurred in this pass.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/04-v2g-after-pay.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/04-t-after-pay.png",
+      "servers/lcustomer/serve.log"
+    ],
+    "severity": "n/a",
+    "class": "payment",
+    "status": "env-gated",
+    "priorId": "CUST-ENV-01"
+  },
+  {
+    "id": "CUST-L-D04",
+    "title": "V2 'View booking & payment' page (/v2/booking?bookingId=) renders only the checkout error when the payment gateway is unavailable — booking details, status and Manage link are hidden",
+    "persona": "customer",
+    "url": "/v2/activity → /v2/booking?bookingId=PS-UAT-MUBC02TE-51E4 (also training PS-UAT-MUBCBDM2-416A)",
+    "steps": [
+      "Open /v2/activity",
+      "Click 'View booking & payment'"
+    ],
+    "expected": "Booking reference, status, schedule, provider, Manage service link and a payment status message render; the checkout gate is shown as an inline notice",
+    "actual": "Page shows only '← Your bookings · Razorpay test checkout is not configured. Contact billing support. · Retry booking'. The page loads the booking through POST /api/customer-checkout {action:'status'} (loadCustomerConfirmationProjection) which is 503 whenever Razorpay keys are missing, so a gateway/config outage hides the whole booking record. /mobile-app/booking-confirmation?bookingId=… shows the booking with Pay/Try again for the same id, and /v2/grooming?bookingId=… renders the checkout card.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/07-v2-activity-reopened.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/18-v2-booking-pending.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/06-t-v2-booking.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/result.json (v2-activity-reopen-pending)"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-D05",
+    "title": "Still no resume-payment path from Activity/manage for a payment_pending grooming booking (mobile); the V2 path exists but lands on the error-only page",
+    "persona": "customer",
+    "url": "/mobile-app Activity → /grooming/manage?bookingId=…; /v2/activity → /v2/booking?bookingId=…",
+    "steps": [
+      "Create a Pay-online booking, do not pay",
+      "Mobile Activity → 'View booking and care →'",
+      "/v2/activity → 'View booking & payment'"
+    ],
+    "expected": "A Pay/resume control reachable from Activity",
+    "actual": "Mobile: Activity shows 'PAYMENT PENDING Bath & Basic … View booking and care →' → /grooming/manage shows 'Payment Pending' with controls Refresh policy preview / Refresh booking status only and 'Cancellation unavailable' — no Pay. V2: Activity now has 'View booking & payment' → /v2/booking which shows only the checkout error (CUST-L-D04). The only surfaces with a Pay control are /v2/grooming?bookingId=… and /mobile-app/booking-confirmation?bookingId=… (URL only).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/08-manage-pending.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/09-activity.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/16-mobile-booking-confirmation-pending.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D05"
+  },
+  {
+    "id": "CUST-L-D06",
+    "title": "Coupon is still dropped when the customer switches payment mode; Confirm stays enabled and the booking is created at full price",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app Book → Review",
+    "steps": [
+      "Review Essential Bath ₹1,241",
+      "Apply UATCARE100 → 'UAT coupon applied · you save ₹100' (₹1,141)",
+      "Tap Pay online, then Pay after service",
+      "Confirm booking"
+    ],
+    "expected": "Coupon stays applied or the total/Confirm is blocked until re-applied",
+    "actual": "After switching, total reverts to ₹1,241, coupon input still shows UATCARE100 but 'APPLIED' is gone and only the small line 'Booking details changed — apply the coupon again…' appears; Confirm booking enabled; booking PS-UAT-MUBC8VUJ-597C created with totalAmount 1241.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/04-coupon-applied.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/05-after-pay-online.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/06-after-pay-after.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/result.json"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D06"
+  },
+  {
+    "id": "CUST-L-P06",
+    "title": "Mobile grooming pay-after booking, reschedule and cancel driven end to end",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app Book → /grooming/manage",
+    "steps": [
+      "Pets → Essential Bath → address (Google suggestion) verified → Fri 25 Sept 11:00 AM–1:00 PM → Review → Pay after service → Confirm ×2",
+      "Activity → View booking and care → Reschedule +2 days 11:00 → Confirm new appointment",
+      "Cancel with reason → Confirm cancellation → reload"
+    ],
+    "expected": "Confirmed booking with assigned groomer; reschedule and cancel persist",
+    "actual": "1 canonical POST → 201 PS-UAT-MUBC8VUJ-597C confirmed (₹1,241, due now ₹0), 'BOOKING CONFIRMED … YOUR ASSIGNED GROOMER PawSpace Grooming Team (UAT)'; reschedule 200 → assigned, scheduled_start 2026-09-27T05:30Z; cancel 200 → cancelled (refund ₹0, policy observe), page 'Cancellation unavailable' after reload; D1 canonical_bookings status cancelled.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/08-confirmed.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/11-rescheduled.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/12-cancelled.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass",
+    "priorId": "CUST-P08"
+  },
+  {
+    "id": "CUST-L-P07",
+    "title": "Payment-pending grooming booking can be cancelled? — No: manage page says 'Cancellation unavailable' for an unpaid booking (recorded as a governed state, not a defect)",
+    "persona": "customer",
+    "url": "/grooming/manage?bookingId=PS-UAT-MUBC02TE-51E4",
+    "steps": [
+      "Open manage for the payment_pending booking"
+    ],
+    "expected": "Clear state",
+    "actual": "'Your Grooming booking Payment Pending … Cancellation unavailable'; no cancel form; booking remains payment_pending. Customers cannot self-cancel an unpaid reservation (owner decision whether that is intended).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/08-manage-pending.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "owner-decision"
+  },
+  {
+    "id": "CUST-L-D07",
+    "title": "OTP name field 'Your name (first time only)' still shown to returning customers (mobile and V2)",
+    "persona": "returning customer",
+    "url": "/mobile-app Account → Send OTP; /v2 Sign in",
+    "steps": [
+      "Sign out, request OTP for an existing number"
+    ],
+    "expected": "No name prompt for a known customer",
+    "actual": "Field visible with placeholder 'Your name (first time only)'; typed value ignored (name unchanged 'QA Grooming Parent'); same customer id after verify.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/10-mobile-otp-returning.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/result.json (mobile-otp-returning-name-prompt-D12)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D12"
+  },
+  {
+    "id": "CUST-L-D08",
+    "title": "Seeded pet Bruno still renders 'Vaccination not provided' although the record says vaccinated",
+    "persona": "customer 9800000111 (E2E-CUS-UI-001)",
+    "url": "/mobile-app My Pets, /v2/account",
+    "steps": [
+      "Sign in as 9800000111, open My Pets and /v2/account"
+    ],
+    "expected": "Card shows Vaccinated",
+    "actual": "/api/customer-account pets[0].vaccinationStatus 'vaccinated'; both cards show 'Bruno Indie · Dog · 14 Kg Vaccination not provided'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/19-bruno-mobile-pets.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/20-bruno-v2-account.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D11"
+  },
+  {
+    "id": "CUST-L-D09",
+    "title": "Internal/staging wording still visible to customers across V2 and mobile",
+    "persona": "customer",
+    "url": "/v2/grooming, /v2/training, /v2/taxi, /v2/walking, /mobile-app review, /v2/relocation",
+    "steps": [
+      "Scan body text on each visited page"
+    ],
+    "expected": "No 'UAT', 'sandbox', 'canonical', 'synthetic', 'INTERNAL' in customer copy",
+    "actual": "Examples this pass: 'Canonical Grooming price for Bath & Basic', groomers 'PawSpace Grooming Team (UAT)', 'Divya K. (UAT East)', 'Sandbox checkout only', 'Coupon code · UAT governed', 'This UAT confirmation creates sandbox records only', 'PET RELOCATION · INTERNAL UAT', 'DOG TRAINING · CANONICAL UAT', '₹500 sandbox amount due now · live money disabled', 'PET TAXI · CANONICAL UAT … synthetic UAT route class', 'Create canonical UAT schedule →', 'Register UAT document', 'Issue ₹75,000 UAT quote' (staff), 'UAT customer experience · live SMS delivery, money mo…' on the account tab. copyScan per page in each result.json.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/result.json (copyScan)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/result.json (copyScan)",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/00-explore/06-_v2_taxi.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/01-relocation/04-reloc-domestic-created.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D13"
+  },
+  {
+    "id": "CUST-L-D10",
+    "title": "Payment-return page prints the checkout error twice and shows 'Sign in to your account' while signed in (prior D15 items persist); customer app still polls the staff-only /api/mobile-employee-ai (403 console errors)",
+    "persona": "customer",
+    "url": "/mobile-app/booking-confirmation?bookingId=…, /v2/booking-confirmation?bookingId=…, /mobile-app",
+    "steps": [
+      "Open the payment-return route for a pending booking",
+      "Open /mobile-app"
+    ],
+    "expected": "One error line; no sign-in prompt for a signed-in customer; no forbidden calls from the customer app",
+    "actual": "'Razorpay test checkout is not configured. Contact billing support.' ×2 and controls 'Try again · Sign in to your account · Pay securely with Razorpay · Continue to PawSpace'; console: 'Failed to load resource: 403' on /api/mobile-employee-ai during every /mobile-app load.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/16-mobile-booking-confirmation-pending.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02-grooming/17-v2-booking-confirmation-pending.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/result.json (consoleErrors)"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D15"
+  },
+  {
+    "id": "CUST-L-OBS-02",
+    "title": "Mobile Book grooming address step does not offer the customer's saved default address (must be typed again)",
+    "persona": "customer with a saved default address",
+    "url": "/mobile-app Book → Choose a requested slot",
+    "steps": [
+      "Seed a default address, start Book grooming, reach the address step"
+    ],
+    "expected": "Saved address offered",
+    "actual": "Address Line 1 empty, no 'use saved address' control; V2 boarding/sitting does reuse the saved address.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/02b-mobile-grooming/01-address-step.png"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P08",
+    "title": "V2 Training paid assessment (Trainer Meet & Greet ₹500) reserves exactly one programme with one session; Pay refuses honestly",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/training",
+    "steps": [
+      "Select Rocky, package 'Trainer Meet & Greet 1 session(s) · valid 7 days ₹500 Meet & Greet · prepaid'",
+      "First session date 2026-09-24 → trainer availability",
+      "Double-click Reserve trainer & continue to payment",
+      "Pay securely · ₹500.00"
+    ],
+    "expected": "One booking + one session; honest refusal",
+    "actual": "1 canonical POST → 201 PS-UAT-MUBCBDM2-416A payment_pending; payment view 'Total service value ₹500.00 · Due now ₹500.00'; Pay → 503 inline; GET /api/training-programmes?bookingId → 1 programme TP-F183E4A8-CFB scheduled with sessions: 1; customer-account booking dog_training 'Trainer Meet & Greet' ₹500 payment_pending with provider uatcap_train_ft.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/02-t-availability.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/03-t-payment.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/04-t-after-pay.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass",
+    "priorId": "CUST-P09"
+  },
+  {
+    "id": "CUST-L-P09",
+    "title": "Training customer refusal states: cancellation request is blocked by policy configuration (governed), reschedule request accepted, closeout/ops actions denied",
+    "persona": "customer",
+    "url": "POST /api/training-cancellation, /api/training-customer-session-change, /api/training-sessions, /api/training-ops",
+    "steps": [
+      "As the booking's customer send request/request_reschedule/complete/cancel"
+    ],
+    "expected": "Governed responses, no 5xx",
+    "actual": "training-cancellation request → 200 {caseId TCAN-E3A93F86-E4C, status 'blocked_policy_configuration'} (no cancellation policy configured on this database — environment/config gate, the customer view has no cancel control for training); session change → 200 reschedule_requested TSR-74E02D44-54B; training-sessions complete → 403 'Identity session does not own this customer/provider scope'; training-ops cancel → 403 'Permission denied'. Programme stays scheduled, booking payment_pending.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/result.json (v2-training-recovery-and-refusals)"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "env-gated"
+  },
+  {
+    "id": "CUST-L-D11",
+    "title": "V2 training recovery page (/v2/training?bookingId=) shows no pending-payment recovery — only 'Refresh trainer availability'; training booking still has no manage link",
+    "persona": "customer",
+    "url": "/v2/training?bookingId=PS-UAT-MUBCBDM2-416A, /v2/activity",
+    "steps": [
+      "Reopen the pending training booking by URL and from Activity"
+    ],
+    "expected": "Held booking, amount due and Pay control (or a link to them)",
+    "actual": "Page renders the empty catalogue form; controls with Pay/Refresh: ['Refresh trainer availability'] only. Activity links to /v2/booking (error-only page, CUST-L-D04). Mobile booking-confirmation route shows Pay.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/08-t-v2-training-recovery.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/05-t-activity.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-D12",
+    "title": "Floating appearance/theme buttons overlap the primary Pay button on the V2 training payment view (Pixel 7)",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/training payment step",
+    "steps": [
+      "Reach the payment view on a 412px-wide viewport"
+    ],
+    "expected": "Primary action unobstructed",
+    "actual": "The ◐ and ◇ floating controls sit over the right end of 'Pay securely · ₹500.00'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/04-t-after-pay.png"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P10",
+    "title": "V2 Dog Walking: one-time walk and recurring starter schedule created (double-click → one booking each), listed in Activity and on the mobile Home 'UPCOMING BOOKING'",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/walking",
+    "steps": [
+      "Recurring starter schedule: Rocky, address via Google suggestion (verified 'East Bengaluru'), Mon/Wed/Fri 7:00 AM → Create canonical UAT schedule",
+      "One-time walk: Rocky, 30 min, Start from +3 days, 7:00 AM → Create (double-click)"
+    ],
+    "expected": "Server-owned price, one booking per click pair, visible in Activity",
+    "actual": "Recurring: quote WQ-03C318F6-2FE ₹698 (2×₹349) → PS-UAT-WALK-MUBCDRTG-1C51 confirmed, 'PawSpace Walker (UAT)', 2 reserved walks. One-time: quote WQ-980D045B-342 ₹349 → POST /api/walking-bookings 201 then 200 (replay of the same idempotent request) → one booking PS-UAT-WALK-MUBCRDBP-DC07 confirmed; D1 canonical_bookings shows exactly two dog_walking rows for the customer. /v2/activity lists both with 'View booking & payment'; mobile Home shows 'UPCOMING BOOKING 30-minute Solo Walk 24 Sept, 7:00 am · confirmed'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04-walking/03-w-created-Recurring-starter-schedule.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04b-walking/02-w1-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04-walking/04-w-activity.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04b-walking/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass",
+    "priorId": "CUST-P12"
+  },
+  {
+    "id": "CUST-L-D13",
+    "title": "V2 pages and /boarding/manage render booking times in the device time zone without a zone label — the same 7:00 AM IST walk shows as '1:30 am' in V2 Activity and the walking manage page (mobile pages pin IST)",
+    "persona": "customer whose browser is not in IST (sandbox browser tz UTC)",
+    "url": "/v2/activity, /v2/walking (confirmation + manage), /boarding/manage",
+    "steps": [
+      "Book a 7:00 AM walk",
+      "Compare /v2/activity, /v2/walking/manage and the mobile Home/Activity"
+    ],
+    "expected": "One consistent, labelled time zone (IST) on every customer surface",
+    "actual": "V2 activity: '30-minute Solo Walk Thu, 24 Sept, 1:30 am · dog walking'; V2 walking confirmation/manage: 'Reserved sessions 1 canonical walk 24/9/2026, 1:30:00 am', 'Walk 1 · scheduled 24/9/2026, 1:30:00 am → 2:00:00 am'; training in V2 activity 'Thu, 24 Sept, 4:30 am' for a 10:00 IST session; /boarding/manage 'Stay window: 25 Sept, 4:30 am → 30 Sept, 4:30 am' for a 10:00 IST check-in. Mobile Home/Activity show '24 Sept, 7:00 am' / '25 Sept 2026, 10:00 am IST'. Browser timeZone was 'UTC'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04b-walking/03-w-manage.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04-walking/04-w-activity.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/05-t-activity.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/06-manage-legacy.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04b-walking/result.json (timeDisplay)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P11",
+    "title": "Walking lifecycle actions are refused for customers (403 governed) and the manage page offers no reschedule (record)",
+    "persona": "customer",
+    "url": "POST /api/walking-lifecycle",
+    "steps": [
+      "As the booking's customer POST {action:'complete_walk'}"
+    ],
+    "expected": "Governed refusal",
+    "actual": "403 {\"error\":\"Permission denied\"}. /v2/walking/manage controls: 'Request cancellation review' only (disabled until a reason of ≥3 characters is typed); no reschedule control (as before).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04b-walking/result.json (v2-walking-manage-cancel)"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P12",
+    "title": "Boarding quote-error retry: a forced 503 from /api/boarding-commercial at the review step shows the error with a 'Retry price' control, prices read 'Price unavailable', and Retry restores the live quote; check-out before check-in is refused",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/boarding review step",
+    "steps": [
+      "Reach Review · 4 of 4 (50% selected)",
+      "Browser-force the next POST /api/boarding-commercial to 503 (page.route), toggle 'Pay the full amount now' to trigger a re-quote",
+      "Click Retry price",
+      "Separately: check-out earlier than check-in on the plan step"
+    ],
+    "expected": "Honest error, retry control, recovery; bad dates blocked",
+    "actual": "Forced 503 → alert 'Simulated quote outage (browser-forced for the retry test) · Retry price', option cards 'Price unavailable now · Price unavailable due 24 hours before check-in'; Retry price → POST 201 → 'Pay ₹6,990 & create canonical stay', error gone. Bad dates: alert 'Choose a check-out after check-in.', 'See available homes' disabled, no quote created. (The retry control only renders on steps after the plan; a plan-step quote failure is re-fetched on the next input change.)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/02-quote-forced-error.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/03-quote-after-retry.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/01-boarding-bad-dates.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/result.json"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P13",
+    "title": "Boarding 5-night dog+cat stay: host match with trust badges, 50% reserve creates exactly one payment_pending booking + stay record; split amounts correct on both option cards (D08 fixed)",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/boarding",
+    "steps": [
+      "25→30 Sept, Rocky + Misty, saved address reused",
+      "See available homes → Continue with Maya",
+      "Care details → Review protected booking",
+      "Toggle Pay the full amount now / Reserve with 50% now",
+      "Consent, double-click Pay ₹3,495 & create canonical stay"
+    ],
+    "expected": "Correct amounts on both cards in both states; one booking",
+    "actual": "Hosts: 'Maya & Rohan 4.9 ★ · Home, KYC and background verified · ₹699 / pet / stay unit'. 50% selected: '✓ Reserve with 50% now ₹3,495 now · ₹3,495 due 24 hours before check-in / Pay the full amount now ₹6,990 · no later balance'; full selected: 'Reserve with 50% now ₹3,495 now · ₹3,495 due… / ✓ Pay the full amount now ₹6,990 · no later balance', pay button 'Pay ₹6,990 & create canonical stay'; back to 50%: 'Pay ₹3,495 & create canonical stay'. Pay disabled until consent. 1 POST /api/canonical-bookings → 201 PS-UAT-MUBCU8O5-69FF payment_pending, stay BSTAY-A929DCD9-2 awaiting_host_acceptance (5 units, 2 pets, host_maya_rohan); payment view 'Total service value ₹6,990.00 · Due now ₹3,495.00 · Balance later ₹3,495.00 · Pay securely · ₹3,495.00'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/05-boarding-hosts.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/08-boarding-review-50.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/09-boarding-review-full.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/04-after-reserve.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/result.json"
+    ],
+    "severity": "n/a",
+    "class": "payment",
+    "status": "fixed-verified",
+    "priorId": "CUST-D08"
+  },
+  {
+    "id": "CUST-L-P14",
+    "title": "Unpaid boarding stay copy: manage pages say 'Stay window' and 'Payment status is tracked separately…' — no 'Payment is captured' claim (P1-07 / D02 fixed)",
+    "persona": "customer",
+    "url": "/boarding/manage?bookingId=PS-UAT-MUBCU8O5-69FF, /v2/boarding/manage?bookingId=…, mobile Activity → View booking and care",
+    "steps": [
+      "Open the manage pages for the payment_pending stay"
+    ],
+    "expected": "No captured/paid wording for an unpaid stay; neutral window label",
+    "actual": "'CANONICAL BOARDING STAY · PS-UAT-MUBCU8O5-69FF Awaiting Host Acceptance The selected host still needs to accept the canonical stay. Payment status is tracked separately on the canonical booking payment record. Host: Maya & Rohan. Stay window: 25 Sept, 4:30 am → 30 Sept, 4:30 am.' Mobile Activity lists it as 'PAYMENT PENDING Luxury Stay 25 Sept 2026, 10:00 am IST'. (Time-zone rendering: CUST-L-D13.)",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/06-manage-legacy.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/07-manage-v2.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/09-mobile-activity.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/10-mobile-stay-panel.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "fixed-verified",
+    "priorId": "CUST-D02"
+  },
+  {
+    "id": "CUST-L-OBS-03",
+    "title": "Unpaid boarding stay: manage page has no Pay control and Request extension / date change / cancellation are all disabled while awaiting host acceptance",
+    "persona": "customer",
+    "url": "/boarding/manage?bookingId=PS-UAT-MUBCU8O5-69FF",
+    "steps": [
+      "Open manage for the payment_pending stay"
+    ],
+    "expected": "Owner decision: whether an unpaid reservation should be cancellable/payable from here",
+    "actual": "Controls: 'Add Pet Taxi for this stay →', 'Save canonical care plan', 'Request extension(disabled)', 'Request date change(disabled)', 'Request cancellation(disabled)'; no Pay. The only pay surface is the checkout step reached right after reservation or /mobile-app/booking-confirmation?bookingId=…",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/06-manage-legacy.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/result.json (mobile-app-boarding-stay-panel.controls)"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "owner-decision"
+  },
+  {
+    "id": "CUST-L-D14",
+    "title": "Sitting '2-hour home Meet & Greet · ₹500' card is still a dead control and the review contradicts it (Meet & Greet ₹0, total ₹399)",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/sitting care-details step",
+    "steps": [
+      "4-hour visit, Continue with Sana",
+      "Care details: click '2-hour home Meet & Greet · ₹500'",
+      "Review protected booking"
+    ],
+    "expected": "Card toggles a state and the review shows the chosen option with its price (pricing itself is an owner decision)",
+    "actual": "Click: no aria-pressed change (null → null), no API call, no visible change; review lists 'Meet & Greet 2 hours · ₹0', '2-hour sitter Meet & Greet ₹0', 'Booking total ₹399'. Details step text shows both '2-hour sitter Meet & Greet · ₹500' and '2-hour home Meet & Greet · ₹500'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/13-sitting-details-mg-clicked.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/14-sitting-review.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/result.json (sitting-visit-meet-greet-D09)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D09"
+  },
+  {
+    "id": "CUST-L-ENV-03",
+    "title": "Host/sitter profile, reviews and chat from the customer side are honest environment gates: profile card with badges renders; reviews/media 'not connected'; chat overlay says live masked chat is not connected and sends nothing",
+    "persona": "customer",
+    "url": "/v2/boarding hosts step (View full profile / Chat securely)",
+    "steps": [
+      "Open host profile, open chat"
+    ],
+    "expected": "No simulated messages or fake reviews",
+    "actual": "Host card: 4.9 ★, 'Home, KYC and background verified', 'Multiple families allowed by profile'; profile: 'Host media and customer reviews are not connected in Boarding UAT'; chat: 'Boarding chat · UAT boundary · Live masked chat is not connected yet. This screen does not simulate host messages.' with only 'Close chat'. Sitting: 'Reviews are not connected', 'Live sitter messaging is not connected. No message has been sent.'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/06-boarding-chat.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/05-boarding-hosts.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/12-sitting-sitters.png"
+    ],
+    "severity": "n/a",
+    "class": "partner",
+    "status": "env-gated",
+    "priorId": "CUST-ENV-03"
+  },
+  {
+    "id": "CUST-L-P15",
+    "title": "Repeat stay plans do not grow the saved service address or add rows; identical account address upserts dedupe to the same id (a locality-suffixed variant is stored as a new row)",
+    "persona": "customer",
+    "url": "/v2/boarding, /v2/sitting, POST /api/customer-account upsert_address",
+    "steps": [
+      "Type/verify the address once in the boarding plan ('Use this address')",
+      "Run two more stay plans with the saved address",
+      "Upsert 'Home / 42 Indiranagar Double Road' twice via API, then once with ', Indiranagar, Bengaluru 560038' appended"
+    ],
+    "expected": "No suffix growth, no duplicate rows for the same input",
+    "actual": "customer_addresses after three stay plans: unchanged 'SD-…-ljcw2r · Service address · 42 Indiranagar Double Road, Indiranagar, Bengaluru, 560038' (default) + seeded 'Home' row; API upsert of the identical seed input → same id ADDR-…-FCE7O6 (201, no new row); the suffixed variant → new row ADDR-…-1SMKYL5 made default. Three rows now describe one physical address (seed Home, typed Service address, suffixed Home) — recorded as an observation, not suffix growth.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06-stay/result.json (repeat-address-stability)"
+    ],
+    "severity": "n/a",
+    "class": "data",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-D15",
+    "title": "Mobile Training: the pre-selected default Meet & Greet slot still cannot be reserved (scheduler 400) while the next 'Available' chip reserves fine",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app → Training → Book a Meet & Greet (Package step)",
+    "steps": [
+      "Open Training, tap 'Book a Meet & Greet' on the Assessment step",
+      "Package step shows '60-minute Meet & Greet · ₹500' with chips 'Tue, 22 Sept, 11:00 am Selected · Wed, 23 Sept, 3:00 pm Available · Wed, 23 Sept, 4:00 pm Available'",
+      "Tap 'Book a Meet & Greet' with the default chip",
+      "Choose 'Wed, 23 Sept, 3:00 pm' and tap again"
+    ],
+    "expected": "A slot presented as Selected is reservable, or is not offered",
+    "actual": "Default chip: POST /api/training-commercial 201 then POST /api/uat-scheduling 400 → alert 'We could not reserve this slot. Please choose another time, or contact PawSpace support.'; no booking. Other chip: training-commercial 201, uat-scheduling 200, canonical-bookings 201 → PS-UAT-MUBCZM7M-F10C payment_pending. The default chip (next day 11:00) is inside the scheduler's refusal window but is still offered as Selected.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03c-mobile-training/01-mt-package-step.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03c-mobile-training/02-mt-after-book-default-slot.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03c-mobile-training/03-mt-after-book-other-slot.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03c-mobile-training/result.json"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "still-open",
+    "priorId": "CUST-D10"
+  },
+  {
+    "id": "CUST-L-P16",
+    "title": "Mobile Training flow: Assessment → Package (recommended plan) → Trainer roster → Calendar → Review with 50%/100% options renders end to end; V2 assessment recovery shows Pay on the mobile payment-return route",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app Training",
+    "steps": [
+      "Drive Assessment → Choose trainer → Build session calendar → Review & pay"
+    ],
+    "expected": "Each stage renders with server data",
+    "actual": "Stage 2 'PAWSPACE RECOMMENDS Basic Obedience Plan … 8 sessions', stage 3 roster 'PawSpace Training Team (UAT) · 4.9 ★ · capacity 1', stage 4 'Service start date' + 'Repeat schedule' selects and '3:00 PM Recommended', stage 5 'Pay 50% upfront · no discount ₹6,000 now · ₹6,000 later' / 'Pay 100% upfront · coupon eligible ₹12,000' and 'Pay ₹6,000 & request trainer approval' (not pressed: money path is gated). /mobile-app/booking-confirmation?bookingId=PS-UAT-MUBCBDM2-416A shows 'Pay securely with Razorpay' for the pending assessment.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03b-mobile-training/02-mt2-package.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03b-mobile-training/04-mt3-trainers-loaded.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03b-mobile-training/05-mt4-calendar.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03b-mobile-training/06-mt5-review.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/03-training/07-t-mobile-confirmation.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P17",
+    "title": "V2 Pet Taxi canonical trip created and manageable; cancellation is request-only",
+    "persona": "customer",
+    "url": "/v2/taxi, /v2/taxi/manage?bookingId=PS-UAT-TAXI-MUBCMB6Y-2F2F",
+    "steps": [
+      "Pickup/drop/PIN 560038/date +3, 11:00, driver Meera S., Create canonical UAT trip (double-click)",
+      "Open Manage trip"
+    ],
+    "expected": "One trip, manage page with governed controls",
+    "actual": "'Trip booking created PS-UAT-TAXI-MUBCMB6Y-2F2F', ₹699 · ₹0 due now; D1 canonical_bookings pet_taxi confirmed 699. Manage: 'confirmed · trip scheduled · 42 Indiranagar Double Road → Cubbon Park Vet Clinic … Driver Meera S. · vehicle pending', controls 'Call driver securely · masked number', 'Request cancellation review' (needs a reason).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05-taxi/03-x-v2-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05b-taxi/03-x-v2-manage.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05b-taxi/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass",
+    "priorId": "CUST-P13"
+  },
+  {
+    "id": "CUST-L-D16",
+    "title": "V2 Pet Taxi confirmation prints 'Invalid Date' and placeholder route copy ('synthetic km · min estimate')",
+    "persona": "customer",
+    "url": "/v2/taxi after Create canonical UAT trip",
+    "steps": [
+      "Create a canonical trip"
+    ],
+    "expected": "Scheduled pickup time and a real or clearly-labelled estimate",
+    "actual": "'Trip booking created PS-UAT-TAXI-MUBCMB6Y-2F2F → Invalid Date · Meera S. UAT route class Bengaluru East · medium UAT route synthetic km · min estimate Commercial intent ₹699 ₹0 due now · production payment timing pending'. The manage page renders the time correctly (24 Sept, 5:30 am → 6:30 am, device tz).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05-taxi/03-x-v2-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05-taxi/result.json (v2-taxi-canonical-trip.afterText)"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P18",
+    "title": "V2 OTP sign-in (modal): new customer with name capture, wrong code refused, sign-out clears the session, returning customer keeps identity and name",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2 Sign in → dialog 'Sign in to PawSpace'",
+    "steps": [
+      "Sign in → mobile number → Continue securely → code shown on screen",
+      "Enter 000000 → Open my PawSpace",
+      "Enter the real code + name",
+      "/v2/account → Sign out",
+      "Sign in again with the same number, type a different name"
+    ],
+    "expected": "Honest wrong-code refusal; session cleared on sign-out; returning customer unchanged",
+    "actual": "Wrong code: alert 'Incorrect OTP code', /api/customer-account 401; verify → CUS-OTP-EE8E560CC58317B19DC634B7 'QA Account Parent'; Sign out → /api/customer-account and /api/identity-session 401, landing shows 'Sign in'; returning: same customer id, name unchanged.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/02-new-otp-code.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/03-new-wrong-code.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/14-signed-out.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/18-returning-signed-in.png"
+    ],
+    "severity": "n/a",
+    "class": "auth",
+    "status": "pass",
+    "priorId": "CUST-P01"
+  },
+  {
+    "id": "CUST-L-D17",
+    "title": "V2 sign-in modal also shows 'Your name · first visit only' to returning customers, and labels the on-screen code 'UAT CODE'",
+    "persona": "returning customer",
+    "url": "/v2 sign-in dialog",
+    "steps": [
+      "Request OTP for a known number"
+    ],
+    "expected": "No name prompt for a known customer; no internal wording",
+    "actual": "Name field visible with hint 'first visit only' for the returning customer (value ignored); code block 'UAT CODE 429948 · No real SMS is sent in sandbox.'",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/17-returning-otp-code.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "still-open",
+    "priorId": "CUST-D12"
+  },
+  {
+    "id": "CUST-L-P19",
+    "title": "Profile email validation (UI + API) and alternate-mobile validation; profile persists after reload",
+    "persona": "customer",
+    "url": "/v2/account",
+    "steps": [
+      "Email 'not-an-email' → Save profile",
+      "Email qa.account@example.com → Save",
+      "POST update_profile with email 'still@bad'",
+      "Alternate mobile 12345 then 9000000977"
+    ],
+    "expected": "Invalid values refused with a message; valid values saved",
+    "actual": "'Enter a valid email address.' (email stays null); valid → 'Profile updated.', API email qa.account@example.com; API invalid → 400 {error:'Enter a valid email address.', code:'invalid_email'}; alt 12345 → 'Alternate mobile must be 10 digits.'; 9000000977 saved; reload shows both values.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/06-email-invalid.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/result.json (profile-email-validation)"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "fixed-verified",
+    "priorId": "CUST-P03"
+  },
+  {
+    "id": "CUST-L-P20",
+    "title": "Repeat 'Save address' with identical values keeps one row and the same id; label and line1 do not grow",
+    "persona": "customer",
+    "url": "/v2/account Add default address",
+    "steps": [
+      "Save Home / 42 Indiranagar Double Road / Indiranagar / Bengaluru / 560038 three times"
+    ],
+    "expected": "One row, stable id, no suffixes",
+    "actual": "All three → 201 entityId ADDR-…-1LU38PK; customer_addresses has one row 'Home · 42 Indiranagar Double Road · 560038 · default'; Saved places shows one 'Home · Default'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/08-address-repeat.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/result.json (address-save-repeat-and-pin-D03)"
+    ],
+    "severity": "n/a",
+    "class": "data",
+    "status": "pass",
+    "priorId": "CUST-P04"
+  },
+  {
+    "id": "CUST-L-D18",
+    "title": "Account 'Add default address' still accepts an unserviceable PIN (110001) and makes it the default",
+    "persona": "customer",
+    "url": "/v2/account",
+    "steps": [
+      "Save Office / 1 Connaught Place, New Delhi / PIN 110001"
+    ],
+    "expected": "Refusal or a warning (service-zone API says the PIN is not served)",
+    "actual": "201 → 'Office · Default 1 Connaught Place, New Delhi … 110001' above Home; GET /api/service-zone?pincode=110001 → 404 'Zone not found for this pincode'.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/09-address-delhi.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/result.json"
+    ],
+    "severity": "P2",
+    "class": "data",
+    "status": "still-open",
+    "priorId": "CUST-D03"
+  },
+  {
+    "id": "CUST-L-D19",
+    "title": "Signed-out customer on /v2/food sees 'Your staging sign-in has expired. Open /staging-login to sign in again.' (twice) — staff-login copy on a customer surface",
+    "persona": "signed-out customer",
+    "url": "/v2/food (also the raw 401 body of /api/v2/grooming-catalogue)",
+    "steps": [
+      "Sign out, open /v2/food"
+    ],
+    "expected": "Customer-oriented sign-in prompt (as /v2/activity does: 'Sign in to see your care history…')",
+    "actual": "Two alerts 'Your staging sign-in has expired. Open /staging-login to sign in again.' next to 'Reserve canonical UAT order →'; /staging-login is the staff UAT entry, not a customer path.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/15-signed-out-food.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/result.json (sign-out-signed-out-copy-returning-otp-D12)"
+    ],
+    "severity": "P2",
+    "class": "auth",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P21",
+    "title": "V2 account pet form validates required fields inline ('Select the pet's temperament') and does not submit an incomplete pet",
+    "persona": "customer",
+    "url": "/v2/account → ＋ Add pet",
+    "steps": [
+      "Fill name/breed/age/weight/vaccinated/gender, leave Temperament, tap Add pet"
+    ],
+    "expected": "Inline validation, no request",
+    "actual": "'Select the pet's temperament' shown, no POST sent, pets unchanged.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07b-account/11-pet-saved.png"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass",
+    "priorId": "CUST-P05"
+  },
+  {
+    "id": "CUST-L-ENV-04",
+    "title": "Mobile/V2 Pet Taxi quote is gated on GOOGLE_MAPS_SERVER_API_KEY_UAT — 'Calculate Citroën & XUV fares' returns 503 on this server, so paise formatting, the route-fallback disclosure, the inline Pay refusal and 'Check payment status' could not be exercised locally (Boarding → Taxi continuation reaches the same gate)",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app Pet Taxi stage 3; /v2/taxi?sourceBookingId=PS-UAT-MUBCU8O5-69FF → POST /api/taxi-commercial",
+    "steps": [
+      "Pets (Rocky pre-selected) → Continue to trip details",
+      "One-way, City / regular, pickup/drop typed, date +3, 11:00 → Review ride requirements",
+      "Calculate Citroën & XUV fares"
+    ],
+    "expected": "A server quote (₹ with paise) plus the route notice ('Sandbox fallback estimate…' / 'Google Routes sandbox estimate…'), then Reserve → Pay 50% booking fee → honest 503 → Check payment status",
+    "actual": "POST /api/taxi-commercial → 503; the page shows 'Pet Taxi route pricing needs GOOGLE_MAPS_SERVER_API_KEY_UAT' and no vehicle options. lib/taxi-route-pricing.ts throws when the key is empty; the 10 km / 45 min 'sandbox_route_fallback' leg is only used after a Google failure, not when the key is absent. Staging must carry GOOGLE_MAPS_SERVER_API_KEY_UAT for this path to be testable. The V2 canonical taxi page (server UAT route class) is unaffected (CUST-L-P17).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/04-mx-quote.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/11-bx-quote.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/result.json"
+    ],
+    "severity": "n/a",
+    "class": "infrastructure",
+    "status": "env-gated"
+  },
+  {
+    "id": "CUST-L-D20",
+    "title": "Customer-facing taxi quote error prints the server environment variable name ('Pet Taxi route pricing needs GOOGLE_MAPS_SERVER_API_KEY_UAT')",
+    "persona": "customer",
+    "url": "/mobile-app Pet Taxi stage 3, /v2/taxi?sourceBookingId=…",
+    "steps": [
+      "Calculate fares with the Maps key unset"
+    ],
+    "expected": "A customer-worded refusal (e.g. 'Route pricing is temporarily unavailable') — configuration names belong in logs/ops",
+    "actual": "Red inline text 'Pet Taxi route pricing needs GOOGLE_MAPS_SERVER_API_KEY_UAT' rendered to the customer (mobile and V2 continuation).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/04-mx-quote.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/11-bx-quote.png"
+    ],
+    "severity": "P2",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P22",
+    "title": "Boarding → Taxi continuation stays inside V2 with the source booking: /boarding/manage 'Add Pet Taxi for this stay →' opens /v2/taxi?sourceBookingId=<stay>, header 'BOARDING → PET TAXI', link back to the stay, pets pre-selected",
+    "persona": "customer",
+    "url": "/boarding/manage?bookingId=PS-UAT-MUBCU8O5-69FF → /v2/taxi?sourceBookingId=PS-UAT-MUBCU8O5-69FF",
+    "steps": [
+      "Open the boarding manage page, follow 'Add Pet Taxi for this stay →'",
+      "Drive stages 1–3"
+    ],
+    "expected": "Continuation keeps the source booking reference and the V2 shell",
+    "actual": "Landing 'Add Pet Taxi to your Boarding stay … BOARDING → PET TAXI', link /v2/boarding/manage?bookingId=PS-UAT-MUBCU8O5-69FF, URL stays /v2/taxi?sourceBookingId=…; stage 3 reached (quote gated, CUST-L-ENV-04) so the persisted source_booking_id on a created ride could not be checked (the client sends channel 'boarding_cross_sell' + sourceBookingId per taxi-flow.tsx).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/07-bx-landing.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05d-taxi/08-bx-stage1.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/06b-boarding/06-manage-legacy.png"
+    ],
+    "severity": "n/a",
+    "class": "wiring",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-P23",
+    "title": "V2 Pet Taxi and Dog Walking cancellations are request-only: 'Request cancellation review' posts to taxi-finance / walking-finance (200) and the booking stays confirmed pending review",
+    "persona": "customer",
+    "url": "/v2/taxi/manage?bookingId=PS-UAT-TAXI-MUBCMB6Y-2F2F, /v2/walking/manage?bookingId=PS-UAT-WALK-MUBCRDBP-DC07",
+    "steps": [
+      "Click Request cancellation review (walking after typing a reason), then repeat"
+    ],
+    "expected": "Governed request recorded, no silent cancellation, no crash",
+    "actual": "Taxi: POST /api/taxi-finance 200, booking confirmed. Walking: POST /api/walking-finance 200, page 'Cancellation request policy review required. No refund was calculated automatically…', booking confirmed; a second request also returns 200 (no duplicate guard visible to the customer).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/05c-taxi/04-x-v2-manage-cancel.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04c-walking/02-w-cancel-submitted.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04c-walking/result.json"
+    ],
+    "severity": "n/a",
+    "class": "backend",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-D21",
+    "title": "V2 Fresh Food: a double-tap on 'Reserve canonical UAT order' crashes the page ('This page didn't load') — the idempotent replay (200) response is rendered as a fresh order and throws 'Cannot read properties of undefined (reading toLocaleString)'",
+    "persona": "customer (Pixel 7)",
+    "url": "/v2/food",
+    "steps": [
+      "Adult Dog Food, pet Rocky",
+      "Double-click Reserve canonical UAT order"
+    ],
+    "expected": "One order and one confirmation; a replayed response is ignored or rendered safely",
+    "actual": "POST /api/food-orders 201 then 200 (replay, one row PS-UAT-FOOD-MUBDB52K-F2E9 in food_orders); console 'TypeError: Cannot read properties of undefined (reading 'toLocaleString') at canonical-food-page…', 'PawSpace route error'; the route error boundary replaces the screen ('Something went wrong while preparing this screen… Try again'). Try again returns to the catalogue with no confirmation. A single click renders the confirmation normally (PS-UAT-FOOD-MUBDATPN-8C72, 'Manage order'). Reproduced twice (07c single reserve with el.click() twice, 07d double-click).",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/02-double-after-create.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/03-double-try-again.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07c-food-pets/05-food-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/result.json (consoleLog)"
+    ],
+    "severity": "P1",
+    "class": "UI",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-D22",
+    "title": "Food orders do not appear in /v2/activity or the customer-account bookings list — after leaving the confirmation the order can only be reached by URL",
+    "persona": "customer",
+    "url": "/v2/activity, GET /api/customer-account",
+    "steps": [
+      "Create food orders, open Activity"
+    ],
+    "expected": "Food orders listed with a link to /v2/food/manage?orderId=…",
+    "actual": "Activity has no Food entry or link; /api/customer-account bookings contain no food record although food_orders has three rows for the customer (PS-UAT-FOOD-MUBD55F2-B129, …ATPN-8C72, …B52K-F2E9). Combined with CUST-L-D21 a customer whose confirmation crashed has no in-app way back to the order.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/06-activity-food.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/result.json (food-manage-and-subscriptions-D07)"
+    ],
+    "severity": "P2",
+    "class": "wiring",
+    "status": "defect"
+  },
+  {
+    "id": "CUST-L-P24",
+    "title": "/v2/food/manage?orderId=<id> now renders the order (status, fulfilment truth, Request Finance review) — prior D07 fixed for the orderId parameter; ?bookingId= still renders an empty 'Manage Food order' shell without explanation",
+    "persona": "customer",
+    "url": "/v2/food/manage?orderId=PS-UAT-FOOD-MUBDB52K-F2E9 (and ?bookingId=…)",
+    "steps": [
+      "Open manage with orderId, then with bookingId"
+    ],
+    "expected": "Order shown; a wrong/missing id explained",
+    "actual": "orderId: 'CANONICAL FOOD · CUSTOMER UAT PS-UAT-FOOD-MUBDB52K-F2E9 Adult Dog Food · UAT 2 kg · qty 1 · uat reserved … Request Finance review', APIs food-fulfilment/food-proof 200. bookingId: only 'Manage Food order · Back to Food' (no message). /v2/food/subscriptions renders the subscription form.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/04-food-manage-orderId.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/05-food-manage-bookingId.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07d-food/07-food-subscriptions.png"
+    ],
+    "severity": "P3",
+    "class": "UI",
+    "status": "fixed-verified",
+    "priorId": "CUST-D07"
+  },
+  {
+    "id": "CUST-L-P25",
+    "title": "Mobile Dog Walking (Pixel 7): package → schedule → dog → review with address verification on the review step → pay-after payment step",
+    "persona": "customer (Pixel 7)",
+    "url": "/mobile-app Dog Walking",
+    "steps": [
+      "Just once, 30-minute Solo Walk ₹349 → Plan the schedule (Wed, 7:00 AM) → Choose your dog (Rocky) → Review & confirm → verify address → Continue to payment · ₹349 after service"
+    ],
+    "expected": "Server quote and a pay-after confirmation",
+    "actual": "Review: 'Schedule Tue, 22 Sept, 7:00 am · Walks reserved 1 · Per walk ₹349 · Total (pay after service) ₹349 · Due today ₹0'; address verified on the review step ('Verified service doorstep'); payment step 'Total service value ₹349.00 · Due now ₹0.00 · Accept pay-after-service & confirm booking'. Confirm: 'Accept pay-after-service & confirm booking' (double-click) → walking-commercial 201, uat-scheduling 200, walking-bookings 201 → one booking PS-UAT-WALK-MUBDD5BJ-2F9A confirmed ('Rocky's walks are booked … ₹349 after each completed walk · ₹0 due today', walker 'PawSpace Walker (UAT) · 4.9 ★'); D1 canonical_bookings confirmed 349.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04d-mobile-walking/01-mw-review-verified.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04d-mobile-walking/02-mw-payment.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04e-mobile-walking/03-mw-created.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/04e-mobile-walking/result.json"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-OBS-04",
+    "title": "V2 account pet form: breed must be picked from the suggestion list — free-typed 'Labrador Retriever' is refused with 'Select the pet's breed' (recorded, not counted as a defect: suggestion buttons were not observed in this run)",
+    "persona": "customer",
+    "url": "/v2/account → ＋ Add pet",
+    "steps": [
+      "Type a breed without picking a suggestion, fill every other field, Add pet"
+    ],
+    "expected": "n/a (observation)",
+    "actual": "Alert 'Select the pet's breed', no POST; empty submit lists 'Pet name is required · Tell us whether the pet is vaccinated · Select the pet's breed'. Pets created via API and via the mobile flow's suggestion pick worked in this pass.",
+    "evidence": [
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07c-food-pets/03-pet-filled-submit.png",
+      "/tmp/claude-0/-home-user-pawspace-tech-platform/18394ca5-ebb5-5fb5-a302-921f060172cb/scratchpad/launch/evidence/customer/07c-food-pets/result.json"
+    ],
+    "severity": "n/a",
+    "class": "UI",
+    "status": "pass"
+  },
+  {
+    "id": "CUST-L-NR-01",
+    "title": "Not retested: invalid pet weight via API returns a generic error (prior CUST-D14, P3) — not reachable from any UI (weight is a band select); left for the API regression suite",
+    "persona": "n/a",
+    "url": "POST /api/customer-account upsert_pet",
+    "steps": [],
+    "expected": "n/a",
+    "actual": "Not retested this pass; no UI path exists and the launch scope is browser journeys.",
+    "evidence": [],
+    "severity": "P3",
+    "class": "backend",
+    "status": "not-retested",
+    "priorId": "CUST-D14"
+  },
+  {
+    "id": "CUST-L-NR-02",
+    "title": "Not retested: neighbourhood search / Google egress (prior CUST-ENV-02) — location welcome was skipped with 'Browse without location'; address autocomplete returned the deterministic sandbox suggestion in every flow",
+    "persona": "n/a",
+    "url": "/mobile-app location welcome",
+    "steps": [],
+    "expected": "n/a",
+    "actual": "Address autocomplete worked via the sandbox place ('42, Indiranagar Double Road, Stage 2, Hoysala Nagar…'); the neighbourhood search itself was not driven.",
+    "evidence": [],
+    "severity": "n/a",
+    "class": "infrastructure",
+    "status": "not-retested",
+    "priorId": "CUST-ENV-02"
+  }
+]

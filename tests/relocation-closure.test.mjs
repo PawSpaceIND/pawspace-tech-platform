@@ -105,6 +105,10 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   const cleared = await governance.getRelocationCase(db, created.id);
   assert.equal(cleared.status, "quote_pending", "the last verification is what unlocks quoting");
   for (const doc of cleared.documents) assert.equal(doc.status, "verified");
+  // CUST-L-D01: verifying the LAST document is what unlocks quoting, and is also what completes the
+  // documents_review milestone — the customer and staff milestone board must not stay "pending" once
+  // the case has already moved past documents_pending.
+  assert.equal(cleared.milestones.find((row) => row.code === "documents_review").status, "complete");
 
   // 4. QUOTE. Priced by an agent, with the margin recorded, and it must be positive.
   const free = await refusal(act(db, created.id, "issue_quote", { amount: 0, vendorCost: 0 }));
@@ -118,6 +122,20 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   assert.equal(Number(quoted.quote.margin), 30_000, "the margin is derived by the server, not submitted");
   assert.equal(quoted.quote.status, "sent");
   assert.ok(Number(quoted.quote.valid_until) > Date.now());
+  // CUST-L-D01: issuing the quote completes the quote_issued milestone immediately, not only once the
+  // quote is later accepted or paid.
+  assert.equal(quoted.milestones.find((row) => row.code === "quote_issued").status, "complete");
+  const quoteIssuedEvents = quoted.events.filter((row) => row.event_type === "quote_sent");
+  assert.equal(quoteIssuedEvents.length, 1, "issuing the quote records exactly one quote_sent event");
+
+  // CUST-L-D03: replaying the identical "Issue quote" request (the same amount and vendor cost, while
+  // the quote is still 'sent') must be idempotent — no second quote_sent event, and the same quote row.
+  const replayed = await act(db, created.id, "issue_quote", { amount: 120_000, vendorCost: 90_000, validDays: 7 });
+  assert.equal(replayed.status, "quote_sent");
+  assert.equal(replayed.quote.id, quoted.quote.id, "a replay does not mint a second quote row");
+  assert.equal(Number(replayed.quote.amount), 120_000);
+  const replayedEvents = replayed.events.filter((row) => row.event_type === "quote_sent");
+  assert.equal(replayedEvents.length, 1, "a replayed Issue quote does not append a second quote_sent event");
 
   // 5. ACCEPT. Acceptance raises a payment DUE; it does not take money.
   const accepted = await act(db, created.id, "accept_quote");
@@ -130,6 +148,8 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
 
   // 6. PAYMENT and TRANSPORT.
   const paid = await act(db, created.id, "record_payment", { paymentReference: "UAT-RELO-1" });
+  // CUST-L-D01: recording payment completes the payment_confirmed milestone.
+  assert.equal(paid.milestones.find((row) => row.code === "payment_confirmed").status, "complete");
   assert.equal(paid.status, "transport_ready");
   assert.equal(paid.payment.status, "paid");
   assert.equal(paid.payment.payment_reference, "UAT-RELO-1");
@@ -156,6 +176,11 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   assert.equal(board.delivery_confirmed, "complete");
   assert.equal(board.origin_handover, "complete");
   assert.equal(board.destination_handover, "complete");
+  // CUST-L-D01: the whole board — not only the later, explicitly-completed milestones — reads
+  // complete by delivery, matching what both the customer and staff pages read from the same case.
+  assert.equal(board.documents_review, "complete");
+  assert.equal(board.quote_issued, "complete");
+  assert.equal(board.payment_confirmed, "complete");
   assert.equal(delivered.settlement.approval_status, "awaiting_finance_approval");
   assert.equal(Number(delivered.settlement.vendor_cost), 90_000);
   assert.equal(delivered.settlement.tax_status, "disabled_by_policy");
@@ -184,14 +209,15 @@ test("Relocation validates its inputs and its lifecycle preconditions", async ()
 
   const noPet = await refusal(newCase(db, { petName: "" }));
   assert.equal(noPet?.status, 400);
-  assert.match(noPet.message, /Customer, pet, origin and destination are required/);
+  // V2-045: refusals are field-specific so the customer form can show them inline (shared validator).
+  assert.match(noPet.message, /Enter your pet's name/);
 
   const noDestination = await refusal(newCase(db, { destinationCity: "" }));
   assert.equal(noDestination?.status, 400);
 
   const badMode = await refusal(newCase(db, { travelMode: "teleport" }));
   assert.equal(badMode?.status, 400);
-  assert.match(badMode.message, /Unsupported relocation travel mode/);
+  assert.match(badMode.message, /Choose air, road or sea/);
 
   const pastDate = await refusal(newCase(db, { targetTravelDate: new Date(Date.now() - 86_400_000).toISOString() }));
   assert.equal(pastDate?.status, 400);
@@ -359,4 +385,49 @@ test("Relocation reads and the gateway keep customer, agent and finance authorit
   // An anonymous caller cannot open or move a relocation case.
   assert.equal(await ask("/api/relocation", { action: "qualify", caseId: mine.id }), 401);
   assert.equal(await ask("/api/relocation"), 401);
+});
+
+// ---------------------------------------------------------------------------------------------
+// CUST-L-D02. `app/api/relocation/route.ts` catches every thrown error with
+// `authError(error,"Unable to update relocation case")`. authError only lets a response's real
+// message through when the response was built by `governedJsonError`/`markGovernedHttpError` — any
+// OTHER thrown 4xx Response (an ungoverned client error) is logged and replaced with the fallback, so
+// an operator could not tell a missing-document refusal from an out-of-order transport refusal. Every
+// precondition in lib/relocation-governance.ts must reach the caller through governedJsonError so
+// authError recognises it as governed and lets the real reason through.
+test("Relocation governed refusals reach the operator through authError instead of a redacted fallback", async () => {
+  const { db } = await reloWorld();
+  const serverAuth = await import("../lib/server-auth.ts");
+  const FALLBACK = "Unable to update relocation case";
+
+  const created = await newCase(db);
+
+  const cases = [
+    { action: "issue_quote", extra: { amount: 75_000, vendorCost: 60_000 }, status: 409, match: /can only be issued once all documents are verified/ },
+    { action: "resolve_refund", extra: { decision: "approved" }, status: 409, match: /No pending relocation refund request/ },
+    { action: "invent_a_visa", extra: {}, status: 400, match: /Unsupported relocation action/ },
+  ];
+  for (const { action, extra, status, match } of cases) {
+    let thrown = null;
+    try { await act(db, created.id, action, extra); } catch (error) { thrown = error; }
+    assert.ok(thrown instanceof Response, `${action} throws a Response`);
+    const routed = serverAuth.authError(thrown, FALLBACK);
+    assert.equal(routed.status, status);
+    const body = await routed.json();
+    assert.notEqual(body.error, FALLBACK, `${action}'s real precondition must not be redacted to the fallback`);
+    assert.match(body.error, match);
+  }
+
+  // The 404 "case not found" path (createRelocationCase / mutateRelocationCase) is governed too.
+  let notFound = null;
+  try { await act(db, "RLC-NOPE", "qualify"); } catch (error) { notFound = error; }
+  const routedNotFound = serverAuth.authError(notFound, FALLBACK);
+  assert.equal(routedNotFound.status, 404);
+  assert.match((await routedNotFound.json()).error, /Relocation case not found/);
+
+  // An actually-unexpected thrown value (not a governed Response) still gets the safe fallback —
+  // this fix narrows what is redacted, it does not stop redacting genuinely ungoverned errors.
+  const stray = serverAuth.authError(new Error("boom"), FALLBACK);
+  assert.equal(stray.status, 500);
+  assert.equal((await stray.json()).error, FALLBACK);
 });

@@ -193,3 +193,26 @@ test("implemented Sitting visit and overnight packages are server-priced; unconf
     "daycare remains an explicit catalogue/policy blocker instead of receiving an invented price",
   );
 });
+
+
+test("malformed optional email cannot mutate a profile or consume its retry key", async () => {
+  const {sqlite, db, account} = await fresh();
+  const created = await register(db, "9000001090", {name:"Email QA", cityId:"blr"});
+  const input = {customerId:created.customerId, action:"update_profile", idempotencyKey:"email-correction"};
+  for (const email of ["invalid-email", "a@@example.com", "a b@example.com", "a@.com", "a@example..com", {}, 17, "a".repeat(250)+"@example.com"]) {
+    let rejected;
+    try { await account.mutateCustomerAccount(db, {...input, profile:{name:"Must not save",email}}); }
+    catch(error) { rejected=error; }
+    assert.equal(rejected?.status,400);
+    assert.deepEqual(await rejected.json(),{error:"Enter a valid email address.",code:"invalid_email"});
+    const record=await account.readCustomerAccount(db,created.customerId);
+    assert.equal(record.name,"Email QA"); assert.equal(record.email,null);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM customer_account_mutations").get().n,0);
+  }
+  await account.mutateCustomerAccount(db,{...input,profile:{email:"  QA+Test@Example.COM "}});
+  assert.equal((await account.readCustomerAccount(db,created.customerId)).email,"qa+test@example.com");
+  await account.mutateCustomerAccount(db,{...input,idempotencyKey:"email-omitted",profile:{name:"Email QA Updated"}});
+  assert.equal((await account.readCustomerAccount(db,created.customerId)).email,"qa+test@example.com");
+  await account.mutateCustomerAccount(db,{...input,idempotencyKey:"email-clear",profile:{email:null}});
+  assert.equal((await account.readCustomerAccount(db,created.customerId)).email,null);
+});
