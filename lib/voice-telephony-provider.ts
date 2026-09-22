@@ -20,6 +20,10 @@ export type TelephonyCallIntent = {
   recordingAllowed: boolean;
   timeoutSeconds?: number;
   simulatedOutcome?: TelephonyEventKind | null;
+  customerId?: string | null;
+  leadId?: string | null;
+  bookingId?: string | null;
+  useCase?: string | null;
 };
 
 export type TelephonyCallHandle = { accepted: boolean; providerCallId: string; providerStatus: string; productionCall: boolean };
@@ -195,6 +199,54 @@ export function exotelTelephony(env: Env): TelephonyProvider {
   };
 }
 
+export const ELEVENLABS_EXOTEL_PROVIDER = "elevenlabs_exotel";
+export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
+  const apiKey = val(env, "ELEVENLABS_API_KEY"), agentId = val(env, "ELEVENLABS_AGENT_ID"), phoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
+  if (!apiKey || !agentId || !phoneNumberId) return disconnectedTelephony;
+  const base = (val(env, "ELEVENLABS_API_BASE") || "https://api.in.residency.elevenlabs.io").replace(/\/$/, "");
+  return {
+    provider: ELEVENLABS_EXOTEL_PROVIDER, status: "connected", productionCapable: true,
+    async createCall(intent) {
+      if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
+      try {
+        let response: Response, raw: string;
+        try {
+          response = await fetch(`${base}/v1/convai/exotel/outbound-call`, {
+            method: "POST", signal: controller.signal,
+            headers: { "content-type": "application/json", "xi-api-key": apiKey },
+            body: JSON.stringify({
+              agent_id: agentId,
+              agent_phone_number_id: phoneNumberId,
+              to_number: intent.toNumber,
+              conversation_initiation_client_data: {
+                dynamic_variables: {
+                  pawspace_voice_call_id: intent.callRef,
+                  pawspace_customer_id: intent.customerId || "",
+                  pawspace_lead_id: intent.leadId || "",
+                  pawspace_booking_id: intent.bookingId || "",
+                  pawspace_voice_use_case: intent.useCase || "",
+                },
+              },
+            }),
+          });
+          raw = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
+        } catch (error) {
+          throw new TelephonyProviderUnavailable(controller.signal.aborted ? `ElevenLabs outbound provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `ElevenLabs outbound provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
+        }
+        if (!response.ok) throw new TelephonyProviderUnavailable(`ElevenLabs outbound provider rejected the call request (${response.status})`);
+        let parsed: { success?: boolean; conversation_id?: string; callSid?: string; message?: string } = {};
+        try { parsed = JSON.parse(raw) as typeof parsed; } catch { throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned a malformed response"); }
+        const providerCallId = String(parsed.callSid || parsed.conversation_id || "").trim();
+        if (!parsed.success || !providerCallId) throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned no accepted call identifier");
+        return { accepted: true, providerCallId, providerStatus: "queued", productionCall: true };
+      } finally { clearTimeout(timer); }
+    },
+    async verifyWebhook() { return { verified: false, mechanism: null, reason: "ElevenLabs callbacks are verified on the dedicated signed post-call endpoint" }; },
+    parseEvent() { throw new TelephonyProviderUnavailable("ElevenLabs events are reconciled through the dedicated post-call endpoint"); },
+  };
+}
+
 export const LOCAL_SIMULATOR_PROVIDER = "local_simulator_non_production";
 export function localSimulatorTelephony(env: Env): TelephonyProvider {
   const secret = val(env, "EXOTEL_WEBHOOK_SECRET") || val(env, "PAWSPACE_VOICE_SIMULATOR_SECRET");
@@ -207,6 +259,10 @@ export function localSimulatorTelephony(env: Env): TelephonyProvider {
 
 export function selectTelephonyProvider(env: Env): TelephonyProvider {
   if (val(env, "PAWSPACE_VOICE_TRANSPORT") === LOCAL_SIMULATOR_PROVIDER && voiceMode(env) !== "live") return localSimulatorTelephony(env);
+  if (val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase() === "elevenlabs") {
+    const eleven = elevenLabsExotelTelephony(env);
+    if (eleven.status === "connected") return eleven;
+  }
   if (telephonyCredentialsConfigured(env)) return exotelTelephony(env);
   return disconnectedTelephony;
 }

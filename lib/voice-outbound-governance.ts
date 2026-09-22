@@ -533,6 +533,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
     const handle = await policy.provider.createCall({
       callRef: id, toNumber: dialNumber, statusCallbackUrl: callbackUrl,
       recordingAllowed: policy.recordingAllowed, simulatedOutcome: input.simulatedOutcome ?? null,
+      customerId: text(input.customerId) || null, leadId: text(input.leadId) || null,
+      bookingId: text(input.bookingId) || null, useCase: text(input.useCase) || null,
     });
     await db.prepare("UPDATE voice_call_orders SET provider_call_id=?,production_call=?,updated_at=? WHERE id=?").bind(handle.providerCallId, handle.productionCall ? 1 : 0, now, id).run();
     await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall }, asOf: now });
@@ -831,6 +833,25 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
     // and voiceOutboundReadiness surfaces the count so a stuck call is visible rather than silent.
     return { accepted: true, status: 200, duplicate: false, applied: false, stateChanged: false, reason: String((error as Error).message).slice(0, 200), eventKind: event.kind, eventId: eventKey };
   }
+}
+
+
+export async function reconcileVerifiedElevenLabsCompletion(db:Db,input:{callId:string;conversationId:string;completed:boolean;asOf?:number}){
+ await ensureVoiceCallTables(db);const now=input.asOf??Date.now();
+ const call=await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(input.callId).first<Row>();
+ if(!call)throw new Response("PawSpace voice call not found",{status:404});
+ if(text(call.provider)!=="elevenlabs_exotel")throw new Response("Voice call is not owned by the ElevenLabs Exotel provider",{status:409});
+ let state=text(call.state)as VoiceCallState;
+ if(VOICE_TERMINAL_STATES.includes(state))return{callId:input.callId,state,duplicatePrevented:true};
+ if(!input.completed){
+  if(canVoiceCallTransition(state,"provider_error")){await applyTransition(db,{callId:input.callId,to:"provider_error",reason:"Verified ElevenLabs call initiation failure",actor:"provider:elevenlabs_exotel",detail:{conversationId:input.conversationId},asOf:now});state="provider_error";}
+  return{callId:input.callId,state,duplicatePrevented:false};
+ }
+ for(const next of ["dialing","ringing","connected","completed"]as VoiceCallState[]){
+  if(state===next)continue;
+  if(canVoiceCallTransition(state,next)){await applyTransition(db,{callId:input.callId,to:next,reason:`Verified ElevenLabs post-call reconciliation (${input.conversationId})`,actor:"provider:elevenlabs_exotel",detail:{conversationId:input.conversationId,inferredFromPostCall:next!=="completed"},asOf:now});state=next;}
+ }
+ return{callId:input.callId,state,duplicatePrevented:false};
 }
 
 // --- audit read ------------------------------------------------------------------------------------

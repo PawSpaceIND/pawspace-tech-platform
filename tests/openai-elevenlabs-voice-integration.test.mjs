@@ -95,3 +95,19 @@ test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
  assert.throws(()=>mod.assertElevenLabsLlmAuth(make("Bearer wrong"),{ELEVENLABS_LLM_SECRET:"secret"}));
  assert.doesNotThrow(()=>mod.assertElevenLabsLlmAuth(make("Bearer secret"),{ELEVENLABS_LLM_SECRET:"secret"}));
 });
+
+test("ElevenLabs Exotel outbound adapter is selected only when explicitly configured and carries PawSpace IDs",async()=>{
+ const mod=await import("../lib/voice-telephony-provider.ts");
+ const env={PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"el-test",ELEVENLABS_AGENT_ID:"agent-1",ELEVENLABS_AGENT_PHONE_NUMBER_ID:"phone-1",ELEVENLABS_API_BASE:"https://api.in.residency.elevenlabs.io"};
+ const provider=mod.selectTelephonyProvider(env);assert.equal(provider.provider,"elevenlabs_exotel");
+ const stub=stubFetch((_url)=>jsonResponse({success:true,conversation_id:"conv-1",callSid:"call-1"}));
+ try{
+  const result=await provider.createCall({callRef:"VCALL-1",toNumber:"+919999999999",statusCallbackUrl:"https://example.test/cb",recordingAllowed:false,customerId:"CUS-1",leadId:"LEAD-1",bookingId:"BOOK-1",useCase:"booking_confirmation"});
+  assert.equal(result.accepted,true);assert.equal(result.providerCallId,"call-1");
+  const call=stub.calls[0],body=JSON.parse(call.init.body);
+  assert.equal(call.url,"https://api.in.residency.elevenlabs.io/v1/convai/exotel/outbound-call");
+  assert.equal(call.init.headers["xi-api-key"],"el-test");
+  assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_voice_call_id,"VCALL-1");
+  assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,"CUS-1");
+ }finally{stub.restore();}
+});

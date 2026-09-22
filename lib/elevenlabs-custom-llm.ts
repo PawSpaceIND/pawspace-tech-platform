@@ -39,7 +39,7 @@ export function extractElevenLabsResponsesInput(body:Row){
 
 function extra(body:Row){return((body.elevenlabs_extra_body||body.metadata||{})as Row);}
 async function voiceContext(db:D1Database,body:Row){
- const data=extra(body),sessionId=text(data.pawspace_voice_session_id),customerIdHint=text(data.pawspace_customer_id),threadIdHint=text(data.pawspace_thread_id);
+ const data=extra(body),sessionId=text(data.pawspace_voice_session_id),customerIdHint=text(data.pawspace_customer_id),threadIdHint=text(data.pawspace_thread_id),voiceCallId=text(data.pawspace_voice_call_id);
  if(sessionId){
   const session=await db.prepare("SELECT id,customer_id,thread_id,status FROM inbound_ai_voice_sessions WHERE id=?").bind(sessionId).first<Row>();
   if(!session)throw new Response("PawSpace voice session not found",{status:409});
@@ -51,6 +51,21 @@ async function voiceContext(db:D1Database,body:Row){
   if(!thread||text(thread.customer_id)!==customerIdHint)throw new Response("PawSpace voice thread/customer mismatch",{status:409});
   if(text(thread.status)==="closed")throw new Response("PawSpace voice thread is closed",{status:409});
   return{sessionId:null,customerId:customerIdHint,threadId:threadIdHint};
+ }
+ if(voiceCallId){
+  const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
+  if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call context was not found",{status:409});
+  const customerId=text(call.customer_id);
+  let thread=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
+  let threadId=text(thread?.id);
+  if(!threadId){
+   threadId=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
+   await db.batch([
+    db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)").bind(threadId,customerId,text(call.booking_id)||null,text(call.lead_id)||null,now,now),
+    db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(),threadId,"customer",customerId,customerId,now),
+   ]);
+  }
+  return{sessionId:null,customerId,threadId,voiceCallId};
  }
  throw new Response("PawSpace voice identity is missing from ElevenLabs custom LLM request",{status:400});
 }
