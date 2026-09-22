@@ -29,7 +29,7 @@ export type AtlasCeoBrief={
  autonomousExecution:false;
 };
 
-const REQUIRED_CEO_COVERAGE=["sales","marketing","operations","customer_success","finance","gst_tax","legal","hr","risk"] as const;
+const REQUIRED_CEO_COVERAGE=["ceo","sales","marketing","operations","customer_success","finance","gst_tax","legal","hr","risk","groomer","trainer"] as const;
 const text=(value:unknown)=>String(value??"").trim();
 
 export function buildAtlasCeoBrief(candidates:AtlasExecutiveCandidate[],options:{now?:number;policy?:AtlasDecisionPolicy}={}):AtlasCeoBrief{
