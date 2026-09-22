@@ -323,8 +323,11 @@ test("Customer persona — OTP → grooming booking → real booking ID (+ Razor
       expect(onlineReservedRes.status(), await onlineReservedRes.text()).toBe(200);
       log(`✅ Online-pay scheduler reservation completed in ${Date.now() - onlineStartedAt} ms.`);
       const onlineRes = await createdOnline;
-      const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string } };
-      log(`${onlineRes.status() === 201 ? "✅" : "⚠️"} 'Pay online' booking request → HTTP ${onlineRes.status()}${onlineBody.data?.bookingId ? ` (${onlineBody.data.bookingId}, payment pending until captured)` : ""}.`);
+      const onlineBody = await onlineRes.json().catch(() => ({})) as { data?: { bookingId?: string }; error?: string; code?: string };
+      // A non-201 here used to report only the status, which left "prepaid is refused" indistinguishable
+      // from "the sweep booked the same slot twice". The governed refusal reason is the whole diagnosis.
+      const onlineRefusal = onlineRes.status() === 201 ? "" : ` — ${onlineBody.error || "(no error field)"}${onlineBody.code ? ` [${onlineBody.code}]` : ""}`;
+      log(`${onlineRes.status() === 201 ? "✅" : "⚠️"} 'Pay online' booking request → HTTP ${onlineRes.status()}${onlineBody.data?.bookingId ? ` (${onlineBody.data.bookingId}, payment pending until captured)` : ""}${onlineRefusal}.`);
       // Prepaid auto-starts the Razorpay checkout on the payment page; a "Pay securely" button may also exist.
       const payPage = p2.getByRole("region", { name: "Grooming payment" });
       await expect(payPage, "prepaid payment page rendered").toBeVisible({ timeout: 20_000 });
