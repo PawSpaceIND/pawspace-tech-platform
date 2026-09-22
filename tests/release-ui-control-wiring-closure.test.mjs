@@ -333,6 +333,9 @@ test("the shared Button component still forwards type and handlers to the real b
 test("Case Center disables Refresh while canonical case data is already loading", () => {
   const source = read("../app/team/cases/page.tsx");
   assert.match(source, /disabled=\{loading\}[\s\S]*?loading\?"Refreshing…":"Refresh"/);
+  // The control also reports its busy state, so an audit snapshot of "Refreshing…" is not a
+  // silently-enabled target and assistive technology hears the refresh in progress.
+  assert.match(source, /aria-busy=\{loading\}/);
 });
 
 test("signed-in customer acceptance follows the current discovery location editor", () => {
