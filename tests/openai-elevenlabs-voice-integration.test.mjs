@@ -75,7 +75,7 @@ test("Exotel human transfer readiness stays UAT-gated and points at India reside
  assert.equal(status.enabled,true);
  assert.equal(status.destinationConfigured,true);
  assert.equal(status.exotelConnectAppletRequired,true);
- assert.match(status.connectAppletUrl,/api\.in\.residency\.elevenlabs\.io/);
+ assert.match(status.connectAppletUrl,/^https:\/\/api\.in\.residency\.elevenlabs\.io\/v1\/convai\/exotel\/connect-applet$/);
  assert.equal(status.productionReady,false);
 });
 
