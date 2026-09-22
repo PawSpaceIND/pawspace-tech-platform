@@ -52,7 +52,7 @@ interface Env {
   PAWSPACE_AI_EXECUTIVE_ACTIVE?:string;
   PUBLIC_CONTACT_RATE_LIMITER?:RateLimitBinding;
   AI_VOICE_RATE_LIMITER?:RateLimitBinding;
-  ATLAS_VECTORIZE?:{upsert(vectors:Array<{id:string;values:number[];metadata:Record<string,unknown>}>):Promise<unknown>;query(values:number[],options:Record<string,unknown>):Promise<unknown>};
+  ATLAS_VECTORIZE?:{upsert(vectors:Array<{id:string;values:number[];metadata:Record<string,unknown>}>):Promise<unknown>;query(values:number[],options:Record<string,unknown>):Promise<unknown>;deleteByIds(ids:string[]):Promise<unknown>};
   ATLAS_SECURE_CONTEXT_KEY?:string;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -203,7 +203,7 @@ const worker = {
       const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
-      const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention"}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
+      const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
       const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         gatewayInboundTask,
