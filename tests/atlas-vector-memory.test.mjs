@@ -26,7 +26,7 @@ test("access codes and direct PII are classified as secure context",()=>{
 
 test("credential storage never invokes AI embedding or Vectorize",async()=>{
  const db=new DbMock();let aiCalls=0,vectorCalls=0;
- const result=await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey,AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{vectorCalls++},query:async()=>({matches:[]})}},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actorId:"ops@test"});
+ const result=await storeAtlasMemory(db,{ATLAS_SECURE_CONTEXT_KEY:secureKey,AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{vectorCalls++},query:async()=>({matches:[]})}},{customerId:"C1",petId:"P1",content:"Gate code is 1234",actor});
  assert.equal(result.storage,"secure_context");assert.equal(result.vectorized,false);assert.equal(aiCalls,0);assert.equal(vectorCalls,0);
  const insert=db.calls.find(c=>c.sql.includes("INSERT INTO atlas_secure_context_facts"));assert.ok(insert);assert.equal(insert.binds.includes("Gate code is 1234"),false);
 });
@@ -34,7 +34,7 @@ test("credential storage never invokes AI embedding or Vectorize",async()=>{
 test("ordinary behavioral memory uses bge-m3 and filtered Vectorize metadata",async()=>{
  const db=new DbMock();let model="",metadata=null;
  const vector={upsert:async rows=>{metadata=rows[0].metadata},query:async()=>({matches:[]})};
- const result=await storeAtlasMemory(db,{AI:{run:async m=>{model=m;return{data:[embedding]}}},ATLAS_VECTORIZE:vector},{customerId:"C1",petId:"P1",content:"Dog is afraid of autos",actorId:"ops@test"});
+ const result=await storeAtlasMemory(db,{AI:{run:async m=>{model=m;return{data:[embedding]}}},ATLAS_VECTORIZE:vector},{customerId:"C1",petId:"P1",content:"Dog is afraid of autos",actor});
  assert.equal(result.storage,"vector");assert.equal(model,"@cf/baai/bge-m3");assert.deepEqual(metadata,{customer_id:"C1",pet_id:"P1",sensitivity:"non_sensitive",memory_id:result.id});
 });
 test("LLM retrieval of a sensitive query stops before embeddings or Vectorize",async()=>{
@@ -61,7 +61,7 @@ test("memory storage requires granted consent before secure or vector writes",as
   const db=new DbMock(consentStatus);let aiCalls=0,vectorCalls=0;
   const env={ATLAS_SECURE_CONTEXT_KEY:secureKey,AI:{run:async()=>{aiCalls++;return{data:[embedding]}}},ATLAS_VECTORIZE:{upsert:async()=>{vectorCalls++},query:async()=>({matches:[]})}};
   for(const content of ["Dog is afraid of autos","Gate code is 1234"]){
-   const error=await storeAtlasMemory(db,env,{customerId:"C1",petId:"P1",content,actorId:"ops@test"}).then(()=>null,e=>e);
+   const error=await storeAtlasMemory(db,env,{customerId:"C1",petId:"P1",content,actor}).then(()=>null,e=>e);
    assert.equal(error instanceof Response,true);assert.equal(error.status,403);assert.equal(await error.text(),"Atlas memory consent is required before storage");
   }
   assert.equal(aiCalls,0);assert.equal(vectorCalls,0);
