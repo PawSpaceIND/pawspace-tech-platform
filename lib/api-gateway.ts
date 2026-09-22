@@ -173,6 +173,9 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
     // continue to require Finance authority; requesting customer payment never grants that power.
     return body.action==="request_after_service"?"bookings.view":"payments.manage";
   }
+  // Staff replying on a web chat thread, and the in-thread WhatsApp consent that precedes any move
+  // (owner decision 2026-09-22, decision 4). Same permission the WhatsApp conversation control carries.
+  if(url.pathname==="/api/chat-human-reply")return "communications.manage";
   if(url.pathname==="/api/grooming-lifecycle"){
     if(method==="GET")return "bookings.view";
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
