@@ -1,5 +1,6 @@
 import {buildCustomer360} from "./customer-360";
 import {startInboundAiVoiceSession} from "./inbound-ai-telephony";
+import {aiModelRef,aiProviderRef} from "./ai-provider-adapter";
 
 type Env=Record<string,unknown>;
 type Row=Record<string,unknown>;
@@ -14,19 +15,26 @@ export function elevenLabsVoiceConfigured(env:Env){
 export function elevenLabsVoiceReadiness(env:Env){
  const missing=["ELEVENLABS_API_KEY","ELEVENLABS_AGENT_ID","ELEVENLABS_INIT_WEBHOOK_SECRET"].filter(key=>!text(env[key]));
  const enabled=text(env.PAWSPACE_VOICE_RUNTIME).toLowerCase()==="elevenlabs";
+ const residency=text(env.ELEVENLABS_RESIDENCY).toLowerCase();
+ const provider=aiProviderRef(env),model=aiModelRef(env,"voice").modelRef;
  return{
   runtime:"elevenlabs" as const,
   enabled,
   configured:missing.length===0,
   missing,
   agentIdConfigured:Boolean(text(env.ELEVENLABS_AGENT_ID)),
-  indiaResidency:text(env.ELEVENLABS_RESIDENCY).toLowerCase()!=="global",
+  indiaResidency:["in","india","in-residency"].includes(residency),
+  residency:residency||null,
   exotelWebSocket:text(env.ELEVENLABS_EXOTEL_WS)||ELEVENLABS_EXOTEL_INDIA_WS,
-  intelligenceProvider:"openai" as const,
-  intelligenceModel:text(env.PAWSPACE_AI_VOICE_MODEL)||DEFAULT_ELEVENLABS_OPENAI_MODEL,
+  intelligenceProvider:provider,
+  intelligenceModel:model,
   productionReady:false,
   reason:!enabled?"ElevenLabs runtime is not selected":missing.length?"ElevenLabs credentials are incomplete":"Configuration present; live carrier proof is still required",
  };
+}
+
+export function assertElevenLabsVoiceConfigured(env:Env){
+ if(!elevenLabsVoiceConfigured(env))throw new Response("ElevenLabs voice integration is not fully configured",{status:503});
 }
 
 export function assertElevenLabsInitWebhook(request:Request,env:Env){
@@ -41,10 +49,10 @@ export function assertElevenLabsInitWebhook(request:Request,env:Env){
 function recentOpenCase(customer:Row){
  const support=Array.isArray(customer.supportCases)?customer.supportCases as Row[]:[];
  const tickets=Array.isArray(customer.tickets)?customer.tickets as Row[]:[];
- return [...support,...tickets].find(item=>!["resolved","closed"].includes(text(item.status).toLowerCase()))||null;
+ return [...support,...tickets].filter(item=>!["resolved","closed"].includes(text(item.status).toLowerCase())).sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0))[0]||null;
 }
 
-export async function buildElevenLabsInitiation(db:D1Database,input:{providerCallId:string;callerId:string;conversationId:string;agentId:string;language?:string|null}){
+export async function buildElevenLabsInitiation(db:D1Database,input:{providerCallId:string;callerId:string;conversationId:string;agentId:string;language?:string|null},env:Env={}){
  if(!text(input.providerCallId)||!text(input.callerId)||!text(input.conversationId))throw new Response("ElevenLabs call identity is incomplete",{status:400});
  const session=await startInboundAiVoiceSession(db,{providerCallId:input.providerCallId,caller:input.callerId,language:input.language||null});
  const records=await buildCustomer360(db,session.customerId),customer=(records[0]||{}) as Row;
@@ -66,7 +74,7 @@ export async function buildElevenLabsInitiation(db:D1Database,input:{providerCal
    preferred_language:text(input.language)||"auto",
    elevenlabs_conversation_id:input.conversationId,
   },
-  environment:"staging",
+  environment:text(env.PAWSPACE_DEPLOYMENT_ENV)||"unknown",
   user_id:session.customerId,
  };
 }

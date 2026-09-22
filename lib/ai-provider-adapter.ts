@@ -179,7 +179,7 @@ async function governanceAllowsExternalAi(
   }
 }
 
-export async function aiProviderConnection(): Promise<{
+export async function aiProviderConnection(channel?: string): Promise<{
   configured: boolean;
   connected: boolean;
   verified: false;
@@ -198,7 +198,7 @@ export async function aiProviderConnection(): Promise<{
     };
   }
   const providerRef = aiProviderRef(env);
-  const { modelRef, source } = aiModelRef(env);
+  const { modelRef, source } = aiModelRef(env,channel);
   return {
     configured: true, connected: true, verified: false, providerRef, modelRef, modelRefSource: source,
     timeoutMs: aiTimeoutMs(env),
