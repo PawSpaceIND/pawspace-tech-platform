@@ -8,7 +8,7 @@ import fs from "node:fs";
 const root = new URL("..", import.meta.url);
 const read = p => fs.readFileSync(new URL(p, root), "utf8");
 
-test("Atlas capacity conflict hardcodes the >90% Grooming halt and pivot", () => {
+test("Atlas capacity conflict becomes a proposal-only halt and pivot recommendation", () => {
   assert.equal(resolveCapacityConflict({utilization:0.91,cityId:"blr",zoneId:"z1",serviceCode:"grooming"}).length,2);
   assert.equal(resolveCapacityConflict({utilization:0.90,cityId:"blr",zoneId:"z1",serviceCode:"grooming"}).length,0);
   const atlas = read("lib/agents/atlas-ceo-supervisor.ts");
@@ -16,6 +16,11 @@ test("Atlas capacity conflict hardcodes the >90% Grooming halt and pivot", () =>
   assert.match(atlas, /action: "halt_outbound_promotion"/);
   assert.match(atlas, /alternatives: \["dog_training", "boarding"\]/);
   assert.match(atlas, /target_pacing_lag_above_25_percent/);
+  assert.match(atlas, /recordAtlasProposal/);
+  assert.match(atlas, /proposalOnly:true/);
+  assert.match(atlas, /workerRouterCalled:false/);
+  assert.match(atlas, /directives:\[\]/);
+  assert.doesNotMatch(atlas, /await route\(/);
 });
 
 test("human escalation router contains all four hard-stop classes", () => {
@@ -33,6 +38,7 @@ test("agents preserve canonical execution boundaries", () => {
   assert.match(marketing, /enqueueCommunication/);
   assert.match(marketing, /outbound_routing_queue/);
   assert.doesNotMatch(marketing, /UPDATE canonical_bookings/);
-  assert.match(atlas, /lineLevelExecution: false/);
-  assert.match(atlas, /canonicalExecutionOnly: true/);
+  assert.match(atlas, /lineLevelExecution:false/);
+  assert.match(atlas, /canonicalExecutionOnly:true/);
+  assert.match(atlas, /riskClass:"medium"/);
 });
