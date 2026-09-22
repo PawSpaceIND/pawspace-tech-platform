@@ -81,6 +81,19 @@ async function whatsappConnected(){
  }catch{return false;}
 }
 
+/**
+ * The eligibility for a thread, with the customer resolved from that thread.
+ *
+ * The route used to run `SELECT customer_id FROM communication_threads` itself. That put a raw table
+ * read in a surface that creates no tables, so on a cold D1 it was the one statement that could run
+ * before anything had created that table - and it made the route's data access invisible to the module
+ * that owns it. Callers pass a thread; this file decides whose details that means.
+ */
+export async function whatsAppMoveEligibilityForThread(db:Db,threadId:string):Promise<WhatsAppMoveEligibility>{
+ const thread=await chatThread(db,threadId);
+ return whatsAppMoveEligibility(db,{threadId,customerId:text(thread.customer_id)});
+}
+
 export type WhatsAppMoveEligibility={
  eligible:boolean;blockedBy:WhatsAppMoveBlock|null;customerMessage:string;
  phoneOnFile:boolean;optedOut:boolean;crmWhatsAppConsent:boolean;providerConnected:boolean;

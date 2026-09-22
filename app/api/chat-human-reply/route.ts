@@ -1,5 +1,5 @@
 import{actorCanAccessConversation}from"../../../lib/conversation-access";
-import{askWhatsAppMoveConsent,moveChatThreadToWhatsApp,queueChatHumanReply,recordWhatsAppMoveConsent,whatsAppMoveEligibility}from"../../../lib/chat-human-reply";
+import{askWhatsAppMoveConsent,moveChatThreadToWhatsApp,queueChatHumanReply,recordWhatsAppMoveConsent,whatsAppMoveEligibilityForThread}from"../../../lib/chat-human-reply";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 
 /**
@@ -19,13 +19,12 @@ export async function GET(request:Request){
   const threadId=url.searchParams.get("threadId")||"";
   if(!threadId)return json({error:"Thread ID is required"},400);
   if(!(await actorCanAccessConversation(db,actor,threadId)))return json({error:"Conversation access denied"},403);
-  /* The customer is READ FROM THE THREAD, never taken from the query string. It used to be a parameter,
-   * so a member of staff authorised for one conversation could pass any other customer's id and read
-   * back that customer's phone number, opt-out state and consent. The thread is what access was checked
-   * against, so the thread is what decides whose contact details come back. */
-  const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Record<string,unknown>>();
-  if(!thread)return json({error:"Conversation not found"},404);
-  return json({data:await whatsAppMoveEligibility(db,{threadId,customerId:String(thread.customer_id??"")})});
+  /* The customer is resolved FROM THE THREAD, never taken from the query string. It used to be a
+   * parameter, so a member of staff authorised for one conversation could pass any other customer's id
+   * and read back that customer's phone number, opt-out state and consent. The thread is what access
+   * was checked against, so the thread is what decides whose contact details come back - and the lookup
+   * lives in the module that owns the tables, so this route reads no table of its own. */
+  return json({data:await whatsAppMoveEligibilityForThread(db,threadId)});
  }catch(error){if(error instanceof Response)return error;return authError(error,"Unable to load chat reply state");}
 }
 
