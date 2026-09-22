@@ -29,7 +29,7 @@ test("remediation vertical tools are registered with conservative boundaries",()
  const source=readFileSync(new URL("../lib/atlas-phase2-vertical-tools.ts",import.meta.url),"utf8");
  for(const code of["ops.inventory.check","ops.fleet.track","ops.provisioning.execute","finance.ledger.reconcile"])assert.match(source,new RegExp(`"${code.replaceAll(".","\\.")}"`),`${code} must be registered`);
  assert.match(source,/"finance\.ledger\.reconcile":schema\("finance\.ledger\.reconcile",\["finance","atlas"\],"read","autonomous"/);
- assert.match(source,/"ops\.provisioning\.execute":schema\("ops\.provisioning\.execute",\["ops","atlas"\],"high","within_envelope"/);
+ assert.match(source,/"ops\.provisioning\.execute":schema\("ops\.provisioning\.execute",\["ops"\],"high","within_envelope"/);assert.match(source,/Atlas is recommendation-only for Phase 2 mutation tools/);
 });
 test("marketing budget reallocation compensates a successful source mutation when destination fails",()=>{
  const source=readFileSync(new URL("../lib/marketing-agent-gateway.ts",import.meta.url),"utf8");
