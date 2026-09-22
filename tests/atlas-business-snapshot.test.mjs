@@ -129,3 +129,18 @@ test("proposal status helper is exact-id only and enforces lifecycle transitions
  const source=(await import("node:fs")).readFileSync(new URL("../lib/intelligence/atlas-business-snapshot.ts",import.meta.url),"utf8");
  assert.doesNotMatch(source,/proposalType\?:string/);assert.doesNotMatch(source,/actionJson\?:Record/);assert.match(source,/WHERE id=\? AND status=\?/);
 });
+
+
+test("daily retry never re-offers rejected or executed terminal proposals",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
+ sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER); INSERT INTO governed_marketing_campaigns VALUES ('C-TERM','Terminal campaign','approved','approved',2000000000000);");
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MT','Terminal retry mission',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:'company'}),now-10000,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('TC','MT','terminal-collected','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);globalThis.__PAWSPACE_TEST_ENV__={};
+ const first=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});const proposal=sqlite.prepare("SELECT id FROM atlas_proposals WHERE proposal_type='campaign_activation' ORDER BY created_at DESC LIMIT 1").get();
+ await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:'proposed',to:'rejected',actorId:'founder@pawspace.test'});
+ sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);
+ const second=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});assert.equal(second.action,null);
+ const latest=sqlite.prepare("SELECT action_status,proposal_id,content FROM atlas_chat_messages WHERE role='atlas' ORDER BY created_at DESC LIMIT 1").get();assert.equal(latest.action_status,null);assert.equal(latest.proposal_id,null);assert.match(latest.content,/already rejected; Atlas will not re-offer/);
+ sqlite.prepare("UPDATE atlas_proposals SET status='executed' WHERE id=?").run(proposal.id);sqlite.prepare("UPDATE atlas_daily_runs SET status='failed',summary_json='{}',completed_at=NULL WHERE day_key=?").run(first.dayKey);
+ const third=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});assert.equal(third.action,null);const latest2=sqlite.prepare("SELECT action_status,proposal_id,content FROM atlas_chat_messages WHERE role='atlas' ORDER BY created_at DESC LIMIT 1").get();assert.equal(latest2.action_status,null);assert.equal(latest2.proposal_id,null);assert.match(latest2.content,/already executed; Atlas will not re-offer/);
+});
