@@ -35,12 +35,12 @@ test("a normal provider answer returns its text, the requested model and a measu
     assert.equal(result.connected, true);
     assert.equal(result.text, "Grooming starts at Rs 899.");
     assert.equal(result.providerRef, "anthropic");
-    assert.equal(result.modelRef, adapter.DEFAULT_AI_MODEL_REF);
+    assert.equal(result.modelRef, "claude-sonnet-4-6");
     assert.equal(result.stopReason, "end_turn");
     assert.ok(Number.isFinite(result.latencyMs) && result.latencyMs >= 0);
     assert.equal(stub.calls.length, 1);
     const sent = JSON.parse(stub.calls[0].init.body);
-    assert.equal(sent.model, adapter.DEFAULT_AI_MODEL_REF, "the model actually sent is the one reported");
+    assert.equal(sent.model, "claude-sonnet-4-6", "the model actually sent is the one reported");
   } finally { stub.restore(); }
 });
 
@@ -315,7 +315,7 @@ test("verifyAiProvider produces evidence with no response text in it, and refuse
     const evidence = await adapter.verifyAiProvider();
     assert.equal(evidence.verified, true);
     assert.equal(evidence.providerRef, "anthropic");
-    assert.equal(evidence.modelRefRequested, adapter.DEFAULT_AI_MODEL_REF);
+    assert.equal(evidence.modelRefRequested, "claude-sonnet-4-6");
     assert.ok(Number.isInteger(evidence.checkedAt) && evidence.checkedAt > 0, "evidence carries a timestamp");
     assert.ok(!JSON.stringify(evidence).includes("OK\""), "the probe response text is not part of the evidence");
   } finally { ok.restore(); }

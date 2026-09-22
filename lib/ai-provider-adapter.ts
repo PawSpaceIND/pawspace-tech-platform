@@ -8,8 +8,11 @@ import { sanitizeAiProviderText } from "./ai-provider-safety";
 import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
 import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
 
-export const DEFAULT_AI_MODEL_REF = "claude-sonnet-4-6";
-export const AI_PROVIDER_REF = "anthropic";
+export type AiProviderRef = "openai" | "anthropic";
+export const AI_PROVIDER_REF: AiProviderRef = "openai";
+export const DEFAULT_AI_MODEL_REF = "gpt-5.6-terra";
+export const DEFAULT_VOICE_AI_MODEL_REF = "gpt-5.6-luna";
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
@@ -84,9 +87,16 @@ async function runtimeEnv(): Promise<Record<string, unknown>> {
 
 const str = (env: Record<string, unknown>, key: string) => String(env[key] ?? "").trim();
 
-export function aiModelRef(env: Record<string, unknown>): { modelRef: string; source: "configured" | "default" } {
-  const configured = str(env, "PAWSPACE_AI_PROVIDER_MODEL");
-  return configured ? { modelRef: configured, source: "configured" } : { modelRef: DEFAULT_AI_MODEL_REF, source: "default" };
+export function aiProviderRef(env: Record<string, unknown>): AiProviderRef {
+  return str(env, "PAWSPACE_AI_PROVIDER").toLowerCase() === "anthropic" ? "anthropic" : "openai";
+}
+
+export function aiModelRef(env: Record<string, unknown>, channel?: string): { modelRef: string; source: "configured" | "default" } {
+  const voiceConfigured = channel === "voice" ? str(env, "PAWSPACE_AI_VOICE_MODEL") : "";
+  const configured = voiceConfigured || str(env, "PAWSPACE_AI_PROVIDER_MODEL");
+  if (configured) return { modelRef: configured, source: "configured" };
+  if (aiProviderRef(env) === "anthropic") return { modelRef: "claude-sonnet-4-6", source: "default" };
+  return { modelRef: channel === "voice" ? DEFAULT_VOICE_AI_MODEL_REF : DEFAULT_AI_MODEL_REF, source: "default" };
 }
 
 export function aiTimeoutMs(env: Record<string, unknown>): number {
@@ -118,10 +128,38 @@ export function extractAiText(parsed: unknown): { text: string; stopReason: stri
   return { text, stopReason: typeof body.stop_reason === "string" ? body.stop_reason : null, ...(usageTokens === undefined ? {} : { usageTokens }) };
 }
 
+
+
+export function extractOpenAiText(parsed: unknown): { text: string; stopReason: string | null; usageTokens?: number } | { failure: AiFailureClass } {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { failure: "malformed_output" };
+  const body = parsed as { output_text?: unknown; output?: unknown; status?: unknown; error?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown } };
+  if (body.error) return { failure: "provider_error" };
+  let text = typeof body.output_text === "string" ? body.output_text.trim() : "";
+  if (!text && Array.isArray(body.output)) {
+    text = body.output.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) return [];
+      return content.flatMap((part) => {
+        if (!part || typeof part !== "object") return [];
+        const row = part as { type?: unknown; text?: unknown };
+        return row.type === "output_text" && typeof row.text === "string" ? [row.text] : [];
+      });
+    }).join("\n").trim();
+  }
+  if (!text) return { failure: "empty_output" };
+  const total = Number(body.usage?.total_tokens);
+  const input = Number(body.usage?.input_tokens), output = Number(body.usage?.output_tokens);
+  const usageTokens = Number.isFinite(total) && total >= 0 ? Math.floor(total) :
+    (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0 ? Math.floor(input + output) : undefined);
+  return { text, stopReason: typeof body.status === "string" ? body.status : null, ...(usageTokens === undefined ? {} : { usageTokens }) };
+}
+
 async function governanceAllowsExternalAi(
   env: Record<string, unknown>,
   input: { channel?: string; intent?: string },
   modelRef: string,
+  providerRef: AiProviderRef,
 ): Promise<boolean> {
   const db = env.DB as D1Database | undefined;
   const production = str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production";
@@ -130,7 +168,7 @@ async function governanceAllowsExternalAi(
     const switches = await resolveExplicitAiKillSwitches(db, {
       channel: String(input.channel || "direct"),
       intent: String(input.intent || "direct"),
-      provider: AI_PROVIDER_REF,
+      provider: providerRef,
       model: modelRef,
     });
     return switches.length === 0;
@@ -159,9 +197,10 @@ export async function aiProviderConnection(): Promise<{
       timeoutMs: aiTimeoutMs(env), reason: FAILURE_REASON.not_configured,
     };
   }
+  const providerRef = aiProviderRef(env);
   const { modelRef, source } = aiModelRef(env);
   return {
-    configured: true, connected: true, verified: false, providerRef: AI_PROVIDER_REF, modelRef, modelRefSource: source,
+    configured: true, connected: true, verified: false, providerRef, modelRef, modelRefSource: source,
     timeoutMs: aiTimeoutMs(env),
     reason: "A provider credential is configured; the model above is what this adapter requests, not a model confirmed to have answered",
   };
@@ -172,8 +211,9 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const apiKey = str(env, "PAWSPACE_AI_PROVIDER_API_KEY");
   if (!apiKey) return fail("not_configured");
 
-  const { modelRef } = aiModelRef(env);
-  if (!(await governanceAllowsExternalAi(env, input, modelRef))) return fail("governance_blocked");
+  const providerRef = aiProviderRef(env);
+  const { modelRef } = aiModelRef(env, input.channel);
+  if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -183,13 +223,13 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   let reservation: AiRuntimeReservation = null;
   if (db) {
-    const preflight = await reserveAiProviderRequest(db, env, { provider: AI_PROVIDER_REF, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
   }
 
   const finishFailure = async (failure: AiFailureClass, status?: number) => {
-    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
     return fail(failure, status);
   };
 
@@ -200,12 +240,19 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   try {
     let response: Response;
     try {
-      response = await fetch(ANTHROPIC_MESSAGES_URL, {
-        method: "POST",
-        signal: controller.signal,
-        headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
-        body: JSON.stringify({ model: modelRef, max_tokens: maxTokens, system: safeSystemPrompt, messages: [{ role: "user", content: safeUserPrompt }] }),
-      });
+      response = providerRef === "openai"
+        ? await fetch(OPENAI_RESPONSES_URL, {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false }),
+          })
+        : await fetch(ANTHROPIC_MESSAGES_URL, {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
+            body: JSON.stringify({ model: modelRef, max_tokens: maxTokens, system: safeSystemPrompt, messages: [{ role: "user", content: safeUserPrompt }] }),
+          });
     } catch {
       return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
@@ -232,15 +279,15 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return await finishFailure("malformed_output"); }
-    const extracted = extractAiText(parsed);
+    const extracted = providerRef === "openai" ? extractOpenAiText(parsed) : extractAiText(parsed);
     if ("failure" in extracted) return await finishFailure(extracted.failure);
 
-    if (db) await completeAiProviderRequest(db, env, { reservation, provider: AI_PROVIDER_REF, modelRef, actualTokens: extracted.usageTokens });
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: extracted.usageTokens });
     return {
       connected: true,
       text: extracted.text,
       modelRef,
-      providerRef: AI_PROVIDER_REF,
+      providerRef,
       latencyMs: Date.now() - started,
       stopReason: extracted.stopReason,
       ...(extracted.usageTokens === undefined ? {} : { usageTokens: extracted.usageTokens }),
@@ -269,11 +316,12 @@ export async function verifyAiProvider(): Promise<{
     intent: "readiness_probe",
   });
   const env = await runtimeEnv();
+  const providerRef = aiProviderRef(env);
   const { modelRef } = aiModelRef(env);
   if (!result.connected) {
     return {
       verified: false,
-      providerRef: result.failure === "not_configured" ? null : AI_PROVIDER_REF,
+      providerRef: result.failure === "not_configured" ? null : providerRef,
       modelRefRequested: result.failure === "not_configured" ? null : modelRef,
       latencyMs: null, failure: result.failure, ...(result.status === undefined ? {} : { status: result.status }),
       reason: result.reason, checkedAt,

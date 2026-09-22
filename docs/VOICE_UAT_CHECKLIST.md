@@ -206,3 +206,23 @@ here is about proving the *provider* behaves as the contract assumes, not about 
 variables are configured; the callback receiver has verified at least one real signed provider callback;
 and at least one allow-listed call has completed with a full audit trail. Until then, the honest
 statement is the one at the top of this document.
+
+## OpenAI + ElevenLabs migration slice
+
+The governed PawSpace business plane remains authoritative. The voice migration changes providers, not booking/payment/consent authority.
+
+Required staging configuration for the ElevenLabs path:
+
+- `PAWSPACE_AI_PROVIDER=openai`
+- `PAWSPACE_AI_PROVIDER_API_KEY` = OpenAI API key
+- `PAWSPACE_AI_PROVIDER_MODEL=gpt-5.6-terra` (general grounded AI)
+- `PAWSPACE_AI_VOICE_MODEL=gpt-5.6-luna` (latency-sensitive voice turns)
+- `PAWSPACE_VOICE_RUNTIME=elevenlabs`
+- `ELEVENLABS_API_KEY`
+- `ELEVENLABS_AGENT_ID`
+- `ELEVENLABS_INIT_WEBHOOK_SECRET`
+- `ELEVENLABS_RESIDENCY=india`
+
+Exotel Voicebot should use the ElevenLabs India-residency AgentStream endpoint. The new PawSpace conversation-initiation webhook is `/api/webhooks/elevenlabs/init`; configure its authorization header as `Bearer <ELEVENLABS_INIT_WEBHOOK_SECRET>`.
+
+This slice is **not production authorization**. It provides provider abstraction, OpenAI Responses API support, voice-specific model selection, ElevenLabs readiness, and canonical caller personalization. Live outbound via ElevenLabs, post-call reconciliation, human transfer certification, production recording policy and carrier acceptance remain separate controlled UAT gates.
