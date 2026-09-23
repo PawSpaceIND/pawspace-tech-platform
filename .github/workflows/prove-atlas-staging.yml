@@ -17,20 +17,32 @@ jobs:
     environment: pawspace-staging
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.expected_sha }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Verify requested SHA is current main
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ inputs.expected_sha }}"
-
       - name: Install dependencies
         run: npm run install:ci
+
+      - name: Verify live staging provenance
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deployments status --json --name pawspace-staging > atlas-deployment-provenance.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const d=JSON.parse(fs.readFileSync("atlas-deployment-provenance.json","utf8"));
+          const expected=String(process.env.EXPECTED_SHA||"").trim();
+          const message=String(d?.annotations?.["workers/message"]||"");
+          const versions=Array.isArray(d?.versions)?d.versions:[];
+          if(message!==`staging ${expected}`) throw new Error(`Staging SHA mismatch: expected ${expected}, got ${message||"missing"}`);
+          if(versions.length!==1||Number(versions[0]?.percentage)!==100) throw new Error("Staging is not 100% on one certified version");
+          console.log(`staging_sha=${expected}; percentage=100`);
+          NODE
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -49,4 +61,5 @@ jobs:
           path: |
             atlas-staging-proof.json
             atlas-team-ai.png
+            atlas-deployment-provenance.json
           if-no-files-found: error
