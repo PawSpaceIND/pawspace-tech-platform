@@ -289,3 +289,18 @@ test("Atlas decision quality scores process only and keeps outcome non-causal",a
 test("Team AI exposes advisory-only decision quality without authority mutation",async()=>{
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/decisionQuality=await buildAtlasDecisionQuality/);assert.match(page,/decision quality .* advisory only/i);assert.match(page,/never changes the score, authority or confidence/i);
 });
+
+test("Atlas recommendation consistency flags only exact-evidence action divergence",async()=>{
+ const consistency=await import('../lib/intelligence/atlas-recommendation-consistency.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);
+ const ins=sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES (?,?,?,?,?,'[]','high','proposed',?,'atlas',?)");
+ ins.run('RC1','campaign_activation','x','SAME','b1',JSON.stringify({type:'campaign.activate',campaignId:'A'}),now-3);
+ ins.run('RC2','campaign_activation','x','SAME','b2',JSON.stringify({campaignId:'A',type:'campaign.activate'}),now-2);
+ ins.run('RC3','campaign_activation','x','SAME','b3',JSON.stringify({type:'campaign.activate',campaignId:'B'}),now-1);
+ ins.run('RC4','campaign_activation','x','OTHER','b4',JSON.stringify({type:'campaign.activate',campaignId:'C'}),now);
+ const rows=await consistency.buildAtlasRecommendationConsistency(db,10);const group=rows.find(x=>x.snapshotHash==='SAME');assert.equal(group.proposalCount,3);assert.equal(group.distinctActions,2);assert.equal(group.consistent,false);assert.equal(group.requiresFounderReview,true);assert.equal(group.advisoryOnly,true);assert.equal(group.authorityMutationAllowed,false);assert.match(group.note,/Founder review is required/i);
+ assert.equal(rows.some(x=>x.snapshotHash==='OTHER'),false,'single proposal is not a replay group');
+});
+
+test("Team AI exposes exact-evidence replay consistency without authority mutation",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/recommendationConsistency=await buildAtlasRecommendationConsistency/);assert.match(page,/recommendation consistency .* replay review/i);assert.match(page,/same recorded snapshot hash and proposal type/i);
+});
