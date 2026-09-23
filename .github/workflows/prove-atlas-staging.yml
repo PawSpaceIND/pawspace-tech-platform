@@ -1,0 +1,52 @@
+name: Prove Atlas staging business truth
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact deployed staging SHA to certify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify requested SHA is current main
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.expected_sha }}"
+
+      - name: Install dependencies
+        run: npm run install:ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Prove Atlas staging UI + business truth
+        env:
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/prove-atlas-staging.mjs
+
+      - name: Upload sanitized Atlas proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-staging-proof-${{ inputs.expected_sha }}
+          path: |
+            atlas-staging-proof.json
+            atlas-team-ai.png
+          if-no-files-found: error
