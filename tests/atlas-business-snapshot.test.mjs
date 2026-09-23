@@ -1,4 +1,5 @@
 import test from "node:test";
+const calibration=await import('../lib/intelligence/atlas-outcome-calibration.ts');
 import assert from "node:assert/strict";
 import {DatabaseSync} from "node:sqlite";
 import {installWorkersHooks} from "./helpers/module-hooks.mjs";
@@ -261,4 +262,19 @@ test("Founder approval still executes a fresh daily proposal inside the current 
  sqlite.prepare("INSERT INTO marketing_audience_snapshots (id,campaign_id,snapshot_at,total_candidates,eligible_count,holdout_count,suppressed_count,policy_json,created_by) VALUES ('AUD-FRESH-EXEC','C-FRESH-EXEC',?,0,0,0,0,'{}','founder@pawspace.test')").run(now);
  const message=await atlasData.recordAtlasMessage(db,{role:'atlas',actorEmail:'system:atlas',content:'Fresh activation?',action,actionStatus:'approval_required',proposalId:proposal.id,createdAt:now});const result=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:'founder@pawspace.test',asOf:now});
  assert.equal(result.status,'executed');assert.equal(sqlite.prepare("SELECT status FROM atlas_proposals WHERE id=?").get(proposal.id).status,'executed');assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM marketing_governance_events WHERE campaign_id='C-FRESH-EXEC' AND event_type='activated'").get().n,1);
+});
+
+
+test("Atlas outcome calibration is review-only, sample-gated and non-causal",async()=>{
+ const{sqlite,db}=world();await atlas.ensureAtlasProposalOutcomes(db);
+ const ins=sqlite.prepare("INSERT INTO atlas_proposal_outcomes (proposal_id,proposal_type,action_json,mission_id,baseline_net,baseline_collected,baseline_at,evaluate_after,observed_net,observed_collected,observed_net_delta,observed_collected_delta,evaluated_at,status,reason,attribution_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'measured',NULL,?)");
+ for(let i=0;i<4;i++)ins.run('CAL-'+i,'campaign_activation','{}','M',100,100,i,i,100+(i-1)*10,100+(i-1)*10,(i-1)*10,(i-1)*10,i,'Observed only; not causal');
+ let rows=await calibration.buildAtlasOutcomeCalibration(db);assert.equal(rows.length,1);assert.equal(rows[0].measured,4);assert.equal(rows[0].usableForReview,false);assert.equal(rows[0].confidenceMutationAllowed,false);assert.equal(rows[0].causalAttribution,false);
+ ins.run('CAL-4','campaign_activation','{}','M',100,100,5,5,130,130,30,30,5,'Observed only; not causal');
+ rows=await calibration.buildAtlasOutcomeCalibration(db);assert.equal(rows[0].measured,5);assert.equal(rows[0].usableForReview,true);assert.equal(rows[0].positive,3);assert.equal(rows[0].flat,1);assert.equal(rows[0].negative,1);assert.match(rows[0].note,/human calibration review only/i);
+});
+
+test("Atlas business snapshot API exposes calibration evidence without automatic confidence mutation",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');
+ assert.match(route,/outcomeCalibration=await buildAtlasOutcomeCalibration/);assert.match(page,/calibration evidence .* review only/i);assert.match(page,/does not automatically alter confidence, policies, budgets or approval gates/i);
 });
