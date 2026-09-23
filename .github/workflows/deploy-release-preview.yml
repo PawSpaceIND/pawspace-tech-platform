@@ -236,35 +236,41 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        # The UAT credentials ride WITH the deploy, the way the staging deploy already sends its own,
+        # instead of being installed afterwards with `secret put`. Every `secret put` publishes a NEW
+        # Worker version, so installing four of them after the deploy left the ACTIVE version as an
+        # unmarked secret-update version. A gate that resolves the active version and requires the
+        # `release-preview <sha>` message then refuses a preview that is in fact correct -- which is
+        # what refused the 2026-09-23 UI closure run against an otherwise healthy preview. Deploying
+        # the code and its credentials together keeps the marked version active, and makes the pair
+        # atomic: there is no window in which the preview serves the new build with the old secrets.
         run: |
           set -euo pipefail
           DEPLOY_LOG="$(mktemp)"
-          trap 'rm -f "$DEPLOY_LOG"' EXIT
-          npx wrangler deploy --message "release-preview $EXPECTED_SHA" 2>&1 | tee "$DEPLOY_LOG"
+          SECRETS_FILE="$(mktemp)"
+          trap 'rm -f "$DEPLOY_LOG" "$SECRETS_FILE"' EXIT
+          # Written by node and handed over as a file, so no credential is ever a command argument or
+          # a log line. Refusing an empty value here keeps a blank secret from silently replacing a
+          # working one, which `secret put` would have accepted.
+          SECRETS_FILE="$SECRETS_FILE" node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const names = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", "GOOGLE_MAPS_SERVER_API_KEY_UAT"];
+            const values = Object.fromEntries(names.map((name) => [name, process.env[name] || ""]));
+            const missing = names.filter((name) => !values[name]);
+            if (missing.length) throw new Error(`preview credential not supplied: ${missing.join(", ")}`);
+            writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
+          '
+          npx wrangler deploy --message "release-preview $EXPECTED_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee "$DEPLOY_LOG"
           PREVIEW_URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n 1)"
           if [ -z "$PREVIEW_URL" ]; then
             echo "Wrangler did not report a workers.dev URL for the deployed preview." >&2
             exit 1
           fi
           echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Install UAT credentials as Worker secrets
-        if: ${{ steps.isolation.outputs.isolated == 'true' }}
-        working-directory: candidate
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
-        run: |
-          set -euo pipefail
-          # Piped over stdin so no value is ever a command argument or echoed into the log.
-          for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT GOOGLE_MAPS_SERVER_API_KEY_UAT; do
-            printf '%s' "${!name}" | npx wrangler secret put "$name" --name "$WORKER"
-          done
 
       - name: Verify the DEPLOYED sha is the candidate sha
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
@@ -278,23 +284,42 @@ jobs:
           set -euo pipefail
           # `wrangler deploy --message` is exposed by `versions list --json`; require the exact
           # release-preview message so a partial sha or unrelated version can never satisfy this gate.
+          #
+          # The message must be on the version that is actually SERVING, not merely present somewhere
+          # in the list. A marked version that has since been superseded is still listed, so the old
+          # list-wide check passed while the preview served a different, unmarked version -- and every
+          # downstream gate that inspects the active version (release-ui-closure) then refused.
+          #
+          # "Serving" is read the way tests/e2e/staging-certification.mjs reads it: the deployment's
+          # own `versions` array, requiring exactly one entry at 100% traffic. Searching the status
+          # object for any nested version id and taking the first that matches would accept a split
+          # deployment in which an unmarked version still takes a share of the requests.
+          npx wrangler deployments status --json --name "$WORKER" > deploy-status.json
           npx wrangler versions list --json --name "$WORKER" > versions.json
           node --input-type=module <<'NODE'
           import fs from "node:fs";
           const expected = process.env.EXPECTED_SHA;
           const expectedMessage = `release-preview ${expected}`;
           const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+          const status = JSON.parse(fs.readFileSync("deploy-status.json", "utf8"));
+          const refuse = (why) => { console.error(`${why} Refusing to certify the preview.`); process.exit(1); };
+          const serving = Array.isArray(status?.versions) ? status.versions : null;
+          if (!serving) refuse("The deployment status did not report a versions array.");
+          if (serving.length !== 1) refuse(`The active deployment has ${serving.length} versions; the preview must serve exactly one.`);
+          if (Number(serving[0]?.percentage) !== 100) refuse("The active deployment is not one version at 100% traffic.");
+          const servingId = String(serving[0]?.version_id ?? "").trim();
+          if (!servingId) refuse("The active deployment reported no version id.");
+          const rows = Array.isArray(versions) ? versions : [];
+          const active = rows.find((row) => String(row?.id || row?.version_id || "") === servingId);
+          if (!active) refuse(`The serving version ${servingId} is not in the version list.`);
           const strings = [];
           const collect = (value) => {
             if (typeof value === "string") strings.push(value);
             else if (Array.isArray(value)) value.forEach(collect);
             else if (value && typeof value === "object") Object.values(value).forEach(collect);
           };
-          collect(versions);
-          if (!strings.includes(expectedMessage)) {
-            console.error(`No deployed version message exactly matches ${expectedMessage} — deployment drift.`);
-            process.exit(1);
-          }
+          collect(active);
+          if (!strings.includes(expectedMessage)) refuse(`The serving preview version does not carry ${expectedMessage} — deployment drift.`);
           console.log(`deployed_sha=${expected}`);
           console.log("deployed_sha matches the product candidate sha.");
           NODE
