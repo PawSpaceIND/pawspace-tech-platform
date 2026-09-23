@@ -222,3 +222,18 @@ test("team AI labels proposal outcome measurements as observed rather than causa
  const fs=await import('node:fs');const page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8'),route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8');
  assert.match(page,/proposal outcomes .* observed, not causal/i);assert.match(page,/does not prove the campaign caused the change/i);assert.match(route,/proposalOutcomes/);
 });
+
+test("default Atlas snapshot refuses expired active mission while explicit historical lookup remains available",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('M-EXPIRED','Expired mission',1000,'INR',?,?,?,'net_collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-20000,now-10000,JSON.stringify({type:'company'}),now-20000,now-10000);
+ const current=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});assert.equal(current.mission.value,null);assert.equal(current.mission.reason,'current_mission_not_found');assert.match(current.limitations.join(' '),/expired or future mission/i);
+ const historical=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:'M-EXPIRED'});assert.equal(historical.mission.value.id,'M-EXPIRED');assert.equal(historical.mission.value.target,1000);
+});
+
+test("daily Atlas does not propose an out-of-period approved campaign",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlasData.ensureAtlasTables(db);
+ const start=now-10000,end=now+10000;sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('M-CURRENT','Current mission',1000,'INR',?,?,?,'net_collected','active_uat','APR',1,'owner',?,'owner',?)").run(start,end,JSON.stringify({type:'company'}),start,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('MC1','M-CURRENT','mc1','collected','C','B','P',NULL,'grooming','blr',100,0,100,'INR',?,'test','{}',?)").run(now-1000,now);
+ sqlite.exec("CREATE TABLE governed_marketing_campaigns(id TEXT PRIMARY KEY,name TEXT,approval_status TEXT,status TEXT,updated_at INTEGER);");sqlite.prepare("INSERT INTO governed_marketing_campaigns VALUES ('OLD-CAMP','Old approved campaign','approved','approved',?)").run(start-1);
+ globalThis.__PAWSPACE_TEST_ENV__={};const result=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});assert.equal(result.facts.missionId,'M-CURRENT');assert.ok(result.facts.pacingGapPercent<=-10);assert.equal(result.action,null);await atlas.ensureAtlasProposalJournal(db);assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposals WHERE proposal_type='campaign_activation'").get().n,0);
+});
