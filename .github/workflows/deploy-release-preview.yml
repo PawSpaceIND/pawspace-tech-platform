@@ -288,8 +288,12 @@ jobs:
           # The message must be on the version that is actually SERVING, not merely present somewhere
           # in the list. A marked version that has since been superseded is still listed, so the old
           # list-wide check passed while the preview served a different, unmarked version -- and every
-          # downstream gate that inspects the active version (release-ui-closure) then refused. This
-          # is the same resolution those gates use, so a preview this step accepts is one they accept.
+          # downstream gate that inspects the active version (release-ui-closure) then refused.
+          #
+          # "Serving" is read the way tests/e2e/staging-certification.mjs reads it: the deployment's
+          # own `versions` array, requiring exactly one entry at 100% traffic. Searching the status
+          # object for any nested version id and taking the first that matches would accept a split
+          # deployment in which an unmarked version still takes a share of the requests.
           npx wrangler deployments status --json --name "$WORKER" > deploy-status.json
           npx wrangler versions list --json --name "$WORKER" > versions.json
           node --input-type=module <<'NODE'
@@ -298,27 +302,24 @@ jobs:
           const expectedMessage = `release-preview ${expected}`;
           const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
           const status = JSON.parse(fs.readFileSync("deploy-status.json", "utf8"));
-          const activeIds = [];
-          const collectActive = (value) => {
-            if (!value || typeof value !== "object") return;
-            if (typeof value.version_id === "string") activeIds.push(value.version_id);
-            if (typeof value.versionId === "string") activeIds.push(value.versionId);
-            for (const child of Object.values(value)) collectActive(child);
-          };
-          collectActive(status);
+          const refuse = (why) => { console.error(`${why} Refusing to certify the preview.`); process.exit(1); };
+          const serving = Array.isArray(status?.versions) ? status.versions : null;
+          if (!serving) refuse("The deployment status did not report a versions array.");
+          if (serving.length !== 1) refuse(`The active deployment has ${serving.length} versions; the preview must serve exactly one.`);
+          if (Number(serving[0]?.percentage) !== 100) refuse("The active deployment is not one version at 100% traffic.");
+          const servingId = String(serving[0]?.version_id ?? "").trim();
+          if (!servingId) refuse("The active deployment reported no version id.");
           const rows = Array.isArray(versions) ? versions : [];
-          const active = rows.find((row) => activeIds.includes(String(row?.id || row?.version_id || "")));
+          const active = rows.find((row) => String(row?.id || row?.version_id || "") === servingId);
+          if (!active) refuse(`The serving version ${servingId} is not in the version list.`);
           const strings = [];
           const collect = (value) => {
             if (typeof value === "string") strings.push(value);
             else if (Array.isArray(value)) value.forEach(collect);
             else if (value && typeof value === "object") Object.values(value).forEach(collect);
           };
-          collect(active || status);
-          if (!active || !strings.includes(expectedMessage)) {
-            console.error(`The serving preview version does not carry ${expectedMessage} — deployment drift.`);
-            process.exit(1);
-          }
+          collect(active);
+          if (!strings.includes(expectedMessage)) refuse(`The serving preview version does not carry ${expectedMessage} — deployment drift.`);
           console.log(`deployed_sha=${expected}`);
           console.log("deployed_sha matches the product candidate sha.");
           NODE

@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const workflow = await readFile(
   new URL("../.github/workflows/deploy-release-preview.yml", import.meta.url),
@@ -102,9 +106,10 @@ test("release-preview verification reads version JSON and requires the exact sha
   );
 });
 
-test("release-preview verification requires the message on the SERVING version, not merely present", () => {
-  // A superseded version stays in `versions list`, so a list-wide match certified a preview whose
-  // active version was something else. The deploy now proves the property the downstream gates test.
+// The cases below run the workflow's real verification program rather than matching its text, so a
+// rewrite that still reads plausibly cannot pass them. It is lifted out of the step's heredoc and
+// executed against synthetic `deployments status` / `versions list` output.
+function verificationProgram() {
   const verify = namedStep(
     "Verify the DEPLOYED sha is the candidate sha",
     "Post-deploy gate (runner-local; nothing sensitive leaves this job)",
@@ -114,16 +119,65 @@ test("release-preview verification requires the message on the SERVING version, 
     /npx wrangler deployments status --json --name "\$WORKER"/,
     "verification must resolve which version is actually serving",
   );
-  assert.match(
-    verify,
-    /collect\(active \|\| status\);/,
-    "verification must read the message off the active version",
+  const opener = "<<'NODE'\n";
+  const open = verify.indexOf(opener);
+  assert.notEqual(open, -1, "the verification step must run a node heredoc");
+  const body = verify.slice(open + opener.length);
+  const close = body.indexOf("\n          NODE\n");
+  assert.notEqual(close, -1, "the node heredoc must be terminated");
+  return body.slice(0, close).replace(/^ {10}/gm, "");
+}
+
+const SHA = "a".repeat(40);
+const MARKER = `release-preview ${SHA}`;
+const marked = (id) => ({ id, annotations: { "workers/message": MARKER } });
+const unmarked = (id) => ({ id, annotations: { "workers/message": "Automatic deployment on secret update." } });
+
+function runVerification(status, versions) {
+  const dir = mkdtempSync(join(tmpdir(), "preview-verify-"));
+  writeFileSync(join(dir, "deploy-status.json"), JSON.stringify(status));
+  writeFileSync(join(dir, "versions.json"), JSON.stringify(versions));
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", verificationProgram()], {
+    cwd: dir,
+    env: { ...process.env, EXPECTED_SHA: SHA },
+    encoding: "utf8",
+  });
+  return { code: result.status, stderr: String(result.stderr || "") };
+}
+
+test("verification accepts one marked version serving all of the traffic", () => {
+  const result = runVerification({ versions: [{ version_id: "v2", percentage: 100 }] }, [marked("v2"), unmarked("v1")]);
+  assert.equal(result.code, 0, result.stderr);
+});
+
+test("verification refuses a superseded marker: the serving version is not the marked one", () => {
+  // The original defect. `secret put` published v2 on top of the marked v1, which is still listed.
+  const result = runVerification({ versions: [{ version_id: "v2", percentage: 100 }] }, [unmarked("v2"), marked("v1")]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /does not carry release-preview/);
+});
+
+test("verification refuses split traffic in which an unmarked version still takes requests", () => {
+  // Review finding: resolving `active` from any nested version id and taking the first match let a
+  // marked version satisfy the gate while an unmarked one served half the requests.
+  const result = runVerification(
+    { versions: [{ version_id: "v1", percentage: 50 }, { version_id: "v2", percentage: 50 }] },
+    [marked("v1"), unmarked("v2")],
   );
-  assert.match(
-    verify,
-    /if \(!active \|\| !strings\.includes\(expectedMessage\)\)/,
-    "an unresolvable active version must fail rather than pass on the whole list",
-  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /must serve exactly one/);
+});
+
+test("verification refuses a single version that is not at 100% traffic", () => {
+  const result = runVerification({ versions: [{ version_id: "v1", percentage: 50 }] }, [marked("v1")]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /not one version at 100% traffic/);
+});
+
+test("verification refuses status output it cannot read rather than passing on the whole list", () => {
+  const result = runVerification({ deployment: { version_id: "v1" } }, [marked("v1")]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /did not report a versions array/);
 });
 
 test("release-preview installs the Maps UAT key only as an encrypted Worker secret", () => {
