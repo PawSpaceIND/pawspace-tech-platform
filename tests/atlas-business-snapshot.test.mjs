@@ -304,3 +304,13 @@ test("Atlas recommendation consistency flags only exact-evidence action divergen
 test("Team AI exposes exact-evidence replay consistency without authority mutation",async()=>{
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/recommendationConsistency=await buildAtlasRecommendationConsistency/);assert.match(page,/recommendation consistency .* replay review/i);assert.match(page,/same recorded snapshot hash and proposal type/i);
 });
+
+test("Atlas challenge review surfaces missing evidence and contradictions without mutating authority",async()=>{
+ const challenge=await import('../lib/intelligence/atlas-challenge-review.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES ('CH1','campaign_activation','x','','','[]','high','proposed',?,'atlas',?)").run(JSON.stringify({type:'campaign.activate',campaignId:'A'}),now);
+ const rows=await challenge.buildAtlasChallengeReview(db,snapshot,5),r=rows[0];assert.equal(r.proposalId,'CH1');assert.equal(r.requiresFounderReview,true);assert.equal(r.advisoryOnly,true);assert.equal(r.authorityMutationAllowed,false);assert.ok(r.missingEvidence.includes('proposal_has_no_recorded_source_ids'));assert.ok(r.missingEvidence.includes('proposal_snapshot_hash_missing'));assert.ok(r.reasonsNotToAct.includes('high_risk_proposal_requires_human_approval'));assert.match(r.note,/never executes, rejects, approves/i);
+});
+
+test("Team AI exposes advisory dissent reasons before reusable precedent",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/challengeReview=await buildAtlasChallengeReview/);assert.match(page,/challenge review .* reasons not to act/i);assert.match(page,/missing evidence, contradictions and defer\/stop reasons/i);
+});
