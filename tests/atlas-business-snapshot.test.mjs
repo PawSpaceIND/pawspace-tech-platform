@@ -6,6 +6,10 @@ import {installWorkersHooks} from "./helpers/module-hooks.mjs";
 installWorkersHooks("__ATLAS_SNAPSHOT_DB__","__PAWSPACE_TEST_ENV__");
 const atlas=await import("../lib/intelligence/atlas-business-snapshot.ts");
 const atlasData=await import("../lib/intelligence/atlas-data.ts");
+const freshnessBuilder=await import("../lib/intelligence/atlas-proposal-freshness.ts");
+const challengeBuilder=await import("../lib/intelligence/atlas-challenge-review.ts");
+const qualityBuilder=await import("../lib/intelligence/atlas-decision-quality.ts");
+const consistencyBuilder=await import("../lib/intelligence/atlas-recommendation-consistency.ts");
 const revenue=await import("../lib/revenue-mission-control.ts");
 const marketing=await import("../lib/marketing-governance.ts");
 
@@ -325,4 +329,20 @@ test("Atlas proposal freshness requires re-evaluation when canonical snapshot ch
 
 test("Team AI exposes proposal freshness as advisory re-evaluation only",async()=>{
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/proposalFreshness=await buildAtlasProposalFreshness/);assert.match(page,/proposal freshness .* re-evaluation review/i);assert.match(page,/does not auto-reject or auto-approve here/i);
+});
+
+test("Atlas precedent readiness is synthesis-only and never grants reuse authority",async()=>{
+ const precedent=await import('../lib/intelligence/atlas-precedent-readiness.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),hash=await atlas.atlasSnapshotHash(snapshot);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at,reviewed_by,reviewed_at) VALUES ('PR1','report.generate','x',?,'b',?,'low','approved','{}','atlas',?,'founder',?)").run(hash,JSON.stringify(['s1','s2','s3','s4']),now-1000,now);
+ const [freshness,challenges,quality,consistency]=await Promise.all([freshnessBuilder.buildAtlasProposalFreshness(db,snapshot,10),challengeBuilder.buildAtlasChallengeReview(db,snapshot,10),qualityBuilder.buildAtlasDecisionQuality(db,10),consistencyBuilder.buildAtlasRecommendationConsistency(db,10)]),rows=precedent.buildAtlasPrecedentReadiness(freshness,challenges,quality,consistency),r=rows.find(x=>x.proposalId==='PR1');assert.equal(r.requiresFounderReview,true);assert.equal(r.advisoryOnly,true);assert.equal(r.authorityMutationAllowed,false);assert.equal(r.causalOutcomeUsed,false);assert.equal(r.readiness,'not_ready');assert.ok(r.blockers.includes('exact_evidence_replay_unavailable'));assert.match(r.note,/human review only/i);
+});
+
+test("Atlas precedent readiness blocks stale, challenged, inconsistent or low-quality proposals",async()=>{
+ const precedent=await import('../lib/intelligence/atlas-precedent-readiness.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES ('PR2','campaign_activation','x','old','b','[]','high','proposed','{}','atlas',?)").run(now);
+ const [freshness,challenges,quality,consistency]=await Promise.all([freshnessBuilder.buildAtlasProposalFreshness(db,snapshot,10),challengeBuilder.buildAtlasChallengeReview(db,snapshot,10),qualityBuilder.buildAtlasDecisionQuality(db,10),consistencyBuilder.buildAtlasRecommendationConsistency(db,10)]),r=precedent.buildAtlasPrecedentReadiness(freshness,challenges,quality,consistency).find(x=>x.proposalId==='PR2');assert.equal(r.readiness,'not_ready');assert.ok(r.blockers.includes('canonical_snapshot_changed_since_proposal'));assert.ok(r.blockers.includes('challenge_review_has_open_findings'));assert.ok(r.blockers.includes('decision_quality_below_review_threshold'));
+});
+
+test("Team AI exposes precedent readiness as Founder review only",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/precedentReadiness=buildAtlasPrecedentReadiness\(proposalFreshness,challengeReview,decisionQuality,recommendationConsistency\)/);assert.match(page,/precedent readiness .* Founder reuse review/i);assert.match(page,/eligible for human review only/i);
 });
