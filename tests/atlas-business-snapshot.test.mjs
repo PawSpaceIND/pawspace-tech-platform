@@ -314,3 +314,15 @@ test("Atlas challenge review surfaces missing evidence and contradictions withou
 test("Team AI exposes advisory dissent reasons before reusable precedent",async()=>{
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/challengeReview=await buildAtlasChallengeReview/);assert.match(page,/challenge review .* reasons not to act/i);assert.match(page,/missing evidence, contradictions and defer\/stop reasons/i);
 });
+
+test("Atlas proposal freshness requires re-evaluation when canonical snapshot changes",async()=>{
+ const freshness=await import('../lib/intelligence/atlas-proposal-freshness.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),currentHash=await atlas.atlasSnapshotHash(snapshot);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES ('FR1','campaign_activation','x',?,'b','[]','high','proposed','{}','atlas',?)").run('old-hash',now);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES ('FR2','campaign_activation','x',?,'b','[]','high','proposed','{}','atlas',?)").run(currentHash,now-1);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at) VALUES ('FR3','campaign_activation','x',?,'b','[]','high','executed','{}','atlas',?)").run('old-hash',now-2);
+ const rows=await freshness.buildAtlasProposalFreshness(db,snapshot,10),stale=rows.find(x=>x.proposalId==='FR1'),fresh=rows.find(x=>x.proposalId==='FR2'),terminal=rows.find(x=>x.proposalId==='FR3');assert.equal(stale.requiresReevaluation,true);assert.equal(stale.reason,'canonical_snapshot_changed_since_proposal');assert.equal(stale.authorityMutationAllowed,false);assert.equal(fresh.fresh,true);assert.equal(fresh.requiresReevaluation,false);assert.equal(terminal.terminal,true);assert.equal(terminal.requiresReevaluation,false);
+});
+
+test("Team AI exposes proposal freshness as advisory re-evaluation only",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/proposalFreshness=await buildAtlasProposalFreshness/);assert.match(page,/proposal freshness .* re-evaluation review/i);assert.match(page,/does not auto-reject or auto-approve here/i);
+});
