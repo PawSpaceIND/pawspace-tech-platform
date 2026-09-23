@@ -189,3 +189,36 @@ test("integration flags reuse canonical credential detectors instead of partial 
  assert.match(snapshot.integrations.whatsapp.source,/integration-readiness credential detector/);
  globalThis.__PAWSPACE_TEST_ENV__={};
 });
+
+test("Atlas proposal outcome waits seven days and records observed non-causal mission change",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);await atlas.ensureAtlasProposalJournal(db);
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MO','Outcome mission',5000,'INR',?,?,?,'net_collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS+10000,JSON.stringify({type:'company'}),now-10000,now);
+ const ins=sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+ ins.run('OB1','MO','baseline-collected','collected','C','B1','P1',null,'grooming','blr',400,0,400,'INR',now-1000,'test','{}',now);
+ const baseline=await atlas.buildAtlasBusinessSnapshot(db,{missionId:'MO',asOf:now});
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:'campaign_activation',summary:'Measure after execution',snapshot:baseline,basisId:'OUTCOME',riskClass:'high',action:{type:'campaign.activate',campaignId:'C-OUTCOME'},createdBy:'atlas'});
+ await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:'proposed',to:'approved',actorId:'founder@pawspace.test'});await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:'approved',to:'executed',actorId:'founder@pawspace.test'});
+ const first=await atlas.recordAtlasProposalOutcomeBaseline(db,{proposalId:proposal.id,snapshot:baseline,asOf:now});
+ const duplicate=await atlas.recordAtlasProposalOutcomeBaseline(db,{proposalId:proposal.id,snapshot:baseline,asOf:now+1});
+ assert.equal(first.recorded,true);assert.equal(first.status,'pending');assert.equal(duplicate.recorded,false);
+ assert.deepEqual(await atlas.refreshAtlasProposalOutcomes(db,{asOf:now+atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS-1}),{evaluated:0,measured:0,insufficient:0,windowMs:atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS,causalAttribution:false});
+ ins.run('OB2','MO','later-collected','collected','C','B2','P2',null,'grooming','blr',125,0,125,'INR',now+atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS,'test','{}',now+atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS);
+ const refreshed=await atlas.refreshAtlasProposalOutcomes(db,{asOf:now+atlas.ATLAS_PROPOSAL_OUTCOME_WINDOW_MS+1});assert.equal(refreshed.measured,1);assert.equal(refreshed.causalAttribution,false);
+ const outcome=(await atlas.listAtlasProposalOutcomes(db,5))[0];assert.equal(outcome.status,'measured');assert.equal(outcome.mission_id,'MO');assert.equal(outcome.baseline_net,400);assert.equal(outcome.observed_net,525);assert.equal(outcome.observed_net_delta,125);assert.equal(outcome.observed_collected_delta,125);assert.match(outcome.attribution_note,/not causal attribution/i);
+});
+
+test("recovered already-active campaign does not fabricate an Atlas outcome baseline",async()=>{
+ const{sqlite,db,now}=world();await atlasData.ensureAtlasTables(db);await marketing.ensureMarketingGovernance(db);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),action={type:'campaign.activate',campaignId:'C-RECOVER-NO-BASELINE'};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:'campaign_activation',summary:'Recovered active campaign',snapshot,basisId:'REC-NO-BASELINE',riskClass:'high',action,createdBy:'atlas'});
+ await atlas.updateAtlasProposalStatus(db,{id:proposal.id,from:'proposed',to:'approved',actorId:'founder@pawspace.test'});
+ sqlite.prepare("INSERT INTO governed_marketing_campaigns (id,name,objective,service_code,city_id,audience_rule_json,budget_amount,currency,holdout_percent,status,approval_status,approved_by,approved_at,created_by,created_at,updated_at) VALUES ('C-RECOVER-NO-BASELINE','Recovered','retention','grooming','blr','{}',1000,'INR',10,'active','approved','founder@pawspace.test',?,'founder@pawspace.test',?,?)").run(now,now,now);
+ const message=await atlasData.recordAtlasMessage(db,{role:'atlas',actorEmail:'system:atlas',content:'Already active',action,actionStatus:'executing',proposalId:proposal.id,createdAt:now});
+ const result=await atlasData.executeAtlasApprovedAction(db,{messageId:message.messageId,actorEmail:'founder@pawspace.test'});assert.equal(result.recovered,true);
+ await atlas.ensureAtlasProposalOutcomes(db);assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM atlas_proposal_outcomes WHERE proposal_id=?").get(proposal.id).n,0);
+});
+
+test("team AI labels proposal outcome measurements as observed rather than causal",async()=>{
+ const fs=await import('node:fs');const page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8'),route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8');
+ assert.match(page,/proposal outcomes .* observed, not causal/i);assert.match(page,/does not prove the campaign caused the change/i);assert.match(route,/proposalOutcomes/);
+});
