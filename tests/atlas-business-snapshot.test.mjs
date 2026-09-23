@@ -278,3 +278,14 @@ test("Atlas business snapshot API exposes calibration evidence without automatic
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');
  assert.match(route,/outcomeCalibration=await buildAtlasOutcomeCalibration/);assert.match(page,/calibration evidence .* review only/i);assert.match(page,/does not automatically alter confidence, policies, budgets or approval gates/i);
 });
+
+test("Atlas decision quality scores process only and keeps outcome non-causal",async()=>{
+ const quality=await import('../lib/intelligence/atlas-decision-quality.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);await atlas.ensureAtlasProposalOutcomes(db);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at,reviewed_by,reviewed_at,executed_at) VALUES ('DQ1','campaign_activation','x','h','b',?,'high','executed','{}','atlas',?,'founder',?,?)").run(JSON.stringify(['s1','s2','s3','s4']),now-30*60*1000,now,now);
+ sqlite.prepare("INSERT INTO atlas_proposal_outcomes (proposal_id,proposal_type,action_json,mission_id,baseline_net,baseline_collected,baseline_at,evaluate_after,observed_net,observed_collected,observed_net_delta,observed_collected_delta,evaluated_at,status,reason,attribution_note) VALUES ('DQ1','campaign_activation','{}','M',100,100,?,?,50,50,-50,-50,?,'measured',NULL,'not causal')").run(now,now,now);
+ const first=(await quality.buildAtlasDecisionQuality(db,5))[0];assert.equal(first.score,100);assert.equal(first.dimensions.grounding,100);assert.equal(first.dimensions.reviewTimeliness,100);assert.equal(first.dimensions.resolution,100);assert.equal(first.outcome.direction,'negative');assert.equal(first.outcome.causalAttribution,false);assert.equal(first.authorityMutationAllowed,false);assert.match(first.note,/business outcomes.*do not affect the score/i);
+});
+
+test("Team AI exposes advisory-only decision quality without authority mutation",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/decisionQuality=await buildAtlasDecisionQuality/);assert.match(page,/decision quality .* advisory only/i);assert.match(page,/never changes the score, authority or confidence/i);
+});
