@@ -8,11 +8,9 @@ const quiz = await read("../lib/provider-quiz-ai-draft.ts");
 const evalSec = await read("../lib/ai-evaluation-security.ts");
 const webChat = await read("../lib/ai-web-chat-adapter.ts");
 
-// Permanent readiness gate for AI activation: the whole switch is one secret
-// (PAWSPACE_AI_PROVIDER_API_KEY). These invariants must hold so that setting the key
-// flips AI on cleanly, removing it fails safe, and the human-in-the-loop guardrails
-// can never be silently weakened. (The deep flip-on behaviour is exercised by the
-// scratchpad execution preflight; this is the CI-run contract check.)
+// Permanent readiness gate for AI activation: Anthropic keeps the legacy provider secret while
+// OpenAI uses a distinct secret. Provider selection must never reinterpret the legacy Anthropic
+// credential as an OpenAI key during migration.
 
 // This test used to pin the adapter's literal source: `if (!apiKey) { return { connected: false`,
 // a fixed model string, and a sentence from a comment. Hardening the adapter broke all three while
@@ -20,16 +18,13 @@ const webChat = await read("../lib/ai-web-chat-adapter.ts");
 // whole problem with proving behaviour by grepping formatting. What survives here is the one genuine
 // source contract (a single named secret is the switch, and nothing local generates text in its
 // place); the behaviour itself is executed in tests/ai-provider-adapter-execution.test.mjs.
-test("AI activation is a single, reversible, fail-safe key switch", () => {
+test("AI provider credentials remain isolated and fail-safe during OpenAI migration", () => {
   assert.match(adapter, /PAWSPACE_AI_PROVIDER_API_KEY/);
-  // The switch stays exactly one credential. Counting occurrences would break on formatting, so this
-  // pins the SET of environment names the adapter reads: a second credential name is a second switch,
-  // and a second switch is how "AI is off" stops being a single reversible fact.
   const envNames = [...new Set([...adapter.matchAll(/"(PAWSPACE_[A-Z_0-9]+|[A-Z_0-9]*API_KEY|[A-Z_0-9]*TOKEN|[A-Z_0-9]*SECRET)"/g)].map(m => m[1]))].sort();
   const credentialNames = envNames.filter(name => /(?:API_KEY|TOKEN|SECRET)$/.test(name));
-  assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY"],
-    `AI activation must remain one credential switch; found ${credentialNames.join(", ") || "none"}`);
-  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER", "PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_AI_VOICE_MODEL", "PAWSPACE_DEPLOYMENT_ENV"],
+  assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_OPENAI_API_KEY"],
+    `AI provider credential set changed unexpectedly: ${credentialNames.join(", ") || "none"}`);
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER", "PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_AI_VOICE_MODEL", "PAWSPACE_DEPLOYMENT_ENV", "PAWSPACE_OPENAI_API_KEY"],
     `the adapter reads an unexpected environment input: ${envNames.join(", ")}`);
   assert.ok(adapter.includes('const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";'));
   assert.match(adapter, /authorization: `Bearer \$\{apiKey\}`/);

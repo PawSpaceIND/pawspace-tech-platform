@@ -9,7 +9,7 @@ import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeRese
 import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
 
 export type AiProviderRef = "openai" | "anthropic";
-export const AI_PROVIDER_REF: AiProviderRef = "openai";
+export const AI_PROVIDER_REF: AiProviderRef = "anthropic";
 export const DEFAULT_AI_MODEL_REF = "gpt-5.6-terra";
 export const DEFAULT_VOICE_AI_MODEL_REF = "gpt-5.6-luna";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -42,7 +42,7 @@ const RETRYABLE: ReadonlySet<AiFailureClass> = new Set<AiFailureClass>(["timeout
 export const isRetryableAiFailure = (failure: AiFailureClass) => RETRYABLE.has(failure);
 
 const FAILURE_REASON: Record<AiFailureClass, string> = {
-  not_configured: "PAWSPACE_AI_PROVIDER_API_KEY is not configured - no external AI provider is connected and every conversation goes to a human",
+  not_configured: "The selected AI provider credential is not configured - no external AI provider is connected and every conversation goes to a human",
   governance_blocked: "External AI is disabled by an active PawSpace AI governance control",
   quota_exceeded: "External AI is temporarily disabled because the configured request, token, or estimated-spend budget has been reached",
   circuit_open: "External AI is temporarily disabled because the provider circuit breaker is open",
@@ -88,7 +88,14 @@ async function runtimeEnv(): Promise<Record<string, unknown>> {
 const str = (env: Record<string, unknown>, key: string) => String(env[key] ?? "").trim();
 
 export function aiProviderRef(env: Record<string, unknown>): AiProviderRef {
-  return str(env, "PAWSPACE_AI_PROVIDER").toLowerCase() === "anthropic" ? "anthropic" : "openai";
+  const requested=str(env,"PAWSPACE_AI_PROVIDER").toLowerCase();
+  if(requested==="openai")return "openai";
+  if(requested==="anthropic")return "anthropic";
+  return "anthropic";
+}
+
+export function aiProviderCredential(env:Record<string,unknown>,providerRef:AiProviderRef):string{
+  return providerRef==="openai"?str(env,"PAWSPACE_OPENAI_API_KEY"):str(env,"PAWSPACE_AI_PROVIDER_API_KEY");
 }
 
 export function aiModelRef(env: Record<string, unknown>, channel?: string): { modelRef: string; source: "configured" | "default" } {
@@ -190,14 +197,14 @@ export async function aiProviderConnection(channel?: string): Promise<{
   reason: string;
 }> {
   const env = await runtimeEnv();
-  const configured = Boolean(str(env, "PAWSPACE_AI_PROVIDER_API_KEY"));
+  const providerRef = aiProviderRef(env);
+  const configured = Boolean(aiProviderCredential(env,providerRef));
   if (!configured) {
     return {
       configured: false, connected: false, verified: false, providerRef: null, modelRef: null, modelRefSource: null,
       timeoutMs: aiTimeoutMs(env), reason: FAILURE_REASON.not_configured,
     };
   }
-  const providerRef = aiProviderRef(env);
   const { modelRef, source } = aiModelRef(env,channel);
   return {
     configured: true, connected: true, verified: false, providerRef, modelRef, modelRefSource: source,
@@ -208,10 +215,9 @@ export async function aiProviderConnection(channel?: string): Promise<{
 
 export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
-  const apiKey = str(env, "PAWSPACE_AI_PROVIDER_API_KEY");
-  if (!apiKey) return fail("not_configured");
-
   const providerRef = aiProviderRef(env);
+  const apiKey = aiProviderCredential(env,providerRef);
+  if (!apiKey) return fail("not_configured");
   const { modelRef } = aiModelRef(env, input.channel);
   if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
 
