@@ -22,11 +22,11 @@ on:
         options:
           - pawspace-staging
           - pawspace-release-preview
-      seed_historical_fixture:
-        description: Seed and close one expired Revenue Mission fixture if the isolated target has no mission rows
+      allow_revenue_mission_fixture:
+        description: Allow one expired audited Revenue Mission fixture when the isolated target is empty
         required: true
-        type: boolean
         default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -82,8 +82,14 @@ jobs:
           STAGING_URL: ${{ inputs.preview_url }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
-          ALLOW_REVENUE_MISSION_FIXTURE: ${{ inputs.seed_historical_fixture }}
-        run: node scripts/prove-atlas-staging.mjs
+          ALLOW_REVENUE_MISSION_FIXTURE: ${{ inputs.allow_revenue_mission_fixture }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.allow_revenue_mission_fixture }}" = "true" ] && [ "${{ inputs.target_environment }}" != "pawspace-release-preview" ]; then
+            echo "Revenue Mission fixture seeding is allowed only in pawspace-release-preview" >&2
+            exit 1
+          fi
+          node scripts/prove-atlas-staging.mjs
 
       - name: Upload sanitized Atlas proof
         uses: actions/upload-artifact@v4
