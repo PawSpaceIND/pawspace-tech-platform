@@ -119,7 +119,14 @@ registerServicePolicyDomain<BookingTimePolicy&Record<string,unknown>>({
  * Seeds the platform default plus one row per schedulable service. INSERT OR IGNORE through the kernel,
  * so an operator's own edit is never overwritten.
  */
+// Seeding is idempotent but not free: every scope costs a lookup, and resolveBookingTimePolicy seeds
+// on each call. Unguarded, one grooming reservation spent 24 D1 round trips re-proving eight rows it
+// had already written - the dominant cost of a booking on a cross-region database. Guarded per D1
+// instance, exactly as seedAssignmentPolicies does; a fresh database (every test, every isolate) seeds
+// again, and the membership is recorded only after the writes succeed so a failure retries.
+const bookingTimePoliciesSeeded=new WeakSet<Db>();
 export async function seedBookingTimePolicies(db:Db){
+  if(bookingTimePoliciesSeeded.has(db))return;
   const{seedServicePolicyDefault,seedServicePolicyScope}=await import("./service-policy-governance");
   await seedServicePolicyDefault(db,BOOKING_TIME_POLICY_DOMAIN);
   for(const service of SCHEDULABLE_SERVICES){
@@ -127,6 +134,7 @@ export async function seedBookingTimePolicies(db:Db){
       {...APPROVED_BOOKING_TIME_DEFAULT,...APPROVED_BOOKING_TIME_BY_SERVICE[service]},
       `Booking time rules - ${service}`);
   }
+  bookingTimePoliciesSeeded.add(db);
 }
 
 export async function resolveBookingTimePolicy(db:Db,scope:{serviceCode?:string|null;cityId?:string|null}){
