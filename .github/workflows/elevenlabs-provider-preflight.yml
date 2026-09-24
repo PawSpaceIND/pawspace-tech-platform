@@ -31,13 +31,26 @@ jobs:
           ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID || secrets.EXOTEL_SID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
         run: |
           node <<'NODE'
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
-          const phoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim();
+          let phoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim();
           const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
           const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
-          if(!key||!phoneId||!agentId||entries.length!==1)throw new Error('controlled Grooming UAT prerequisites missing');
+          const exotel={accountSid:String(process.env.EXOTEL_ACCOUNT_SID||'').trim(),apiKey:String(process.env.EXOTEL_API_KEY||'').trim(),apiToken:String(process.env.EXOTEL_API_TOKEN||'').trim(),callerId:String(process.env.EXOTEL_CALLER_ID||'').trim(),appId:String(process.env.EXOTEL_VOICE_APP_ID||'').trim()};
+          if(!key||!agentId||entries.length!==1||Object.values(exotel).some(v=>!v))throw new Error('controlled Grooming UAT prerequisites missing');
+          let phoneOk=false;
+          if(phoneId){const check=await fetch(`https://api.elevenlabs.io/v1/convai/phone-numbers/${encodeURIComponent(phoneId)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)});phoneOk=check.ok;console.log(`EXISTING_PHONE_ID_STATUS=${check.status}`);}
+          if(!phoneOk){
+            const callerDigits=exotel.callerId.replace(/\D/g,''); const caller=exotel.callerId.startsWith('+')?exotel.callerId:(callerDigits.length===10?`+91${callerDigits}`:`+${callerDigits}`); console.log('::add-mask::'+caller);
+            const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{method:'POST',headers:{'content-type':'application/json','xi-api-key':key},body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT',phone_number:caller,account_sid:exotel.accountSid,api_key:exotel.apiKey,api_token:exotel.apiToken,api_subdomain:'api.exotel.com',app_id:exotel.appId}),signal:AbortSignal.timeout(30000)});
+            const impBody=await imp.json().catch(()=>({})); if(!imp.ok||!impBody?.phone_number_id){console.log('PHONE_IMPORT_ERROR='+JSON.stringify(impBody).slice(0,2000));throw new Error(`ElevenLabs Exotel import failed: HTTP ${imp.status}`);} phoneId=String(impBody.phone_number_id); console.log('IMPORTED_PHONE_ID='+phoneId);
+          }
           const digits=entries[0].replace(/\D/g,'');
           if(digits.length<10||digits.length>15)throw new Error('allowlisted UAT recipient is invalid');
           const to=entries[0].startsWith('+')?entries[0]:(digits.length===10?`+91${digits}`:`+${digits}`);
