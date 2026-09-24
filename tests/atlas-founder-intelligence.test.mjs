@@ -44,7 +44,8 @@ test("Atlas campaign approval cannot bypass governed campaign approval/snapshot"
  assert.match(data,/activateCampaign/);
  assert.match(data,/action_status='approval_required'/);
  assert.match(chat,/action==="approve"/);
- assert.match(chat,/Yes, execute\./);
+ assert.match(chat,/executeAtlasApprovedAction\(db,\{messageId,request,actor\}\)/);
+ assert.match(chat,/Founder approval executed\./);
 });
 
 test("Atlas WebSocket and daily Cloudflare cron are wired",()=>{
