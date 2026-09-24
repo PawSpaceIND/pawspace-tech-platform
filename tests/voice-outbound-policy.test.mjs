@@ -783,3 +783,28 @@ test("max retry exhaustion writes a CRM disposition and releases the recipient d
   assert.ok(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(first.callId).released_at);
   assert.equal(sqlite.prepare("SELECT last_outcome FROM lead_work_items WHERE id='LEAD-V1'").get().last_outcome, "voice_terminal:retry_exhausted");
 });
+
+test("controlled specialist UAT bypasses quiet hours only for the single allowlisted Grooming/Training test", async () => {
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED: "true", PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "true" });
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "controlled_specialist_uat", actorId: "uat-test", asOf: QUIET_TIME });
+
+  const normal = await gov.requestOutboundVoiceCall(db, env, callInput({ useCase: "grooming_sales", bookingId: null, asOf: QUIET_TIME }));
+  assertRefused(sqlite, normal, "blocked_quiet_hours", "quiet_hours");
+
+  const controlled = await gov.requestControlledSpecialistUatCall(db, env, {
+    idempotencyKey: "voice-specialist-uat:grooming:quiet-hours-proof",
+    useCase: "grooming_sales",
+    phone: ALLOWLISTED_PHONE,
+    cityId: "blr",
+    customerId: "CON-V1",
+    leadId: "LEAD-V1",
+    bookingId: null,
+    campaignId: "controlled_specialist_uat",
+    asOf: QUIET_TIME,
+  });
+  assert.equal(controlled.dialled, true);
+  assert.equal(order(sqlite, controlled.callId).quiet_hours_decision, "uat_bypass");
+  const q = sqlite.prepare("SELECT passed,detail FROM voice_call_policy_decisions WHERE call_id=? AND check_code='quiet_hours'").get(controlled.callId);
+  assert.equal(q.passed, 1);
+  assert.match(q.detail, /Controlled specialist UAT bypassed quiet hours/);
+});
