@@ -1,3 +1,4 @@
+import { serviceAddressPincodes } from "./service-address-pincode";
 /** A contradiction check, not a geocoder. A matching PIN never proves a doorstep. */
 const CITY_ALIASES = [
   ["bengaluru", "bangalore"], ["mumbai", "bombay"], ["chennai", "madras"],
@@ -8,7 +9,7 @@ const mentionsLocality = (address: string, name: string) =>
   new RegExp(`\\b${escape(name)}\\b(?!\\s+(?:road|street|lane|avenue|apartments?|building|cafe|restaurant|hotel|bank|store|bakery)\\b)`, "i").test(address);
 export function serviceAddressConflict(address: string, city: string, pincode: string): string | null {
   if (address.length > 2000) return "Keep the complete service address within 2,000 characters.";
-  const pins = address.match(/\b\d{6}\b/g) || [];
+  const pins = serviceAddressPincodes(address);
   if (pins.some(pin => pin !== pincode)) return "The address and selected PIN code do not match. Correct the address before continuing.";
   const expected = city.trim().toLowerCase();
   const expectedAliases = CITY_ALIASES.find(names => names.includes(expected)) || [expected];

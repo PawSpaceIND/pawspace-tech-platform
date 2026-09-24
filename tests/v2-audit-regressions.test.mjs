@@ -109,12 +109,12 @@ test('shared API deadline aborts a stalled JSON body after headers, not just the
 });
 test('caller cancellation is preserved when the shared helper adds its own deadline', { timeout: 3000 }, async t => {
  const { createServer } = await import('node:http');
- const { apiRequest, ApiError } = await import('../lib/api-fetch.ts');
+ const { apiRequest } = await import('../lib/api-fetch.ts');
  const server = createServer((_request, response) => { response.writeHead(200); response.flushHeaders(); });
  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
  t.after(() => { server.closeAllConnections(); server.close(); });
  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 100);
- try { await assert.rejects(() => apiRequest(`http://127.0.0.1:${server.address().port}/body`, { signal: controller.signal }, { timeoutMs: 2000 }), error => error instanceof ApiError && error.kind === 'timeout'); }
+ try { await assert.rejects(() => apiRequest(`http://127.0.0.1:${server.address().port}/body`, { signal: controller.signal }, { timeoutMs: 2000 }), error => error instanceof DOMException && error.name === 'AbortError'); }
  finally { clearTimeout(timer); }
 });
 test('address validation bounds oversized inputs and handles repeated separators without backtracking', () => {
@@ -122,4 +122,20 @@ test('address validation bounds oversized inputs and handles repeated separators
  assert.match(serviceAddressConflict('\n'.repeat(1900) + 'Maharashtra', 'Bengaluru', '560076'), /state does not match/);
  assert.equal(serviceAddressConflict('\n'.repeat(1900) + 'Karnataka', 'Bengaluru', '560076'), null);
  assert.match(serviceAddressConflict('Road,  Maharashtra  560076  India', 'Bengaluru', '560076'), /state does not match/);
+});
+test('postal parsing distinguishes legitimate six-digit property numbers from explicit postal conflicts', async () => {
+ const { serviceAddressPincodes } = await import('../lib/service-address-pincode.ts');
+ for (const address of [
+   'Flat 123456, 18th Main Road, Bengaluru 560076',
+   'Building No 123456, BTM Layout, Bengaluru 560076',
+   'BTM Layout, Bengaluru 560076, Reference number 123456',
+   '123456, 18th Main Road, Bengaluru 560076',
+   'PIN 560076, landmark reference 123456',
+ ]) {
+   assert.deepEqual(serviceAddressPincodes(address), ['560076'], address);
+   assert.equal(serviceAddressConflict(address, 'Bengaluru', '560076'), null, address);
+ }
+ const conflicting = 'Flat 123456, Bengaluru, PIN 560076, postal code 560038';
+ assert.deepEqual(serviceAddressPincodes(conflicting), ['560076', '560038']);
+ assert.match(serviceAddressConflict(conflicting, 'Bengaluru', '560076'), /PIN code do not match/);
 });

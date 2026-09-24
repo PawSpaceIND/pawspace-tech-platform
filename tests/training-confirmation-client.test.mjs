@@ -137,7 +137,7 @@ test("default refresh forwards caller cancellation through the bounded API helpe
   try {
     const pending = loadVerifiedTrainingConfirmation(base, controller.signal);
     await started; controller.abort();
-    await assert.rejects(pending, /too long|aborted/i);
+    await assert.rejects(pending, { name: "AbortError" });
     assert.equal(calls, 1, "cancellation must not start a programme read or a second payment");
   } finally { globalThis.fetch = original; }
 });

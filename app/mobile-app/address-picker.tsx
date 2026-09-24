@@ -3,6 +3,7 @@ import{useEffect,useRef,useState}from"react";
 import{resolveServiceCoverage}from"../../lib/service-zone-client";
 import{resolveAddress,searchAddresses,type AddressSuggestion}from"../../lib/address-autocomplete-client";
 import{createAddressSessionToken}from"../../lib/grooming-booking-calendar";
+import{serviceAddressPincodes}from"../../lib/service-address-pincode";
 import{serviceAddressConflict}from"../../lib/service-address-consistency";
 import{validGpsCoordinates}from"../../lib/gps-telemetry-policy";
 import styles from"./address-picker.module.css";
@@ -11,7 +12,7 @@ export type Zone={zoneId:string;zoneName:string;description:string;color:string;
 export type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;cityId:string;city:string;area:string};address:string;addressLine1:string;addressLine2:string;latitude:number;longitude:number;placeId:string;verification:"map"|"typed"};
 export const SELECTED_SERVICE_ADDRESS_KEY="pawspace.selected-service-address";
 function remember(result:ZoneResult|null){try{result?sessionStorage.setItem(SELECTED_SERVICE_ADDRESS_KEY,JSON.stringify(result)):sessionStorage.removeItem(SELECTED_SERVICE_ADDRESS_KEY)}catch{}}
-function pinFrom(value:string){return value.match(/\b[1-9]\d{5}\b/)?.[0]||""}
+function pinFrom(value:string){return serviceAddressPincodes(value).at(-1)||""}
 const AREA_PIN:Array<[RegExp,string]>=[
   [/jayanagar/i,"560041"],
   [/koramangala/i,"560034"],
@@ -37,7 +38,7 @@ export default function AddressPicker({onZoneResolved,restoreSaved=true,summaryL
   if(!pincode)throw new Error("Add a 6-digit PIN, or a Bengaluru area name such as Jayanagar, so we can verify the service zone.");
   await applyCoverage(source.trim(),pincode);
  }
- useEffect(()=>{void fetch("/api/service-zone?action=list").then(r=>r.json()).then((b:{data?:Zone[]})=>b.data&&setZones(b.data)).catch(()=>{});try{const raw=restoreSaved?sessionStorage.getItem(SELECTED_SERVICE_ADDRESS_KEY):null;if(raw){const saved=JSON.parse(raw)as ZoneResult;if(saved?.addressLine1&&saved?.assignment?.pincode&&!serviceAddressConflict(saved.address||saved.addressLine1,saved.assignment.city,saved.assignment.pincode)){queueMicrotask(()=>{setLine1(saved.addressLine1);setLine2(saved.addressLine2||"");setResolvedZone(saved);onZoneResolved?.(saved)})}}}catch{}}// eslint-disable-next-line react-hooks/exhaustive-deps
+ useEffect(()=>{void fetch("/api/service-zone?action=list").then(r=>r.json()).then((b:{data?:Zone[]})=>b.data&&setZones(b.data)).catch(()=>{});try{const raw=restoreSaved?sessionStorage.getItem(SELECTED_SERVICE_ADDRESS_KEY):null;if(raw){const saved=JSON.parse(raw)as ZoneResult;if(typeof saved?.addressLine1==="string"){remember(null);queueMicrotask(()=>{setLine1(saved.addressLine1);setLine2(typeof saved.addressLine2==="string"?saved.addressLine2:"");setResolvedZone(null);onZoneResolved?.(null)})}}}catch{}}// eslint-disable-next-line react-hooks/exhaustive-deps
  ,[]);
  useEffect(()=>{function onVerify(){if(resolvedZone||loading)return;if(line1.trim().length<8){setError("Enter the street and area, then tap Verify service address.");return;}setLoading(true);setError("");void verifyTyped(line1).catch(e=>setError(e instanceof Error?e.message:"Could not verify this address")).finally(()=>setLoading(false));}window.addEventListener("pawspace-verify-address",onVerify);return()=>window.removeEventListener("pawspace-verify-address",onVerify);},[line1,line2,resolvedZone,loading]);
  useEffect(()=>{if(resolvedZone||line1.trim().length<3)return;const request=++generation.current,timer=window.setTimeout(()=>{setLoading(true);setError("");void(async()=>{

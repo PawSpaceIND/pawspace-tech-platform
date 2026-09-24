@@ -40,7 +40,7 @@ test("contradictory typed address is rejected without an unhandled browser error
 });
 test("review retains the complete street and apartment and rejects a conflicting edit", async ({ page }) => {
   await reachAddress(page);
-  const street = "18th Main Road, BTM Layout, Bengaluru 560076", apartment = "QA Tower, Flat 402, Fourth floor";
+  const street = "Flat 123456, 18th Main Road, BTM Layout, Bengaluru 560076", apartment = "QA Tower, Flat 402, Fourth floor";
   await page.locator("#grooming-address-line-1").fill(street);
   await expect(page.getByText("Service area matched - doorstep not map verified", { exact: true })).toBeVisible();
   await page.locator("#grooming-address-line-2").fill(apartment);
@@ -103,4 +103,22 @@ test.beforeEach(async ({ baseURL }) => {
 });
 test.afterEach(async ({ page }, testInfo) => {
   if (!page.isClosed()) await testInfo.attach("audit-browser", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+});
+test("restored address cannot reuse stale coverage after a service area is removed", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("pawspace.selected-service-address", JSON.stringify({
+    addressLine1: "18th Main Road, BTM Layout, Bengaluru 560076", addressLine2: "QA Flat 402",
+    address: "18th Main Road, BTM Layout, Bengaluru 560076, QA Flat 402", verification: "map", placeId: "old-place",
+    latitude: 12.925, longitude: 77.5938,
+    assignment: { cityId: "blr", city: "Bengaluru", zoneId: "blr-south", area: "BTM Layout", pincode: "560076" },
+    zone: { zoneId: "blr-south", zoneName: "South Bengaluru", serviceAvailable: true, description: "Old coverage", color: "#000000" },
+  })));
+  let lookups = 0;
+  await page.route("**/api/service-zone?pincode=560076", route => {
+    lookups += 1; return route.fulfill({ status: 404, json: { error: "This service area has been removed" } });
+  });
+  await reachAddress(page);
+  await expect(page.getByRole("alert")).toContainText("service area has been removed");
+  expect(lookups).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Review booking", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Verified service doorstep", { exact: true })).toHaveCount(0);
 });

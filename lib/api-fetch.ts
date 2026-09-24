@@ -54,16 +54,19 @@ export type ApiFetchOptions = { timeoutMs?: number };
  * non-JSON body on a 2xx is surfaced as a clean ApiError("parse").
  */
 export async function apiRequest(url: string, init: RequestInit = {}, opts: ApiFetchOptions = {}): Promise<{ ok: boolean; status: number; body: unknown }> {
+  if (init.signal?.aborted) throw init.signal.reason ?? new DOMException("Request cancelled", "AbortError");
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     throw new ApiError("offline", 0, "You appear to be offline. Please check your connection and try again.");
   }
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-  const cancelFromCaller = () => controller?.abort();
+  let deadlineExceeded = false;
+  const timer = controller ? setTimeout(() => { if (!controller.signal.aborted) { deadlineExceeded = true; controller.abort(); } }, timeoutMs) : null;
+  const cancelFromCaller = () => { if (!controller?.signal.aborted) controller?.abort(init.signal?.reason); };
   if (init.signal?.aborted) cancelFromCaller();
   else init.signal?.addEventListener("abort", cancelFromCaller, { once: true });
   try {
+    if (init.signal?.aborted) throw init.signal.reason ?? new DOMException("Request cancelled", "AbortError");
     const res = await fetch(url, { ...init, signal: controller?.signal ?? init.signal ?? undefined });
     // The deadline covers the response body too. Headers alone are not a completed API call.
     const text = await res.text();
@@ -77,8 +80,9 @@ export async function apiRequest(url: string, init: RequestInit = {}, opts: ApiF
     return { ok: res.ok, status: res.status, body };
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (controller?.signal.aborted || (error as { name?: string })?.name === "AbortError")
-      throw new ApiError("timeout", 0, "The request took too long. Please try again.");
+    if (deadlineExceeded) throw new ApiError("timeout", 0, "The request took too long. Please try again.");
+    if (init.signal?.aborted) throw init.signal.reason ?? new DOMException("Request cancelled", "AbortError");
+    if ((error as { name?: string })?.name === "AbortError") throw error;
     throw new ApiError("network", 0, "We couldn't reach the server. Please check your connection and try again.");
   } finally {
     if (timer) clearTimeout(timer);
