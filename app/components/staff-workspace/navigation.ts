@@ -18,6 +18,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "Booking Command Center", href: "/team/operations/bookings", permission: "bookings.view" },
     { label: "Live calendar & delivery", href: "/team/operations", permission: "bookings.view" },
     { label: "Scheduling", href: "/team/scheduling", permission: "scheduling.view" },
+    { label: "Meet & greet", href: "/team/meet-and-greet", permission: "bookings.manage" },
     { label: "Create a booking", href: "/assisted-booking", permission: "bookings.manage" },
   ] },
   { id: "people", label: "Partners & people", links: [
@@ -34,16 +35,20 @@ export const STAFF_GROUPS: StaffGroup[] = [
   { id: "growth", label: "Growth & communications", links: [
     { label: "Marketing", href: "/team/marketing", permission: "marketing.view" },
     { label: "Voice operations", href: "/team/voice", permission: "communications.call" },
+    { label: "WhatsApp workspace", href: "/team/whatsapp", permission: "communications.manage" },
     { label: "WhatsApp templates", href: "/team/whatsapp/templates", permission: "communications.manage" },
   ] },
   { id: "reports", label: "Reports & intelligence", links: [
     { label: "Analytics", href: "/team/analytics", permission: "reports.view" },
+    { label: "Revenue mission", href: "/team/revenue-mission", permission: "reports.view" },
     { label: "Atlas intelligence", href: "/team/ai", permission: "reports.view" },
     { label: "Performance", href: "/team/performance", permission: "performance.view" },
   ] },
   { id: "settings", label: "Settings & controls", links: [
     { label: "Founder & system controls", href: "/control", permission: "launch.view" },
     { label: "System integrations", href: "/control/integrations", permission: "settings.manage" },
+    { label: "Lifecycle automation", href: "/team/lifecycle-reminders", permission: "settings.manage" },
+    { label: "Subscription plans", href: "/team/subscription-plans", permission: "pricing.view" },
     { label: "Catalogue & services", href: "/team/catalogue", permission: "pricing.manage" },
   ] },
 ];
