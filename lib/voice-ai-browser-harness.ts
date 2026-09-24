@@ -312,6 +312,8 @@ export async function handleDirectBrowserVoiceHarnessStream(
   const pair = createWebSocketPair();
   const client = pair[0];
   const server = pair[1];
+  // Workers compatibility >= 2026-03-17 delivers Blob by default; this PCM handler expects ArrayBuffer.
+  server.binaryType = "arraybuffer";
   server.accept({ allowHalfOpen: true });
 
   let flux: WorkerSocket | null = null;
