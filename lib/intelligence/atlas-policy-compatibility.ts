@@ -1,0 +1,5 @@
+import {DEFAULT_ATLAS_DECISION_POLICY} from "./atlas-executive-governance";
+type Row=Record<string,unknown>;
+const text=(v:unknown)=>String(v??"").trim();
+export type AtlasPolicyCompatibility={proposalId:string;proposalPolicyVersion:string|null;currentPolicyVersion:string;compatible:boolean;requiresReevaluation:boolean;reason:"policy_current"|"proposal_policy_version_unknown"|"policy_version_changed";requiresFounderReview:true;advisoryOnly:true;authorityMutationAllowed:false};
+export function buildAtlasPolicyCompatibility(proposals:Row[]):AtlasPolicyCompatibility[]{const currentPolicyVersion=DEFAULT_ATLAS_DECISION_POLICY.version;return proposals.map(row=>{const proposalPolicyVersion=text(row.policy_version)||null,compatible=proposalPolicyVersion===currentPolicyVersion,reason=!proposalPolicyVersion?"proposal_policy_version_unknown" as const:compatible?"policy_current" as const:"policy_version_changed" as const;return{proposalId:text(row.id),proposalPolicyVersion,currentPolicyVersion,compatible,requiresReevaluation:!compatible,reason,requiresFounderReview:true as const,advisoryOnly:true as const,authorityMutationAllowed:false as const};});}
