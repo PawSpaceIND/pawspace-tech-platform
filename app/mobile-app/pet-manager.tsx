@@ -177,8 +177,9 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
       setPets(updated); onPetsChanged?.(updated); setForm(null); setSaving(false);
       return;
     }
+    let saved: { entityId: string };
     try {
-      await upsertCustomerPet({
+      saved = await upsertCustomerPet({
         customerId: customer.customerId,
         pet: { id: form.id, name: candidate.name, species: form.species, breed: profile.breed || null, vaccinationStatus: candidate.vaccinationStatus, profile },
       });
@@ -188,16 +189,41 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
       setSaving(false);
       return;
     }
-    // The pet is committed. A failure refreshing the list must NOT reopen the resubmit path: a retry
-    // mints a fresh idempotency key and would create a duplicate pet. Close the form, refresh best-effort.
+    // The write is committed and returned the canonical id. Publish that version immediately instead of
+    // making the UI depend on the next D1 read being read-after-write fresh. A replica can briefly return
+    // the previous list; hiding a successfully saved pet until reload is worse than keeping this canonical-id
+    // optimistic projection until a matching server read arrives.
+    const prior = pets.find((pet) => pet.id === saved.entityId);
+    const optimistic: CustomerPet = {
+      id: saved.entityId,
+      sourceId: prior?.sourceId ?? null,
+      name: candidate.name,
+      species: form.species,
+      breed: profile.breed || null,
+      vaccinationStatus: candidate.vaccinationStatus,
+      ageYears: null,
+      weightKg: null,
+      profile,
+    };
+    const optimisticPets = [...pets.filter((pet) => pet.id !== saved.entityId), optimistic];
     setForm(null);
+    setPets(optimisticPets);
+    setLoadError("");
+    onPetsChanged?.(optimisticPets);
     try {
       const refreshed = await loadCustomerPets(customer.customerId);
-      setPets(refreshed);
-      setLoadError("");
-      onPetsChanged?.(refreshed);
+      const canonical = refreshed.find((pet) => pet.id === saved.entityId);
+      const matchesSavedVersion = canonical?.name === optimistic.name
+        && canonical.species === optimistic.species
+        && canonical.breed === optimistic.breed
+        && canonical.vaccinationStatus === optimistic.vaccinationStatus;
+      if (matchesSavedVersion) {
+        setPets(refreshed);
+        onPetsChanged?.(refreshed);
+      }
     } catch {
-      setLoadError("Pet saved — reload to see the updated list.");
+      // The successful write already has a canonical id and is visible locally. Leave it in place and
+      // reconcile on the next account load rather than telling the customer to reload/resubmit.
     } finally {
       setSaving(false);
     }

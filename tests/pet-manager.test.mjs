@@ -181,7 +181,11 @@ test("pet manager is embeddable with the required props and performs no direct f
   assert.match(component, /\{ customer, onPetsChanged \}: \{ customer: LoggedInCustomer; onPetsChanged\?/);
   assert.doesNotMatch(component, /fetch\(/, "all IO goes through the customer-account client lib");
   assert.match(component, /from "\.\.\/\.\.\/lib\/customer-account-client"/);
-  assert.match(component, /onPetsChanged\?\.\(refreshed\)/, "flows are told when the pet list changes");
+  assert.match(component, /const optimistic: CustomerPet =/, "successful saves publish the canonical-id pet immediately");
+  assert.match(component, /setPets\(optimisticPets\)/, "the saved pet is visible before any re-read completes");
+  assert.match(component, /matchesSavedVersion/, "a stale post-write read cannot replace the just-saved pet");
+  assert.match(component, /onPetsChanged\?\.\(optimisticPets\)/, "embedded flows receive the immediate saved version");
+  assert.match(component, /onPetsChanged\?\.\(refreshed\)/, "a matching canonical refresh still reconciles embedded flows");
   assert.doesNotMatch(component, /from\s*"\.\/(grooming-flow|stay-flow|training-flow|walking-flow|food-flow|page)/);
 });
 
