@@ -117,3 +117,9 @@ test('caller cancellation is preserved when the shared helper adds its own deadl
  try { await assert.rejects(() => apiRequest(`http://127.0.0.1:${server.address().port}/body`, { signal: controller.signal }, { timeoutMs: 2000 }), error => error instanceof ApiError && error.kind === 'timeout'); }
  finally { clearTimeout(timer); }
 });
+test('address validation bounds oversized inputs and handles repeated separators without backtracking', () => {
+ assert.match(serviceAddressConflict('x'.repeat(2001), 'Bengaluru', '560076'), /2,000 characters/);
+ assert.match(serviceAddressConflict('\n'.repeat(1900) + 'Maharashtra', 'Bengaluru', '560076'), /state does not match/);
+ assert.equal(serviceAddressConflict('\n'.repeat(1900) + 'Karnataka', 'Bengaluru', '560076'), null);
+ assert.match(serviceAddressConflict('Road,  Maharashtra  560076  India', 'Bengaluru', '560076'), /state does not match/);
+});
