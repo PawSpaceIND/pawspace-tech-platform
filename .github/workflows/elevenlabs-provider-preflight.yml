@@ -3,9 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls. Makes one synthetic OpenAI request and reads the existing global ElevenLabs agent. No calls or conversations.'
+        description: 'Type no-calls for provider preflight or specialist-call for one controlled UAT specialist call.'
         required: true
         default: ''
+      specialist_use_case:
+        description: 'grooming_sales or training_sales when confirm=specialist-call'
+        required: false
+        default: 'grooming_sales'
 permissions:
   contents: read
 jobs:
@@ -38,4 +42,59 @@ jobs:
           const latest=rows.sort((a,b)=>Number(b?.start_time_unix_secs||b?.metadata?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||a?.metadata?.start_time_unix_secs||0))[0];
           const id=String(latest?.conversation_id||'');console.log('::add-mask::'+id);const dResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});const d=await dResponse.json().catch(()=>({}));if(!dResponse.ok)throw new Error(`conversation read failed ${dResponse.status}`);
           const transcript=Array.isArray(d.transcript)?d.transcript:[];console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(d?.metadata?.call_duration_secs||0),terminationReason:d?.metadata?.termination_reason||null,error:d?.metadata?.error||null,safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          NODE
+
+  specialist-call:
+    if: ${{ inputs.confirm == 'specialist-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
+        env:
+          SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const origin='https://pawspace-staging.karthik-fce.workers.dev';
+          const useCase=String(process.env.SPECIALIST_USE_CASE||'').trim();
+          if(!['grooming_sales','training_sales'].includes(useCase))throw new Error('specialist use case must be grooming_sales or training_sales');
+          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const agentId=useCase==='grooming_sales'?String(process.env.GROOMING_AGENT_ID||'').trim():String(process.env.TRAINING_AGENT_ID||'').trim();
+          if(!access||!elevenKey||!agentId)throw new Error('specialist UAT secrets/agent id unavailable');
+          const customerId='INBOUND-9513886363';
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+          if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
+          if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
+          const before=Date.now();
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'uat_specialist_sales_test',useCase,customerId,cityId:'blr'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const body=await call.json().catch(()=>({}));
+          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed:Boolean(body?.data?.dialed),phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
+          if(call.status!==201||!body?.data?.callId||body?.data?.state!=='dialing')throw new Error('specialist call was not accepted by PawSpace');
+          console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
+          let detail=null,conversationId='';
+          for(let attempt=0;attempt<40;attempt++){
+            await new Promise(r=>setTimeout(r,4000));
+            const lr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=20`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});
+            if(!lr.ok)continue;const list=await lr.json().catch(()=>({}));const rows=Array.isArray(list?.conversations)?list.conversations:[];
+            const candidate=rows.filter(x=>Number(x?.start_time_unix_secs||0)*1000>=before-15000).sort((a,b)=>Number(b?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||0))[0];
+            if(!candidate?.conversation_id)continue;conversationId=String(candidate.conversation_id);console.log('::add-mask::'+conversationId);
+            const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});if(!dr.ok)continue;detail=await dr.json().catch(()=>({}));
+            const tr=Array.isArray(detail?.transcript)?detail.transcript:[];console.log(`SPECIALIST_POLL useCase=${useCase} status=${String(detail?.status||'')} turns=${tr.length} hasAudio=${Boolean(detail?.has_audio)} userAudio=${Boolean(detail?.has_user_audio)} responseAudio=${Boolean(detail?.has_response_audio)}`);
+            if(String(detail?.status)==='failed'||String(detail?.status)==='done'||tr.length>=2||detail?.has_response_audio)break;
+          }
+          if(!detail||!conversationId)throw new Error('ElevenLabs specialist conversation not observed');
+          const tr=Array.isArray(detail.transcript)?detail.transcript:[];
+          console.log('SPECIALIST_RESULT='+JSON.stringify({useCase,status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,safeTranscript:tr.slice(0,10).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          if(String(detail.agent_id)!==agentId)throw new Error('specialist call used the wrong ElevenLabs agent');
+          if(String(detail.status)==='failed')throw new Error('ElevenLabs specialist conversation failed');
           NODE
