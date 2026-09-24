@@ -17,3 +17,7 @@
 @media(max-width:1250px){.statGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:1050px){.customerGrid{grid-template-columns:1fr}.customerGrid>aside{max-height:340px}}
 @media(max-width:560px){.surface{padding:18px 14px}.pageHeader h1{font-size:28px}.pageHeader>div:first-child{min-width:0}.pageHeader>div:last-child{width:100%}.pageHeader a{flex:1}}
+
+.statGrid>div>span{font-size:13px;color:var(--staff-muted);letter-spacing:.04em}
+.statGrid>div>strong{color:var(--staff-text)}
+.surface input{min-height:44px;background:var(--staff-surface);color:var(--staff-text);font-family:inherit;font-size:15px}
