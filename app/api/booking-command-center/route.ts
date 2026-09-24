@@ -1,3 +1,4 @@
+import { bookingPaymentBalances } from "../../../lib/booking-payment-balances";
 import { bookingSupportCases } from "../../../lib/booking-support-cases";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
@@ -66,6 +67,7 @@ async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerO
 
 async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
   const rows=await bookingRows(db,scope,options);
+  const balances=await bookingPaymentBalances(db,rows.results.map(row=>String(row.id)));
   const supportCases=await bookingSupportCases(db,rows.results.map(row=>String(row.id)));
   const casesByBooking=new Map<string,Row[]>();
   for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
@@ -81,7 +83,9 @@ async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveMana
       db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
       db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
     ]);
-    bookings.push({...row,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
+    const balance=balances.get(String(row.id));
+    if(!balance)throw new Error("Canonical payment balance unavailable");
+    bookings.push({...row,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
   }
   return{source:"canonical UAT database snapshot + live stream",bookings,organizationalScope:scope??"global"};
 }
