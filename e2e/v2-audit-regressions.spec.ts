@@ -44,6 +44,9 @@ test("review retains the complete street and apartment and rejects a conflicting
   await page.locator("#grooming-address-line-1").fill(street);
   await expect(page.getByText("Service area matched - doorstep not map verified", { exact: true })).toBeVisible();
   await page.locator("#grooming-address-line-2").fill(apartment);
+  const draft = await page.evaluate(() => JSON.parse(sessionStorage.getItem("pawspace.selected-service-address") || "null"));
+  expect(draft).toMatchObject({addressLine1:street,addressLine2:apartment,verification:"manual",requiresRevalidation:true});
+  for(const field of ["latitude","longitude","placeId","zone","assignment"])expect(draft).not.toHaveProperty(field);
   await page.getByRole("button", { name: /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),/ }).first().click();
   await page.getByRole("button", { name: /^11:00 AM/ }).click();
   await page.getByRole("button", { name: "Review booking", exact: true }).click();

@@ -11,7 +11,12 @@ import type{CSSProperties}from"react";
 export type Zone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
 export type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;cityId:string;city:string;area:string};address:string;addressLine1:string;addressLine2:string;latitude:number;longitude:number;placeId:string;verification:"map"|"typed"};
 export const SELECTED_SERVICE_ADDRESS_KEY="pawspace.selected-service-address";
-function remember(result:ZoneResult|null){try{result?sessionStorage.setItem(SELECTED_SERVICE_ADDRESS_KEY,JSON.stringify(result)):sessionStorage.removeItem(SELECTED_SERVICE_ADDRESS_KEY)}catch{}}
+function remember(result:ZoneResult|null){try{
+ if(!result){sessionStorage.removeItem(SELECTED_SERVICE_ADDRESS_KEY);return;}
+ // Cache only an unverified text draft. Exact coordinates and Places identifiers stay in memory.
+ const draft={addressLine1:result.addressLine1,addressLine2:result.addressLine2,address:result.address,pincode:result.assignment.pincode,verification:"manual",requiresRevalidation:true};
+ sessionStorage.setItem(SELECTED_SERVICE_ADDRESS_KEY,JSON.stringify(draft));
+}catch{}}
 function pinFrom(value:string){return serviceAddressPincodes(value).at(-1)||""}
 const AREA_PIN:Array<[RegExp,string]>=[
   [/jayanagar/i,"560041"],
