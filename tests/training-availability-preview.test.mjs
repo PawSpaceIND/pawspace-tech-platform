@@ -47,3 +47,13 @@ test('Training preview refuses anonymous, foreign-customer and foreign-pet reque
  assert.equal((await f.call()).status,403);
  assert.equal(counts(f.sqlite).scheduling_reservations,0);
 });
+
+test('Training UAT roster seeds only requested session dates and retry stays idempotent',async t=>{
+ const f=await fixture(t),first=await f.call();assert.equal(first.status,200,JSON.stringify(first.body));
+ const rows=()=>f.sqlite.prepare("SELECT provider_id,date FROM scheduling_availability WHERE source='uat_roster' ORDER BY provider_id,date").all();
+ const before=rows();
+ assert.equal(before.length,6,'three seeded trainers × two requested weekly sessions');
+ assert.equal(new Set(before.map(row=>row.date)).size,2,'do not seed 100 days for a two-session preview');
+ assert.equal((await f.call()).status,200);
+ assert.deepEqual(rows(),before);
+});
