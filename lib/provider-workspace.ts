@@ -17,6 +17,7 @@ import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
 import{ensureProviderCommissionTables}from"./provider-commission-governance";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 import{PHOTO_PROOF_PURPOSE,MEDIA_REF_PREFIX}from"./care-proof-photo-claims";
+import{bookingPaymentBalances}from"./booking-payment-balances";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -182,8 +183,12 @@ export async function respondToJobOffer(db:Db,input:{providerId:string;bookingId
 
 async function bookingsForProvider(db:Db,providerId:string){
  const rows=await db.prepare("SELECT b.id,b.customer_id,b.service_code,b.package_name,b.scheduled_start,b.scheduled_end,b.status,b.total_amount,p.status pay_status,p.amount_due_now,p.method pay_method FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.provider_id=? ORDER BY b.scheduled_start DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
+ const balances=await bookingPaymentBalances(db,rows.results.map(row=>text(row.id)),{includePaymentMetadata:true});
  const nowIso=new Date().toISOString();
- const map=(r:Row)=>({bookingId:text(r.id),customerId:text(r.customer_id),serviceCode:text(r.service_code),package:text(r.package_name),start:text(r.scheduled_start),end:text(r.scheduled_end),status:text(r.status),orderValue:money(r.total_amount),paymentStatus:r.pay_status?text(r.pay_status):"none",paymentDueNow:money(r.amount_due_now),paymentMethod:r.pay_method?text(r.pay_method):null});
+ const map=(r:Row)=>{
+  const balance=balances.get(text(r.id));
+  return{bookingId:text(r.id),customerId:text(r.customer_id),serviceCode:text(r.service_code),package:text(r.package_name),start:text(r.scheduled_start),end:text(r.scheduled_end),status:text(r.status),orderValue:money(r.total_amount),paymentStatus:balance?.paymentStatus??(r.pay_status?text(r.pay_status):"none"),paymentDueNow:balance?.dueNow??money(r.amount_due_now),paymentMethod:balance?.paymentMethod|| (r.pay_method?text(r.pay_method):null)};
+ };
  const all=rows.results.map(map);
  return{
   upcoming:all.filter(b=>b.start>=nowIso&&!["completed","cancelled"].includes(b.status)),
