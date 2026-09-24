@@ -1,10 +1,10 @@
 import{database,resolvePrimaryActor,securityAudit}from"../../../../../../lib/server-auth";
-import{adminMfaCookie,issuePrivilegedSession,privilegedRole,verifyTotp}from"../../../../../../lib/admin-mfa";
+import{adminMfaCookie,issuePrivilegedSession,mfaEligibleRole,verifyTotp}from"../../../../../../lib/admin-mfa";
 
 export async function POST(request:Request){
  try{
   const actor=await resolvePrimaryActor(request);
-  if(!privilegedRole(actor.roleCode))return Response.json({error:"MFA is only required for privileged staff"},{status:403});
+  if(!mfaEligibleRole(actor.roleCode))return Response.json({error:"MFA is only required for privileged staff"},{status:403});
   const db=await database(),body=await request.json().catch(()=>({})) as Record<string,unknown>;
   const user=actor.userId?await db.prepare("SELECT id,mfa_enabled,mfa_secret FROM app_users WHERE id=?").bind(actor.userId).first<Record<string,unknown>>():null;
   if(!user||Number(user.mfa_enabled)!==1||!String(user.mfa_secret||"").trim())return Response.json({error:"MFA enrollment required"},{status:403});

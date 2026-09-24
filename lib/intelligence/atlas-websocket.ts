@@ -1,7 +1,7 @@
 import { database, resolveActor } from "../server-auth";
 import { answerFinancialQuestion } from "./financial-query-agent";
 import { answerAtlasBusinessQuestion } from "./atlas-business-snapshot";
-import { executeAtlasApprovedAction, listAtlasMessages, recordAtlasMessage, requireFounderRole } from "./atlas-data";
+import { executeAtlasApprovedAction, listAtlasMessages, recordAtlasMessage, requireAtlasApprovalAssurance, requireFounderRole } from "./atlas-data";
 
 type Pair={0:WebSocket;1:WebSocket};
 export async function handleAtlasWebSocket(request:Request){
@@ -13,7 +13,7 @@ export async function handleAtlasWebSocket(request:Request){
  server.addEventListener("message",event=>{void(async()=>{try{
   const payload=JSON.parse(String(event.data||"{}")) as Record<string,unknown>,type=String(payload.type||"");
   if(type==="sync"){send({type:"snapshot",messages:await listAtlasMessages(db,100)});return}
-  if(type==="approve"){const messageId=String(payload.messageId||"").trim();await recordAtlasMessage(db,{role:"founder",actorEmail:actor.email,content:"Yes, execute.",replyToId:messageId});send({type:"action_result",data:await executeAtlasApprovedAction(db,{messageId,actorEmail:actor.email,actorRoleCode:actor.roleCode})});return}
+  if(type==="approve"){const messageId=String(payload.messageId||"").trim(),approvalAssurance=await requireAtlasApprovalAssurance(db,request,actor);await recordAtlasMessage(db,{role:"founder",actorEmail:actor.email,content:"Yes, execute.",replyToId:messageId});send({type:"action_result",data:await executeAtlasApprovedAction(db,{messageId,actorEmail:actor.email,actorRoleCode:actor.roleCode,approvalAssurance})});return}
   if(type==="ask"){
    const question=String(payload.message||"").trim();if(!question)throw new Error("Founder message is required");await recordAtlasMessage(db,{role:"founder",actorEmail:actor.email,content:question});
    const answer=await answerAtlasBusinessQuestion(db,{question,missionId:String(payload.missionId||"").trim()||undefined}),analytics=payload.includeTallyMemory===true?{...(await answerFinancialQuestion(db,question)),source:"tally_memory"}:null;
