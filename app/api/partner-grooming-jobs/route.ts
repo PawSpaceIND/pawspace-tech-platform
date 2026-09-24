@@ -1,3 +1,4 @@
+import {bookingPaymentBalances} from "../../../lib/booking-payment-balances";
 import {ensureCustomerAccountTables} from "../../../lib/customer-account";
 import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
 import{projectProviderLifecycleEvent}from"../../../lib/grooming-provider-projection";
@@ -54,8 +55,11 @@ export async function GET(request:Request){
       JOIN booking_payments p ON p.booking_id=b.id
       WHERE w.provider_id=? AND w.service_code='grooming'
       ORDER BY b.scheduled_start ASC LIMIT 100`).bind(providerId).all<Row>();
+    const balances=await bookingPaymentBalances(readDb,rows.results.map(row=>String(row.booking_id)));
     const jobs=[];
     for(const row of rows.results){
+      const balance=balances.get(String(row.booking_id));
+      if(!balance)throw new Error("Current payment balance is unavailable for this assigned job");
       const[pets,events,proof,invoice]=await Promise.all([
         readDb.prepare("SELECT id,name,species,breed,vaccination_status,profile_json FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
         readDb.prepare("SELECT event_type,entity_type,actor_id,detail_json,occurred_at FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC LIMIT 50").bind(row.booking_id).all<Row>(),
@@ -71,7 +75,7 @@ export async function GET(request:Request){
         zoneId:String(row.zone_id),cityId:String(row.city_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),totalAmount:Number(row.total_amount||0),currency:String(row.currency||"INR"),
         customer:{id:String(row.customer_id),name:partnerFirstName(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
         pets:pets.results.map((pet:Row)=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status),safetyNotes:[parseJson<Record<string,unknown>>(pet.profile_json,{}).aggression,pricing.healthSafetyNotes,pricing.behaviourNotes].filter((value):value is string=>typeof value==="string"&&value.trim().length>0)})),
-        payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:String(row.payment_status),amount:Number(row.payment_amount||0),amountDueNow:Number(row.amount_due_now||0)},
+        payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:balance.paymentStatus,amount:balance.bookingTotal,amountDueNow:balance.dueNow},
         subscription:pricing.subscription?String(pricing.subscription):null,
         addOns,
         safetyRequirements,

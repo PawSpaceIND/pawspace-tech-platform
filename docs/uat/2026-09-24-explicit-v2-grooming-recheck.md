@@ -21,3 +21,13 @@ A genuine Razorpay TEST Netbanking checkout captured INR 1,241 for synthetic boo
 - The first browser run was not green: it included an ambiguous aside selector (cookie dialog plus booking summary), cold-compilation timeout and browser closure. The selector now targets the care summary; the complete rerun passed. No assertion was removed to waive a defect.
 
 These changes are not a certificate that every service option, coupon, subscription, provider workflow or AI function has passed. The explicit V2 page and the legacy wizard are distinct surfaces and require separate coverage.
+
+## Partner balance follow-up
+
+The visible /v2/partner view for the same captured INR 1,241 booking still reported INR 1,241 due online. The Control Center and customer checkout had zero due, so this was an independent provider-feed projection defect, not a failed Razorpay payment.
+
+The provider feed now reuses bookingPaymentBalances on its existing primary-read session. This reads current payment state, split schedules and applied credits without changing the original instalment in booking_payments. Missing financial projections fail closed rather than claiming zero. The helper accepts a prepare-only D1 interface so it can retain the existing session constraint. Provider ownership and contact masking are unchanged.
+
+Seven new executed provider-route tests cover pending/captured/refunded/partially-refunded states, unchanged original instalments, pay-after service totals, second split captures and foreign-provider denial. The expanded related checkout/provider suite passed 113/113; typecheck, targeted ESLint and git diff --check passed. A source-shape assertion requiring the obsolete original-instalment projection was updated to require the shared current-balance path; the seven execution cases independently verify behavior.
+
+These provider changes still require protected CI, staging deployment and a visible-browser recheck. The paid booking is now visible as assigned to its provider; completion, approved stored images and invoicing have not been certified.

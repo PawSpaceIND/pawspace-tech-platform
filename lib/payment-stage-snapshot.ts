@@ -8,7 +8,7 @@ const money = (value: unknown) => Math.round(Math.max(0, Number(value || 0)) * 1
  * Schema discovery is separate; missing optional ledgers mean never used, but query/schema faults
  * propagate. A capture cannot split the payment, instalment, credit and reconciliation read.
  */
-export async function readPaymentStageSnapshots(db: D1Database, bookingIds: string[]): Promise<Map<string, PaymentStageSnapshot>> {
+export async function readPaymentStageSnapshots(db: Pick<D1Database, "prepare">, bookingIds: string[]): Promise<Map<string, PaymentStageSnapshot>> {
   const ids = [...new Set(bookingIds)], result = new Map<string, PaymentStageSnapshot>();
   if (!ids.length) return result;
   const schema = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${optionalTables.map(() => '?').join(',')})`).bind(...optionalTables).all<Row>();
