@@ -1,3 +1,4 @@
+import{validateCrmLead}from"../../../lib/crm-lead-validation";
 import{CRM_CONTACT_LIST_SQL,crmContactListBinds}from"../../../lib/crm-contact-list";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{maskName,maskPhone}from"../../../lib/platform-security";
@@ -77,7 +78,7 @@ export async function GET(request:Request){try{
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){
-  try{const actor=await authorize(request,"customers.manage"); await ensureTables(); const body=await request.json() as Record<string,unknown>; const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
+  try{const actor=await authorize(request,"customers.manage"); const body=await request.json().catch(()=>null) as Record<string,unknown>;const validated=validateCrmLead(body);if(!validated.ok)return Response.json({error:validated.error},{status:400});body.name=validated.name;body.primaryPhone=validated.phone;await ensureTables(); const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
   const db=await database();const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,CRM_MANAGER_DOMAIN);
   const cityId=scope?.cityId??normaliseOrg(body.cityId,"blr"),teamCode=scope?.teamCode??normaliseOrg(body.teamCode,"sales"),departmentCode=scope?.departmentCode??normaliseOrg(body.departmentCode,"cc-sales");
   const ownership=await assignLeadOwner(db,{customerId:id,service:String(body.service||body.opportunity||""),preferred:String(body.owner||"")});
