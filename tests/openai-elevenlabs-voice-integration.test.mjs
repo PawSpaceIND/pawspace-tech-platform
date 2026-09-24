@@ -20,6 +20,7 @@ test("OpenAI uses a dedicated credential and voice uses the low-latency model wh
   assert.equal(call.init.headers.authorization,"Bearer test-openai-key");
   assert.equal(body.model,adapter.DEFAULT_VOICE_AI_MODEL_REF);
   assert.equal(body.store,false);
+ assert.equal(body.reasoning.effort,"none");
   assert.equal(body.instructions,"system");
   assert.equal(body.input,"hello");
   assert.ok(!String(call.init.body).includes("test-openai-key"));
@@ -153,7 +154,7 @@ test("ElevenLabs Exotel outbound adapter is selected only when explicitly config
   const call=stub.calls[0],body=JSON.parse(call.init.body);
   assert.equal(call.url,"https://api.in.residency.elevenlabs.io/v1/convai/exotel/outbound-call");
   assert.equal(call.init.headers["xi-api-key"],"el-test");
-  assert.deepEqual(body.conversation_initiation_client_data.extra_body,{pawspace_voice_call_id:"VCALL-1"});
+  assert.deepEqual(body.conversation_initiation_client_data.custom_llm_extra_body,{pawspace_voice_call_id:"VCALL-1"});
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_voice_call_id,"VCALL-1");
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,"CUS-1");
  }finally{stub.restore();}
