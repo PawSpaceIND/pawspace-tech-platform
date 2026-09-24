@@ -2,7 +2,8 @@
 import { pathToFileURL } from "node:url";
 const OPENAI = "https://api.openai.com/v1/responses";
 const ELEVENLABS = "https://api.elevenlabs.io";
-const AGENT_ENDPOINT = "https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses";
+// ElevenLabs stores the base URL; its Responses transport appends /responses.
+const AGENT_ENDPOINT = "https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1";
 const MODEL = "gpt-5.6-luna";
 async function boundedJson(response) {
   const reader = response.body?.getReader();
