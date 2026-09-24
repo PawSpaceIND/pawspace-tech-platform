@@ -48,7 +48,7 @@ test('after verified payment, failed UI finalization retries confirmation withou
   await page.route('**/api/customer-checkout',r=>{
     const input=r.request().postDataJSON();calls.push(input.action);
     const locks={PAWSPACE_PAYMENT_ENV:'sandbox',FORBID_PRODUCTION:'true',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
-    const data=input.action==='start'?{connected:true,bookingId:'TEST-PAY-1',environment:'sandbox',orderId:'order_component',keyId:'rzp_test_component',amountPaise:124100,currency:'INR',locks}
+    const data=input.action==='start'?{connected:true,bookingId:'TEST-PAY-1',environment:'sandbox',orderId:'order_component',keyId:'rzp_test_mock',amountPaise:124100,currency:'INR',locks}
       :{bookingId:'TEST-PAY-1',orderId:'order_component',environment:'sandbox',receiptVerified:true,status:'captured'};
     return r.fulfill({json:{data}});
   });
