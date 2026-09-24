@@ -27,3 +27,14 @@
   .module :where(header > div) { max-width:100%; }
   .module :where(h1) { font-size:1.75rem; }
 }
+
+/* Context navigation remains inside labelled disclosures. */
+.module { --staff-font:"PawSpaceStaffNunito",system-ui,sans-serif; }
+.module details[data-staff-context] { margin:16px 24px; border:1px solid var(--staff-line); border-radius:12px; background:var(--staff-surface); color:var(--staff-text); }
+.module details[data-staff-context] > summary { min-height:46px; padding:12px 16px; font-size:.9375rem; font-weight:750; cursor:pointer; }
+.module details[data-staff-context] > aside { display:flex !important; position:static !important; inset:auto !important; height:auto !important; width:auto !important; min-width:0 !important; padding:16px !important; overflow:visible !important; background:var(--staff-surface) !important; color:var(--staff-text) !important; border-top:1px solid var(--staff-line); }
+.module details[data-staff-context] > aside nav { display:grid !important; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)) !important; min-width:0 !important; gap:8px; width:100%; }
+.module details[data-staff-context] > aside nav a,.module details[data-staff-context] > aside nav button { min-height:44px; padding:10px 12px; color:var(--staff-text) !important; background:var(--staff-raised) !important; font-size:.9375rem !important; white-space:normal; }
+.module details[data-staff-context] > aside nav [aria-current="page"] { border-left:3px solid var(--staff-gold); font-weight:850; }
+.module details[data-staff-context] > aside :is(strong,small,p,span) { color:var(--staff-text) !important; }
+@media(max-width:600px){.module details[data-staff-context]{margin:12px;}}

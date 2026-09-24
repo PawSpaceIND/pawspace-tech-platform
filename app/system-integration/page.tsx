@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./page.module.css";
+import StaffModule from "../components/staff-workspace/StaffModule";
 
 type Control = { id: string; label: string; status: string; evidence: string };
 type Integration = { name: string; from: string; to: string; passed: boolean; detail?: string };
@@ -36,14 +37,14 @@ export default function SystemIntegrationPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Confirmation failed"); }
     finally { setBusy(false); }
   }
-  if (!data) return <main className={styles.loading}>{error || "Checking every PawSpace system connection…"}</main>;
+  if (!data) return <StaffModule><main className={styles.loading}>{error || "Checking every PawSpace system connection…"}</main></StaffModule>;
   const internalDone = data.summary.internalPassed === data.summary.internalTotal;
-  return <main className={styles.shell}>
-    <aside className={styles.side}>
+  return <StaffModule><main className={styles.shell}>
+    <details data-staff-context="true"><summary>System links and boundaries</summary><aside className={styles.side}>
       <Link href="/control" className={styles.brand}><b>paw</b>space <span>CONTROL</span></Link>
       <nav><Link href="/team">⌂ Team</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/sales">⚡ Revenue & CX</Link><Link href="/control">◇ Launch essentials</Link><Link className={styles.active} href="/control/integrations">◎ System integration</Link></nav>
       <div className={styles.boundary}><b>UAT BOUNDARY</b><span>No live payments</span><span>No customer rollout</span><span>Vendor delivery stays locked until verified</span></div>
-    </aside>
+    </aside></details>
     <section className={styles.workspace}>
       <header className={styles.top}><div><span>PAWSPACE RELEASE CONTROL</span><h1>System Integration Control</h1><p>One evidence screen for every launch-essential workflow and external connection.</p></div><button disabled={busy} onClick={() => void confirm()}>{busy ? "Running…" : "Run full confirmation"}</button></header>
       <section className={styles.hero}>
@@ -57,5 +58,5 @@ export default function SystemIntegrationPage() {
       <section className={styles.external}><div><span>LIVE VENDOR GATE</span><h2>What still needs Karthik’s vendor setup</h2><p>Internal UAT can be closed independently. Live delivery is confirmed only after credentials, approved templates, consent checks and webhook callbacks pass.</p></div><div>{Object.entries(data.credentials).map(([name, ready]) => <article key={name}><i className={ready ? styles.passDot : styles.blockDot}></i><b>{name === "telephony" ? "Exotel telephony" : pretty(name)}</b><span>{ready ? "Configured" : "Credentials required"}</span></article>)}</div></section>
       <footer><span>{data.latestRun ? `Latest signed confirmation: ${data.latestRun.id} · ${when(data.latestRun.created_at)}` : "No signed confirmation run yet"}</span><Link href="/control">Open Launch Essentials →</Link></footer>
     </section>
-  </main>;
+  </main></StaffModule>;
 }

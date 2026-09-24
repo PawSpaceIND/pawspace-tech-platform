@@ -50,3 +50,21 @@ export function staffSemanticContract(source, name='page.tsx') {
   const normalized=ts.createPrinter({removeComments:true}).printFile(transformed.transformed[0]);transformed.dispose();
   return createHash('sha256').update(normalized).digest('hex');
 }
+
+/** Normalize an explicitly labelled disclosure around the original local rail, not its contents. */
+export function staffContextSemanticContract(source, name='page.tsx') {
+  const file=parseStaffPage(source,name);
+  const transformed=ts.transform(file,[context=>{
+    const visit=node=>{
+      if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='details'&&node.openingElement.attributes.properties.some(p=>ts.isJsxAttribute(p)&&p.name.text==='data-staff-context')) {
+        const children=node.children.filter(c=>!ts.isJsxText(c)||c.text.trim());
+        if(children.length!==2||!ts.isJsxElement(children[0])||children[0].openingElement.tagName.getText(file)!=='summary'||!ts.isJsxElement(children[1])||children[1].openingElement.tagName.getText(file)!=='aside')throw new Error('Context disclosure must retain exactly the original aside plus its label.');
+        return ts.visitNode(children[1],visit);
+      }
+      return ts.visitEachChild(node,visit,context);
+    };
+    return node=>ts.visitNode(node,visit);
+  }]);
+  const normalized=ts.createPrinter().printFile(transformed.transformed[0]);transformed.dispose();
+  return staffSemanticContract(normalized,name);
+}
