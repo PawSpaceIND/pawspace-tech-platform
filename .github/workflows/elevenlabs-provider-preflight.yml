@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls for provider preflight or specialist-call for one controlled UAT specialist call.'
+        description: 'Type no-calls, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
       specialist_use_case:
@@ -97,4 +97,54 @@ jobs:
           console.log('SPECIALIST_RESULT='+JSON.stringify({useCase,status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,safeTranscript:tr.slice(0,10).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
           if(String(detail.agent_id)!==agentId)throw new Error('specialist call used the wrong ElevenLabs agent');
           if(String(detail.status)==='failed')throw new Error('ElevenLabs specialist conversation failed');
+          NODE
+
+  direct-grooming-call:
+    if: ${{ inputs.confirm == 'direct-grooming-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Place grounded ElevenLabs Grooming call and inspect carrier
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: |
+          node <<'NODE'
+          const origin='https://pawspace-staging.karthik-fce.workers.dev';
+          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||''), key=String(process.env.ELEVENLABS_API_KEY||'').trim(), phoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim(), agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
+          if(!access||!key||!phoneId||!agentId||!exKey||!exToken||!exSid||entries.length!==1)throw new Error('direct Grooming UAT prerequisites missing');
+          const digits=entries[0].replace(/\D/g,''); const to=entries[0].startsWith('+')?entries[0]:(digits.length===10?`+91${digits}`:`+${digits}`); console.log('::add-mask::'+to);
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)}); if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0]; if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
+          const ledgerResp=await fetch(origin+'/api/voice-outbound?scope=ledger&limit=100',{headers:{cookie},signal:AbortSignal.timeout(30000)}); const ledgerBody=await ledgerResp.json().catch(()=>({})); if(!ledgerResp.ok)throw new Error('voice ledger failed: '+ledgerResp.status);
+          const rows=Array.isArray(ledgerBody?.data)?ledgerBody.data:[]; const context=rows.find(r=>r?.dialed&&r?.callId&&['booking_confirmation','grooming_sales','training_sales'].includes(String(r?.useCase||'')))||rows.find(r=>r?.dialed&&r?.callId);
+          if(!context?.callId)throw new Error('no canonical UAT voice call context available'); const voiceCallId=String(context.callId); console.log('::add-mask::'+voiceCallId); console.log('PAWSPACE_CONTEXT_READY='+JSON.stringify({useCase:context.useCase,state:context.state,mode:context.mode,dialed:Boolean(context.dialed)}));
+          const before=Date.now();
+          const callResp=await fetch('https://api.elevenlabs.io/v1/convai/exotel/outbound-call',{method:'POST',headers:{'content-type':'application/json','xi-api-key':key},body:JSON.stringify({agent_id:agentId,agent_phone_number_id:phoneId,to_number:to,conversation_initiation_client_data:{custom_llm_extra_body:{pawspace_voice_call_id:voiceCallId},dynamic_variables:{pawspace_voice_call_id:voiceCallId,pawspace_uat:'true'}}}),signal:AbortSignal.timeout(30000)});
+          const callBody=await callResp.json().catch(()=>({})); if(!callResp.ok||callBody?.success!==true||!callBody?.conversation_id){console.log('ELEVENLABS_CALL_ERROR='+JSON.stringify(callBody).slice(0,2200));throw new Error(`ElevenLabs outbound call refused: HTTP ${callResp.status}`);} const conversationId=String(callBody.conversation_id),callSid=String(callBody.callSid||callBody.call_sid||callBody.call_sid_exotel||''); console.log('::add-mask::'+conversationId); if(callSid)console.log('::add-mask::'+callSid); console.log('ELEVENLABS_CALL_ACCEPTED=yes');
+          let detail=null,carrier=null;
+          for(let i=0;i<30;i++){
+            await new Promise(r=>setTimeout(r,4000));
+            const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)}); if(dr.ok)detail=await dr.json().catch(()=>({}));
+            if(callSid){const cr=await fetch(`https://${exHost}/v1/Accounts/${encodeURIComponent(exSid)}/Calls/${encodeURIComponent(callSid)}.json`,{headers:{authorization:`Basic ${Buffer.from(`${exKey}:${exToken}`).toString('base64')}`},signal:AbortSignal.timeout(20000)}); if(cr.ok){const cb=await cr.json().catch(()=>({}));const row=(cb.Call||cb.call||cb);carrier={status:String(row.Status||row.status||''),currentStatus:String(row.CurrentStatus||row.current_status||''),duration:Number(row.Duration||row.duration||0),direction:String(row.Direction||row.direction||'')};}}
+            const tr=Array.isArray(detail?.transcript)?detail.transcript:[]; console.log('DIRECT_GROOMING_POLL='+JSON.stringify({conversationStatus:detail?.status||null,turns:tr.length,hasAudio:Boolean(detail?.has_audio),hasUserAudio:Boolean(detail?.has_user_audio),hasResponseAudio:Boolean(detail?.has_response_audio),carrier}));
+            if(String(detail?.status)==='failed'||String(detail?.status)==='done'||tr.length>=2||detail?.has_response_audio)break;
+          }
+          if(!detail)throw new Error('ElevenLabs conversation was not readable'); const tr=Array.isArray(detail.transcript)?detail.transcript:[];
+          console.log('DIRECT_GROOMING_RESULT='+JSON.stringify({status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,carrier,safeTranscript:tr.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          if(String(detail.agent_id)!==agentId)throw new Error('wrong ElevenLabs Grooming agent'); if(String(detail.status)==='failed')throw new Error('ElevenLabs Grooming conversation failed');
           NODE
