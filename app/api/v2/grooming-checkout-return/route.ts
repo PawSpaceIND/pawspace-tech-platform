@@ -6,7 +6,11 @@ async function v2Return(request: Request, handler: (request: Request) => Promise
   const location = response.headers.get("location");
   if (response.status !== 303 || !location) return response;
   const target = new URL(location), source = new URL(request.url);
-  if (target.origin !== source.origin || target.pathname !== "/mobile-app/booking-confirmation") {
+  // The shared adapter selects the V2 presentation when the callback carries scope=v2.
+  // Accept both the legacy intermediate target and the already-scoped V2 target so a
+  // Razorpay redirect is not rejected with a 400 before it can reach the booking page.
+  if (target.origin !== source.origin ||
+      !["/mobile-app/booking-confirmation", "/v2/booking-confirmation"].includes(target.pathname)) {
     return new Response("Invalid checkout return destination", { status: 400 });
   }
   target.pathname = "/v2/grooming";

@@ -247,6 +247,15 @@ test("V2 Razorpay callback reuses bounded validation and returns only to the sam
   assert.equal(client.v2GroomingCheckoutReturnUrl("B1", "javascript:invalid"), undefined);
 });
 
+test("V2 Razorpay callback accepts its scoped redirect target", async () => {
+  const response = await returns.GET(new Request("https://pawspace.test/api/v2/grooming-checkout-return?bookingId=B1&scope=v2"));
+  assert.equal(response.status, 303);
+  const target = new URL(response.headers.get("location"));
+  assert.equal(target.origin, "https://pawspace.test");
+  assert.equal(target.pathname, "/v2/grooming");
+  assert.equal(target.searchParams.get("bookingId"), "B1");
+});
+
 test("V2 presentation remains isolated from legacy UI and shared engine writes", async () => {
   const page = await readFile(new URL("../app/v2/grooming/page.tsx", import.meta.url), "utf8");
   const panel = await readFile(new URL("../app/v2/grooming/payment-panel.tsx", import.meta.url), "utf8");
