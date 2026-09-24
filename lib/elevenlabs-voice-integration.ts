@@ -61,6 +61,13 @@ export async function buildElevenLabsInitiation(db:D1Database,input:{providerCal
  const recent=(bookings[0]||{}) as Row,openCase=recentOpenCase(customer);
  return{
   type:"conversation_initiation_client_data" as const,
+  // ElevenLabs forwards extra_body to the custom LLM as elevenlabs_extra_body.
+  // Dynamic variables alone are not a transport for authenticated PawSpace identity.
+  extra_body:{
+   pawspace_customer_id:session.customerId,
+   pawspace_voice_session_id:session.sessionId,
+   pawspace_thread_id:session.threadId,
+  },
   dynamic_variables:{
    pawspace_customer_id:session.customerId,
    pawspace_voice_session_id:session.sessionId,
