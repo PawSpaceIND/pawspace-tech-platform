@@ -38,3 +38,12 @@
 .module details[data-staff-context] > aside nav [aria-current="page"] { border-left:3px solid var(--staff-gold); font-weight:850; }
 .module details[data-staff-context] > aside :is(strong,small,p,span) { color:var(--staff-text) !important; }
 @media(max-width:600px){.module details[data-staff-context]{margin:12px;}}
+
+/* Additional opt-in layouts for the remaining Team forms and report grids. */
+.module { --staff-on-gold:#251b08; }
+.module [data-staff-grid="form"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)) !important; align-items:end; }
+.module [data-staff-grid="panels"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)) !important; }
+.module [data-staff-grid="record"] > * { overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  .module [data-staff-grid="form"],.module [data-staff-grid="panels"] { grid-template-columns:minmax(0,1fr) !important; }
+}
