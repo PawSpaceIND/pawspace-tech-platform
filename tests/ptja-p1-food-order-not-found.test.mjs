@@ -99,3 +99,31 @@ test("P1-N06 the renewal payment screen says something when it has no renewal to
   assert.match(text, /could not|no longer|out of date|expired|check the link/i,
     `the screen must explain the absence: ${text}`);
 });
+
+// --- V2 Food cancellation action errors ---------------------------------------------------------
+
+test("P1-N07 Food cancellation conflict keeps resource-load state independent from action errors", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL(MODULE, import.meta.url), "utf8");
+  assert.match(source, /\[loadError,setLoadError\]/);
+  assert.match(source, /\[actionError,setActionError\]/);
+  assert.match(source, /resourceScreenState\(\{id:orderId,loaded:loadedId===orderId,resource:order,error:loadError\}\)/);
+  assert.match(source, /actionError&&<p role="alert">\{actionError\}<\/p>/);
+});
+
+test("P1-N08 Food finance client executes a safe specific message for duplicate cancellation 409", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: "Unable to update Food finance" }), {
+    status: 409,
+    headers: { "content-type": "application/json" },
+  });
+  try {
+    const { requestFoodCancellation } = await import("../lib/food-finance-client.ts");
+    await assert.rejects(
+      () => requestFoodCancellation({ orderId: "PS-UAT-FOOD-DUPLICATE", reason: "Already requested" }),
+      /A cancellation request is already pending or approved for this Food order\./,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
