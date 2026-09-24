@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {chromium} from 'playwright';
 const ORIGIN=process.env.STAFF_UI_BASE_URL||'http://127.0.0.1:4318';
 if(!['127.0.0.1','localhost','[::1]'].includes(new URL(ORIGIN).hostname))throw new Error('UI fixtures are allowed on loopback only.');
-const browser=await chromium.launch({executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined),headless:true});
+const browser=await chromium.launch({executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined),headless:process.env.STAFF_UI_HEADED!=='1',slowMo:Number(process.env.STAFF_UI_SLOW_MS||0)});
 const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
 const page=await context.newPage();
 const results=[],requests=[],mutations=[],unexpected=[];let role='admin',denyOverview=false,denyBookings=false;

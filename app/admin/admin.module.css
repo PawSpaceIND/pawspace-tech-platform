@@ -85,3 +85,50 @@
   .trainingMetrics strong, .trainingCases strong, .workforceTable strong,
   .boardingKpis strong, .boardingRows strong { font-size: 13px; }
 }
+
+/* Opt-in staff Training presentation. Existing admin/customer rules above remain unchanged. */
+:global([data-staff-module]) .trainingMetrics { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+:global([data-staff-module]) .trainingMetrics article { display:flex; background:var(--staff-surface); border-color:var(--staff-line); }
+:global([data-staff-module]) .trainingMetrics :is(span,small) { color:var(--staff-muted); font-size:.875rem; }
+:global([data-staff-module]) .trainingMetrics strong { color:var(--staff-text); font-size:1.625rem; }
+:global([data-staff-module]) .trainingOpsGrid { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:16px; }
+:global([data-staff-module]) :is(.trainingCases,.trainingDetail) { background:var(--staff-surface); border-color:var(--staff-line); min-width:0; color:var(--staff-text); }
+:global([data-staff-module]) .trainingCases .panelHead button { min-height:42px; padding:9px 12px; font-size:.9375rem; background:var(--staff-surface); color:var(--staff-primary); border-color:var(--staff-line); }
+:global([data-staff-module]) .trainingTableHead { background:var(--staff-raised); color:var(--staff-muted); font-size:.8125rem; }
+:global([data-staff-module]) .trainingCases>button { min-width:0; background:var(--staff-surface); color:var(--staff-text); border-color:var(--staff-line); padding:12px 8px; }
+:global([data-staff-module]) .trainingCases>.selectedTraining { background:var(--staff-raised); box-shadow:inset 3px 0 var(--staff-primary); }
+:global([data-staff-module]) .trainingCases>button :is(div,span) { min-width:0; overflow-wrap:anywhere; }
+:global([data-staff-module]) .trainingCases>button :is(strong,small) { font-size:.875rem; }
+:global([data-staff-module]) .trainingCases>button small { color:var(--staff-muted); }
+:global([data-staff-module]) .trainingCases>button i { font-size:.8125rem; color:var(--staff-success); background:var(--staff-success-bg); }
+:global([data-staff-module]) .trainingDetail .kicker,:global([data-staff-module]) .trainingCases .kicker { color:var(--staff-primary); font-size:.8125rem; }
+:global([data-staff-module]) .activeTag { font-size:.8125rem; background:var(--staff-success-bg); color:var(--staff-success); }
+:global([data-staff-module]) .trainingParent { background:var(--staff-raised); }
+:global([data-staff-module]) .trainingParent>span { background:var(--staff-primary); color:var(--staff-on-primary); font-size:.875rem; }
+:global([data-staff-module]) .trainingParent :is(strong,small) { font-size:.875rem; color:var(--staff-text); }
+:global([data-staff-module]) .trainingDetail dl { grid-template-columns:minmax(0,1fr); }
+:global([data-staff-module]) .trainingDetail dl div { border-color:var(--staff-line); }
+:global([data-staff-module]) .trainingDetail dt { color:var(--staff-muted); font-size:.8125rem; }
+:global([data-staff-module]) .trainingDetail dd { font-size:.9375rem; overflow-wrap:anywhere; }
+:global([data-staff-module]) .trainingQuality { background:var(--staff-raised); margin-block:12px; }
+:global([data-staff-module]) .trainingQuality :is(span,b,strong) { font-size:.875rem; color:var(--staff-text); }
+:global([data-staff-module]) .trainingQuality>button { display:grid; width:100%; text-align:left; gap:5px; padding:10px; margin-top:7px; background:var(--staff-surface); color:var(--staff-text); border:1px solid var(--staff-line); border-radius:9px; min-height:44px; }
+:global([data-staff-module]) .trainingQuality>.selectedTraining { border-color:var(--staff-primary); box-shadow:inset 3px 0 var(--staff-primary); }
+:global([data-staff-module]) .detailActions { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+:global([data-staff-module]) .detailActions button { font-size:.875rem; min-height:44px; color:var(--staff-primary); background:var(--staff-surface); border-color:var(--staff-line); }
+:global([data-staff-module]) .trainingBottom { grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+:global([data-staff-module]) .trainingBottom article { min-width:0; gap:12px; background:var(--staff-surface); border-color:var(--staff-line); }
+:global([data-staff-module]) .trainingBottom :is(span,small) { font-size:.875rem; color:var(--staff-muted); }
+:global([data-staff-module]) .trainingBottom button { min-height:42px; font-size:.875rem; color:var(--staff-primary); }
+:global([data-staff-module]) .progressCell>span { background:var(--staff-line); }
+:global([data-staff-module]) .progressCell>span i { background:var(--staff-success); }
+@media(max-width:1250px) { :global([data-staff-module]) .trainingOpsGrid { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:600px) {
+ :global([data-staff-module]) .trainingMetrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ :global([data-staff-module]) .trainingMetrics article:nth-child(n) { display:flex; }
+ :global([data-staff-module]) .trainingBottom { grid-template-columns:minmax(0,1fr); }
+ :global([data-staff-module]) .trainingCases>button { grid-template-columns:minmax(0,1fr); gap:9px; }
+}
+:global([data-staff-module]) .trainingCases>button :is(strong,small) { display:block; }
+:global([data-staff-module]) .trainingCases>button small { margin-top:4px; }
+:global([data-staff-module]) .progressCell>span i { height:100%; display:block; min-width:0; }

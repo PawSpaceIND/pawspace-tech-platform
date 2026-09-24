@@ -5,7 +5,7 @@ import {chromium} from 'playwright';
 const ORIGIN=process.env.STAFF_UI_BASE_URL||'http://127.0.0.1:4318';
 if(!['127.0.0.1','localhost','[::1]'].includes(new URL(ORIGIN).hostname))throw new Error('Fixture harness is loopback-only.');
 const OUT=process.env.STAFF_UI_OUTPUT_DIR||'.ui-audit/phase3';fs.mkdirSync(OUT+'/screens',{recursive:true});
-const browser=await chromium.launch({headless:true,executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined)});
+const browser=await chromium.launch({headless:process.env.STAFF_UI_HEADED!=='1',slowMo:Number(process.env.STAFF_UI_SLOW_MS||0),executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined)});
 const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
 const page=await context.newPage();page.setDefaultTimeout(12000);
 const results=[],reads=[],writes=[],blockedExternal=[],pageErrors=[];
