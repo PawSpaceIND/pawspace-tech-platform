@@ -255,3 +255,29 @@ test("V2 presentation remains isolated from legacy UI and shared engine writes",
   assert.match(panel, /isV2GroomingConfirmationReady/); assert.match(panel, /loadV2GroomingCheckoutReadiness/);
   assert.doesNotMatch(panel, /createCanonicalLifecycle|reserveUatSchedule/);
 });
+
+for (const [label, address, pincode] of [
+  ['foreign city', '24 Audit Road, Andheri West, Mumbai, Maharashtra', '560076'],
+  ['different embedded PIN', '21 HSR Main Road, Bengaluru 560102', '560038'],
+  ['foreign state', '24 Audit Road, Maharashtra', '560076'],
+]) test(`explicit V2 rejects ${label} before reservation or payment`, async t => {
+  const f = network(t), value = input(); Object.assign(value, { address, pincode });
+  await assert.rejects(client.createV2GroomingBooking(value), /city|PIN|state/);
+  assert.equal(f.calls.length, 0);
+});
+test('explicit V2 never combines a puppy and kitten under the common young audience', async t => {
+  const f = network(t), value = input();
+  value.selectedPets = [{...value.selectedPets[0],ageYears:0.3},{...value.selectedPets[0],id:'PET-2',species:'cat',ageYears:0.3}];
+  value.account.pets = value.selectedPets; value.pkg.audience = 'young'; value.bundle.petCount = 2;
+  await assert.rejects(client.createV2GroomingBooking(value), /cannot be mixed/); assert.equal(f.calls.length, 0);
+});
+test('explicit V2 rejects unsupported species and a wrong age-category package before writes', async t => {
+  const f = network(t), value = input(); value.selectedPets[0].species = 'rabbit';
+  await assert.rejects(client.createV2GroomingBooking(value), /dogs and cats only/);
+  value.selectedPets[0].species = 'dog'; value.selectedPets[0].ageYears = 0.3;
+  await assert.rejects(client.createV2GroomingBooking(value), /age category/); assert.equal(f.calls.length, 0);
+});
+test('valid Bangalore alias and property numbers remain bookable in explicit V2', async t => {
+  const f = network(t), value = input(); value.address = 'Flat 123456, 21 HSR Main Road, Bangalore 560102';
+  await client.createV2GroomingBooking(value); assert.equal(f.calls.length, 3);
+});
