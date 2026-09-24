@@ -358,5 +358,13 @@ test("Atlas decision lineage flags missing human review records for resolved pro
 });
 
 test("Team AI exposes decision lineage as read-only audit trace",async()=>{
- const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/decisionLineage=buildAtlasDecisionLineage/);assert.match(page,/decision lineage .* audit trace/i);assert.match(page,/Historical policy version is not inferred/i);
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/decisionLineage=buildAtlasDecisionLineage/);assert.match(page,/decision lineage .* audit trace/i);assert.match(page,/Historical policy is shown when recorded at proposal creation/i);assert.match(page,/legacy proposals remain explicitly unknown rather than inferred/i);
+});
+
+test("new Atlas proposals persist governance policy version at creation",async()=>{
+ const{sqlite,db}=world();const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:Date.now()}),proposal=await atlas.recordAtlasProposal(db,{proposalType:'report.generate',summary:'x',snapshot,basisId:'policy-provenance',riskClass:'low',createdBy:'atlas'}),row=sqlite.prepare("SELECT policy_version FROM atlas_proposals WHERE id=?").get(proposal.id);assert.equal(row.policy_version,'atlas-v2.2');assert.equal(proposal.policyVersion,'atlas-v2.2');
+});
+
+test("Atlas decision lineage distinguishes recorded policy from legacy unknown",async()=>{
+ const lineage=await import('../lib/intelligence/atlas-decision-lineage.ts');const current={id:'PNEW',proposal_type:'report.generate',snapshot_hash:'h',basis_id:'b',source_ids_json:'["s"]',risk_class:'low',status:'proposed',created_by:'atlas',created_at:1,reviewed_by:null,reviewed_at:null,executed_at:null,policy_version:'atlas-v2.2'},legacy={...current,id:'PLEGACY',policy_version:null};const rows=lineage.buildAtlasDecisionLineage([current,legacy],[],[],[],[]),now=rows.find(x=>x.proposalId==='PNEW'),old=rows.find(x=>x.proposalId==='PLEGACY');assert.equal(now.proposalPolicyVersionRecorded,true);assert.equal(now.proposalPolicyVersion,'atlas-v2.2');assert.equal(now.lineageComplete,true);assert.equal(old.proposalPolicyVersionRecorded,false);assert.ok(old.missingLineage.includes('proposal_policy_version_not_recorded_at_creation'));assert.match(old.note,/legacy proposal/i);
 });
