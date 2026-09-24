@@ -1,0 +1,29 @@
+/* Opt-in standalone staff pages only; no customer or document-level selectors. */
+.module { min-width:0; }
+.module > main { width:100%; min-width:0; box-sizing:border-box; }
+.module :where(header) { flex-wrap:wrap; }
+.module :where(header > div) { min-width:0; }
+.module :where(a) { color:var(--staff-primary); text-underline-offset:3px; }
+.module :where(button:not([class])) { min-height:42px; padding:9px 14px; border:1px solid var(--staff-line); border-radius:9px; background:var(--staff-surface); color:var(--staff-text); font-weight:700; }
+.module :where(button:disabled) { opacity:.6; cursor:not-allowed; }
+.module :where(input,select,textarea) { font-family:inherit; }
+.module :where(p,footer) { line-height:1.65; }
+.module :where(article) { background-color:var(--staff-surface); }
+.module :where(h1) { margin-block:8px 16px; font-size:2rem; font-weight:750; }
+.module :where(h2) { margin-block:20px 12px; font-size:1.25rem; font-weight:700; }
+.module :where([role="alert"]) { padding:14px 16px; border:1px solid var(--staff-danger); border-radius:12px; background:var(--staff-danger-bg); color:var(--staff-danger); }
+.module :where([role="status"]) { padding:12px; border-radius:10px; background:var(--staff-raised); }
+.module :where(table) { font-variant-numeric:tabular-nums; }
+.module :where(th,td) { line-height:1.55; }
+.module :where(div:has(>table),section:has(>table)) { min-width:0; max-width:100%; overflow-x:auto; }
+.module [data-staff-grid] { min-width:0; }
+.module [data-staff-grid] > * { min-width:0; }
+.module [data-staff-grid="stats"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)) !important; }
+.module [data-staff-grid="record"] { overflow-x:auto; }
+@media(max-width:1180px) { .module [data-staff-grid="split"] { grid-template-columns:minmax(0,1fr) !important; } }
+@media(max-width:600px) {
+  .module > main { padding:20px 14px !important; }
+  .module [data-staff-grid="stats"] { grid-template-columns:minmax(0,1fr) !important; }
+  .module :where(header > div) { max-width:100%; }
+  .module :where(h1) { font-size:1.75rem; }
+}
