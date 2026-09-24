@@ -1,4 +1,5 @@
 import { requestAiDraft } from "../ai-provider-adapter";
+import { buildAtlasOutcomeLearningContext } from "./atlas-outcome-learning";
 import { integrationCredentialStatusForCode } from "../integration-readiness";
 import { revenueMissionSummary } from "../revenue-mission-control";
 import { DEFAULT_ATLAS_DECISION_POLICY } from "./atlas-executive-governance";
@@ -68,8 +69,8 @@ export function atlasNarrativeIsTightEnough(snapshot:AtlasBusinessSnapshot,narra
 export function atlasNumbersOnlyBrief(snapshot:AtlasBusinessSnapshot){const m=snapshot.mission.value;if(!m)return"Narrative unavailable; numbers only. Mission data is insufficient.";return`Narrative unavailable; numbers only. Target INR ${m.target.toLocaleString("en-IN")}; booked INR ${m.booked.toLocaleString("en-IN")}; collected INR ${m.collected.toLocaleString("en-IN")}; refunded INR ${m.refunded.toLocaleString("en-IN")}; net INR ${m.net.toLocaleString("en-IN")}; achieved ${m.percent.toFixed(2)}% on ${m.basis}.`}
 
 export async function answerAtlasBusinessQuestion(db:Db,input:{question:string;missionId?:string;asOf?:number}){
- const snapshot=await buildAtlasBusinessSnapshot(db,{missionId:input.missionId,asOf:input.asOf}),numbersOnly=atlasNumbersOnlyBrief(snapshot);
- const draft=await requestAiDraft({systemPrompt:"You are Atlas, PawSpace founder intelligence. Answer only from the supplied canonical business snapshot. Never increase achieved revenue, turn pipeline into achieved revenue, claim an action executed, or waive approval/consent/DND. If data is missing, say so.",userPrompt:JSON.stringify({question:input.question,snapshot}),maxTokens:220,channel:"founder",intent:"atlas_business_snapshot_qa"});
- if(!draft.connected)return{snapshot,content:numbersOnly,narrativeAvailable:false,narrativeReason:draft.failure};
- const tight=atlasNarrativeIsTightEnough(snapshot,draft.text);return tight.ok?{snapshot,content:draft.text,narrativeAvailable:true,narrativeReason:null}:{snapshot,content:numbersOnly,narrativeAvailable:false,narrativeReason:tight.reason};
+ const snapshot=await buildAtlasBusinessSnapshot(db,{missionId:input.missionId,asOf:input.asOf}),numbersOnly=atlasNumbersOnlyBrief(snapshot),outcomeLearning=await buildAtlasOutcomeLearningContext(db);
+ const draft=await requestAiDraft({systemPrompt:"You are Atlas, PawSpace founder intelligence. Answer first from the supplied canonical business snapshot. Historical outcome learning is secondary observational context only: it does not prove causation, cannot override current canonical facts, cannot change confidence or policy, and cannot waive approval/consent/DND. Never increase achieved revenue, turn pipeline into achieved revenue, claim an action executed, or imply an observed historical outcome was caused by Atlas. If data is missing, say so.",userPrompt:JSON.stringify({question:input.question,snapshot,outcomeLearning}),maxTokens:220,channel:"founder",intent:"atlas_business_snapshot_qa"});
+ if(!draft.connected)return{snapshot,outcomeLearning,content:numbersOnly,narrativeAvailable:false,narrativeReason:draft.failure};
+ const tight=atlasNarrativeIsTightEnough(snapshot,draft.text);return tight.ok?{snapshot,outcomeLearning,content:draft.text,narrativeAvailable:true,narrativeReason:null}:{snapshot,outcomeLearning,content:numbersOnly,narrativeAvailable:false,narrativeReason:tight.reason};
 }
