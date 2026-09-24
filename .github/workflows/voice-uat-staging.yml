@@ -181,6 +181,7 @@ jobs:
       - name: Apply voice UAT overlay
         env:
           PAWSPACE_VOICE_UAT_APPROVED: 'true'
+          PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: 'true'
           EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
           EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
         run: node scripts/stage-voice-uat-config.mjs
