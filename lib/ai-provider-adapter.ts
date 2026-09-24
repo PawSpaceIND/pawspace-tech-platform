@@ -251,7 +251,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             method: "POST",
             signal: controller.signal,
             headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false }),
+            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
           })
         : await fetch(ANTHROPIC_MESSAGES_URL, {
             method: "POST",

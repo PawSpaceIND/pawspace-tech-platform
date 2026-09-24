@@ -220,6 +220,7 @@ export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
               agent_phone_number_id: phoneNumberId,
               to_number: intent.toNumber,
               conversation_initiation_client_data: {
+                custom_llm_extra_body: { pawspace_voice_call_id: intent.callRef },
                 dynamic_variables: {
                   pawspace_voice_call_id: intent.callRef,
                   pawspace_customer_id: intent.customerId || "",
