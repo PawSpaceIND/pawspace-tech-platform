@@ -113,6 +113,7 @@ cfg.vars = {
   PAWSPACE_RAZORPAYX_ENV: "sandbox",
   PAWSPACE_RAZORPAYX_LIVE_APPROVED: "false",
   PAWSPACE_UAT_LOGIN: "on",
+  PAWSPACE_UAT_PERSONAS: process.env.PAWSPACE_UAT_PERSONAS === "on" ? "on" : "off",
   PAWSPACE_MAPS_ENV: "sandbox",
   PAWSPACE_COMMUNICATION_ENV: "uat",
   PAWSPACE_VOICE_ENV: "uat",
