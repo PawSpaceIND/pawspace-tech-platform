@@ -234,7 +234,7 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(mobileHome, /PawSpace Media slot/);
   assert.match(stays, /nights > 4/);
   assert.match(stays, /Reserve with 50% now/);
-  assert.match(stays, /due 24 hours before check-in/);
+  assert.match(stays, /due\s+24\s+hours before check-in/);
   assert.match(stays, /3-hour host-home trial · Included/);
   // Owner decision 2026-09-22 (decision 1 of 10) made the Sitting Meet & Greet ₹499 everywhere the
   // customer sees it. This pinned the ₹500 literal that was the defect. It now pins the thing that

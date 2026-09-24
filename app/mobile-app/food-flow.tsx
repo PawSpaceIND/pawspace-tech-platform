@@ -343,9 +343,10 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
                 <div className={styles.itemBuy}>
                   <em>{money(item.unit_price * line.quantity)}</em>
                   <span className={styles.stepper}>
-                    <button onClick={() => setQty(item, line.quantity - 1)}>−</button>
+                    <button type="button" aria-label={`Decrease ${lineName(item)} quantity`} onClick={() => setQty(item, line.quantity - 1)}>−</button>
                     <b>{line.quantity}</b>
-                    <button onClick={() => setQty(item, line.quantity + 1)}>＋</button>
+                    {line.quantity >= Math.min(item.max_qty_per_order, item.uat_available_units) && <small role="status">Maximum available quantity reached</small>}
+                    <button type="button" aria-label={`Increase ${lineName(item)} quantity`} disabled={line.quantity >= Math.min(item.max_qty_per_order, item.uat_available_units)} onClick={() => setQty(item, line.quantity + 1)}>＋</button>
                   </span>
                 </div>
               </article>

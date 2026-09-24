@@ -16,6 +16,21 @@ export type AtlasCeoBriefItem=AtlasExecutiveCandidate&{
  overdue:boolean;
 };
 
+export type AtlasConflictArbitration={
+ resourceKey:string;
+ proposalIds:string[];
+ domains:string[];
+ orderedProposalIds:string[];
+ recommendedFirstProposalId:string|null;
+ status:"clear_precedence_for_founder_review"|"founder_tradeoff_required"|"all_candidates_blocked";
+ reasons:string[];
+ requiresFounderReview:true;
+ automaticResolutionAllowed:false;
+ authorityMutationAllowed:false;
+ executionMutationAllowed:false;
+ note:string;
+};
+
 export type AtlasCeoBrief={
  generatedAt:number;
  policyVersion:string;
@@ -26,6 +41,7 @@ export type AtlasCeoBrief={
  advisory:AtlasCeoBriefItem[];
  autoExecuteQueue:AtlasCeoBriefItem[];
  conflicts:Array<{proposalIds:string[];resourceKey:string}>;
+ arbitrations:AtlasConflictArbitration[];
  coverage:{represented:string[];missing:string[]};
  autonomousExecution:"low_risk_internal_only";
 };
@@ -33,6 +49,17 @@ export type AtlasCeoBrief={
 const REQUIRED_CEO_COVERAGE=["ceo","sales","marketing","operations","customer_success","finance","gst_tax","legal","hr","risk","groomer","trainer"] as const;
 const text=(value:unknown)=>String(value??"").trim();
 
+
+function arbitrationForConflict(conflict:{proposalIds:string[];resourceKey:string},items:AtlasCeoBriefItem[]):AtlasConflictArbitration{
+ const byId=new Map(items.map(item=>[item.proposal.proposalId,item])),members=conflict.proposalIds.map(id=>byId.get(id)).filter((item):item is AtlasCeoBriefItem=>Boolean(item)),reasons:string[]=[];
+ const eligible=members.filter(item=>item.evaluation.disposition!=="blocked"),obligation=(item:AtlasCeoBriefItem)=>Boolean(item.proposal.statutoryFiling||item.proposal.legallyBinding),ordered=[...eligible].sort((a,b)=>Number(obligation(b))-Number(obligation(a))||Number(b.overdue)-Number(a.overdue)||b.priorityScore-a.priorityScore||a.rank-b.rank);
+ if(!eligible.length)return{resourceKey:conflict.resourceKey,proposalIds:[...conflict.proposalIds],domains:[...new Set(members.map(item=>item.proposal.domain))].sort(),orderedProposalIds:members.map(item=>item.proposal.proposalId),recommendedFirstProposalId:null,status:"all_candidates_blocked",reasons:["all_conflicting_candidates_are_currently_blocked"],requiresFounderReview:true,automaticResolutionAllowed:false,authorityMutationAllowed:false,executionMutationAllowed:false,note:"All conflicting candidates are blocked by existing governance. Atlas does not choose or execute any candidate."};
+ const top=ordered[0],second=ordered[1];let clear=false;
+ if(members.some(item=>item.evaluation.disposition==="blocked")){reasons.push("blocked_candidates_cannot_take_precedence");clear=eligible.length===1;}
+ if(second){if(obligation(top)!==obligation(second)){reasons.push(obligation(top)?"statutory_or_legal_obligation_precedes_non_obligation":"non_obligation_cannot_displace_statutory_or_legal_obligation");clear=obligation(top);}else if(top.overdue!==second.overdue){reasons.push("overdue_deadline_precedes_non_overdue_work");clear=top.overdue;}else if(top.priorityScore-second.priorityScore>=15){reasons.push("explicit_priority_gap_supports_precedence");clear=true;}else reasons.push("cross_domain_tradeoff_is_materially_ambiguous");}else{reasons.push("only_one_conflicting_candidate_is_currently_eligible");clear=true;}
+ const status=clear?"clear_precedence_for_founder_review" as const:"founder_tradeoff_required" as const;
+ return{resourceKey:conflict.resourceKey,proposalIds:[...conflict.proposalIds],domains:[...new Set(members.map(item=>item.proposal.domain))].sort(),orderedProposalIds:ordered.map(item=>item.proposal.proposalId),recommendedFirstProposalId:clear?top.proposal.proposalId:null,status,reasons:[...new Set(reasons)],requiresFounderReview:true,automaticResolutionAllowed:false,authorityMutationAllowed:false,executionMutationAllowed:false,note:clear?"Atlas found explainable precedence for Founder review only. Existing approval, consent, money, legal, HR and execution controls remain unchanged.":"Atlas found no sufficiently strong governed precedence. Founder must decide the tradeoff; Atlas does not break the tie or execute either side."};
+}
 export function buildAtlasCeoBrief(candidates:AtlasExecutiveCandidate[],options:{now?:number;policy?:AtlasDecisionPolicy}={}):AtlasCeoBrief{
  if(!Array.isArray(candidates)||!candidates.length)throw new Error("Atlas CEO brief requires at least one executive proposal");
  const now=options.now??Date.now(),policy=options.policy??DEFAULT_ATLAS_DECISION_POLICY;
@@ -55,6 +82,7 @@ export function buildAtlasCeoBrief(candidates:AtlasExecutiveCandidate[],options:
  for(const item of items)for(const other of item.conflictsWith??[]){if(!ids.has(other))throw new Error("Atlas conflict references an unknown proposal");const pair=[item.proposal.proposalId,other].sort(),key=pair.join(":");declared.set(key,new Set(pair));}
  const conflicts=[...groups.entries()].filter(([,proposalIds])=>proposalIds.length>1).map(([resourceKey,proposalIds])=>({resourceKey,proposalIds:[...proposalIds].sort()}));
  for(const pair of declared.values())conflicts.push({resourceKey:"declared_conflict",proposalIds:[...pair]});
+ const arbitrations=conflicts.map(conflict=>arbitrationForConflict(conflict,items));
  const represented=[...new Set(items.map(item=>item.proposal.domain))].sort();
- return{generatedAt:now,policyVersion:policy.version,tenantId,items,approvalQueue:items.filter(item=>item.evaluation.disposition==="approval_required"||item.evaluation.disposition==="ready_for_confirmation"),blocked:items.filter(item=>item.evaluation.disposition==="blocked"),advisory:items.filter(item=>item.evaluation.disposition==="advice_only"),autoExecuteQueue:items.filter(item=>item.evaluation.disposition==="auto_execute_internal"),conflicts,coverage:{represented,missing:REQUIRED_CEO_COVERAGE.filter(domain=>!represented.includes(domain))},autonomousExecution:"low_risk_internal_only"};
+ return{generatedAt:now,policyVersion:policy.version,tenantId,items,approvalQueue:items.filter(item=>item.evaluation.disposition==="approval_required"||item.evaluation.disposition==="ready_for_confirmation"),blocked:items.filter(item=>item.evaluation.disposition==="blocked"),advisory:items.filter(item=>item.evaluation.disposition==="advice_only"),autoExecuteQueue:items.filter(item=>item.evaluation.disposition==="auto_execute_internal"),conflicts,arbitrations,coverage:{represented,missing:REQUIRED_CEO_COVERAGE.filter(domain=>!represented.includes(domain))},autonomousExecution:"low_risk_internal_only"};
 }
