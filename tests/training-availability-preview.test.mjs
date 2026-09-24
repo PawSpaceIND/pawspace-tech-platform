@@ -47,3 +47,43 @@ test('Training preview refuses anonymous, foreign-customer and foreign-pet reque
  assert.equal((await f.call()).status,403);
  assert.equal(counts(f.sqlite).scheduling_reservations,0);
 });
+
+test('Training UAT roster seeds only requested session dates and retry stays idempotent',async t=>{
+ const f=await fixture(t),first=await f.call();assert.equal(first.status,200,JSON.stringify(first.body));
+ const rows=()=>f.sqlite.prepare("SELECT provider_id,date FROM scheduling_availability WHERE source='uat_roster' ORDER BY provider_id,date").all();
+ const before=rows();
+ assert.equal(before.length,6,'three seeded trainers × two requested weekly sessions');
+ assert.equal(new Set(before.map(row=>row.date)).size,2,'do not seed 100 days for a two-session preview');
+ assert.equal((await f.call()).status,200);
+ assert.deepEqual(rows(),before);
+});
+
+test('real preview resolves a planned provider move at appointment time, not current time',async t=>{
+ const f=await fixture(t),first=await f.call({occurrences:1});
+ assert.equal(first.status,200,JSON.stringify(first.body));
+ const chosen=first.body.data.providers[0].id;
+ const {saveProviderHomeBase}=await import('../lib/provider-home-base.ts');
+ const moveAt=Date.parse(f.input.scheduledStart)+86400000;
+ await saveProviderHomeBase(f.db,{providerId:chosen,address:'QA future base outside service radius',latitude:14,longitude:78,
+  effectiveFrom:moveAt,reason:'Scheduled synthetic provider move',actorId:'audit-test'});
+ const before=await f.call({occurrences:1});
+ assert.equal(before.status,200,JSON.stringify(before.body));
+ assert.ok(before.body.data.providers.some(p=>p.id===chosen),'before move, original nearby home base applies');
+ const nextDate=value=>new Date(Date.parse(value)+2*86400000).toISOString();
+ const after=await f.call({occurrences:1,scheduledStart:nextDate(f.input.scheduledStart),scheduledEnd:nextDate(f.input.scheduledEnd)});
+ assert.equal(after.status,200,JSON.stringify(after.body));
+ assert.ok(!after.body.data.providers.some(p=>p.id===chosen),'after move, future distant home base excludes the trainer');
+ assert.ok(after.body.data.providers.length>0,'other nearby trainers remain eligible');
+ assert.equal(counts(f.sqlite).scheduling_reservations,0,'neither preview creates a hold');
+});
+
+test('Training optimisation preserves Grooming next-day UAT roster for customer rescheduling',async t=>{
+ const f=await fixture(t);
+ const result=await f.call({action:'reserve',serviceCode:'grooming',occurrences:1,scheduledEnd:new Date(Date.parse(f.input.scheduledStart)+2*3600000).toISOString(),clientRequestId:'GROOM-ROSTER-REGRESSION'});
+ assert.equal(result.status,200,JSON.stringify(result.body));
+ const providerId=result.body.data.provider.id;
+ const nextDay=new Date(Date.parse(f.input.scheduledStart)+86400000).toISOString().slice(0,10);
+ const roster=f.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE provider_id=? AND date=? AND source='uat_roster'").get(providerId,nextDay);
+ assert.ok(roster,'the existing next-day window used by customer reschedule must remain available');
+ assert.deepEqual(JSON.parse(roster.windows_json),['09:00-19:00']);
+});

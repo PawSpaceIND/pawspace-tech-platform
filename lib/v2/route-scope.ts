@@ -8,6 +8,7 @@ export function customerScopedHref(pathname: string, legacyHref: string): string
   if (!isV2CustomerPath(pathname)) return legacyHref;
   if (legacyHref === "/") return "/v2";
   if (legacyHref === "/mobile-app") return "/v2/account";
+  if (legacyHref.startsWith("/mobile-app/booking-confirmation?")) return legacyHref.replace("/mobile-app/booking-confirmation", "/v2/booking-confirmation");
   if (legacyHref.startsWith("/v2/")) return legacyHref;
   if (CUSTOMER_ROOTS.some(root => legacyHref === root || legacyHref.startsWith(root + "/") || legacyHref.startsWith(root + "?"))) {
     return "/v2" + legacyHref;

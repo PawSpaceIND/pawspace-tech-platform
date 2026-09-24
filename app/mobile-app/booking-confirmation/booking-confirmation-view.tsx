@@ -77,7 +77,8 @@ function BookingConfirmationInner(props: Props) {
   }, [bookingId, projection?.ready]);
 
   const busy = ["starting", "checkout", "confirming"].includes(state.phase);
-  const canPayAgain = loaded && !verified && !busy && state.phase !== "pending" && (failedReturn || state.phase === "error" || state.phase === "ready") && (!projection || projection.bookingStatus === "payment_pending");
+  const canResumeUnpaid = props.payment === "resume" && projection?.bookingStatus === "payment_pending" && ["created", "failed", "pending"].includes(projection.paymentStatus);
+  const canPayAgain = loaded && Boolean(projection) && !verified && !busy && (canResumeUnpaid || (state.phase !== "pending" && (failedReturn || state.phase === "error" || state.phase === "ready"))) && projection?.bookingStatus === "payment_pending";
   const manageHref = projection ? customerBookingManageHref({id:projection.bookingId,serviceCode:projection.serviceCode,scheduledStart:projection.scheduledStart,status:projection.bookingStatus}) : null;
   const serviceName = projection ? SERVICE_LABEL[projection.serviceCode] || projection.serviceCode.replaceAll("_", " ") : "PawSpace";
   const canonicalReady = Boolean(projection?.ready);
@@ -106,14 +107,14 @@ function BookingConfirmationInner(props: Props) {
           </dl><p className={styles.reference}>Booking reference · {projection.bookingId}</p></section>}
       {verified && projection && <section className={styles.card} aria-label="Payment receipt"><h2>Payment receipt</h2><dl>
         <div><dt>Status</dt><dd>{projection.paymentStatus.replaceAll("_", " ")}</dd></div>
-        <div><dt>Amount</dt><dd>{money(projection.totalAmount, projection.currency)}</dd></div>
+        <div><dt>Booking value (not a captured-payment total)</dt><dd>{money(projection.totalAmount, projection.currency)}</dd></div>
         {projection.gatewayPaymentId && <div><dt>Razorpay payment</dt><dd>{projection.gatewayPaymentId}</dd></div>}
         {projection.gatewayOrderId && <div><dt>Razorpay order</dt><dd>{projection.gatewayOrderId}</dd></div>}
       </dl><p className={styles.reference}>PawSpace payment record · {projection.paymentId}</p></section>}
       <div className={styles.actions}>
         {canPayAgain && <button type="button" className={styles.primary} disabled={busy} onClick={() => void controller.current?.start()}>Pay securely with Razorpay</button>}
         {!verified && state.canCheck && !busy && state.phase !== "pending" && <button type="button" className={styles.secondary} onClick={() => void controller.current?.resume()}>Check payment status</button>}
-        {manageHref && <Link className={styles.secondary} href={customerScopedHref(home, manageHref)}>Manage this booking</Link>}
+        {manageHref && !manageHref.startsWith("/mobile-app/booking-confirmation") && <Link className={styles.secondary} href={customerScopedHref(home, manageHref)}>Manage this booking</Link>}
         <Link className={success ? styles.primary : styles.secondary} href={home}>Continue to PawSpace</Link>
       </div>
       <small className={styles.foot}>The browser never self-confirms a payment. Signed gateway evidence remains authoritative; if Razorpay has taken the payment, this page updates once PawSpace verifies it.</small>
