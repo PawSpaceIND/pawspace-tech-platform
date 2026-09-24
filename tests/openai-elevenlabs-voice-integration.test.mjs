@@ -5,6 +5,7 @@ import {installAiHooks,stubFetch,jsonResponse} from "./helpers/ai-harness.mjs";
 installAiHooks();
 const adapter=await import("../lib/ai-provider-adapter.ts");
 const eleven=await import("../lib/elevenlabs-voice-integration.ts");
+const telephony=await import("../lib/voice-telephony-provider.ts");
 
 test("OpenAI uses a dedicated credential and voice uses the low-latency model when explicitly selected",async()=>{
  globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
@@ -141,6 +142,15 @@ test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
  assert.throws(()=>mod.assertElevenLabsLlmAuth(make(),{ELEVENLABS_LLM_SECRET:"secret"}));
  assert.throws(()=>mod.assertElevenLabsLlmAuth(make("Bearer wrong"),{ELEVENLABS_LLM_SECRET:"secret"}));
  assert.doesNotThrow(()=>mod.assertElevenLabsLlmAuth(make("Bearer secret"),{ELEVENLABS_LLM_SECRET:"secret"}));
+});
+
+
+test("ElevenLabs specialist agent routing is deterministic by governed voice use case",()=>{
+ const env={ELEVENLABS_AGENT_ID:"agent-generic",ELEVENLABS_GROOMING_AGENT_ID:"agent-grooming",ELEVENLABS_TRAINING_AGENT_ID:"agent-training"};
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"grooming_sales"),"agent-grooming");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"training_sales"),"agent-training");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"booking_confirmation"),"agent-generic");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase({ELEVENLABS_AGENT_ID:"agent-generic"},"grooming_sales"),"agent-generic");
 });
 
 test("ElevenLabs Exotel outbound adapter is selected only when explicitly configured and carries PawSpace IDs",async()=>{
