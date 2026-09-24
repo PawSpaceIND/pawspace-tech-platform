@@ -12,7 +12,10 @@ test("test customer signs in without OTP and persists a pet through the real acc
   await page.getByRole("button", { name: "UAT Audit Customer A", exact: true }).click();
   expect((await signed).status()).toBe(200);
   await page.waitForURL("**/mobile-app");
+  // The discovery home deliberately hides the shell header; account controls live on Account.
+  await page.getByRole("button", { name: "Account", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
   const initial = await page.request.get("/api/customer-account");
   expect(initial.status()).toBe(200); expect((await initial.json()).data.customerId).toBe("UAT-AUDIT-CUSTOMER-A");
   await page.getByRole("button", { name: /Book now.*Grooming/ }).click();
@@ -35,7 +38,10 @@ test("test customer signs in without OTP and persists a pet through the real acc
     return result.data?.pets?.some((pet: { name: string }) => pet.name === petName);
   }).toBe(true);
   await page.reload();
+  // The discovery home deliberately hides the shell header; account controls live on Account.
+  await page.getByRole("button", { name: "Account", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
   const persisted = await page.request.get("/api/customer-account");
   expect((await persisted.json()).data.pets.some((pet: { name: string }) => pet.name === petName)).toBe(true);
   const other = await page.request.get("/api/customer-account?customerId=UAT-AUDIT-CUSTOMER-B");
