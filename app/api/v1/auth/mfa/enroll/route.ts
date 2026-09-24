@@ -1,11 +1,11 @@
 import { database, resolvePrimaryActor, securityAudit } from "../../../../../../lib/server-auth";
-import { ensureAdminMfaTables, newTotpSecret, privilegedRole, verifyTotp } from "../../../../../../lib/admin-mfa";
+import { ensureAdminMfaTables, newTotpSecret, mfaEligibleRole, verifyTotp } from "../../../../../../lib/admin-mfa";
 
 type Row = Record<string, unknown>;
 
 export async function POST(request: Request) {
   const actor = await resolvePrimaryActor(request);
-  if (!privilegedRole(actor.roleCode)) return Response.json({ error: "Privileged role required" }, { status: 403 });
+  if (!mfaEligibleRole(actor.roleCode)) return Response.json({ error: "Privileged role required" }, { status: 403 });
   const db = await database();
   await ensureAdminMfaTables(db);
   const user = actor.userId
