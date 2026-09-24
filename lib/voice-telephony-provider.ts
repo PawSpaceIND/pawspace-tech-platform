@@ -200,14 +200,22 @@ export function exotelTelephony(env: Env): TelephonyProvider {
 }
 
 export const ELEVENLABS_EXOTEL_PROVIDER = "elevenlabs_exotel";
+export function elevenLabsAgentIdForUseCase(env: Env, useCase?: string | null) {
+  const code = String(useCase ?? "").trim().toLowerCase();
+  if (code === "grooming_sales") return val(env, "ELEVENLABS_GROOMING_AGENT_ID") || val(env, "ELEVENLABS_AGENT_ID");
+  if (code === "training_sales") return val(env, "ELEVENLABS_TRAINING_AGENT_ID") || val(env, "ELEVENLABS_AGENT_ID");
+  return val(env, "ELEVENLABS_AGENT_ID");
+}
 export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
-  const apiKey = val(env, "ELEVENLABS_API_KEY"), agentId = val(env, "ELEVENLABS_AGENT_ID"), phoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
-  if (!apiKey || !agentId || !phoneNumberId) return disconnectedTelephony;
+  const apiKey = val(env, "ELEVENLABS_API_KEY"), defaultAgentId = val(env, "ELEVENLABS_AGENT_ID"), phoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
+  if (!apiKey || !defaultAgentId || !phoneNumberId) return disconnectedTelephony;
   const base = (val(env, "ELEVENLABS_API_BASE") || "https://api.in.residency.elevenlabs.io").replace(/\/$/, "");
   return {
     provider: ELEVENLABS_EXOTEL_PROVIDER, status: "connected", productionCapable: true,
     async createCall(intent) {
       if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
+      const agentId = elevenLabsAgentIdForUseCase(env, intent.useCase);
+      if (!agentId) throw new TelephonyProviderUnavailable("ElevenLabs agent is not configured for this voice use case");
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
       try {
         let response: Response, raw: string;

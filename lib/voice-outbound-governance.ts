@@ -66,6 +66,8 @@ export const VOICE_USE_CASES: VoiceUseCaseDefinition[] = [
   { code: "feedback_request", label: "Ask for feedback after a completed service", purpose: "lifecycle", requiresBooking: true, requiresSalesApproval: false, maxAttempts: 1 },
   { code: "lead_qualification", label: "Qualify an inbound enquiry", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
   { code: "sales_pitch", label: "Outbound sales / pitching call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 1 },
+  { code: "grooming_sales", label: "Grooming sales and booking call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
+  { code: "training_sales", label: "Dog-training needs assessment and booking call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
 ];
 
 export const voiceUseCase = (code: unknown) => VOICE_USE_CASES.find(entry => entry.code === text(code)) || null;
