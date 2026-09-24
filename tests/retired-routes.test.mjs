@@ -80,7 +80,8 @@ test("regression: /trainer and /crm are real integrated modules and must NOT be 
   assert.doesNotMatch(trainer, /redirect\(/, "trainer must keep rendering its real workspace");
   // /crm reads the canonical CRM and revenue engines
   const crm = read("app/crm/page.tsx");
-  assert.match(crm, /fetch\("\/api\/crm"/, "crm reads the real CRM API");
+  assert.match(crm, /apiRequest\(`\/api\/crm\$\{/, "crm reads the real CRM API through the bounded helper");
+  assert.match(crm, /apiRequest\("\/api\/crm"/, "crm creates leads through the same real API");
   assert.doesNotMatch(crm, /redirect\(/, "crm must keep rendering");
   assert.match(read("app/crm/revenue-engine-panel.tsx"), /fetch\("\/api\/revenue-crm"/, "the revenue engine panel reads the real API");
 });
