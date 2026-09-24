@@ -1,4 +1,6 @@
 import type { CustomerAccountRecord } from "../customer-account";
+import { serviceAddressConflict } from "../service-address-consistency";
+import { v2GroomingSelectionIssue } from "./grooming-selection";
 import { stableBookingInputKey } from "../booking-input-fingerprint";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
 import { apiSend } from "../api-fetch";
@@ -16,6 +18,7 @@ export type V2GroomingCheckoutInput = {
   provider: ProviderPreview["providers"][number];
   address: string;
   pincode: string;
+  cityName?: string;
   cityId: string;
   zoneId: string;
   scheduledStart: string;
@@ -53,7 +56,10 @@ export async function createV2GroomingBooking(
 ): Promise<V2GroomingBooking> {
   // An in-flight booking uses the confirmed snapshot, never mutable form references.
   const input = structuredClone(submitted);
-  if (!input.selectedPets.length) throw new Error("Choose at least one pet before booking.");
+  const selectionIssue = v2GroomingSelectionIssue(input.selectedPets, input.pkg.audience);
+  if (selectionIssue) throw new Error(selectionIssue);
+  const addressIssue = serviceAddressConflict(input.address, input.cityName || (input.cityId === "blr" ? "Bengaluru" : input.cityId), input.pincode);
+  if (addressIssue) throw new Error(addressIssue);
   if (input.selectedPets.some(pet => !String(pet.sourceId || pet.id).trim())) throw new Error("Every selected pet needs a canonical source identity.");
   if (!input.address.trim() || !/^\d{6}$/.test(input.pincode)) throw new Error("Verify a complete service address before booking.");
   if (!Number.isFinite(input.quote.price) || input.quote.price <= 0) throw new Error("A valid live price is required before booking.");
