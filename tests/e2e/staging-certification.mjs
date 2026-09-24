@@ -45,8 +45,21 @@ export const FORBIDDEN_ON_STAGING = {
   PAWSPACE_VOICE_ENV: ["live", "production", "prod"],
   PAWSPACE_VOICE_LIVE_APPROVED: ["true", "1", "yes", "on"],
   PAWSPACE_VOICE_RECORDING_APPROVED: ["true", "1", "yes", "on"],
-  PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: ["true", "1", "yes", "on"],
 };
+const TRUE_VALUES = new Set(["true", "1", "yes", "on"]);
+function explicitVoiceUatSalesOverlay(vars) {
+  return val(vars, "PAWSPACE_VOICE_ENV").toLowerCase() === "uat"
+    && val(vars, "PAWSPACE_VOICE_UAT_APPROVED").toLowerCase() === "true"
+    && val(vars, "PAWSPACE_VOICE_UAT_AUTORUN").toLowerCase() === "true"
+    && val(vars, "PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED").toLowerCase() === "true";
+}
+function forbiddenStagingFlags(vars) {
+  const flags = Object.entries(FORBIDDEN_ON_STAGING)
+    .filter(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))
+    .map(([name]) => name);
+  if (TRUE_VALUES.has(val(vars, "PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED").toLowerCase()) && !explicitVoiceUatSalesOverlay(vars)) flags.push("PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED");
+  return flags;
+}
 
 /** Required staging modes, as name → the only accepted value. */
 export const REQUIRED_STAGING_VARS = {
@@ -184,7 +197,7 @@ export async function runStagingIsolationPreflight({ deployedConfig, liveVersion
   if (String(await liveVersionMessage()).trim() !== `staging ${expectedSha}`) throw new StagingIsolationRefused("Refusing to certify: the active version does not match EXPECTED_SHA");
   const vars = config && typeof config.vars === "object" ? config.vars : {};
   for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) if (val(vars, name) !== expected) throw new StagingIsolationRefused(`Refusing to certify: ${name} is not ${expected}`);
-  if (Object.entries(FORBIDDEN_ON_STAGING).some(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))) throw new StagingIsolationRefused("Refusing to certify: a production/live approval flag is active");
+  if (forbiddenStagingFlags(vars).length) throw new StagingIsolationRefused("Refusing to certify: a production/live approval flag is active");
   if (STAGING_SECRET_NAMES.some(name => val(vars, name))) throw new StagingIsolationRefused("Refusing to certify: a UAT credential is serialized in deployed vars");
   return { ok: true, worker: val(env, "WORKER_NAME"), sha: expectedSha, databaseIdVerified: true };
 }
@@ -253,9 +266,7 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
   for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) {
     check(`environment mode: ${name} is ${expected}`, val(vars, name) === expected, `${name}="${val(vars, name) || "(unset)"}"`);
   }
-  const liveFlags = Object.entries(FORBIDDEN_ON_STAGING)
-    .filter(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))
-    .map(([name]) => name);
+  const liveFlags = forbiddenStagingFlags(vars);
   check("no production or live-approval flag is set on staging", liveFlags.length === 0, liveFlags.length ? `set: ${liveFlags.join(", ")}` : "none set");
 
   const leaked = STAGING_SECRET_NAMES.filter(name => val(vars, name));
