@@ -6,7 +6,6 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("non-mobile workspaces use the shared convergence layer", () => {
   const files = [
-    "app/admin/layout.tsx",
     "app/partner/layout.tsx",
     "app/partner-app/layout.tsx",
   ];

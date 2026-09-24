@@ -132,3 +132,81 @@
 :global([data-staff-module]) .trainingCases>button :is(strong,small) { display:block; }
 :global([data-staff-module]) .trainingCases>button small { margin-top:4px; }
 :global([data-staff-module]) .progressCell>span i { height:100%; display:block; min-width:0; }
+
+/* STAFF ADMIN/SELF-SERVICE OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .adminShell { display:block; min-width:0; background:var(--staff-bg); color:var(--staff-text); font-family:inherit; font-size:16px; }
+:global([data-staff-module]) .adminShell .workspace { padding:24px 28px 64px; min-width:0; }
+:global([data-staff-module]) .adminShell .header { flex-wrap:wrap; align-items:flex-start; }
+:global([data-staff-module]) .adminShell .header h1 { font-size:32px; }
+:global([data-staff-module]) .adminShell .header p { color:var(--staff-muted); font-size:14px; }
+:global([data-staff-module]) .adminShell .headerActions { flex-wrap:wrap; min-width:0; }
+:global([data-staff-module]) .adminShell .headerActions select { display:block !important; max-width:100%; background:var(--staff-surface); color:var(--staff-text); border-color:var(--staff-line); font-size:15px; min-height:44px; }
+:global([data-staff-module]) .adminShell .headerActions .ghostButton { display:inline-flex !important; }
+:global([data-staff-module]) .adminShell .primaryButton { background:var(--staff-primary); color:var(--staff-on-primary); border-color:var(--staff-primary); min-height:44px; font-size:15px; }
+:global([data-staff-module]) .adminShell .ghostButton { background:var(--staff-surface); color:var(--staff-primary); border-color:var(--staff-line); min-height:44px; font-size:15px; }
+:global([data-staff-module]) .adminShell .textButton { color:var(--staff-primary); font-size:14px; }
+:global([data-staff-module]) .adminShell .sidebar { flex-direction:column; gap:14px; }
+:global([data-staff-module]) .adminShell .sidebar .brand { display:flex !important; gap:10px; }
+:global([data-staff-module]) .adminShell .sidebar .brand img { display:block !important; object-fit:contain; width:48px; height:auto; }
+:global([data-staff-module]) .adminShell .sidebar .brand span { display:block !important; }
+:global([data-staff-module]) .adminShell .sidebar nav span { display:block !important; }
+:global([data-staff-module]) .adminShell .sidebar nav button { grid-template-columns:24px minmax(0,1fr) auto !important; text-align:left; place-items:initial; }
+:global([data-staff-module]) .adminShell .sidebar nav b { position:static; transform:none; background:var(--staff-gold); color:var(--staff-on-gold); font-size:13px; }
+:global([data-staff-module]) .adminShell .sidebar nav .activeNav { outline:2px solid var(--staff-primary); outline-offset:0; }
+:global([data-staff-module]) .adminShell .sidebarFooter { display:grid !important; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:8px; margin-top:0; }
+:global([data-staff-module]) .adminShell .sidebarFooter > a { display:block !important; color:var(--staff-primary); margin:0; padding:10px; font-size:14px; }
+:global([data-staff-module]) .adminShell .adminUser { border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .adminUser div { display:block !important; }
+:global([data-staff-module]) .adminShell .metrics { grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr)); }
+:global([data-staff-module]) .adminShell .metrics article:nth-child(n) { display:flex !important; padding:18px; background:var(--staff-surface); border-color:var(--staff-line); min-width:0; }
+:global([data-staff-module]) .adminShell .metrics span { color:var(--staff-muted); font-size:14px; }
+:global([data-staff-module]) .adminShell .metrics strong { color:var(--staff-text); font-size:28px; }
+:global([data-staff-module]) .adminShell .metrics small { color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .metricIcon { background:var(--staff-raised); color:var(--staff-primary); }
+:global([data-staff-module]) .adminShell .alertIcon { background:var(--staff-warning-bg); color:var(--staff-warning); }
+:global([data-staff-module]) .adminShell .positive { color:var(--staff-success); }
+:global([data-staff-module]) .adminShell .warning { color:var(--staff-warning); }
+:global([data-staff-module]) .adminShell .panel,:global([data-staff-module]) .adminShell .detailPanel { min-width:0; background:var(--staff-surface); border-color:var(--staff-line); box-shadow:var(--staff-shadow); }
+:global([data-staff-module]) .adminShell .panelHead { flex-wrap:wrap; gap:12px; }
+:global([data-staff-module]) .adminShell .panelHead h2 { color:var(--staff-text); font-size:20px; }
+:global([data-staff-module]) .adminShell .kicker { color:var(--staff-primary); font-size:13px; }
+:global([data-staff-module]) .adminShell .legend { flex-wrap:wrap; color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .dataNote { color:var(--staff-muted); font-size:14px; }
+:global([data-staff-module]) .adminShell .scheduleWrap { max-width:100%; min-width:0; overflow-x:auto; }
+:global([data-staff-module]) .adminShell .schedule th,:global([data-staff-module]) .adminShell .schedule td { color:var(--staff-text); background:var(--staff-surface); border-color:var(--staff-line); font-size:14px; }
+:global([data-staff-module]) .adminShell .schedule small { color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .tableGroomer span { color:var(--staff-primary); background:var(--staff-raised); }
+:global([data-staff-module]) .adminShell .slotAvailable { color:var(--staff-success); background:var(--staff-success-bg); border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .slotBooked { color:var(--staff-primary); background:var(--staff-raised); border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .slotCompleted { color:var(--staff-success); background:var(--staff-success-bg); border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .slotAvailable small,:global([data-staff-module]) .adminShell .slotBooked small,:global([data-staff-module]) .adminShell .slotCompleted small { color:inherit; }
+:global([data-staff-module]) .adminShell .splitGrid { grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr); }
+:global([data-staff-module]) .adminShell .bookingList > button { min-width:0; grid-template-columns:70px minmax(0,1fr) auto; padding:14px; background:var(--staff-surface); color:var(--staff-text); border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .bookingList .status { grid-column:2 / -1; justify-self:start; color:var(--staff-primary); background:var(--staff-raised); font-size:13px; }
+:global([data-staff-module]) .adminShell .bookingList > .selectedBooking { background:var(--staff-raised); border-color:var(--staff-primary); }
+:global([data-staff-module]) .adminShell .bookingList strong { font-size:15px; }
+:global([data-staff-module]) .adminShell .bookingList small { color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .timePill { background:var(--staff-raised); color:var(--staff-primary); font-size:13px; }
+:global([data-staff-module]) .adminShell .customerCard { background:var(--staff-raised); }
+:global([data-staff-module]) .adminShell .customerCard > span { background:var(--staff-primary); color:var(--staff-on-primary); }
+:global([data-staff-module]) .adminShell .customerCard small { color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .detailPanel dl div { border-color:var(--staff-line); }
+:global([data-staff-module]) .adminShell .detailPanel dt { color:var(--staff-muted); font-size:13px; }
+:global([data-staff-module]) .adminShell .detailPanel dd { color:var(--staff-text); font-size:15px; }
+:global([data-staff-module]) .adminShell .detailActions > a { grid-column:1 / -1; padding:11px; min-height:44px; border:1px solid var(--staff-line); border-radius:9px; color:var(--staff-primary); background:var(--staff-raised); text-align:center; font-size:14px; }
+:global([data-staff-module]) .adminShell .toast { background:var(--staff-success-bg); color:var(--staff-success); border:1px solid var(--staff-line); font-size:15px; }
+:global([data-staff-module]) .accessError { min-height:80dvh; background:var(--staff-bg); color:var(--staff-text); }
+:global([data-staff-module]) .accessError section { background:var(--staff-surface); border-color:var(--staff-line); }
+:global([data-staff-module]) .accessError .primaryButton { min-height:44px; background:var(--staff-primary); color:var(--staff-on-primary); font-size:15px; }
+@media(max-width:1200px) {
+ :global([data-staff-module]) .adminShell .splitGrid { grid-template-columns:minmax(0,1fr); }
+}
+@media(max-width:600px) {
+ :global([data-staff-module]) .adminShell .workspace { padding:12px 0 40px; }
+ :global([data-staff-module]) .adminShell .metrics { grid-template-columns:minmax(0,1fr); }
+ :global([data-staff-module]) .adminShell .bookingList > button { grid-template-columns:minmax(0,1fr); }
+ :global([data-staff-module]) .adminShell .bookingList .status { grid-column:auto; }
+ :global([data-staff-module]) .adminShell .sidebarFooter { grid-template-columns:minmax(0,1fr); }
+}
+:global([data-staff-module]) .adminShell .slotAvailable b,:global([data-staff-module]) .adminShell .slotCompleted b { color:var(--staff-success); font-size:14px; }
+:global([data-staff-module]) .adminShell .slotBooked b { color:var(--staff-primary); font-size:14px; }
