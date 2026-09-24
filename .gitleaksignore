@@ -29,6 +29,9 @@ d3bff97d182c7f1e72b887e3029f88bbf3ad4504:tests/razorpay-capture-confirms-payment
 1dc15704917df6645cd80091bad4ba1df953c67c:tests/customer-otp-returning-customer-name-prompt.test.mjs:generic-api-key:49
 1dc15704917df6645cd80091bad4ba1df953c67c:docs/uat-evidence/2026-09-21-v2-launch/OPEN_ITEMS.md:pawspace-payment-secret-key:42
 
-# Non-credential: literal rzp_test_component in intercepted browser component fixture only.
+# Non-credential: synthetic test identifier in intercepted component fixture only.
 # Exact historical finding; current test uses rzp_test_mock. No credential or provider call.
 713a13b72fa381ea576d78d6711b472ae4f20fb7:e2e/paid-journey-remediation.spec.ts:pawspace-payment-secret-key:51
+
+# Same fake identifier was mentioned in the previous explanatory comment; exact historical metadata only.
+a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret-key:32

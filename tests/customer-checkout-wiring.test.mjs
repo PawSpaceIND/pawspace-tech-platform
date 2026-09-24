@@ -376,3 +376,18 @@ test('a rejected receipt is not converted into successful capture by automatic t
  });
  await controller.start();assert.deepEqual(calls,['start','confirm']);assert.equal(states.at(-1).phase,'error');
 });
+
+test('requested instalment receipt never displays another order capture', async t => {
+  const {db,sqlite}=world(t), session=await cookie(db), {POST}=await import('../app/api/customer-checkout/route.ts');
+  event(sqlite);
+  event(sqlite,{id:'EV2',gateway_order_id:'order_second',gateway_payment_id:'pay_second'});
+  sqlite.exec("UPDATE booking_payments SET status='captured' WHERE id='P1'");
+  for(const [orderId,paymentId] of [['order_fixture','pay_fixture'],['order_second','pay_second']]){
+    const response=await POST(request({action:'status',bookingId:'B1',orderId},session));
+    const result=(await response.json()).data;assert.equal(response.status,200);assert.equal(result.status,'captured');
+    assert.equal(result.confirmation.transactionId,paymentId);assert.equal(result.confirmation.gatewayPaymentId,paymentId);assert.equal(result.confirmation.gatewayOrderId,orderId);
+  }
+  const unknown=await POST(request({action:'status',bookingId:'B1',orderId:'order_not_paid'},session)), body=(await unknown.json()).data;
+  assert.equal(body.status,'awaiting_confirmation');assert.equal(body.confirmation.ready,false);
+  assert.equal(body.confirmation.transactionId,null);assert.equal(body.confirmation.gatewayPaymentId,null);assert.equal(body.confirmation.gatewayOrderId,null);
+});

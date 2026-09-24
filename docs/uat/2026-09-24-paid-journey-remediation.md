@@ -35,3 +35,13 @@ The BTM proof now requires both `adapterConnected` and `objectStored`; a hash-on
 Fresh Razorpay TEST capture and return; canonical booking/customer/partner/Control/Finance agreement; stored-photo retrieval, separate Ops review and provider completion; invoice/receivable/earnings reconciliation; refund/replayed-webhook behavior; actual speech-to-text/AI/text-to-speech; every vertical's completion and cancellation policy.
 
 A code test, configuration flag or opened page never substitutes for these gates. Production payments, real customer outreach, provider ownership, consent/DND and sensitive approvals remain protected.
+
+## Review follow-up
+
+- Monetary input reads now use one SQLite SELECT per bounded batch, shared by checkout and the Operations projection. A concurrently committed capture cannot split the payment, credit and instalment snapshot across separate reads.
+- Status requests for an explicit gateway order return that order's transaction/receipt identifiers, not another instalment's capture.
+- All paid service confirmation callbacks wait for an owned canonical ready projection. Captured money with an unsettled booking projection exposes confirmation-only retry.
+- The Grooming finalization status set also admits canonical `in_progress`.
+- Expanded local financial/checkout regressions: 418 passed, zero failed. Headed component failure-injection cases: six desktop/mobile cases passed; their provider transport is mocked, not live payment evidence.
+- Expanded Atlas/employee/voice executable checks: 210 passed. Separate deployed Atlas questions exposed incomplete narratives under the 220-token response cap. That issue is tracked separately and is not represented as fixed by this payment PR.
+- Secret scan found a non-credential test identifier and then its explanatory comment. The current fixture uses an explicitly short mock identifier; only the two exact historical false-positive fingerprints are recorded. No real provider credential is committed or exempted.

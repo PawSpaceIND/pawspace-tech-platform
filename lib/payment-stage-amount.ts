@@ -1,4 +1,4 @@
-import{creditBreakdownAppliedToBooking}from"./booking-credit-application";
+import { readPaymentStageSnapshots } from "./payment-stage-snapshot";
 
 /**
  * How much is payable RIGHT NOW for a booking — the amount a gateway order must be opened for.
@@ -42,15 +42,8 @@ const money=(value:number)=>round2(Math.max(0,value));
  * payment record, so the caller can fail rather than invent a figure.
  */
 export async function paymentStageAmount(db:Db,bookingId:string):Promise<PaymentStageAmount|null>{
- const payment=await db.prepare("SELECT id,amount,amount_due_now,currency,status FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>();
- if(!payment)return null;
-
- const credits=await creditBreakdownAppliedToBooking(db,bookingId);
- const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status,'stay' schedule_kind FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
- const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status,'taxi' schedule_kind FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
- const schedule=staySchedule??taxiSchedule;
- const recon=schedule&&CAPTURED.includes(String(payment.status))?await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(payment.id).first<Row>().catch(()=>null):null;
- return resolvePaymentStageAmount(payment,schedule,credits,recon);
+ const snapshot=(await readPaymentStageSnapshots(db,[bookingId])).get(bookingId);
+ return snapshot?resolvePaymentStageAmount(snapshot.payment,snapshot.schedule,snapshot.credits,snapshot.recon):null;
 }
 
 /** Same calculation for checkout and batched operational snapshots. No original instalment is rewritten. */

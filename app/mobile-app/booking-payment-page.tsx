@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CustomerCheckoutController, type CheckoutState } from "../../lib/customer-checkout-client";
+import { CustomerCheckoutController, loadCustomerConfirmationProjection, type CheckoutState } from "../../lib/customer-checkout-client";
 import styles from "./booking-payment-page.module.css";
 
 const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(value);
@@ -18,10 +18,10 @@ function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingI
  const finishConfirmation=useCallback(async()=>{
   if(finishingRef.current||notified.current)return;
   finishingRef.current=true;setFinishing(true);setConfirmationError("");
-  try{await onVerified?.();notified.current=true;}
+  try{if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}await onVerified?.();notified.current=true;}
   catch(problem){setConfirmationError(problem instanceof Error?problem.message:"Payment is verified, but booking details could not be refreshed. Retry confirmation, not payment.");}
   finally{finishingRef.current=false;setFinishing(false);}
- },[onVerified]);
+ },[bookingId,onVerified]);
  useEffect(()=>{if(!bookingId){controller.current=null;return;}let active=true;controller.current=new CustomerCheckoutController(bookingId,value=>{if(active)setState(value);});return()=>{active=false;controller.current=null;};},[bookingId]);
  useEffect(()=>{if(state.phase!=="captured"||notified.current||confirmationError)return;void finishConfirmation();},[state.phase,confirmationError,finishConfirmation]);
  useEffect(()=>{if(!autoStart||!bookingId||payAfter||autoStarted.current||!controller.current)return;autoStarted.current=true;void controller.current.start();},[autoStart,bookingId,payAfter]);

@@ -11,7 +11,7 @@ test.beforeAll(async () => {
     window.auditFinishCalls=0;
     window.renderAudit=(kind)=>createRoot(document.getElementById('root')).render(kind==='care'
       ? <Gate mode="boarding" carePlan={{vet:'Synthetic vet',emergencyContact:'Synthetic caretaker',feeding:'Owner instructions'}} payment={{bookingId:'TEST-CARE-1',serviceName:'Boarding',total:699,dueNow:699,mode:'prepaid'}} onVerified={()=>{}}/>
-      : <Payment bookingId="TEST-PAY-1" serviceName="Grooming" totalAmount={1241} amountDueNow={1241} mode="prepaid" autoStart onVerified={async()=>{window.auditFinishCalls++;if(window.auditFinishCalls===1)throw new Error('Synthetic confirmation refresh outage');}}/>);
+      : <Payment bookingId="TEST-PAY-1" serviceName="Grooming" totalAmount={1241} amountDueNow={1241} mode="prepaid" autoStart onVerified={async()=>{window.auditFinishCalls++;if(window.auditFinishCalls===1&&kind!=='pending')throw new Error('Synthetic confirmation refresh outage');}}/>);
   ` }, bundle: true, write: false, outdir: '.audit-evidence/component-bundle', jsx: 'automatic', format: 'iife', platform: 'browser',
     define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' });
   bundle = result.outputFiles.find(file=>file.path.endsWith('.js'))!.text; css = result.outputFiles.find(file=>file.path.endsWith('.css'))?.text || '';
@@ -49,7 +49,7 @@ test('after verified payment, failed UI finalization retries confirmation withou
     const input=r.request().postDataJSON();calls.push(input.action);
     const locks={PAWSPACE_PAYMENT_ENV:'sandbox',FORBID_PRODUCTION:'true',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
     const data=input.action==='start'?{connected:true,bookingId:'TEST-PAY-1',environment:'sandbox',orderId:'order_component',keyId:'rzp_test_mock',amountPaise:124100,currency:'INR',locks}
-      :{bookingId:'TEST-PAY-1',orderId:'order_component',environment:'sandbox',receiptVerified:true,status:'captured'};
+      :{bookingId:'TEST-PAY-1',orderId:'order_component',environment:'sandbox',receiptVerified:true,status:'captured',confirmation:{bookingId:'TEST-PAY-1',ready:true}};
     return r.fulfill({json:{data}});
   });
   await page.evaluate(()=>(window as unknown as {renderAudit:(s:string)=>void}).renderAudit('payment'));
@@ -57,5 +57,27 @@ test('after verified payment, failed UI finalization retries confirmation withou
   await page.getByRole('button',{name:'Retry booking confirmation',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as unknown as {auditFinishCalls:number}).auditFinishCalls)).toBe(2);
   await expect(page.getByRole('alert')).toHaveCount(0);
-  expect(calls).toEqual(['start','confirm']);
+  expect(calls).toEqual(['start','confirm','status','status']);
+});
+
+test('captured payment does not finalize a booking while its canonical readiness is pending',async({page})=>{
+  const calls:string[]=[];let reads=0;
+  await page.evaluate(()=>{(window as unknown as {Razorpay:unknown}).Razorpay=class {
+    options:{handler:(r:Record<string,string>)=>void};constructor(o:{handler:(r:Record<string,string>)=>void}){this.options=o;}
+    on(){} open(){this.options.handler({razorpay_order_id:'order_component',razorpay_payment_id:'pay_component',razorpay_signature:'a'.repeat(64)});}
+  };});
+  await page.route('**/api/customer-checkout',r=>{
+    const action=r.request().postDataJSON().action;calls.push(action);
+    const locks={PAWSPACE_PAYMENT_ENV:'sandbox',FORBID_PRODUCTION:'true',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
+    const data=action==='start'?{connected:true,bookingId:'TEST-PAY-1',environment:'sandbox',orderId:'order_component',keyId:'rzp_test_mock',amountPaise:124100,currency:'INR',locks}
+      :{bookingId:'TEST-PAY-1',orderId:'order_component',environment:'sandbox',receiptVerified:true,status:'captured',confirmation:{bookingId:'TEST-PAY-1',ready:action==='status'?++reads>1:false}};
+    return r.fulfill({json:{data}});
+  });
+  await page.evaluate(()=>(window as unknown as {renderAudit:(s:string)=>void}).renderAudit('pending'));
+  await expect(page.getByRole('alert')).toContainText('canonical booking is still synchronizing');
+  expect(await page.evaluate(()=>(window as unknown as {auditFinishCalls:number}).auditFinishCalls)).toBe(0);
+  await page.getByRole('button',{name:'Retry booking confirmation',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {auditFinishCalls:number}).auditFinishCalls)).toBe(1);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(calls.filter(action=>action==='start')).toHaveLength(1);expect(calls.filter(action=>action==='confirm')).toHaveLength(1);
 });

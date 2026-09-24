@@ -43,7 +43,7 @@ test('optional missing ledgers do not hide database errors; batch queries are bo
   const f=world(t); for(let i=0;i<150;i++)f.add(`b${i}`,100,100,'captured');
   let count=0;const counted={...f.db,prepare(sql){count++;return f.db.prepare(sql);}};
   assert.equal((await bookingPaymentBalances(counted,Array.from({length:150},(_,i)=>`b${i}`))).size,150);
-  assert.equal(count,14,'seven reads per 80-record batch, not seven per booking');
+  assert.equal(count,3,'one schema read and one atomic financial SELECT per 80-record batch');
   f.sql.exec('DROP TABLE pawspace_wallet_ledger');
   assert.equal((await bookingPaymentBalances(f.db,['b0'])).get('b0').dueNow,0);
   f.sql.exec('ALTER TABLE payment_reconciliation_records RENAME COLUMN captured_amount TO wrong_column');
@@ -53,4 +53,13 @@ test('Training activity recovery remains within V2 and binds the exact owned boo
  const href=customerBookingManageHref({id:'B & 1',serviceCode:'dog_training',status:'payment_pending',scheduledStart:''});
  assert.equal(href,'/mobile-app/booking-confirmation?bookingId=B%20%26%201&payment=resume');
  assert.equal(customerScopedHref('/v2/activity',href),'/v2/booking-confirmation?bookingId=B%20%26%201&payment=resume');
+});
+
+test('a capture between schema discovery and financial read cannot produce a mixed instalment snapshot',async t=>{
+ const f=world(t);f.add('atomic',1000,500,'captured');
+ f.sql.exec("INSERT INTO stay_payment_schedules VALUES ('atomic',500,500,'pending_balance');INSERT INTO payment_reconciliation_records VALUES ('P-atomic','atomic',500)");
+ let captured=false;
+ f.db.onSql('FROM booking_payments p',()=>{captured=true;f.sql.exec("UPDATE stay_payment_schedules SET status='paid' WHERE booking_id='atomic';UPDATE payment_reconciliation_records SET captured_amount=1000 WHERE booking_id='atomic'");});
+ const result=await paymentStageAmount(f.db,'atomic');
+ assert.equal(captured,true);assert.equal(result.stage,'settled');assert.equal(result.dueNow,0);assert.equal(result.outstandingBalance,0);
 });
