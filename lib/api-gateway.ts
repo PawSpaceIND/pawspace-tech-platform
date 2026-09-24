@@ -40,6 +40,8 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/control-runtime-switches")return method==="GET"?"audit.view":"settings.manage";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
+  // Test issuer enforces staging locks, access code and fixed fixtures before any session exists.
+  if(url.pathname==="/api/uat-customer-switch")return null;
   if(url.pathname==="/api/uat-provider-switch")return null;
   if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";

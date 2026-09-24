@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 
 const port = Number(process.env.PW_PORT || 4185);
 const baseURL = process.env.PW_BASE_URL || `http://localhost:${port}`;
-const localChromium = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+const localChromium = process.env.PW_CHROMIUM_EXECUTABLE_PATH || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const uatServiceDate = process.env.PW_UAT_SERVICE_DATE || new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
 process.env.PW_UAT_SERVICE_DATE ??= uatServiceDate;
 process.env.PAWSPACE_UAT_SERVICE_CLOCK ??= "on";
@@ -23,6 +23,8 @@ export default defineConfig({
     "e2e/partner-journey.spec.ts",
     "e2e/uat-phase3-partner-training.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
+    "e2e/v2-audit-regressions.spec.ts",
+    "e2e/uat-customer-persona.spec.ts",
     "e2e/uat-cross-module-wiring.spec.ts",
     "e2e/checkout-provider-webhook-proof-736.spec.ts",
     "e2e/voice-console-human-readiness.spec.ts",

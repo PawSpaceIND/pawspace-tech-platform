@@ -1,0 +1,46 @@
+name: Staging test customer access
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: uat-customer-test-access-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: Synthetic customer isolation and browser persistence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      PAWSPACE_LOCAL_PREVIEW: 'off'
+      PAWSPACE_UAT_PERSONAS: 'on'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run install:ci
+      - run: npx playwright install --with-deps chromium
+      - name: Prove issuer, session, profile and ownership guards
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/uat-customer-switch.test.mjs tests/identity-session.test.mjs tests/uat-provider-switch-worker-gateway.test.mjs tests/uat-staging-auth.test.mjs
+      - name: Customer test login and canonical pet persistence in desktop and mobile Chromium
+        run: npx playwright test e2e/uat-customer-persona.spec.ts --project=chromium --project=mobile-chromium --workers=1
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-customer-test-evidence
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+      - name: Remove disposable local bindings
+        if: always()
+        run: rm -f .dev.vars

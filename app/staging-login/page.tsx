@@ -1,5 +1,6 @@
 "use client";
 import{useEffect,useState}from"react";
+import CustomerTestAccess from "./customer-test-access";
 
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
 // Seeded identities a tester can jump in as. Sign-in resolves the role from the staff directory, so
@@ -47,6 +48,7 @@ export default function StagingLoginPage(){
           <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>…or another seeded staff email (must be an active staff identity — an unrecognised email is refused):</p>
           <div style={{display:"flex",gap:8}}><input style={{...inp,marginTop:0}} value={email} placeholder="seeded staff email (e.g. founder@pawspace.in)" onChange={e=>setEmail(e.target.value)}/><button disabled={busy} style={btn} onClick={()=>void login(email)}>{busy?"…":"Sign in"}</button></div>
           {msg?<p style={{color:msg.includes("out")?C.green:"#ff9a9a",marginTop:12}}>{msg}</p>:null}
+          <CustomerTestAccess code={code} />
           <p style={{fontSize:12,color:C.dim,marginTop:18}}>Staging only · synthetic test data · sandbox payments. This sign-in does not exist on production.</p>
         </>:null}
       </div>

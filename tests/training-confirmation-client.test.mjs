@@ -91,7 +91,8 @@ test("default refresh contracts only read status/programme and never start anoth
     await loadVerifiedTrainingConfirmation(base,signal); // Explicit refresh after a successful capture.
     assert.equal(calls.length,4);
     for(const call of calls){
-      assert.equal(call.init.signal,signal);assert.equal(call.init.cache,"no-store");
+      // The shared API helper composes a deadline with caller cancellation; object identity is not its contract.
+      assert.ok(call.init.signal instanceof AbortSignal);assert.equal(call.init.signal.aborted,false);assert.equal(call.init.cache,"no-store");
       if(call.url==="/api/customer-checkout"){
         assert.deepEqual(JSON.parse(call.init.body),{action:"status",bookingId:"B1"});
       }else assert.equal(call.init.method??"GET","GET");
@@ -120,4 +121,23 @@ test('preparing a Meet & Greet creates its canonical execution session before ch
 test('Training catalogue and programme gateways show a useful error for an HTML outage',async()=>{
  const original=globalThis.fetch;globalThis.fetch=async()=>new Response('<html>upstream gateway unavailable</html>',{status:502,headers:{'content-type':'text/html'}});
  try{const catalogue=await import('../lib/training-commercial-client.ts'),programme=await import('../lib/training-programme-client.ts');for(const call of [()=>catalogue.loadTrainingPackages(),()=>programme.loadTrainingProgramme('B1')])await assert.rejects(call(),error=>error instanceof Error&&!/Unexpected token|<html>|JSON/.test(error.message)&&error.message.length>10);}finally{globalThis.fetch=original;}
+});
+
+test("default refresh forwards caller cancellation through the bounded API helper", { timeout: 2000 }, async () => {
+  const original = globalThis.fetch, controller = new AbortController();
+  let began, calls = 0;
+  const started = new Promise(resolve => { began = resolve; });
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      began();
+    });
+  };
+  try {
+    const pending = loadVerifiedTrainingConfirmation(base, controller.signal);
+    await started; controller.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(calls, 1, "cancellation must not start a programme read or a second payment");
+  } finally { globalThis.fetch = original; }
 });

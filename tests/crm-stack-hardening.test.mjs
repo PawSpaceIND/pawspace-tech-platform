@@ -322,7 +322,7 @@ test("legacy CRM page shows only real API data: demo arrays and fabricated field
   assert.doesNotMatch(crmPage, /"command"|"pipeline"|"inbox"|"automation"|"campaigns"|"reports"/, "demo-only views removed");
   // The URL became a template literal when search moved server-side: the page appends ?search= so a
   // lead outside the newest 100 can be found at all. Still one real API call, still no-store.
-  assert.match(crmPage, /fetch\(`\/api\/crm\$\{[\s\S]*?`,\s*\{\s*cache:\s*"no-store"\s*\}\)/, "contacts come from the real API");
+  assert.match(crmPage, /apiRequest\(`\/api\/crm\$\{[\s\S]*?`,\s*\{\s*cache:\s*"no-store"\s*\},\{timeoutMs:15000\}\)/, "contacts come from the real API with a bounded complete-response deadline");
   assert.match(crmPage, /search=\$\{encodeURIComponent\(query\)\}/, "the typed query is passed to the server, and encoded");
   assert.match(crmPage, /loadError/, "API failures surface to staff instead of being swallowed");
   assert.match(crmPage, /No CRM contacts yet/, "honest empty state");

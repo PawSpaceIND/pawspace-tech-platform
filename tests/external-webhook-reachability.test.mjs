@@ -146,6 +146,20 @@ test("no gateway-exempt route is left without any caller authentication", () => 
       assert.match(route, /if\(!uatAccessCodeValid/);
       continue;
     }
+    if (path === "/api/uat-customer-switch") {
+      // This is code-authenticated test access, NOT an unauthenticated public surface.
+      // tests/uat-customer-switch.test.mjs also executes the real gateway and refusal paths.
+      const route = read(`app/api/${name}/route.ts`);
+      const guard = read("lib/uat-customer-testing.ts");
+      assert.match(route, /if \(!uatCustomerTestingEnabled\(request,/);
+      assert.match(route, /if \(!body \|\| !uatAccessCodeValid\(env as never, body.code\)\)/);
+      assert.match(route, /request.headers.get\("origin"\) !== new URL\(request.url\).origin/);
+      assert.match(route, /UAT_CUSTOMER_PERSONAS.find\(item => item.key === body.persona\)/);
+      assert.match(guard, /PAWSPACE_UAT_PERSONAS/);
+      assert.match(guard, /FORBID_PRODUCTION/);
+      assert.match(guard, /PAWSPACE_PAYMENT_LIVE_APPROVED/);
+      continue;
+    }
     if (customerSessionSurfaces.has(path)) {
       const route = read(`app/api/${name}/route.ts`);
       assert.match(route, /await\s+resolveActor\(request\)/);
