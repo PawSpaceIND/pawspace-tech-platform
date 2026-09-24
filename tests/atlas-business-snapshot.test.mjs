@@ -346,3 +346,17 @@ test("Atlas precedent readiness blocks stale, challenged, inconsistent or low-qu
 test("Team AI exposes precedent readiness as Founder review only",async()=>{
  const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/precedentReadiness=buildAtlasPrecedentReadiness\(proposalFreshness,challengeReview,decisionQuality,recommendationConsistency\)/);assert.match(page,/precedent readiness .* Founder reuse review/i);assert.match(page,/eligible for human review only/i);
 });
+
+test("Atlas decision lineage exposes provenance and never invents historical policy version",async()=>{
+ const lineage=await import('../lib/intelligence/atlas-decision-lineage.ts');const{sqlite,db,now}=world();await atlas.ensureAtlasProposalJournal(db);const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now}),hash=await atlas.atlasSnapshotHash(snapshot);
+ sqlite.prepare("INSERT INTO atlas_proposals (id,proposal_type,summary,snapshot_hash,basis_id,source_ids_json,risk_class,status,action_json,created_by,created_at,reviewed_by,reviewed_at) VALUES ('LN1','report.generate','x',?,'basis-1',?,'low','approved','{}','atlas',?,'founder',?)").run(hash,JSON.stringify(['s1','s2']),now-1000,now);
+ const [freshness,challenges,quality,consistency]=await Promise.all([freshnessBuilder.buildAtlasProposalFreshness(db,snapshot,10),challengeBuilder.buildAtlasChallengeReview(db,snapshot,10),qualityBuilder.buildAtlasDecisionQuality(db,10),consistencyBuilder.buildAtlasRecommendationConsistency(db,10)]),precedentBuilder=await import('../lib/intelligence/atlas-precedent-readiness.ts'),precedent=precedentBuilder.buildAtlasPrecedentReadiness(freshness,challenges,quality,consistency),proposals=await atlas.listAtlasProposals(db,10),r=lineage.buildAtlasDecisionLineage(proposals,freshness,challenges,quality,precedent).find(x=>x.proposalId==='LN1');assert.equal(r.snapshotHash,hash);assert.equal(r.basisId,'basis-1');assert.deepEqual(r.sourceIds,['s1','s2']);assert.equal(r.humanDecisionRecorded,true);assert.equal(r.proposalPolicyVersionRecorded,false);assert.ok(r.missingLineage.includes('proposal_policy_version_not_recorded_at_creation'));assert.equal(r.authorityMutationAllowed,false);assert.match(r.note,/does not infer historical policy provenance/i);
+});
+
+test("Atlas decision lineage flags missing human review records for resolved proposals",async()=>{
+ const lineage=await import('../lib/intelligence/atlas-decision-lineage.ts');const row={id:'LN2',proposal_type:'x',snapshot_hash:'h',basis_id:'b',source_ids_json:'["s"]',risk_class:'low',status:'approved',created_by:'atlas',created_at:1,reviewed_by:null,reviewed_at:null,executed_at:null};const r=lineage.buildAtlasDecisionLineage([row],[],[],[],[])[0];assert.equal(r.lineageComplete,false);assert.ok(r.missingLineage.includes('human_review_record_missing'));assert.equal(r.advisoryOnly,true);
+});
+
+test("Team AI exposes decision lineage as read-only audit trace",async()=>{
+ const fs=await import('node:fs');const route=fs.readFileSync(new URL('../app/api/ai-intelligence/route.ts',import.meta.url),'utf8'),page=fs.readFileSync(new URL('../app/team/ai/page.tsx',import.meta.url),'utf8');assert.match(route,/decisionLineage=buildAtlasDecisionLineage/);assert.match(page,/decision lineage .* audit trace/i);assert.match(page,/Historical policy version is not inferred/i);
+});
