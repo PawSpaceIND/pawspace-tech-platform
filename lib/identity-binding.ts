@@ -1,5 +1,5 @@
 export type IdentitySubjectType="customer"|"provider";
-export type IdentitySource="workspace"|"customer_otp"|"partner_otp"|"migration";
+export type IdentitySource="workspace"|"customer_otp"|"partner_otp"|"migration"|"uat_persona";
 export type PrincipalType="email"|"identity_subject";
 type Row=Record<string,unknown>;
 

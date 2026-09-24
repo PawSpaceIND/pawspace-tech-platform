@@ -46,6 +46,14 @@ on:
         description: 'Exact 40-character commit sha to deploy and certify'
         required: true
         default: ''
+      test_customer_personas:
+        description: 'Enable fixed synthetic customer sign-in for this isolated test cycle; ordinary OTP and roles stay unchanged'
+        required: true
+        default: 'off'
+        type: choice
+        options:
+          - 'off'
+          - 'on'
       sms_smoke:
         description: 'Use disabled for normal sandbox certification; choose approved only for the second-stage Fast2SMS smoke + live customer OTP activation'
         required: true
@@ -121,6 +129,7 @@ jobs:
       # any is missing, too short, or equal to one of the values that was committed.
       - name: Configure staging (name + D1 + sandbox)
         env:
+          PAWSPACE_UAT_PERSONAS: ${{ github.event.inputs.test_customer_personas }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
