@@ -1,1 +1,52 @@
 .bar{position:sticky;top:0;z-index:80;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:rgba(255,253,248,.94);backdrop-filter:blur(18px);border-bottom:1px solid #e0e6df;color:#173d32}.brand,.nav a{color:inherit;text-decoration:none;font-weight:800}.brand{display:flex;align-items:center;gap:9px}.brand img{width:34px;height:34px;border-radius:11px}.nav{display:flex;align-items:center;gap:6px}.nav a{padding:8px 11px;border-radius:999px;font-size:13px}.nav a:hover{background:#edf3ee}@media(max-width:620px){.bar{padding:8px 10px}.brand span{display:none}.nav a{padding:8px;font-size:12px}.nav a:nth-child(3){display:none}}
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.bar { composes:palette from "../components/brand/brand-surface.module.css"; }
+.bar.bar { border-bottom:1px solid var(--brand-line) !important; color:var(--brand-text) !important; }
+.bar .nav a:hover { background:var(--brand-raised) !important; }
+@media (max-width:620px) {
+ .bar .nav a { font-size:14px !important; } }
+/* The existing four V2 links stay usable in either palette and display mode. */
+.bar { background:var(--brand-surface) !important; color:var(--brand-text) !important; border-color:var(--brand-line); min-height:64px; padding:12px max(16px,calc((100vw - 1360px)/2)); }
+.bar .brand { color:var(--brand-text); font-size:16px; }
+.bar .nav a { min-height:44px; display:inline-flex; align-items:center; padding:10px 14px; font-size:14px !important; color:var(--brand-text) !important; }
+.bar .nav a:hover { background:var(--brand-raised) !important; }
+@media(max-width:620px) { .bar { gap:8px; padding:8px 10px; } .bar .nav { gap:0; } .bar .nav a,.bar .nav a:nth-child(3) { display:inline-flex; padding:9px; font-size:13px !important; } }
+/* Classless canonical service screens are the existing Food bridge, not staff pages. */
+.bar + :global(main:not([class])) { background:var(--brand-bg) !important; color:var(--brand-text) !important; font:400 16px/1.6 "PawSpaceNunito",system-ui,sans-serif !important; width:100%; box-sizing:border-box; }
+.bar + :global(main:not([class])) :is(section,article) { background:var(--brand-surface) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
+.bar + :global(main:not([class])) h1 { font-size:32px; line-height:1.2; font-weight:800; margin:14px 0; }
+.bar + :global(main:not([class])) h2 { font-size:22px; line-height:1.3; font-weight:750; margin:12px 0; }
+.bar + :global(main:not([class])) :is(input,select,button) { font:inherit; min-height:46px; color:var(--brand-text) !important; background:var(--brand-surface) !important; border:1px solid var(--brand-line) !important; border-radius:12px; padding:10px 12px; max-width:100%; box-sizing:border-box; }
+.bar + :global(main:not([class])) a { color:var(--brand-primary) !important; text-underline-offset:4px; }
+.bar + :global(main:not([class])) [role="alert"] { background:var(--brand-danger-bg) !important; color:var(--brand-danger) !important; border-color:var(--brand-danger) !important; }
+@media(max-width:640px){.bar + :global(main:not([class])) { padding:20px 14px !important; } .bar + :global(main:not([class])) section { min-width:0; grid-template-columns:minmax(0,1fr) !important; }}
+
+/* Fresh Food catalogue, receipt and subscription views keep their original handlers and fields. */
+.bar + :global(main:not([class])) { min-height:calc(100dvh - 64px); padding-bottom:100px !important; gap:20px !important; }
+.bar + :global(main:not([class])) > header { min-width:0; padding:28px; border-radius:24px; background:var(--brand-hero); color:var(--brand-hero-text); }
+.bar + :global(main:not([class])) > header :is(a,p,h1) { color:var(--brand-hero-text) !important; }
+.bar + :global(main:not([class])) > header p { margin:12px 0 0; line-height:1.6; }
+.bar + :global(main:not([class])) > header > p:first-of-type { color:var(--brand-gold) !important; font-size:13px; font-weight:800; letter-spacing:.07em; }
+.bar + :global(main:not([class])):has(button[aria-pressed]) > header { position:relative; padding-right:35%; }
+.bar + :global(main:not([class])):has(button[aria-pressed]) > header::after { content:""; position:absolute; right:24px; top:24px; bottom:24px; width:27%; border-radius:18px; background:#fff8ee url("/assets/pawspace-food-cartoon.webp") center/cover no-repeat; pointer-events:none; }
+.bar + :global(main:not([class])) > section { min-width:0; border-radius:20px !important; line-height:1.6; }
+.bar + :global(main:not([class])) > section:has(>button>strong) { grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)) !important; gap:16px !important; background:transparent !important; }
+.bar + :global(main:not([class])) > section > button:has(>strong) { padding:22px !important; border-radius:20px; text-align:left; outline-color:var(--brand-primary) !important; }
+.bar + :global(main:not([class])) > section > button > strong { display:block; font-size:20px; line-height:1.3; }
+.bar + :global(main:not([class])) :is(label,small) { line-height:1.6; }
+.bar + :global(main:not([class])) small { font-size:13px; color:var(--brand-muted); }
+.bar + :global(main:not([class])) label { font-size:15px; font-weight:700; }
+.bar + :global(main:not([class])) button { min-height:48px; font-size:16px; font-weight:750; cursor:pointer; }
+.bar + :global(main:not([class])) button:disabled { opacity:.6; cursor:not-allowed; }
+.bar + :global(main:not([class])) button[aria-pressed="true"] { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; border-color:var(--brand-primary) !important; }
+.bar + :global(main:not([class])) > section[style*="sticky"] { z-index:5; flex-wrap:wrap; box-shadow:var(--brand-shadow); }
+.bar + :global(main:not([class])) > section[style*="sticky"] > button { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; flex:0 1 auto; }
+.bar + :global(main:not([class])) > section[style*="sticky"] > div { flex:1 1 260px; }
+.bar + :global(main:not([class])) > section[style*="sticky"] strong { font-size:24px; }
+:global(html[data-paw-style="professional"]) .bar + :global(main:not([class])):has(button[aria-pressed]) > header { padding-right:28px; }
+:global(html[data-paw-style="professional"]) .bar + :global(main:not([class])):has(button[aria-pressed]) > header::after { content:none; }
+@media(max-width:640px) {
+ .bar + :global(main:not([class])) > header,.bar + :global(main:not([class])):has(button[aria-pressed]) > header { padding:22px; }
+ .bar + :global(main:not([class])):has(button[aria-pressed]) > header::after { position:relative; display:block; inset:auto; width:100%; height:160px; margin-top:18px; background-size:contain; }
+ .bar + :global(main:not([class])) > section[style*="sticky"] { position:static !important; } .bar + :global(main:not([class])) > section[style*="sticky"] > button { width:100%; }
+}

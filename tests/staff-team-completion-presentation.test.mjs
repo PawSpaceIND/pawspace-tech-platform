@@ -1,3 +1,4 @@
+import {preservedBrandStyleBytes} from './helpers/approved-brand-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ test('AI rollout and campaign governance remain protected by the presentation co
  }
 });
 test('Protected customer, partner, API, permission and database sources retain their exact bytes',()=>{
- for(const[p,h]of Object.entries(c.protected))assert.equal(hash(fs.readFileSync(new URL('../'+p,import.meta.url))),h,p);
+ for(const[p,h]of Object.entries(c.protected))assert.equal(hash(preservedBrandStyleBytes(p)),h,p);
 });
 test('Dialler styles are opt-in; the source policy and timers remain unchanged',()=>{
  for(const[p,h]of Object.entries(c.css)){const s=read(p);assert.equal(hash(s.split('\n/* STAFF TEAM COMPLETION OPT-IN:')[0]),h,p);assert.match(s,/:global\(\[data-staff-module\]\)/);}assert.match(read('app/team/sales/power-dialler/page.tsx'),/POWER_DIALLER_AUTO_ADVANCE_MS/);

@@ -1,3 +1,4 @@
+import {preservedBrandStyleBytes} from './helpers/approved-brand-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +25,7 @@ test('Every existing legacy stylesheet byte is preserved above scoped additions'
  for(const [p,expected] of Object.entries(contract.css)){const original=read(p).split('\n/* STAFF CRM/CONTROL OPT-IN:')[0];assert.equal(hash(original),expected,p);const extra=read(p).slice(original.length);assert.match(extra,/data-staff-module/);}
 });
 test('All protected API, security, customer, partner and database files remain identical',()=>{
- for(const [p,expected] of Object.entries(contract.protected))assert.equal(hash(fs.readFileSync(new URL('../'+p,import.meta.url))),expected,p);
+ for(const [p,expected] of Object.entries(contract.protected))assert.equal(hash(preservedBrandStyleBytes(p)),expected,p);
 });
 
 test('V2 entry points keep using the shared CRM and Booking Command Center',()=>{

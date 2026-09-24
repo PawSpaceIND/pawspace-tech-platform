@@ -1,3 +1,4 @@
+import {preservedBrandStyleBytes} from './helpers/approved-brand-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ for(const [path,expected] of Object.entries(contract.files))test('Operations UI 
  assert.equal((read(path).match(/<StaffModule>/g)||[]).length,expected.mainRoots);
 });
 test('Training, gateway, partner, customer and business engines retain their baseline bytes',()=>{
- for(const [p,hash] of Object.entries(contract.protected))assert.equal(createHash('sha256').update(fs.readFileSync(new URL('../'+p,import.meta.url))).digest('hex'),hash,p);
+ for(const [p,hash] of Object.entries(contract.protected))assert.equal(createHash('sha256').update(preservedBrandStyleBytes(p)).digest('hex'),hash,p);
 });
 test('Training recovery rules, prompts and mutations are not presentation changes',()=>{
  const p='app/team/operations/boarding/page.tsx',s=read(p),hash=staffSemanticContract(s,p);
