@@ -51,3 +51,8 @@ export async function retryVoiceCall(db: Db, env: Env, input: RetryRequest) {
   });
   return base.retryVoiceCall(db, env, input);
 }
+
+export async function requestControlledSpecialistUatCall(db: Db, env: Env, input: Omit<VoiceRequest, "actorId" | "actorPermissions">) {
+  const canonical = await canonicalRequest(db, env, input as VoiceRequest);
+  return base.requestControlledSpecialistUatCall(db, env, canonical);
+}
