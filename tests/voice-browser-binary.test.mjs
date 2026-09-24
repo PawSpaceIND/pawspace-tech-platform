@@ -15,7 +15,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function fixture(t){
  const sql=new DatabaseSync(':memory:'),db=makeD1(sql),originalResponse=globalThis.Response,originalPair=globalThis.WebSocketPair;
  let pair;const upstream=new Socket(),calls=[];
- globalThis.WebSocketPair=class{constructor(){this[0]=new Socket();this[1]=new Socket();pair=this;}};
+ globalThis.WebSocketPair=class{constructor(){this[0]=new Socket();this[1]=new Socket();pair={0:this[0],1:this[1]};}};
  globalThis.Response=class extends originalResponse{constructor(body,init={}){super(body,init.status===101?{status:200}:init);if(init.status===101){Object.defineProperty(this,'status',{value:101});this.webSocket=init.webSocket;}}};
  t.after(()=>{pair?.[1].close();upstream.close();sql.close();globalThis.Response=originalResponse;globalThis.WebSocketPair=originalPair;});
  const env={DB:db,PAWSPACE_VOICE_ENV:'uat',PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED:'true',PAWSPACE_UAT_SIGNING_KEY:'synthetic-voice-ticket-key-for-unit-test-only',AI:{async run(model,input){calls.push({model,input});if(model==='@cf/deepgram/flux')return{webSocket:upstream};if(model==='@cf/deepgram/aura-1')return new Response(new Uint8Array([1,0,2,0]));return{response:'This is a synthetic service explanation; no booking was made.'};}}};
