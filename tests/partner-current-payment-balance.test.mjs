@@ -35,3 +35,17 @@ test('captured deposit leaves its outstanding balance visible and a later captur
  assert.equal((await w.read()).payment.amountDueNow,500);w.sqlite.exec("UPDATE payment_reconciliation_records SET captured_amount=1000");assert.equal((await w.read()).payment.amountDueNow,0);
 });
 test('a provider cannot read another provider balances',async t=>{const w=await world(t);assert.equal((await GET(w.req('OTHER-PROVIDER'))).status,403);});
+
+test('payment mode and method are from the same snapshot as current due',async t=>{
+ const w=await world(t);w.sqlite.exec("UPDATE booking_payments SET status='captured'");
+ const prepare=w.db.prepare.bind(w.db);let changed=false;
+ w.db.prepare=sql=>{
+  if(!changed&&sql.includes("name IN (")&&sql.includes('sqlite_master')){
+   changed=true;
+   w.sqlite.exec("UPDATE booking_payments SET status='created',mode='pay_after_service',method='cash',amount_due_now=0");
+  }
+  return prepare(sql);
+ };
+ const job=await w.read();assert.equal(changed,true);
+ assert.deepEqual(job.payment,{method:'cash',mode:'pay_after_service',status:'created',amount:1000,amountDueNow:0});
+});

@@ -55,7 +55,7 @@ export async function GET(request:Request){
       JOIN booking_payments p ON p.booking_id=b.id
       WHERE w.provider_id=? AND w.service_code='grooming'
       ORDER BY b.scheduled_start ASC LIMIT 100`).bind(providerId).all<Row>();
-    const balances=await bookingPaymentBalances(readDb,rows.results.map(row=>String(row.booking_id)));
+    const balances=await bookingPaymentBalances(readDb,rows.results.map(row=>String(row.booking_id)),{includePaymentMetadata:true});
     const jobs=[];
     for(const row of rows.results){
       const balance=balances.get(String(row.booking_id));
@@ -75,7 +75,7 @@ export async function GET(request:Request){
         zoneId:String(row.zone_id),cityId:String(row.city_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),totalAmount:Number(row.total_amount||0),currency:String(row.currency||"INR"),
         customer:{id:String(row.customer_id),name:partnerFirstName(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
         pets:pets.results.map((pet:Row)=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status),safetyNotes:[parseJson<Record<string,unknown>>(pet.profile_json,{}).aggression,pricing.healthSafetyNotes,pricing.behaviourNotes].filter((value):value is string=>typeof value==="string"&&value.trim().length>0)})),
-        payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:balance.paymentStatus,amount:balance.bookingTotal,amountDueNow:balance.dueNow},
+        payment:{method:balance.paymentMethod,mode:balance.paymentMode,status:balance.paymentStatus,amount:balance.bookingTotal,amountDueNow:balance.dueNow},
         subscription:pricing.subscription?String(pricing.subscription):null,
         addOns,
         safetyRequirements,
