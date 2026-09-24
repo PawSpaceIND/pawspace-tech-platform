@@ -9,8 +9,9 @@ export const ATLAS_ANSWER_SCOPE = {
 } as const;
 
 export function atlasDraftCompletionFailure(stopReason: string | null): string | null {
-  return ['max_tokens', 'length', 'incomplete', 'content_filter', 'refusal'].includes(String(stopReason).toLowerCase())
-    ? 'narrative_incomplete' : null;
+  // Unknown termination is not proof of a complete answer. No automatic re-generation.
+  return ['end_turn', 'completed', 'stop'].includes(String(stopReason).toLowerCase())
+    ? null : 'narrative_incomplete';
 }
 const clean = (value: string) => value.replace(/[*_`|]/g, ' ').replace(/[\t ]+/g, ' ');
 const magnitude = (value: string, unit: string) => Number(value.replaceAll(',', '')) *
@@ -51,9 +52,11 @@ export function atlasOperationalFacts(snapshot: AtlasBusinessSnapshot): string {
   const metric = (name: string, item: { value: unknown; source: string; reason?: string }) =>
     `${name}: ${item.value === null ? `unknown (${item.reason || 'unavailable'})` : JSON.stringify(item.value)}. Source: ${item.source}.`;
   return [`Snapshot as of ${new Date(snapshot.asOf).toISOString()}.`,
+    `Mission: ${snapshot.mission.value ? 'canonical figures above' : `unknown (${snapshot.mission.reason || 'unavailable'})`}. Source: ${snapshot.mission.source}.`,
     metric('Open cases', snapshot.ops.open_cases), metric('SLA breaches', snapshot.ops.sla_breaches),
     metric('Sitting pending acceptance', snapshot.ops.sitting_pending_accepts), metric('Boarding pending acceptance', snapshot.ops.boarding_pending_accepts),
     metric('Completed-job invoice gap', snapshot.finance.invoice_completed_gap), metric('Trainer earnings readiness', snapshot.finance.trainer_earnings),
-    'Recommendations and internal drafts are not external actions. Payments, refunds, payouts, provider assignment and outreach remain governed.',
+    `Internal capability scope, only within the configured envelope: ${ATLAS_ANSWER_SCOPE.internalArtifacts.join(', ')}.`,
+    'Recommendations and internal drafts are not external actions. Payments, refunds, payouts, provider assignment, outreach and campaigns remain governed. This answer authorizes none of them. Production readiness is false.',
   ].join('\n');
 }
