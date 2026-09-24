@@ -73,7 +73,12 @@ test("address-picker component derives pincode from Google Places and resolves z
   assert.match(page,/"use client"/);
   assert.match(page,/\/api\/service-zone/);
   assert.match(page,/function pinFrom\(value:string\)/);
-  assert.match(page,/value\.match\(\/\\b\[1-9\]\\d\{5\}\\b\//);
+  assert.match(page,/serviceAddressPincodes\(value\)\.at\(-1\)/);
+  const{serviceAddressPincodes}=await import("../lib/service-address-pincode.ts");
+  assert.deepEqual(serviceAddressPincodes("BTM Layout, Bengaluru 560076"),["560076"]);
+  assert.deepEqual(serviceAddressPincodes("Flat 123456, BTM Layout, Bengaluru 560076"),["560076"]);
+  assert.deepEqual(serviceAddressPincodes("PIN 560076, reference 123456"),["560076"]);
+  assert.deepEqual(serviceAddressPincodes("An address without a postal code"),[]);
   assert.match(page,/onZoneResolved/);
   assert.match(page,/searchAddresses\(/);
   assert.match(page,/resolveServiceCoverage\(pincode\)/);
