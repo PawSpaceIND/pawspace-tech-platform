@@ -78,7 +78,7 @@ jobs:
           const before=Date.now();
           const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'uat_specialist_sales_test',useCase,customerId,cityId:'blr'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
-          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed:Boolean(body?.data?.dialed),phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
+          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed:Boolean(body?.data?.dialed),phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
           if(call.status!==201||!body?.data?.callId||body?.data?.state!=='dialing')throw new Error('specialist call was not accepted by PawSpace');
           console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
           let detail=null,conversationId='';
