@@ -100,7 +100,7 @@ test("staff, voice administration and money endpoints do not inherit provider ac
 });
 
 
-test("authenticated initialization forwards only canonical IDs into custom-LLM extra_body", async t => {
+test("authenticated initialization forwards only canonical IDs into the documented custom_llm_extra_body wire field", async t => {
   const w = world(t);
   seedCustomer(w.sqlite, "CUS-EL-TEST", "Synthetic Voice User", "9876500091");
   await inboundMessage(w.sqlite, w.db, { threadId: "THREAD-EL-TEST", customerId: "CUS-EL-TEST",
@@ -115,9 +115,10 @@ test("authenticated initialization forwards only canonical IDs into custom-LLM e
   }), { authorization: `Bearer ${credentials.ELEVENLABS_INIT_WEBHOOK_SECRET}` }));
   assert.equal(r.reachedRoute, true); assert.equal(r.response.status, 200, await r.response.clone().text());
   const result = await r.response.json();
-  assert.deepEqual(result.extra_body, { pawspace_customer_id: "CUS-EL-TEST", pawspace_voice_session_id: "INVOICE-EL-TEST", pawspace_thread_id: "THREAD-EL-TEST" });
-  assert.equal(result.dynamic_variables.pawspace_customer_id, result.extra_body.pawspace_customer_id);
-  assert.doesNotMatch(JSON.stringify(result.extra_body), /9876500091|Synthetic Voice User|ATTACKER/);
+  assert.equal("extra_body" in result,false,"SDK convenience names must not replace the wire field");
+  assert.deepEqual(result.custom_llm_extra_body, { pawspace_customer_id: "CUS-EL-TEST", pawspace_voice_session_id: "INVOICE-EL-TEST", pawspace_thread_id: "THREAD-EL-TEST" });
+  assert.equal(result.dynamic_variables.pawspace_customer_id, result.custom_llm_extra_body.pawspace_customer_id);
+  assert.doesNotMatch(JSON.stringify(result.custom_llm_extra_body), /9876500091|Synthetic Voice User|ATTACKER/);
 });
 
 test("authenticated Responses route executes a real grounded turn and returns audible text SSE", async t => {

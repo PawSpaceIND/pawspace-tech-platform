@@ -61,9 +61,9 @@ export async function buildElevenLabsInitiation(db:D1Database,input:{providerCal
  const recent=(bookings[0]||{}) as Row,openCase=recentOpenCase(customer);
  return{
   type:"conversation_initiation_client_data" as const,
-  // ElevenLabs forwards extra_body to the custom LLM as elevenlabs_extra_body.
+  // ElevenLabs wire schema accepts custom_llm_extra_body and forwards it as elevenlabs_extra_body.
   // Dynamic variables alone are not a transport for authenticated PawSpace identity.
-  extra_body:{
+  custom_llm_extra_body:{
    pawspace_customer_id:session.customerId,
    pawspace_voice_session_id:session.sessionId,
    pawspace_thread_id:session.threadId,
@@ -84,4 +84,9 @@ export async function buildElevenLabsInitiation(db:D1Database,input:{providerCal
   environment:text(env.PAWSPACE_DEPLOYMENT_ENV)||"unknown",
   user_id:session.customerId,
  };
+}
+
+/** Agent IDs are configured server-side. An unknown incoming agent never gains customer access. */
+export function configuredElevenLabsAgent(env:Env,agentId:string){
+ return Boolean(agentId)&&[env.ELEVENLABS_AGENT_ID,env.ELEVENLABS_GROOMING_AGENT_ID,env.ELEVENLABS_TRAINING_AGENT_ID].some(value=>text(value)===agentId);
 }
