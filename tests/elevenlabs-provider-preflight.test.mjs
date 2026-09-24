@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { providerPreflight } from "../scripts/elevenlabs-provider-preflight.mjs";
+import { providerPreflight, providerPreflightPassed } from "../scripts/elevenlabs-provider-preflight.mjs";
 const env = { PAWSPACE_OPENAI_API_KEY: "openai-private-canary", ELEVENLABS_API_KEY: "eleven-private-canary", ELEVENLABS_AGENT_ID: "agent_test" };
 test("provider preflight makes one synthetic request and one read, never a call or conversation", async () => {
   const calls = [];
@@ -31,3 +31,14 @@ test("an agent-name mismatch and unconfigured LLM are never marked connected end
   assert.equal(r.openai.verified, false); assert.equal(r.elevenlabs.verified, false);
   assert.equal(r.elevenlabs.customLlmEndpointMatches, false); assert.equal(r.productionReady, false);
 });
+
+for (const missing of ["customLlmEndpointMatches", "responsesApiSelected", "serverSideLlmAuthConfigured"]) {
+  test(`successful provider reads cannot pass with invalid custom LLM configuration: ${missing}`, async () => {
+    const good = { openai: { verified: true }, elevenlabs: { verified: true, customLlmEndpointMatches: true, responsesApiSelected: true, serverSideLlmAuthConfigured: true } };
+    assert.equal(providerPreflightPassed(good), true);
+    good.elevenlabs[missing] = false;
+    assert.equal(providerPreflightPassed(good), false);
+    delete good.elevenlabs[missing];
+    assert.equal(providerPreflightPassed(good), false);
+  });
+}

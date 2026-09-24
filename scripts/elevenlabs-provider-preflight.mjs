@@ -51,10 +51,17 @@ export async function providerPreflight(env, fetcher = fetch) {
       }
     } catch { output.elevenlabs.reason = "bounded_agent_read_failed"; }
   }
+  output.configurationVerified = providerPreflightPassed(output);
   return output;
+}
+export function providerPreflightPassed(result) {
+  return result.openai.verified === true && result.elevenlabs.verified === true
+    && result.elevenlabs.customLlmEndpointMatches === true
+    && result.elevenlabs.responsesApiSelected === true
+    && result.elevenlabs.serverSideLlmAuthConfigured === true;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await providerPreflight(process.env);
   console.log(JSON.stringify(result, null, 2));
-  process.exitCode = result.openai.verified && result.elevenlabs.verified ? 0 : 1;
+  process.exitCode = providerPreflightPassed(result) ? 0 : 1;
 }
