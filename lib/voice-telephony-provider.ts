@@ -173,8 +173,6 @@ export function exotelTelephony(env: Env): TelephonyProvider {
           })()
         : new URLSearchParams({ From: intent.toNumber, CallerId: callerId, Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`, CallType: "trans", StatusCallback: intent.statusCallbackUrl, CustomField: intent.callRef, TimeOut: timeout, Record: intent.recordingAllowed ? "true" : "false" });
       const endpoint = `https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`;
-      const agentId = elevenLabsAgentIdForUseCase(env, intent.useCase);
-      if (!agentId) throw new TelephonyProviderUnavailable("ElevenLabs agent is not configured for this voice use case");
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
       try {
         let response: Response, responseText: string;
