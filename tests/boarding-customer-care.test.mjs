@@ -19,3 +19,22 @@ test('owned Boarding care persists and replays once without changing the booked 
  cookie=(await customerSessionCookie(db,{principalKey:'customer:foreign-board',customerId:'FOREIGN'})).cookie;await assert.rejects(loadOwnedBoardingStay(seed.bookingId),/ownership/i);await assert.rejects(saveCustomerBoardingCare(seed.bookingId,plan,'FOREIGN'),/ownership/i);
 });
 test('timed-out and malformed Boarding reads fail visibly',async t=>{const oldFetch=globalThis.fetch,oldTimer=globalThis.setTimeout;t.after(()=>{globalThis.fetch=oldFetch;globalThis.setTimeout=oldTimer;});globalThis.fetch=async()=>new Response('<html>Unavailable</html>',{status:502});await assert.rejects(loadOwnedBoardingStay('B'),/could not be read/);globalThis.setTimeout=fn=>oldTimer(fn,1);globalThis.fetch=async(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))));await assert.rejects(loadOwnedBoardingStay('B'),/timed out/);});
+
+test('care snapshot, ready status, event and retry receipt roll back together on a late write failure',async t=>{
+ const sqlite=freshSqlite(),db=makeD1(sqlite);t.after(()=>sqlite.close());
+ globalThis.__BOARD_CARE_DB__=db;globalThis.__BOARD_CARE_ENV__={PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false'};
+ const seed=await seedBoardingStay(db,sqlite),{mutateBoardingStay}=await import('../lib/boarding-stay-lifecycle.ts');
+ const input={stayId:seed.stayId,action:'submit_care_plan',actorId:'synthetic-test-customer',idempotencyKey:'atomic-care-retry',carePlan:{vet:'Synthetic vet',emergencyContact:'Synthetic caretaker',feeding:'Owner feeding instructions'}};
+ for(const statement of ['INSERT INTO boarding_stay_events','INSERT INTO boarding_stay_action_keys']){
+   db.onSql(statement,()=>{throw new Error('injected care-write outage');});
+   await assert.rejects(()=>mutateBoardingStay(db,input),/injected care-write outage/);
+   assert.equal(sqlite.prepare('SELECT care_plan_status FROM boarding_stays WHERE id=?').get(seed.stayId).care_plan_status,'required');
+   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM boarding_care_plan_snapshots').get().n,0);
+   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM boarding_stay_events').get().n,0);
+   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM boarding_stay_action_keys').get().n,0);
+ }
+ await mutateBoardingStay(db,input);assert.equal((await mutateBoardingStay(db,input)).duplicatePrevented,true);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM boarding_stay_events').get().n,1);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,1);
+ assert.equal(sqlite.prepare('SELECT care_plan_status FROM boarding_stays').get().care_plan_status,'ready');
+});

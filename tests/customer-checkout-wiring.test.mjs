@@ -342,3 +342,37 @@ test('captured checkout confirmation is hydrated from canonical booking, pet, pr
   assert.equal(confirmation.gatewayPaymentId, 'pay_Canonical456');
   assert.equal(confirmation.paymentStatus, 'captured');
 });
+
+test('a captured split deposit can confirm its booking without pretending the later balance was paid',async t=>{
+ const {db,sqlite}=world(t),session=await cookie(db),{POST}=await import('../app/api/customer-checkout/route.ts');
+ sqlite.exec("CREATE TABLE stay_payment_schedules(booking_id TEXT,paid_now_amount REAL,balance_amount REAL,status TEXT);INSERT INTO stay_payment_schedules VALUES ('B1',249.75,249.75,'pending_balance');UPDATE booking_payments SET status='captured',mode='split_50_50',amount_due_now=249.75 WHERE id='P1';");
+ event(sqlite,{amount_subunits:24975});
+ const response=await POST(request({action:'status',bookingId:'B1',orderId:'order_fixture'},session));
+ assert.equal(response.status,200);const body=await response.json();
+ assert.equal(body.data.status,'captured','exact deposit capture is complete even though the later balance is not');
+ assert.equal(body.data.confirmation.ready,true);
+ const {paymentStageAmount}=await import('../lib/payment-stage-amount.ts');assert.equal((await paymentStageAmount(db,'B1')).dueNow,249.75,'balance remains collectable');
+ const unverified=await POST(request({action:'status',bookingId:'B1',orderId:'order_balance_unpaid'},session));
+ assert.equal((await unverified.json()).data.status,'awaiting_confirmation','the first capture cannot prove a different order');
+});
+
+for (const failure of ['AbortError','CheckoutTemporaryError']) test(`confirmation ${failure} recovers by reading the exact order without another charge`,async()=>{
+ const states=[],calls=[];let opens=0;
+ const controller=new CustomerCheckoutController('B1',s=>states.push(s),{
+  fetch:async(_url,options)=>{const body=JSON.parse(options.body);calls.push(body);
+   if(body.action==='start')return Response.json({data:{connected:true,environment:'sandbox',bookingId:'B1',...opts,locks}});
+   if(body.action==='confirm'){if(failure==='AbortError')throw new DOMException('request deadline','AbortError');return Response.json({error:'temporary checkout outage'},{status:503});}
+   assert.equal(body.action,'status');assert.equal(body.orderId,receipt.orderId);
+   return Response.json({data:{bookingId:'B1',orderId:receipt.orderId,environment:'sandbox',status:'captured'}});
+  },open:async()=>{opens++;return{success:true,environment:'sandbox',...receipt};}
+ });
+ await controller.start();await controller.start();
+ assert.deepEqual(calls.map(x=>x.action),['start','confirm','status']);assert.equal(opens,1);assert.equal(states.at(-1).phase,'captured');
+});
+test('a rejected receipt is not converted into successful capture by automatic transport recovery',async()=>{
+ const calls=[],states=[];const controller=new CustomerCheckoutController('B1',x=>states.push(x),{
+  fetch:async(_url,options)=>{const body=JSON.parse(options.body);calls.push(body.action);return body.action==='start'?Response.json({data:{connected:true,environment:'sandbox',bookingId:'B1',...opts,locks}}):Response.json({error:'Receipt rejected'},{status:400});},
+  open:async()=>({success:true,environment:'sandbox',...receipt})
+ });
+ await controller.start();assert.deepEqual(calls,['start','confirm']);assert.equal(states.at(-1).phase,'error');
+});

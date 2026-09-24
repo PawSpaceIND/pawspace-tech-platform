@@ -5,6 +5,7 @@ export function customerActivityBookings<T extends ActivityBooking>(bookings:T[]
  return bookings.filter(booking=>terminal.has(booking.status)===(segment==='completed')).sort((a,b)=>segment==='completed'?b.scheduledStart.localeCompare(a.scheduledStart):a.scheduledStart.localeCompare(b.scheduledStart));
 }
 export function customerBookingManageHref(booking:ActivityBooking):string|null{
+ if(booking.serviceCode==='dog_training'&&booking.id)return `/mobile-app/booking-confirmation?bookingId=${encodeURIComponent(booking.id)}&payment=resume`;
  const route:Record<string,string>={grooming:'/grooming/manage',boarding:'/boarding/manage',pet_sitting:'/sitting/manage',dog_walking:'/walking/manage',pet_taxi:'/taxi/manage'};
  return route[booking.serviceCode]&&booking.id?`${route[booking.serviceCode]}?bookingId=${encodeURIComponent(booking.id)}`:null;
 }

@@ -45,18 +45,24 @@ export async function paymentStageAmount(db:Db,bookingId:string):Promise<Payment
  const payment=await db.prepare("SELECT id,amount,amount_due_now,currency,status FROM booking_payments WHERE booking_id=?").bind(bookingId).first<Row>();
  if(!payment)return null;
 
+ const credits=await creditBreakdownAppliedToBooking(db,bookingId);
+ const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status,'stay' schedule_kind FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status,'taxi' schedule_kind FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const schedule=staySchedule??taxiSchedule;
+ const recon=schedule&&CAPTURED.includes(String(payment.status))?await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(payment.id).first<Row>().catch(()=>null):null;
+ return resolvePaymentStageAmount(payment,schedule,credits,recon);
+}
+
+/** Same calculation for checkout and batched operational snapshots. No original instalment is rewritten. */
+export function resolvePaymentStageAmount(payment:Row,schedule:Row|null,credits:{totalApplied:number;walletApplied:number;pawPointsApplied:number},recon:Row|null):PaymentStageAmount {
  const bookingTotal=round2(Number(payment.amount||0));
  // booking_payments already stores the governed post-coupon/referral total. Only post-booking credits
  // are subtracted here, otherwise checkout would double-apply a coupon.
  const dueNowStored=Math.min(round2(Number(payment.amount_due_now||0)),bookingTotal);
  const paymentStatus=String(payment.status||"");
  const firstCaptured=CAPTURED.includes(paymentStatus);
- const credits=await creditBreakdownAppliedToBooking(db,bookingId);
  const base={bookingBase:true,currency:String(payment.currency||"INR"),paymentId:String(payment.id),paymentStatus,bookingTotal,creditsApplied:credits.totalApplied,walletCreditApplied:credits.walletApplied,pawPointsCreditApplied:credits.pawPointsApplied};
 
- const staySchedule=await db.prepare("SELECT paid_now_amount,balance_amount,status,'stay' schedule_kind FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
- const taxiSchedule=staySchedule?null:await db.prepare("SELECT booking_fee_amount paid_now_amount,balance_amount,status,'taxi' schedule_kind FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
- const schedule=staySchedule??taxiSchedule;
  if(!schedule){
   const stage:PaymentStage=firstCaptured?"settled":"full";
   const cashDue=firstCaptured?0:money(dueNowStored-credits.totalApplied);
@@ -73,7 +79,6 @@ export async function paymentStageAmount(db:Db,bookingId:string):Promise<Payment
  }
  // A credit used on the first instalment must not be used again on the balance. The gateway
  // reconciliation row is the durable proof of how much cash actually funded the first stage.
- const recon=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(payment.id).first<Row>().catch(()=>null);
  if(credits.totalApplied>0&&!recon)throw new Error("Credit-funded split payment requires a gateway reconciliation record before another order can be opened");
  const capturedCash=money(Number(recon?.captured_amount??paidNow));
  const firstCash=Math.min(paidNow,capturedCash);

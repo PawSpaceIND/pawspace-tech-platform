@@ -724,6 +724,8 @@ async function partnerLifecycle(page: Page) {
     await input.setInputFiles({ name: `${purpose}.jpg`, mimeType: "image/jpeg", buffer: jpegBytes(purpose) });
     const res = await uploaded;
     const body = await res.json().catch(() => ({})) as { data?: { id?: string; accessStatus?: string; sha256?: string; adapterConnected?: boolean; objectStored?: boolean }; error?: string; code?: string };
+    expect(body.data?.adapterConnected, "Private staging media storage must be bound").toBe(true);
+    expect(body.data?.objectStored, "A hash without retained photo bytes does not certify the upload journey").toBe(true);
     if (res.ok()) { uploadedPurposes.push(purpose); log(`✅ ${label}: bytes uploaded and verified by the server (HTTP 200, asset ${body.data?.id}, ${body.data?.accessStatus}, sha256 ${String(body.data?.sha256).slice(0, 12)}…, bucket ${body.data?.adapterConnected ? "bound, object stored" : "not bound in staging"}).`); }
     else log(`❌ ${label}: upload refused (HTTP ${res.status()}): ${body.error ?? body.code ?? ""}`);
     // The app registers, uploads, then discards the queued item and FLUSHES the offline queue; a second
@@ -779,7 +781,7 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
       for (let i = 0; i < count && !approved; i += 1) {
         const article = candidates.nth(i);
         const state = ((await article.locator("span").first().textContent().catch(() => "")) || "").trim();
-        await article.getByLabel(`Review reason for ${label} photo`).fill("UAT: clear photo, pet identifiable, matches booking");
+        await article.getByLabel(`Review reason for ${label} photo`).fill("Synthetic UAT pipeline fixture for this booking; not a real service photograph");
         const decided = page!.waitForResponse(r => r.url().includes("/api/service-media") && r.request().method() === "PATCH", { timeout: 30_000 });
         await article.getByRole("button", { name: `Approve ${label} photo` }).click();
         const res = await decided;
