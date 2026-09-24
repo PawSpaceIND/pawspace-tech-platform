@@ -1,0 +1,63 @@
+{
+  "app/team/page.tsx": {
+    "logicHash": "1d9235ad7a12955e85bc4d6a1205ccbdcec7f835818b3ebb8e19f4ae836b9ed8",
+    "bindings": [
+      "href={workspace.href}"
+    ],
+    "hrefs": [
+      "/",
+      "/control",
+      "/partner",
+      "/team",
+      "/team/operations/bookings"
+    ]
+  },
+  "app/team/sales/page.tsx": {
+    "logicHash": "4f01e631108bf01ff3409f1c4a0f6f37de5c7a06750d5070131df19ff97d0722",
+    "bindings": [
+      "disabled={busy===a.id}",
+      "disabled={busy===a.id}",
+      "onChange={e=>{setListSearch(e.target.value);setShown(PAGE)}}",
+      "onClick={()=>revenue(\"claim\",a.id)}",
+      "onClick={()=>revenue(\"complete\",a.id)}",
+      "onClick={()=>setSelected(c.customerId)}",
+      "onClick={()=>setShown(shown+PAGE)}",
+      "value={listSearch}",
+      "value={v}"
+    ],
+    "hrefs": [
+      "/crm",
+      "/team",
+      "/team/customer-experience"
+    ]
+  },
+  "app/booking-command-center/page.tsx": {
+    "logicHash": "f9d45dde7a814684d4b6e1925a44d8dcbc3ffd2eea02a9c3fa395d99ecfe01c5",
+    "bindings": [
+      "onChange={event => setActionReason(event.target.value)}",
+      "onChange={event => setQuery(event.target.value)}",
+      "onClick={() => setFilter(item)}",
+      "onClick={() => setTab(item)}",
+      "onClick={() => void adminAction(\"call_customer\")}",
+      "onClick={() => void adminAction(\"open_tracking\")}",
+      "onClick={() => void adminAction(\"review_reassignment\")}",
+      "onClick={() => void adminAction(\"whatsapp_customer\")}",
+      "onClick={() => void load()}",
+      "onClick={() => void load()}",
+      "onClick={() => { setSelectedId(String(booking.id)); setTab(\"Overview\"); }}",
+      "value={actionReason}",
+      "value={query}"
+    ],
+    "hrefs": [
+      "/assisted-booking",
+      "/control",
+      "/control/integrations",
+      "/crm",
+      "/mobile-app",
+      "/team",
+      "/team/operations",
+      "/team/operations/bookings",
+      "/team/sales"
+    ]
+  }
+}

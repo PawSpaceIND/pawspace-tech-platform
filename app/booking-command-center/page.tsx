@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
+import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
 import ServiceProofReview from "./service-proof-review";
 
 type Row = Record<string, unknown>;
@@ -86,13 +87,8 @@ export default function BookingCommandCenter() {
     ...selected.adminActions.map(item => ({ ...item, event: item.action, at: item.created_at, source: "Admin" })),
   ].sort((a, b) => Number(b.at) - Number(a.at)) : [];
 
-  return <main className={styles.shell}>
-    <aside className={styles.side}>
-      <Link href="/team" className={styles.logo}><b>paw</b>space <span>TEAM · OPS</span></Link>
-      <nav><strong>OPERATIONS</strong><Link href="/team">⌂ Team home</Link><Link className={styles.active} href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/operations">▦ Live calendar</Link><Link href="/team/sales">⚡ Revenue & CX</Link><Link href="/control">◇ Launch essentials</Link><Link href="/control/integrations">◎ System integration</Link></nav>
-      <div className={styles.uatrecord}><b>UAT CONTROLLED</b><span>Canonical booking records</span><span>Sandbox payments</span><span>Queued communications</span></div>
-      <Link href="/team" className={styles.back}>← Back to Team</Link>
-    </aside>
+  return <StaffWorkspace><main className={styles.shell}>
+
 
     <section className={styles.workspace}>
       <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
@@ -155,5 +151,5 @@ export default function BookingCommandCenter() {
       </section>}
       {toast && <div className={styles.toast}>{toast}</div>}
     </section>
-  </main>;
+  </main></StaffWorkspace>;
 }
