@@ -1,6 +1,6 @@
 {
   "ui": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
-  "upstream": "9e16ef6c44ed61f1668270442b3f6372a42affb2",
+  "upstream": "13ef91ee796df7262878ff4fea4dd33f840f7da6",
   "protected": {
     ".github/workflows/deploy-staging.yml": "799de25fd9c72a1fc4e82b0d6eb10cee82c31fe2d7cf151c6690a90036a49504",
     ".github/workflows/elevenlabs-provider-preflight.yml": "faf5456e92acd2fb255474981de62fdf166c7f68b62d502259bc84bde3425021",
@@ -38,7 +38,7 @@
     "lib/customer-checkout-client.ts": "cd909caea876c2843e21056b1583d850603d55cbb98c56b0672b23a523ebeb51",
     "lib/elevenlabs-voice-integration.ts": "c1657f4febd635ca620a6f14a3ffa7eb3dd1f71c49e46f6f1d493bac53b18cbd",
     "lib/food-finance-client.ts": "4699b76c79d298d04b7f1f31be1799ff0d5442600e0ccccfdc29749602d45f4b",
-    "lib/intelligence/atlas-business-snapshot.ts": "6d91aac0efa27305c071b15816ac7d5f76ef03b452a772e5fcc74de32282138a",
+    "lib/intelligence/atlas-business-snapshot.ts": "87ea04dea68479f370ada126dbca1046da2a2aee49bc576223f5797486fa4053",
     "lib/intelligence/atlas-ceo-operating-engine.ts": "cc26f6bb4d3bfaf93a147e988a21c0777e363983f9bdf2b0721e4ba0a5afeee5",
     "lib/intelligence/atlas-commitment-assurance.ts": "c6aeabd98a774715598d7e94d8a669a2c5b3a9e8d0486096fd99909f89102740",
     "lib/intelligence/atlas-data.ts": "9b0cc6c0331d00b3b2e5606d6c80bab7c6e4553b4b754d0784918d0206faea35",
@@ -59,7 +59,7 @@
     "lib/voice-outbound-canonical.ts": "1d5f51273e91f94eefd87296d878724b890f6d757f3b5de8b72bfb54df97563e",
     "lib/voice-outbound-governance.ts": "139cc885b6390e7e85d3343a3b5404f18a46653326351977a2858583aaef51c4",
     "lib/voice-telephony-provider.ts": "73a8d48476b7026bbf82669316cc56c56117c719543b9efaa3546923a600d75c",
-    "playwright.config.ts": "dc94821bd4a433ae4660a9f2d89de31a80def23e0a5dee4afae73a8dd252190a",
+    "playwright.config.ts": "a5da8f6e77ea79476a7ab23d48b1fdb089cf9cacf1a0c608872b85670e850915",
     "scripts/elevenlabs-provider-preflight.mjs": "efca6623e6c32ade73f4721f914a8e0b1ffc6c3e667b1bb0d5f90781e951d81c",
     "scripts/stage-voice-uat-config.mjs": "00c319928915f91d35a86666c2fa1019234fb7fe85117cc7f7f79576ca2a4e39",
     "tests/ai-voice-self-test-source-contract.test.mjs": "203ae74013681c02e2aca8ec066677e639181674a1b4c756f64da0f55a0d48cd",
@@ -1022,7 +1022,10 @@
     "package-lock.json": "0529313ccf934b3072bc4ca32f39d1dbdd3067e76d897d79e95fe28bd15db4d1",
     "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362",
     "scripts/uat-staging-provider-capacity.sql": "d0a9af4feed66138ac7405c27dca239bb27a715d23a0d804f992447db32c1fd1",
-    "tests/partner-app-login-gate.test.mjs": "e9d0e2e6f4d038854e35cfdd4e04c15caeabeaca068efe78e0ab388055b7a949"
+    "tests/partner-app-login-gate.test.mjs": "e9d0e2e6f4d038854e35cfdd4e04c15caeabeaca068efe78e0ab388055b7a949",
+    "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5",
+    "tests/atlas-answer-integrity.test.mjs": "88d289c2be180b467b1da16aea0c6dad69df89fb3011351b2fdb784517798b27",
+    "tests/atlas-narrative-integrity.test.mjs": "8403c1d7008c0c56489d67d179e65d551eba191bc9174291e8feeec0d28fc364"
   },
   "presentation": {
     "app/team/ai/decision-commitments.tsx": {

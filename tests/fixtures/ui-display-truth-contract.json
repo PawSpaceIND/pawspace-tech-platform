@@ -1157,7 +1157,7 @@
     "lib/integration-readiness.ts": "aaf0ad4f5b7abd0743f6bc8e2b622105578d3dbb29d3db7d7c863d91cf3d1984",
     "lib/intelligence/atlas-business-capabilities.ts": "9c36f03fc620ccf9e140e9c27ea376b99655f57dd0e0eca842c9e23ccc1b311a",
     "lib/intelligence/atlas-business-integration-router.ts": "03a670f2192be2701231c8a01c3cfb312f3566b727ba54698714f43a06e31580",
-    "lib/intelligence/atlas-business-snapshot.ts": "6d91aac0efa27305c071b15816ac7d5f76ef03b452a772e5fcc74de32282138a",
+    "lib/intelligence/atlas-business-snapshot.ts": "87ea04dea68479f370ada126dbca1046da2a2aee49bc576223f5797486fa4053",
     "lib/intelligence/atlas-ceo-operating-engine.ts": "cc26f6bb4d3bfaf93a147e988a21c0777e363983f9bdf2b0721e4ba0a5afeee5",
     "lib/intelligence/atlas-challenge-review.ts": "e65de085eca22f1cdbff7aa8b8e2a5df940d2060785c6ea0b7cec3defe4be7a6",
     "lib/intelligence/atlas-data.ts": "9b0cc6c0331d00b3b2e5606d6c80bab7c6e4553b4b754d0784918d0206faea35",
@@ -1576,6 +1576,7 @@
     "lib/workforce-classification.ts": "a082977376abc4fb55dd1296bee852b444dd9f7654e50b53709300e10d66b8e4",
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
     "package-lock.json": "0529313ccf934b3072bc4ca32f39d1dbdd3067e76d897d79e95fe28bd15db4d1",
-    "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362"
+    "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362",
+    "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
   }
 }
