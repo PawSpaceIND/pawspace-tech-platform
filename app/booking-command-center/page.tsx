@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
+import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
+import {snapshotMetric} from "../components/staff-workspace/display-state";
 import ServiceProofReview from "./service-proof-review";
 
 type Row = Record<string, unknown>;
@@ -86,21 +88,16 @@ export default function BookingCommandCenter() {
     ...selected.adminActions.map(item => ({ ...item, event: item.action, at: item.created_at, source: "Admin" })),
   ].sort((a, b) => Number(b.at) - Number(a.at)) : [];
 
-  return <main className={styles.shell}>
-    <aside className={styles.side}>
-      <Link href="/team" className={styles.logo}><b>paw</b>space <span>TEAM · OPS</span></Link>
-      <nav><strong>OPERATIONS</strong><Link href="/team">⌂ Team home</Link><Link className={styles.active} href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/team/operations">▦ Live calendar</Link><Link href="/team/sales">⚡ Revenue & CX</Link><Link href="/control">◇ Launch essentials</Link><Link href="/control/integrations">◎ System integration</Link></nav>
-      <div className={styles.uatrecord}><b>UAT CONTROLLED</b><span>Canonical booking records</span><span>Sandbox payments</span><span>Queued communications</span></div>
-      <Link href="/team" className={styles.back}>← Back to Team</Link>
-    </aside>
+  return <StaffWorkspace><main className={styles.shell}>
+
 
     <section className={styles.workspace}>
       <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
-      <section className={styles.metrics}>
-        <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
-        <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
-        <article><span>Payment pending</span><b>{paymentPending}</b><small>Includes pay-after service</small></article>
-        <article><span>Open revenue</span><b>{money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0))}</b><small>Due now across records</small></article>
+      <section className={styles.metrics} aria-label="Booking snapshot metrics" aria-busy={loading}>
+        <article><span>Total bookings</span><b>{snapshotMetric(bookings.length, loading, error)}</b><small>{error ? "Snapshot unavailable" : loading ? "Loading snapshot" : "Latest loaded UAT records"}</small></article>
+        <article><span>Needs attention</span><b className={!loading && !error && risks ? styles.red : ""}>{snapshotMetric(risks, loading, error)}</b><small>Delay, ticket or rebooking</small></article>
+        <article><span>Payment pending</span><b>{snapshotMetric(paymentPending, loading, error)}</b><small>Includes pay-after service</small></article>
+        <article><span>Open revenue</span><b>{snapshotMetric(money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0)), loading, error)}</b><small>Due now across records</small></article>
       </section>
 
       <section className={styles.controls}><label>⌕<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search booking, customer, pet, phone or provider" /></label><div>{["All bookings", "Needs attention", "Payment pending", "Confirmed", "Completed"].map(item => <button key={item} className={filter === item ? styles.filterActive : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></section>
@@ -155,5 +152,5 @@ export default function BookingCommandCenter() {
       </section>}
       {toast && <div className={styles.toast}>{toast}</div>}
     </section>
-  </main>;
+  </main></StaffWorkspace>;
 }

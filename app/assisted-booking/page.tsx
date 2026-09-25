@@ -6,6 +6,7 @@ import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig,
 import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 import AssistedTaxiPanel from "./assisted-taxi-panel";
+import StaffModule from "../components/staff-workspace/StaffModule";
 
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
 const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
@@ -68,12 +69,12 @@ export default function AssistedBooking(){
     setResult(created);setNotice(created.duplicatePrevented?"Existing UAT assisted order returned safely":requestedCustomerId?"CRM customer converted to a canonical UAT booking":"Canonical UAT assisted order created");
   }catch(err){setError(err instanceof Error?err.message:"Unable to create Assisted Order UAT");}finally{setBusy(false);}}
 
-  return <div className={styles.shell}>
-    <aside>
+  return <StaffModule><div className={styles.shell}>
+    <details data-staff-context="true"><summary>Assisted booking links and boundaries</summary><aside>
       <Link href="/admin" className={styles.brand}><span>paw</span>space <small>OPS</small></Link>
       <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted orders</Link><Link href="/team">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
       <div className={styles.access}><b>UAT ONLY</b><small>Staff identity required</small><small>Canonical booking + scheduler</small><small>No live money</small></div>
-    </aside>
+    </aside></details>
     <main>
       {notice&&<div className={styles.toast}>✓ {notice}</div>}
       <header><div><small>ASSISTED ORDERS · CRM CONVERSION GATE</small><h1>{requestedCustomerId?"Book the selected CRM customer":"Create an order for a customer"}</h1><p>{requestedCustomerId?"The selected CRM customer ID is preserved through scheduling, canonical booking and Customer 360. Missing pet species must be confirmed before booking.":"Staff-assisted Grooming orders use the same canonical scheduler and booking ledger as the governed customer flow. This page is for testing only."}</p></div><div className={styles.headerMeta}><span>⌾ Bengaluru UAT</span><button disabled>{config?.environment??"Loading"}</button></div></header>
@@ -99,5 +100,5 @@ export default function AssistedBooking(){
       </div>
       <section className={styles.truth}><div><small>TEST-FIRST RULE</small><h2>This module is built to be tested, not launched.</h2><p>After CI is green we still require staff UAT, permission-negative tests, booking/retry/idempotency checks and controlled test evidence before the Assisted Orders gate can be called closed.</p></div><div className={styles.truthGrid}><span>Staff-only boundary</span><span>Consent evidence</span><span>Canonical scheduler</span><span>Canonical booking</span><span>Server pricing</span><span>No live money</span><span>Idempotency</span><span>Security audit</span></div></section>
     </main>
-  </div>;
+  </div></StaffModule>;
 }

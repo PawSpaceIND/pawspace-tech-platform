@@ -224,9 +224,9 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 170px)", background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #e2d9ec" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 170px)", background: "var(--staff-surface, #fff)", borderRadius: 12, overflow: "hidden", border: "1px solid var(--staff-line, #e2d9ec)" }}>
       {/* Conversation header */}
-      <div style={{ background: "#24133f", color: "#fff", padding: "10px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+      <div style={{ background: "var(--staff-primary, #24133f)", color: "var(--staff-on-primary, #fff)", padding: "10px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span>WhatsApp Conversations</span>
         </div>
@@ -238,25 +238,25 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
       {/* Main Split Content */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* Left: Thread List */}
-        <aside style={{ width: 340, borderRight: "1px solid #ede6f5", display: "flex", flexDirection: "column", background: "#faf8fd" }}>
-          <div style={{ padding: 12, borderBottom: "1px solid #ede6f5" }}>
+        <aside style={{ width: 340, borderRight: "1px solid var(--staff-line, #ede6f5)", display: "flex", flexDirection: "column", background: "#faf8fd" }}>
+          <div style={{ padding: 12, borderBottom: "1px solid var(--staff-line, #ede6f5)" }}>
             <input
               type="text"
               placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #d4c8e2", fontSize: 13 }}
+              style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--staff-line, #d4c8e2)", fontSize: 13 }}
             />
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 12, color: "#746b7d" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 14, color: "var(--staff-muted, #746b7d)" }}>
               <span>{filteredThreads.length} threads</span>
-              <button onClick={loadThreads} style={{ background: "none", border: "none", color: "#5d22a8", cursor: "pointer", fontWeight: 600 }}>↻ Refresh</button>
+              <button onClick={loadThreads} style={{ background: "none", border: "none", color: "var(--staff-muted, #5d22a8)", cursor: "pointer", fontWeight: 600 }}>↻ Refresh</button>
             </div>
           </div>
 
           <div style={{ flex: 1, overflowY: "auto" }}>
-            {loading && <p style={{ padding: 16, color: "#746b7d", fontSize: 13 }}>Loading threads…</p>}
+            {loading && <p style={{ padding: 16, color: "var(--staff-muted, #746b7d)", fontSize: 13 }}>Loading threads…</p>}
             {!loading && filteredThreads.length === 0 && (
-              <p style={{ padding: 16, color: "#746b7d", fontSize: 13 }}>No active WhatsApp conversation threads found.</p>
+              <p style={{ padding: 16, color: "var(--staff-muted, #746b7d)", fontSize: 13 }}>No active WhatsApp conversation threads found.</p>
             )}
             {filteredThreads.map((t) => {
               const isSelected = t.id === selectedThreadId;
@@ -266,26 +266,26 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                   onClick={() => setSelectedThreadId(t.id)}
                   style={{
                     padding: "12px 14px",
-                    borderBottom: "1px solid #f0ebf7",
+                    borderBottom: "1px solid var(--staff-line, #f0ebf7)",
                     cursor: "pointer",
                     background: isSelected ? "#efe6f9" : "transparent",
                     transition: "background 0.15s",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <strong style={{ fontSize: 13, color: "#24133f" }}>{t.customer_name}</strong>
-                    <span style={{ fontSize: 11, color: "#8a7e96" }}>
+                    <strong style={{ fontSize: 13, color: "var(--staff-text, #24133f)" }}>{t.customer_name}</strong>
+                    <span style={{ fontSize: 14, color: "var(--staff-muted, #8a7e96)" }}>
                       {t.updated_at ? new Date(t.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12, color: "#6e637a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 14, color: "var(--staff-muted, #6e637a)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {t.lastMessage?.text || (t.lastMessage ? "Message" : "No messages yet")}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: t.withinSession ? "#d4f4dd" : "#f4e0d4", color: t.withinSession ? "#13632e" : "#873200" }}>
+                    <span style={{ fontSize: 14, padding: "2px 6px", borderRadius: 4, background: t.withinSession ? "#d4f4dd" : "#f4e0d4", color: t.withinSession ? "var(--staff-muted, #13632e)" : "var(--staff-muted, #873200)" }}>
                       {t.withinSession ? "24h Session Open" : "Template Required"}
                     </span>
-                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#e8e2f0", color: "#4c3866" }}>
+                    <span style={{ fontSize: 14, padding: "2px 6px", borderRadius: 4, background: "#e8e2f0", color: "var(--staff-muted, #4c3866)" }}>
                       {t.status}
                     </span>
                   </div>
@@ -296,9 +296,9 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
         </aside>
 
         {/* Right: Message Stream & Composer */}
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", background: "#fff" }}>
+        <main style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--staff-surface, #fff)" }}>
           {!selectedThreadId && (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#8a7e96" }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--staff-muted, #8a7e96)" }}>
               Select a conversation thread to view WhatsApp messages
             </div>
           )}
@@ -306,25 +306,25 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
           {selectedThreadId && threadDetail && (
             <>
               {/* Conversation Header */}
-              <div style={{ padding: "12px 20px", borderBottom: "1px solid #ede6f5", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fbfafc" }}>
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--staff-line, #ede6f5)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fbfafc" }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 16, color: "#24133f" }}>{threadDetail.thread.customer_name}</h3>
-                  <small style={{ color: "#746b7d" }}>
+                  <h3 style={{ margin: 0, fontSize: 16, color: "var(--staff-text, #24133f)" }}>{threadDetail.thread.customer_name}</h3>
+                  <small style={{ color: "var(--staff-muted, #746b7d)" }}>
                     ID: {threadDetail.thread.customer_id} · Thread: {threadDetail.thread.id}
                   </small>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 12, color: "#6a5e78" }}>Mode:</span>
+                  <span style={{ fontSize: 14, color: "var(--staff-muted, #6a5e78)" }}>Mode:</span>
                   <select
                     value={threadDetail.routingMode}
                     onChange={(e) => handleSetMode(e.target.value)}
-                    style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #d4c8e2", fontSize: 12 }}
+                    style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--staff-line, #d4c8e2)", fontSize: 14 }}
                   >
                     <option value="human_only">Human Only (Agent)</option>
                     <option value="ai_assistant">AI Assistant</option>
                     <option value="chatbot_only">Chatbot Automated</option>
                   </select>
-                  <span style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, background: threadDetail.session.isWithin24Hours ? "#d4f4dd" : "#ffedd5", color: threadDetail.session.isWithin24Hours ? "#13632e" : "#9a3412" }}>
+                  <span style={{ fontSize: 14, padding: "4px 8px", borderRadius: 6, background: threadDetail.session.isWithin24Hours ? "#d4f4dd" : "#ffedd5", color: threadDetail.session.isWithin24Hours ? "var(--staff-muted, #13632e)" : "var(--staff-muted, #9a3412)" }}>
                     {threadDetail.session.isWithin24Hours ? "✓ 24h Customer-Service Window Active" : "⚠ Outside 24h Window"}
                   </span>
                 </div>
@@ -332,9 +332,9 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
 
               {/* Message Transcript */}
               <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px", display: "flex", flexDirection: "column", gap: 12, background: "#f9f8fb" }}>
-                {detailLoading && <p style={{ color: "#746b7d", fontSize: 13 }}>Loading conversation history…</p>}
+                {detailLoading && <p style={{ color: "var(--staff-muted, #746b7d)", fontSize: 13 }}>Loading conversation history…</p>}
                 {!detailLoading && threadDetail.messages.length === 0 && (
-                  <p style={{ color: "#746b7d", fontSize: 13, textAlign: "center", marginTop: 40 }}>No messages in this conversation thread yet.</p>
+                  <p style={{ color: "var(--staff-muted, #746b7d)", fontSize: 13, textAlign: "center", marginTop: 40 }}>No messages in this conversation thread yet.</p>
                 )}
                 {threadDetail.messages.map((m) => {
                   const isInbound = m.direction === "inbound";
@@ -346,12 +346,12 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                       style={{
                         alignSelf: isInbound ? "flex-start" : "flex-end",
                         maxWidth: "70%",
-                        background: isInbound ? "#ffffff" : "#4b168c",
-                        color: isInbound ? "#24133f" : "#ffffff",
+                        background: isInbound ? "var(--staff-surface, #ffffff)" : "var(--staff-primary, #4b168c)",
+                        color: isInbound ? "var(--staff-text, #24133f)" : "var(--staff-on-primary, #ffffff)",
                         padding: "10px 14px",
                         borderRadius: isInbound ? "14px 14px 14px 2px" : "14px 14px 2px 14px",
                         boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-                        border: isInbound ? "1px solid #e8e2f0" : "none",
+                        border: isInbound ? "1px solid var(--staff-line, #e8e2f0)" : "none",
                       }}
                     >
                       <div style={{ fontSize: 13, lineHeight: 1.45, wordBreak: "break-word" }}>
@@ -366,11 +366,11 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
                           ) : media.type === "audio" ? (
                             <audio controls preload="metadata" src={mediaUrl} style={{ width: "100%", maxWidth: 360 }} />
                           ) : (
-                            <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: isInbound ? "#4b168c" : "#ffffff", textDecoration: "underline" }}>{media.fileName || "Open attachment"}</a>
+                            <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: isInbound ? "var(--staff-primary, #4b168c)" : "var(--staff-on-primary, #ffffff)", textDecoration: "underline" }}>{media.fileName || "Open attachment"}</a>
                           )}
                         </div>
                       )}
-                      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4, fontSize: 10, color: isInbound ? "#8c8299" : "#d8c7ef" }}>
+                      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4, fontSize: 14, color: isInbound ? "var(--staff-muted, #8c8299)" : "var(--staff-muted, #d8c7ef)" }}>
                         <span>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                         <span>·</span>
                         <span>{m.status}</span>
@@ -382,14 +382,14 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
 
               {/* Quick Replies Picker */}
               {threadDetail.quickReplies && threadDetail.quickReplies.length > 0 && (
-                <div style={{ padding: "6px 16px", background: "#f3eff8", borderTop: "1px solid #ede6f5", display: "flex", gap: 8, overflowX: "auto" }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#6a5e78", alignSelf: "center", whiteSpace: "nowrap" }}>Quick Replies:</span>
+                <div style={{ padding: "6px 16px", background: "#f3eff8", borderTop: "1px solid var(--staff-line, #ede6f5)", display: "flex", gap: 8, overflowX: "auto" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--staff-muted, #6a5e78)", alignSelf: "center", whiteSpace: "nowrap" }}>Quick Replies:</span>
                   {threadDetail.quickReplies.map((qr) => (
                     <button
                       key={qr.code}
                       type="button"
                       onClick={() => setMessageText(qr.body)}
-                      style={{ padding: "4px 9px", background: "#fff", border: "1px solid #d9d0e5", borderRadius: 14, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}
+                      style={{ padding: "4px 9px", background: "var(--staff-surface, #fff)", border: "1px solid var(--staff-line, #d9d0e5)", borderRadius: 14, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap" }}
                     >
                       {qr.label}
                     </button>
@@ -398,38 +398,38 @@ export default function LiveChatPanel({ notify }: { notify: (msg: string) => voi
               )}
 
               {/* Message Composer */}
-              <form onSubmit={handleSendMessage} style={{ padding: "12px 18px", borderTop: "1px solid #ede6f5", background: "#fff", display: "flex", gap: 10, alignItems: "center" }}>
+              <form onSubmit={handleSendMessage} style={{ padding: "12px 18px", borderTop: "1px solid var(--staff-line, #ede6f5)", background: "var(--staff-surface, #fff)", display: "flex", gap: 10, alignItems: "center" }}>
                 <input
                   type="text"
                   placeholder={threadDetail.session.isWithin24Hours ? "Type WhatsApp message..." : "Type approved template message..."}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
-                  style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid #d4c8e2", fontSize: 13 }}
+                  style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--staff-line, #d4c8e2)", fontSize: 13 }}
                 />
                 <button
                   type="submit"
                   disabled={sending || !messageText.trim()}
-                  style={{ padding: "10px 18px", background: "#4b168c", color: "white", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: sending || !messageText.trim() ? 0.6 : 1 }}
+                  style={{ padding: "10px 18px", background: "var(--staff-primary, #4b168c)", color: "var(--staff-on-primary, white)", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: sending || !messageText.trim() ? 0.6 : 1 }}
                 >
                   {sending ? "Sending…" : "Send WhatsApp"}
                 </button>
               </form>
 
               {/* Sandbox Inbound Simulator Toolbar */}
-              {threadDetail.simulationAllowed && <div style={{ padding: "8px 18px", background: "#f8f6fb", borderTop: "1px dashed #dcd3e7", display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-                <span style={{ color: "#746b7d", fontWeight: 700 }}>Sandbox Test:</span>
+              {threadDetail.simulationAllowed && <div style={{ padding: "8px 18px", background: "var(--staff-raised, #f8f6fb)", borderTop: "1px dashed var(--staff-line, #dcd3e7)", display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
+                <span style={{ color: "var(--staff-muted, #746b7d)", fontWeight: 700 }}>Sandbox Test:</span>
                 <input
                   type="text"
                   value={simulateText}
                   onChange={(e) => setSimulateText(e.target.value)}
                   placeholder="Simulate customer reply..."
-                  style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #ded6e9", fontSize: 12 }}
+                  style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--staff-line, #ded6e9)", fontSize: 14 }}
                 />
                 <button
                   type="button"
                   onClick={handleSimulateInbound}
                   disabled={simulating || !simulateText.trim()}
-                  style={{ padding: "6px 12px", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", opacity: simulating ? 0.6 : 1 }}
+                  style={{ padding: "6px 12px", background: "#2e7d32", color: "var(--staff-on-primary, #fff)", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: simulating ? 0.6 : 1 }}
                 >
                   {simulating ? "Simulating…" : "⚡ Simulate Customer Inbound"}
                 </button>

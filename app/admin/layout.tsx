@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import convergence from "../components/ui/workspace-convergence.module.css";
 
+/** Presentation is supplied by each existing Admin page, including error states. */
 export default function AdminLayout({ children }: { children: ReactNode }) {
-  return <div className={`${convergence.workspace} ${convergence.operations}`}>{children}</div>;
+  return <>{children}</>;
 }

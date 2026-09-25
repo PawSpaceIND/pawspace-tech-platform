@@ -1,0 +1,51 @@
+/* Shared presentation palette. Opt in through CSS composition; no global theme mutation. */
+@font-face { font-family:"PawSpaceNunito"; src:url("/fonts/nunito/Nunito-Variable.ttf") format("truetype"); font-style:normal; font-weight:200 900; font-display:swap; }
+.palette, .palette:where(header) + :global(main:not([class])) {
+  --brand-primary:#01261f; --brand-strong:#064c3c; --brand-gold:#e6b34e;
+  --brand-bg:#fff8ee; --brand-surface:#fff; --brand-raised:#eff5f1;
+  --brand-text:#173c31; --brand-muted:#526b61; --brand-line:#d7e3dc;
+  --brand-hero:#01261f; --brand-hero-text:#f5fbf7; --brand-on-primary:#fff; --brand-on-gold:#251b08;
+  --brand-danger:#a4232f; --brand-danger-bg:#fff0f0; --brand-success:#126342; --brand-success-bg:#e8f6ee;
+  --brand-warning:#765200; --brand-warning-bg:#fff3d6; --brand-shadow:0 12px 36px #01261f0a;
+  font-family:"PawSpaceNunito",system-ui,sans-serif !important; color-scheme:light;
+}
+:global(html[data-paw-theme="signature"]) .palette, :global(html[data-paw-theme="signature"]) .palette:where(header) + :global(main:not([class])) {
+  --brand-primary:#894aed; --brand-strong:#542795; --brand-gold:#ffaf00;
+  --brand-bg:#f7f3ff; --brand-raised:#f0e8fc; --brand-text:#252525;
+  --brand-muted:#655b72; --brand-line:#e3d8f3; --brand-hero:#542795;
+}
+:global(html[data-paw-mode="dark"]) .palette, :global(html[data-paw-mode="dark"]) .palette:where(header) + :global(main:not([class])) {
+  --brand-bg:#0c1e18; --brand-surface:#152d24; --brand-raised:#203e32;
+  --brand-text:#ecf5ef; --brand-muted:#b8cec1; --brand-line:#446354;
+  --brand-primary:#c2e6d1; --brand-on-primary:#01261f;
+  --brand-danger:#ffc2c8; --brand-danger-bg:#4c2129; --brand-success:#a7ebc3; --brand-success-bg:#183f2b;
+  --brand-warning:#f7d491; --brand-warning-bg:#433518; color-scheme:dark;
+}
+:global(html[data-paw-theme="signature"][data-paw-mode="dark"]) .palette, :global(html[data-paw-theme="signature"][data-paw-mode="dark"]) .palette:where(header) + :global(main:not([class])) {
+  --brand-bg:#191322; --brand-surface:#261d33; --brand-raised:#382a49;
+  --brand-text:#f5effb; --brand-muted:#d0c0df; --brand-line:#5d4974;
+  --brand-primary:#d3b8ff; --brand-on-primary:#32164f; --brand-hero:#32164f;
+}
+/* Existing design-system consumers read the same palette without new application state. */
+.palette, .palette:where(header) + :global(main:not([class])) {
+  --ds-background:var(--brand-bg); --ds-surface:var(--brand-surface); --ds-surface-sunken:var(--brand-raised);
+  --ds-text:var(--brand-text); --ds-text-muted:var(--brand-muted); --ds-text-faint:var(--brand-muted);
+  --ds-border:var(--brand-line); --ds-border-strong:var(--brand-line);
+  --ds-primary-500:var(--brand-primary); --ds-primary-600:var(--brand-primary); --ds-on-primary:var(--brand-on-primary);
+  --ds-accent-500:var(--brand-gold); --ds-danger-500:var(--brand-danger); --ds-danger-50:var(--brand-danger-bg);
+  --ps-muted:var(--brand-muted); --ps-cream:var(--brand-raised); --ps-border:var(--brand-line);
+  --ws-ink:var(--brand-text); --ws-muted:var(--brand-muted); --ws-surface:var(--brand-surface); --ws-canvas:var(--brand-bg);
+  --ws-line:var(--brand-line); --ws-gold:var(--brand-gold); --ws-deep:var(--brand-primary); --ws-deeper:var(--brand-hero);
+  --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong);
+  --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line);
+}
+.palette :where(button,input,select,textarea) { font-family:inherit; }
+.palette :where(a,button,input,select,textarea,summary):focus-visible { outline:3px solid var(--brand-gold); outline-offset:3px; }
+.palette :where(input,select,textarea) { color-scheme:inherit; }
+
+/* Shared customer sub-components inherit the same palette as their host screen. */
+.palette, .palette:where(header) + :global(main:not([class])) {
+  --ps-bg:var(--brand-bg); --ps-surface:var(--brand-surface); --ps-surface-2:var(--brand-raised);
+  --ps-text:var(--brand-text); --ps-primary:var(--brand-primary); --ps-on-primary:var(--brand-on-primary);
+  --ps-accent:var(--brand-gold); --ps-accent-text:var(--brand-on-gold);
+}

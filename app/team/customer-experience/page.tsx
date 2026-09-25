@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
 import teamStyles from "../team-console.module.css";
@@ -326,7 +327,8 @@ export default function CustomerExperiencePage() {
   return (
     <OpsShell
       eyebrow="PawSpace team · Customer experience"
-      title="Unified conversation & CX queue"
+      nav={[{href:"/team/customer-experience",label:"Inbox",icon:"I"},{href:"/team/whatsapp/templates",label:"Templates",icon:"T"},{href:"/team/whatsapp/automation",label:"Automation",icon:"A"},{href:"/team/ai/handoff",label:"AI handoffs",icon:"H"}]}
+      title="Inbox & AI"
       description="WhatsApp AI Shared Inbox — WATI-style customer operations on PawSpace canonical conversations. UAT/sandbox only; production WhatsApp delivery stays disabled until release certification."
       actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge></>}
     >
@@ -336,20 +338,16 @@ export default function CustomerExperiencePage() {
         <aside className={styles.rail}>
           <div className={styles.brand}><div className={styles.brandMark}>PS</div><div><strong>PawSpace</strong><small>WhatsApp AI Customer Operations</small></div></div>
           <nav className={styles.nav} aria-label="WhatsApp AI navigation">
-            <div className={`${styles.navItem} ${styles.navActive}`}><span>Inbox</span><span className={styles.navCount}>{threads.length}</span></div>
-            <div className={styles.navItem}><span>Leads</span><span>{threads.filter((row) => row.lead_id).length}</span></div>
-            <div className={styles.navItem}><span>Customers</span></div>
-            <div className={styles.navItem}><span>Templates</span></div>
-            <div className={styles.navItem}><span>AI Handoffs</span></div>
-            <div className={styles.navItem}><span>Booking Drafts</span></div>
-            <div className={styles.navItem}><span>Audit</span></div>
-            <div className={styles.navItem}><span>Settings</span></div>
+            <a href="#inbox-conversations" title="Inbox" aria-label="Inbox" aria-current="page" className={`${styles.navItem} ${styles.navActive}`}><span>Inbox</span><span className={styles.navCount}>{threads.length}</span></a>
+            <Link href="/team/whatsapp/templates" prefetch={false} title="Templates" aria-label="Templates" className={styles.navItem}><span>Templates</span><span aria-hidden="true">T</span></Link>
+            <Link href="/team/whatsapp/automation" prefetch={false} title="Automation" aria-label="Automation" className={styles.navItem}><span>Automation</span><span aria-hidden="true">A</span></Link>
+            <Link href="/team/ai/handoff" prefetch={false} title="AI handoffs" aria-label="AI handoffs" className={styles.navItem}><span>AI handoffs</span><span aria-hidden="true">H</span></Link>
           </nav>
           <div className={styles.connection}><span className={styles.dot} />WhatsApp UAT connection<br /><b>Sandbox / governed</b><br /><small>External delivery disabled</small></div>
           <div className={styles.operator}><b>CX Operator</b><br /><small>Role-scoped access</small></div>
         </aside>
 
-        <aside className={styles.list}>
+        <aside className={styles.list} id="inbox-conversations" tabIndex={-1}>
           <div className={styles.listTop}>
             <h2>Shared Inbox</h2>
             <input className={styles.search} value={query} maxLength={200} onChange={(event) => { setQuery(event.target.value); setCursorHistory([]); setNextCursor(null); }} placeholder="Search leads or conversations..." />
@@ -455,7 +453,7 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Lead / Customer</strong><a>Canonical</a></div><div className={styles.kv}><span>Name</span><b>{customerName}</b><span>Phone</span><b>{phone}</b><span>Lead</span><b>{leadId}</b><span>Thread</span><b>{text(thread?.id)}</b></div></section>
           {communicationState ? <section className={`${styles.card} ${styles.communicationContext}`}><div className={styles.cardHead}><strong>Customer Awareness Risk</strong><a>{communicationState.state === "failed" ? "Action required" : "Delivery pending"}</a></div><div className={styles.kv}><span>Booking</span><b>{text(communicationState.bookingId)}</b><span>Financial state</span><b>Confirmed / captured</b><span>Customer state</span><b>Confirmation may be unseen</b><span>Queue</span><b>{pretty(communicationState.outboxStatus)}</b></div></section> : null}
           <section className={styles.card}><div className={styles.cardHead}><strong>Consent Evidence</strong><a>Governed</a></div><div className={styles.kv}><span>WhatsApp</span><b>{consentState}</b><span>Purpose</span><b>Lead response / service</b><span>Marketing</span><b>No</b><span>Opt-out</span><b>Prior opt-out always wins</b></div></section>
-          <section className={styles.card}><div className={styles.cardHead}><strong>Qualification</strong><a>AI summary</a></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
+          <section className={styles.card}><div className={styles.cardHead}><strong>Conversation details</strong><span>Recorded fields</span></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Booking</span><b>{text(booking?.id || thread?.booking_id, "Not linked")}</b><span>Service</span><b>{pretty(booking?.service_code)}</b><span>Package</span><b>{text(booking?.package_name)}</b><span>Booking status</span><b>{pretty(booking?.status)}</b><span>Scheduled start</span><b>{text(booking?.scheduled_start)}</b><span>Ticket</span><b>{text(ticket?.id || thread?.ticket_id, "Not linked")}</b><span>Priority</span><b>{pretty(ticket?.priority)}</b><span>Subject</span><b>{text(ticket?.subject, "No linked ticket details")}</b><span>Ticket status</span><b>{pretty(ticket?.status)}</b><span>Response due</span><b>{dateTime(ticket?.sla_due_at)}</b></div></section>
           <section className={styles.card}>
             <div className={styles.cardHead}><strong>Conversation Routing</strong><a>{isWhatsApp ? modeLabel : "Not WhatsApp"}</a></div>

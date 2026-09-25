@@ -3,6 +3,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import styles from "./team-shell.module.css";
 import PageHeader from "./PageHeader";
+import StaffWorkspace from "../staff-workspace/StaffWorkspace";
+import consoleStyles from "../staff-workspace/staff-console.module.css";
 
 /**
  * The shared frame for a Team workspace page.
@@ -18,7 +20,7 @@ export interface TeamNavLink { href: string; label: string; primary?: boolean }
 
 export function TeamShell({ eyebrow, title, description, nav = [], status, children }: { eyebrow: ReactNode; title: ReactNode; description?: ReactNode; nav?: TeamNavLink[]; status?: ReactNode; children: ReactNode }) {
   return (
-    <main className={styles.shell}>
+    <StaffWorkspace><main className={`${styles.shell} ${consoleStyles.console}`}>
       <div className={styles.inner}>
         <PageHeader
           eyebrow={eyebrow}
@@ -29,7 +31,7 @@ export function TeamShell({ eyebrow, title, description, nav = [], status, child
         {status}
         {children}
       </div>
-    </main>
+    </main></StaffWorkspace>
   );
 }
 
