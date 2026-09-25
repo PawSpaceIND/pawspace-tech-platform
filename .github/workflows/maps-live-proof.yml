@@ -14,7 +14,7 @@ jobs:
   live-map-proof:
     runs-on: ubuntu-latest
     concurrency:
-      group: pawspace-staging-sweep
+      group: pawspace-maps-live-proof
       cancel-in-progress: false
     env:
       NODE_ENV: test
