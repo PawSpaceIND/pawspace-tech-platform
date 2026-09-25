@@ -1,0 +1,63 @@
+name: Maps provider diagnostic
+
+on:
+  push:
+    branches:
+      - docs/maps-live-tracking-uat
+    paths:
+      - '.github/workflows/maps-provider-diagnostic.yml'
+  workflow_dispatch:
+
+jobs:
+  maps-provider-diagnostic:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    steps:
+      - name: Probe Google Maps APIs without exposing key
+        env:
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.GOOGLE_MAPS_SERVER_API_KEY_UAT||'').trim();
+          if(!key) throw new Error('GOOGLE_MAPS_SERVER_API_KEY_UAT missing');
+          const safe=async(name,url,init={})=>{
+            const r=await fetch(url,init);
+            const ct=r.headers.get('content-type')||'';
+            let detail='';
+            if(!ct.startsWith('image/')){
+              const t=await r.text();
+              detail=t.replaceAll(key,'[redacted]').slice(0,1200);
+            } else {
+              await r.arrayBuffer();
+              detail='image-response';
+            }
+            console.log(name+'='+JSON.stringify({status:r.status,ok:r.ok,contentType:ct,detail}));
+            return r.ok;
+          };
+          const staticUrl=new URL('https://maps.googleapis.com/maps/api/staticmap');
+          staticUrl.searchParams.set('size','320x180');
+          staticUrl.searchParams.set('scale','1');
+          staticUrl.searchParams.append('markers','color:red|12.9716,77.5946');
+          staticUrl.searchParams.append('markers','color:blue|12.9166,77.6101');
+          staticUrl.searchParams.set('key',key);
+          const staticOk=await safe('STATIC_MAPS',staticUrl.toString());
+
+          const routesOk=await safe('ROUTES','https://routes.googleapis.com/directions/v2:computeRoutes',{
+            method:'POST',
+            headers:{
+              'content-type':'application/json',
+              'X-Goog-Api-Key':key,
+              'X-Goog-FieldMask':'routes.duration,routes.distanceMeters'
+            },
+            body:JSON.stringify({
+              origin:{location:{latLng:{latitude:12.9166,longitude:77.6101}}},
+              destination:{location:{latLng:{latitude:12.908555,longitude:77.6086551}}},
+              travelMode:'DRIVE',
+              routingPreference:'TRAFFIC_AWARE',
+              languageCode:'en-IN',
+              units:'METRIC'
+            })
+          });
+          console.log('MAPS_PROVIDER_SUMMARY='+JSON.stringify({staticMaps:staticOk,routes:routesOk}));
+          if(!staticOk||!routesOk) process.exitCode=2;
+          NODE
