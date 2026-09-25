@@ -14,7 +14,7 @@ const active=(row:Row)=>["active","started","on_the_way","arrived","in_service"]
 export default function OpsLiveTracking(){
  const[data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true),[tick,setTick]=useState(0);
  const load=useCallback(async()=>{try{const r=await fetch("/api/location-recovery",{cache:"no-store"}),b=await r.json() as Payload;if(!r.ok||!b.data)throw new Error(b.error||"Unable to load live tracking");setData(b.data);setError("");}catch(e){setError(e instanceof Error?e.message:"Unable to load live tracking");}finally{setLoading(false);}},[]);
- useEffect(()=>{void load();const id=window.setInterval(()=>{setTick(v=>v+1);void load();},10000);return()=>window.clearInterval(id);},[load]);
+ useEffect(()=>{const first=window.setTimeout(()=>void load(),0);const id=window.setInterval(()=>{setTick(v=>v+1);void load();},10000);return()=>{window.clearTimeout(first);window.clearInterval(id);};},[load]);
  const sessions=useMemo(()=>data?.sessions??[],[data]),recoveries=useMemo(()=>data?.recoveries??[],[data]),events=useMemo(()=>data?.punctualityEvents??[],[data]);
  const liveSessions=sessions.filter(active),openRecoveries=recoveries.filter(row=>!["resolved","cancelled","closed"].includes(String(row.recovery_state||row.status||"").toLowerCase()));
  return <main className={styles.page}>
