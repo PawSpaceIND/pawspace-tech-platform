@@ -74,6 +74,7 @@ jobs:
       - name: Inspect latest Grooming specialist conversation without dialing
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
@@ -96,10 +97,24 @@ jobs:
           const trResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}?format=opentelemetry`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           if(trResponse.ok){
             const otlp=await trResponse.json().catch(()=>({}));
+            const rawOtlp=JSON.stringify(otlp);
+            const callId=(rawOtlp.match(/pawspace_voice_call_id\\":\\"([^\\"]+)/)||[])[1]||'';
             const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
             const compact=JSON.stringify(scrub(otlp));
             const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
             console.log('GROOMING_OTLP_SIGNALS='+JSON.stringify(hits));
+            const llmSecret=String(process.env.ELEVENLABS_LLM_SECRET||'').trim();
+            if(callId&&llmSecret){
+              const started=Date.now();
+              const probe=await fetch('https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses',{
+                method:'POST',
+                headers:{'content-type':'application/json',authorization:'Bearer '+llmSecret},
+                body:JSON.stringify({input:'I need grooming service today. Can you help me book it?',elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
+                signal:AbortSignal.timeout(30000)
+              });
+              const bodyText=await probe.text();
+              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,ms:Date.now()-started,contentType:probe.headers.get('content-type'),bodyPrefix:bodyText.slice(0,1200)}));
+            } else console.log('GROOMING_LLM_PROBE='+JSON.stringify({skipped:true,hasCallId:Boolean(callId),hasSecret:Boolean(llmSecret)}));
           }
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),host=(String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com');
           if(callSid&&exKey&&exToken&&exSid){
