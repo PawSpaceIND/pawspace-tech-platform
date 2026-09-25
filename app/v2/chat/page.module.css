@@ -2,7 +2,9 @@
 @media(max-width:640px){.page{padding:0 0 72px}.chatShell{width:100%;height:calc(100dvh - 72px);min-height:0;border:0;border-radius:0;box-shadow:none}.chatHeader{padding:11px 13px}.brand img{width:38px;height:38px}.back{padding:8px 11px;font-size:13px}.modeBar{padding:9px 12px;overflow-x:auto}.conversation{padding:18px 12px}.welcome{padding:18px 8px}.welcome>img{width:54px;height:54px}.suggestions{justify-content:flex-start}.suggestions button{text-align:left}.userBubble,.aiBubble{max-width:86%}.composer{padding:9px 10px 8px}.helper{display:none}.dock{width:calc(100% - 12px);bottom:6px;justify-content:space-between}.dock a{min-width:0;flex:1;padding:8px 4px}}
 /* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
 .page { composes:palette from "../../components/brand/brand-surface.module.css"; }
-/* Replies from a PawSpace team member, set apart from the AI's. */
-.page .teamBubble { border-left:4px solid var(--brand-gold) !important; }
-.page .teamNotice { background:var(--brand-surface) !important; border-left:4px solid var(--brand-gold) !important; }
-.page .teamNotice p { margin:0 !important; }
+/* WATI conversation pane (app/components/wati-chat) inside the V2 shell. */
+.page .chatShell { grid-template-rows:auto minmax(0,1fr) !important; background:transparent !important; border:0 !important; box-shadow:none !important; gap:10px; overflow:visible !important; }
+.page .modeBar { align-items:center; border:0 !important; background:transparent !important; padding:0 !important; }
+.page .modeBar .back { margin-left:auto; }
+.page .watiIntro { margin:4px 0 6px !important; text-align:center; font-size:17px !important; color:var(--brand-text) !important; }
+.page .notice h1 { font-size:22px; margin:0 0 8px; }

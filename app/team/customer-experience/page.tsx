@@ -65,6 +65,8 @@ const initials = (name: unknown) => text(name, "PS").split(/\s+/).map((part) => 
 const inboxRefreshMs = 5_000;
 /** Mirrored AI replies on a web chat thread (lib/ai-web-chat-adapter.ts WEB_CHAT_AI_REPLY_TEMPLATE_KEY). */
 const aiReplyTemplateKey = "web_app_chat_ai_reply";
+/** Guided bot questions on a web chat thread (lib/ai-web-chat-adapter.ts WEB_CHAT_BOT_TEMPLATE_KEY). */
+const botTemplateKey = "web_app_chat_bot";
 const isWebChatConversation = (conversation: Conversation | null) => Boolean(conversation?.messages.some((message) => text(message.channel, "") === "chat") && !conversation?.messages.some((message) => text(message.channel, "") === "whatsapp"));
 
 export default function CustomerExperiencePage() {
@@ -501,7 +503,7 @@ export default function CustomerExperiencePage() {
                 <EmptyState title="No messages yet." className={styles.empty} />
               ) : messages.map((message) => (
                 <div key={text(message.id)} className={`${styles.bubble} ${text(message.direction, "") === "outbound" ? styles.bubbleOut : ""}`}>
-                  <small>{text(message.direction, "") === "outbound" ? `${text(message.template_key, "") === aiReplyTemplateKey ? "PawSpace AI" : text(message.created_by, "PawSpace team")} · ` : ""}{pretty(message.direction)} · {pretty(message.channel)} · {pretty(message.status)}</small>
+                  <small>{text(message.direction, "") === "outbound" ? `${text(message.template_key, "") === aiReplyTemplateKey ? "PawSpace AI" : text(message.template_key, "") === botTemplateKey ? "PawSpace bot" : text(message.created_by, "PawSpace team")} · ` : ""}{pretty(message.direction)} · {pretty(message.channel)} · {pretty(message.status)}</small>
                   <p>{message.payload?.mediaPending ? "Attachment not yet available" : text(message.payload?.text || message.payload?.message || message.payload?.body || message.payload?.notice || message.template_key, "Message")}</p>
                   {Boolean(message.payload?.media) && !Boolean(message.payload?.mediaPending) && <a href={`/api/conversation-media?messageId=${encodeURIComponent(text(message.id))}`} target="_blank" rel="noreferrer">Open attachment</a>}
 

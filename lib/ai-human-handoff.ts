@@ -3,12 +3,12 @@ import{actorCanAccessConversation,conversationAccessPredicate,ensureConversation
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
-export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated"|"high_value_enterprise_objection"|"staff_initiated";
+export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated"|"high_value_enterprise_objection"|"staff_initiated"|"bot_lead_qualified";
 export type AiHandoffAction="take_over"|"resume_ai";
 
 const text=(value:unknown)=>String(value??"").trim();
 function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.manage")||actor.permissions.includes("customers.manage");}
-function queueFor(reason:AiHandoffReason){if(reason==="high_value_enterprise_objection")return{queue:"sales-hot",slaMinutes:5};if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
+function queueFor(reason:AiHandoffReason){if(reason==="high_value_enterprise_objection")return{queue:"sales-hot",slaMinutes:5};if(reason==="bot_lead_qualified")return{queue:"sales-web-chat",slaMinutes:10};if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
 
 export async function ensureAiHumanHandoff(db:D1Database){await ensureConversationGovernance(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_handoffs (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,session_id TEXT,reason TEXT NOT NULL,confidence REAL,queue_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',summary_json TEXT NOT NULL,requested_by TEXT NOT NULL,taken_over_by TEXT,resumed_by TEXT,created_at INTEGER NOT NULL,taken_over_at INTEGER,resumed_at INTEGER)"),
