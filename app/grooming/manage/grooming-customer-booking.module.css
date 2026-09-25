@@ -19,3 +19,19 @@
 .cancelForm{display:grid;gap:16px;border-top:1px solid #d4e3db;padding-top:20px}.cancelForm label{display:grid;gap:8px;line-height:1.5}.cancelForm textarea{font:inherit;min-height:100px;padding:12px;border:1px solid #80978d;border-radius:8px;resize:vertical;box-sizing:border-box;width:100%}.cancelForm .consent{display:flex;align-items:flex-start;gap:12px}.consent input{margin-top:4px;min-width:22px;min-height:22px}.content button:disabled{opacity:.55;cursor:default}.cancelForm textarea:focus-visible,.consent input:focus-visible{outline:3px solid #c88b19;outline-offset:3px}
 
 .cancelForm input[type=date],.cancelForm input[type=time]{font:inherit;min-height:48px;padding:10px;border:1px solid #80978d;border-radius:8px;box-sizing:border-box;max-width:100%;min-width:0}
+
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.page { composes:palette from "../../components/brand/brand-surface.module.css"; }
+.page.page { background:var(--brand-surface) !important; color:var(--brand-text) !important; font-family:"PawSpaceNunito",system-ui,sans-serif !important; }
+.page .content a { color:var(--brand-text) !important; }
+.page .card { background:var(--brand-surface) !important; border:1px solid var(--brand-line) !important; }
+.page .status { color:var(--brand-text) !important; }
+.page .reference { color:var(--brand-muted) !important; }
+.page .card dt { color:var(--brand-muted) !important; }
+.page .note { color:var(--brand-muted) !important; }
+.page .content button { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
+.page .content button:focus-visible, .page .content a:focus-visible { outline:3px solid var(--brand-line) !important; }
+.page .cancelForm { border-top:1px solid var(--brand-line) !important; }
+.page .cancelForm textarea { border:1px solid var(--brand-line) !important; }
+.page .cancelForm textarea:focus-visible, .page .consent input:focus-visible { outline:3px solid var(--brand-line) !important; }
+.page .cancelForm input[type=date], .page .cancelForm input[type=time] { border:1px solid var(--brand-line) !important; }

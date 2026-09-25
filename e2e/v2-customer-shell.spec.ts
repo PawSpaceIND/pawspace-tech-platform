@@ -26,7 +26,7 @@ test("V2 utility routes render signed-out recovery without legacy customer-app h
  await expect(page.locator('a[href="/mobile-app"]')).toHaveCount(0);
  await page.goto("/v2/account"); await expect(page.getByRole("heading",{name:/You are signed out/})).toBeVisible();
  await expect(page.locator('a[href="/mobile-app"]')).toHaveCount(0);
- await page.goto("/v2/chat"); await expect(page.getByRole("heading",{name:/One conversation for your pet/})).toBeVisible();
+ await page.goto("/v2/chat"); await expect(page.getByRole("heading",{name:/Ask PawSpace anything/})).toBeVisible();
  await expect(page.locator('main[data-identity="guest"]')).toBeVisible();
  const accountMode=page.getByRole("button",{name:"My PawSpace"});
  await accountMode.click();

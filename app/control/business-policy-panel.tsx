@@ -21,7 +21,7 @@ type PolicyRecord = {
 type AuditRow = { id: string; service_code: string; city_id: string; action: string; actor_id: string; reason: string; created_at: number };
 type DomainSummary = { domain: string; label: string; managePermission: string; defaults: Record<string, unknown> };
 
-const box: React.CSSProperties = { border: "1px solid #e4e4e7", borderRadius: 10, padding: 14, background: "#fff" };
+const box: React.CSSProperties = { border: "1px solid var(--staff-line, #e4e4e7)", borderRadius: 10, padding: 14, background: "var(--staff-surface, #fff)" };
 const when = (value: number) => (value ? new Date(value).toLocaleString("en-IN") : "—");
 
 export default function BusinessPolicyPanel({ notify }: { notify?: (message: string) => void }) {
@@ -86,20 +86,20 @@ export default function BusinessPolicyPanel({ notify }: { notify?: (message: str
     <section style={{ display: "grid", gap: 14 }}>
       <header>
         <h2 style={{ margin: 0 }}>Business policy</h2>
-        <p style={{ margin: "6px 0 0", color: "#52525b" }}>
+        <p style={{ margin: "6px 0 0", color: "var(--staff-muted, #52525b)" }}>
           Rules the business owns, by service and by city. A row of <code>*</code> / <code>*</code> is the platform default;
           a more specific row overrides it. Every change is versioned, needs a reason, and is kept below.
         </p>
       </header>
 
-      {error && <p role="alert" style={{ ...box, borderColor: "#dc2626", color: "#b91c1c" }}>{error}</p>}
+      {error && <p role="alert" style={{ ...box, borderColor: "var(--staff-line, #dc2626)", color: "var(--staff-muted, #b91c1c)" }}>{error}</p>}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {domains.map((item) => (
           <button key={item.domain} onClick={() => retarget(() => setDomain(item.domain))} aria-pressed={domain === item.domain}
             style={{ ...box, cursor: "pointer", outline: domain === item.domain ? "2px solid #222" : "none" }}>
             <strong>{item.label}</strong>
-            <div style={{ color: "#71717a", fontSize: 12 }}>changed by {item.managePermission}</div>
+            <div style={{ color: "var(--staff-muted, #71717a)", fontSize: 14 }}>changed by {item.managePermission}</div>
           </button>
         ))}
       </div>
@@ -107,17 +107,17 @@ export default function BusinessPolicyPanel({ notify }: { notify?: (message: str
       {detail && (
         <div style={box}>
           <h3 style={{ marginTop: 0 }}>{detail.label}</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }} data-staff-grid="stats">
             <label>Service<input value={serviceCode} onChange={(event) => retarget(() => setServiceCode(event.target.value.trim() || "*"))} placeholder="* for any service" style={{ display: "block", width: "100%", padding: 8 }} /></label>
             <label>City<input value={cityId} onChange={(event) => retarget(() => setCityId(event.target.value.trim() || "*"))} placeholder="* for any city" style={{ display: "block", width: "100%", padding: 8 }} /></label>
           </div>
-          <p style={{ color: "#52525b", fontSize: 13 }}>
+          <p style={{ color: "var(--staff-muted, #52525b)", fontSize: 13 }}>
             {inForce
               ? `Editing ${inForce.serviceCode}/${inForce.cityId} v${inForce.version}, last changed by ${inForce.updatedBy} on ${when(inForce.updatedAt)}.`
               : "No row exists at this scope yet — saving creates one."}
           </p>
           <textarea value={shown} onChange={(event) => setDraft(event.target.value)} rows={18}
-            style={{ width: "100%", fontFamily: "ui-monospace, monospace", fontSize: 12, padding: 10 }} />
+            style={{ width: "100%", fontFamily: "var(--staff-font, ui-monospace, monospace)", fontSize: 14, padding: 10 }} />
           <label style={{ display: "block", marginTop: 8 }}>Why this change
             <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Boarding is an advance commitment in Bengaluru" style={{ display: "block", width: "100%", padding: 8 }} />
           </label>
@@ -134,7 +134,7 @@ export default function BusinessPolicyPanel({ notify }: { notify?: (message: str
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr><th align="left">Service</th><th align="left">City</th><th align="left">Version</th><th align="left">Effective</th><th align="left">Changed by</th><th align="left">When</th></tr></thead>
               <tbody>{detail.policies.map((policy) => (
-                <tr key={policy.id} style={{ borderTop: "1px solid #f4f4f5" }}>
+                <tr key={policy.id} style={{ borderTop: "1px solid var(--staff-line, #f4f4f5)" }}>
                   <td>{policy.serviceCode}</td><td>{policy.cityId}</td><td>v{policy.version}{policy.active ? "" : " (inactive)"}</td>
                   <td>{policy.effectiveFrom}{policy.effectiveTo ? ` → ${policy.effectiveTo}` : ""}</td>
                   <td>{policy.updatedBy}</td><td>{when(policy.updatedAt)}</td>

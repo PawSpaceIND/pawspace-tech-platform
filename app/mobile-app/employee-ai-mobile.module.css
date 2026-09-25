@@ -1,1 +1,42 @@
 .shell{display:grid;gap:14px}.shell header,.context,.turns,.voice{background:var(--ps-card,#fff);border:1px solid color-mix(in srgb,var(--ps-ink,#24152f) 12%,transparent);border-radius:18px;padding:16px}.shell header small{font-size:10px;font-weight:900;letter-spacing:.12em;color:var(--ps-accent,#6a2b91)}.shell header h3{margin:5px 0 2px;font-size:24px}.shell header p,.context span,.voice p,.turns>p{margin:4px 0 0;color:#766a7f;font-size:12px;line-height:1.5}.customer{display:grid;gap:7px;font-size:11px;font-weight:800}.customer select,.shell textarea{width:100%;border:1px solid #ddd2e4;border-radius:13px;background:#fff;color:#24152f;padding:12px}.turns{display:grid;gap:10px;min-height:150px}.turns article{max-width:92%;border-radius:14px;padding:11px 12px;background:#f4eef8}.turns article[data-role="user"]{justify-self:end;background:#5f2788;color:#fff}.turns article p{margin:4px 0;white-space:pre-wrap;line-height:1.45}.turns article small{opacity:.72}.shell form{display:grid;gap:9px}.shell textarea{min-height:92px;resize:vertical}.shell form button{border:0;border-radius:13px;padding:13px 16px;background:#f59a23;color:#2f173d;font-weight:900}.shell form button:disabled{opacity:.5}.voice{display:grid;gap:10px}.voice>div:first-child{display:grid;gap:2px}.voice small{color:#75697e}.voiceActions{display:flex;gap:8px}.voiceActions button{border:0;border-radius:12px;padding:11px 14px;background:#5f2788;color:#fff;font-weight:900}.voiceActions button:disabled{opacity:.45}.voice article{border-radius:12px;padding:10px;background:#f4eef8}.voice article p{margin:4px 0 0}.voiceError{color:#9a3028;font-weight:700}.denied,.loading{padding:18px;border-radius:16px;background:#fff4ef}.denied p{margin-bottom:0}@media(max-width:520px){.shell{gap:11px}.shell header,.context,.turns,.voice{padding:13px;border-radius:15px}.shell header h3{font-size:21px}.turns{min-height:120px}.voiceActions button{width:100%}}
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.shell { composes:palette from "../components/brand/brand-surface.module.css"; }
+.denied { composes:palette from "../components/brand/brand-surface.module.css"; }
+.loading { composes:palette from "../components/brand/brand-surface.module.css"; }
+.shell.shell,.denied.denied,.loading.loading { min-width:0; color:var(--brand-text); font:400 16px/1.6 "PawSpaceNunito",system-ui,sans-serif; }
+.shell.shell { gap:18px; background:var(--brand-bg); padding:4px; border-radius:20px; }
+.shell * { box-sizing:border-box; }
+.shell header,.shell .context,.shell .turns,.shell .voice { background:var(--brand-surface); border:1px solid var(--brand-line); border-radius:18px; padding:18px; color:var(--brand-text); min-width:0; }
+.shell header { background:var(--brand-hero); color:var(--brand-hero-text); }
+.shell header small { color:var(--brand-gold); font-size:13px; line-height:1.5; letter-spacing:.08em; }
+.shell header h3 { color:var(--brand-hero-text); font-size:28px; line-height:1.2; font-weight:850; }
+.shell header p { color:var(--brand-hero-text); font-size:15px; line-height:1.6; }
+.shell .context span,.shell .voice p,.shell .turns>p { font-size:15px; line-height:1.6; color:var(--brand-muted); }
+.shell .context span { display:block; overflow-wrap:anywhere; }
+.shell .customer { font-size:15px; line-height:1.5; color:var(--brand-text); }
+.shell .customer select,.shell textarea { max-width:100%; min-width:0; min-height:48px; font:400 16px/1.5 "PawSpaceNunito",system-ui,sans-serif; background:var(--brand-surface); color:var(--brand-text); border:1px solid var(--brand-line); padding:12px 14px; }
+.shell textarea::placeholder { color:var(--brand-muted); opacity:1; }
+.shell .turns article,.shell .voice article { background:var(--brand-raised); color:var(--brand-text); padding:14px; border:1px solid var(--brand-line); max-width:100%; overflow-wrap:anywhere; }
+.shell .turns article[data-role="user"] { background:var(--brand-primary); color:var(--brand-on-primary); border-color:var(--brand-primary); }
+.shell .turns article p,.shell .voice article p { font-size:16px; line-height:1.65; color:inherit; }
+.shell .turns article small { display:block; opacity:1; font-size:13px; line-height:1.6; color:var(--brand-muted); }
+.shell form button { min-height:48px; background:var(--brand-gold); color:var(--brand-on-gold); font:800 16px/1.5 "PawSpaceNunito",system-ui,sans-serif; padding:12px 18px; }
+.shell .voice small { font-size:13px; line-height:1.6; color:var(--brand-muted); }
+.shell .voiceActions button { min-height:48px; background:var(--brand-primary); color:var(--brand-on-primary); font:800 16px/1.5 "PawSpaceNunito",system-ui,sans-serif; padding:12px 18px; }
+.shell .voiceError,.denied.denied { background:var(--brand-danger-bg); color:var(--brand-danger); border:1px solid var(--brand-danger); padding:14px 16px; border-radius:14px; overflow-wrap:anywhere; }
+.loading.loading { background:var(--brand-raised); border:1px solid var(--brand-line); }
+.shell :is(button,input,textarea,select):focus-visible { outline:3px solid var(--brand-gold); outline-offset:3px; }
+@media(max-width:520px) { .shell.shell { gap:14px; } .shell header,.shell .context,.shell .turns,.shell .voice { padding:16px; } .shell .voiceActions { width:100%; } }
+
+/* The legacy phone chrome must follow the selected palette while the employee panel is mounted. */
+:global(main[data-pawspace-mobile]):has(.shell.shell) { --employee-bg:#fff8ee; --employee-surface:#fff; --employee-text:#173c31; --employee-muted:#526b61; --employee-primary:#01261f; --employee-line:#d7e3dc; --employee-on-primary:#fff; }
+:global(html[data-paw-theme="signature"]) :global(main[data-pawspace-mobile]):has(.shell.shell) { --employee-bg:#f7f3ff; --employee-text:#252525; --employee-muted:#655b72; --employee-primary:#894aed; --employee-line:#e3d8f3; }
+:global(html[data-paw-mode="dark"]) :global(main[data-pawspace-mobile]):has(.shell.shell) { --employee-bg:#0c1e18; --employee-surface:#152d24; --employee-text:#ecf5ef; --employee-muted:#b8cec1; --employee-primary:#c2e6d1; --employee-line:#446354; --employee-on-primary:#01261f; }
+:global(html[data-paw-theme="signature"][data-paw-mode="dark"]) :global(main[data-pawspace-mobile]):has(.shell.shell) { --employee-bg:#191322; --employee-surface:#261d33; --employee-text:#f5effb; --employee-muted:#d0c0df; --employee-primary:#d3b8ff; --employee-line:#5d4974; --employee-on-primary:#32164f; }
+:global(main[data-pawspace-mobile]):has(.shell.shell),:global(main[data-pawspace-mobile]):has(.shell.shell)>section { background:var(--employee-bg) !important; color:var(--employee-text) !important; font-family:"PawSpaceNunito",system-ui,sans-serif !important; --ps-text:var(--employee-text); --ps-muted:var(--employee-muted); --ps-primary:var(--employee-primary); --ps-surface:var(--employee-surface); --ps-border:var(--employee-line); }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>nav { background:var(--employee-surface) !important; border-color:var(--employee-line) !important; }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>nav button { color:var(--employee-muted) !important; font-size:12px !important; }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>nav button[class*="active"] { color:var(--employee-primary) !important; }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>header :is(button,b,small) { color:var(--employee-text) !important; font-size:14px; }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>div h2 { font-size:28px; color:var(--employee-text) !important; }
+:global(main[data-pawspace-mobile]):has(.shell.shell)>section>div button[class*="avatar"] { background:var(--employee-primary) !important; color:var(--employee-on-primary) !important; }

@@ -136,22 +136,25 @@ test("every rebuilt team screen is built from the design system, not inline styl
 });
 
 test("the Operations shell is the approved chrome, responsive and keyboard-navigable", async () => {
-  const [shell, shellCss, adminCss, css] = await Promise.all([
+  const [shell, shellCss, sharedCss, css] = await Promise.all([
     readFile(new URL("../app/components/ops-shell/OpsShell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/ops-shell/ops-shell.module.css", import.meta.url), "utf8"),
-    readFile(new URL("../app/admin/admin.module.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/staff-workspace/staff-workspace.module.css", import.meta.url), "utf8"),
     readFile(new URL("../app/team/team-console.module.css", import.meta.url), "utf8"),
   ]);
-  // The chrome matches the admin surface it was lifted from: same rail width, colour and workspace.
-  assert.match(shellCss, /grid-template-columns: 238px 1fr/);
-  assert.match(adminCss, /grid-template-columns: 238px 1fr/);
-  assert.match(shellCss, /background: #2d0a5d/);
-  assert.match(adminCss, /background: #2d0a5d/);
+  // The approved staff frame replaces the old purple, fixed-width admin rail.
+  assert.match(shell, /<StaffWorkspace>/);
+  assert.match(shellCss, /background:var\(--staff-bg\)/);
+  assert.match(sharedCss, /grid-template-columns:264px minmax\(0,1fr\)/);
+  assert.match(sharedCss, /#01261f/);
+  assert.match(sharedCss, /#894aed/);
+  assert.match(sharedCss, /PawSpaceStaffNunito/);
+  assert.match(shell, /Related workspace links/);
   // The current screen is marked from the route, and the rail is reachable by keyboard.
   assert.match(shell, /usePathname/);
   assert.match(shell, /aria-current/);
   assert.match(shellCss, /\.sidebar nav a:focus-visible/);
-  // It collapses to icons, then to a bottom bar, rather than squeezing the workspace.
+  // The content padding adapts; the shared frame owns the mobile navigation toggle.
   assert.match(shellCss, /@media \(max-width: 1050px\)/);
   assert.match(shellCss, /@media \(max-width: 720px\)/);
   // A badge is only rendered when a screen supplies a real count.
