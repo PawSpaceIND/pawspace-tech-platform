@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 type Scheme={id:string;scheme_code:string;version:number;status:string;role_code:string;team_code:string;effective_from:number;effective_until?:number|null};
 type Result={id:string;employee_id:string;employee_email:string;metric_value:number;calculated_amount:number;approved_amount:number;status:string;scheme_code:string;version:number;period_start:number;period_end:number};
 type Dispute={id:string;result_id:string;status:string;reason:string;opened_by:string;opened_at:number};
@@ -58,26 +59,26 @@ export default function IncentivesPage(){
 
   const disputeFor=(resultId:string)=>data?.disputes.find(d=>d.result_id===resultId);
 
-  return <main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"system-ui,sans-serif"}}>
+  return <StaffModule><main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"inherit"}}>
     <p><Link href="/team/people">← People</Link></p>
     <p style={{fontWeight:800,letterSpacing:1}}>PAWSPACE · PEOPLE · INCENTIVES</p>
     <h1>Governed incentive and bonus management</h1>
     <p>Targets, formulas, caps, quality guardrails and clawbacks are versioned configuration. Pipeline revenue never qualifies as earned incentive. Human approval is required before any result can flow into payroll.</p>
     {error?<p>{error}</p>:null}
-    {actionError?<p style={{color:"crimson"}}>{actionError}</p>:null}
-    <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,margin:"18px 0"}}>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Scheme versions</small><strong style={{display:"block",fontSize:28}}>{data?.schemes.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Incentive results</small><strong style={{display:"block",fontSize:28}}>{data?.results.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Open disputes</small><strong style={{display:"block",fontSize:28}}>{data?.disputes.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Payroll bridge</small><strong style={{display:"block",fontSize:20}}>{data?.truth.payrollInclusionOneTime?"ONE-TIME LINKED":"NOT READY"}</strong></article>
+    {actionError?<p style={{color:"var(--staff-danger)"}}>{actionError}</p>:null}
+    <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,margin:"18px 0"}} data-staff-grid="stats">
+      <article style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:14}}><small>Scheme versions</small><strong style={{display:"block",fontSize:28}}>{data?.schemes.length||0}</strong></article>
+      <article style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:14}}><small>Incentive results</small><strong style={{display:"block",fontSize:28}}>{data?.results.length||0}</strong></article>
+      <article style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:14}}><small>Open disputes</small><strong style={{display:"block",fontSize:28}}>{data?.disputes.length||0}</strong></article>
+      <article style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:14}}><small>Payroll bridge</small><strong style={{display:"block",fontSize:20}}>{data?.truth.payrollInclusionOneTime?"ONE-TIME LINKED":"NOT READY"}</strong></article>
     </section>
     <h2>Schemes</h2>
-    <p style={{color:"#666",fontSize:13}}>Creating or activating a scheme requires real formula, target and guardrail values from People Ops - not shown here to avoid fabricating defaults for a business decision. Use the incentives API directly with a reviewed scheme configuration.</p>
-    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=><article key={s.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}><b>{s.scheme_code} v{s.version} · {s.status}</b><div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div></article>)}</section>
+    <p style={{color:"var(--staff-muted)",fontSize:15}}>Creating or activating a scheme requires real formula, target and guardrail values from People Ops - not shown here to avoid fabricating defaults for a business decision. Use the incentives API directly with a reviewed scheme configuration.</p>
+    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=><article key={s.id} style={{border:"1px solid var(--staff-line)",borderRadius:10,padding:12}}><b>{s.scheme_code} v{s.version} · {s.status}</b><div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div></article>)}</section>
     <h2>Results</h2>
     <section style={{display:"grid",gap:8}}>{data?.results.map(r=>{
       const dispute=disputeFor(r.id),busy=busyId===r.id||busyId===dispute?.id;
-      return <article key={r.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}>
+      return <article key={r.id} style={{border:"1px solid var(--staff-line)",borderRadius:10,padding:12}}>
         <b>{r.employee_email} · {r.status}</b>
         <div>{r.scheme_code} v{r.version} · {day(r.period_start)} → {day(r.period_end)}</div>
         <div>Metric: {r.metric_value} · Calculated: ₹{Number(r.calculated_amount||0).toLocaleString("en-IN")} · Approved: ₹{Number(r.approved_amount||0).toLocaleString("en-IN")}</div>
@@ -88,7 +89,7 @@ export default function IncentivesPage(){
           {dispute&&<button disabled={busy} onClick={()=>setResolveDraft({disputeId:dispute.id,resolutionNote:"",release:false})}>Resolve dispute</button>}
           {["approved","calculated"].includes(r.status)&&<button disabled={busy} onClick={()=>setReverseDraft({resultId:r.id,amount:"",reason:""})}>Reverse</button>}
         </div>
-        {dispute&&<p style={{fontSize:12,color:"#a35"}}>Open dispute: {dispute.reason}</p>}
+        {dispute&&<p style={{fontSize:14,color:"var(--staff-danger)"}}>Open dispute: {dispute.reason}</p>}
         {disputeDraft?.resultId===r.id&&<div style={{marginTop:8,display:"grid",gap:6}}>
           <label>Dispute reason<input style={{display:"block",width:"100%",padding:8}} value={disputeDraft.reason} onChange={e=>setDisputeDraft({...disputeDraft,reason:e.target.value})}/></label>
           <div style={{display:"flex",gap:8}}><button disabled={busy} onClick={()=>void submitDispute()}>Submit dispute</button><button disabled={busy} onClick={()=>setDisputeDraft(null)}>Cancel</button></div>
@@ -107,5 +108,5 @@ export default function IncentivesPage(){
     })}</section>
     {loading?<p>Loading incentive governance…</p>:null}
     <footer style={{marginTop:24}}><b>Pipeline revenue eligible:</b> NO · <b>Automatic payroll inclusion before approval:</b> NO · <b>Production ready:</b> NO</footer>
-  </main>;
+  </main></StaffModule>;
 }

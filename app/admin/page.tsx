@@ -10,6 +10,7 @@ import BoardingPanel from "./boarding-panel";
 import MobilityPanel from "./mobility-panel";
 import FoodPanel from "./food-panel";
 import TestSyncPanel from "../components/test-sync-panel";
+import StaffModule from "../components/staff-workspace/StaffModule";
 
 type View = "overview" | "calendar" | "bookings" | "crm" | "training" | "boarding" | "mobility" | "food" | "groomers" | "workforce" | "subscriptions" | "payments" | "tickets";
 
@@ -119,14 +120,14 @@ export default function AdminPage() {
     window.setTimeout(() => setToast(""), 2600);
   }
 
-  if(overviewError)return <main className={styles.accessError}><section><h1>Operations overview unavailable</h1><p role="alert">{overviewError}</p><p>Sign in with an authorized staff account, or try again if you already have access.</p><button className={styles.primaryButton} onClick={()=>window.location.reload()}>Try again</button><p><Link href="/team">Team sign-in</Link> · <Link href="/mobile-app">Customer app</Link></p></section></main>;
+  if(overviewError)return <StaffModule><main className={styles.accessError}><section><h1>Operations overview unavailable</h1><p role="alert">{overviewError}</p><p>Sign in with an authorized staff account, or try again if you already have access.</p><button className={styles.primaryButton} onClick={()=>window.location.reload()}>Try again</button><p><Link href="/team">Team sign-in</Link> · <Link href="/mobile-app">Customer app</Link></p></section></main></StaffModule>;
   return (
-    <main className={styles.adminShell}>
-      <aside className={styles.sidebar}>
+    <StaffModule><main className={styles.adminShell}>
+      <details data-staff-context="true"><summary>Operations views and links</summary><aside className={styles.sidebar}>
         <div className={styles.brand}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span>Operations</span></div>
         <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)} aria-label={item.label}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
         <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/crm">◉ CRM workspace</Link><Link href="/team/customer-experience">◎ Communications Desk</Link><Link href="/team/provider-onboarding">♟ Provider operations</Link><Link href="/team/operations/boarding">⌂ Boarding & sitting</Link><Link href="/team/operations/taxi">↗ Taxi operations</Link><Link href="/team/operations/walking">↗ Walking operations</Link><Link href="/team/operations/food">● Fresh food operations</Link><Link href="/team/people">♟ People & workforce</Link><Link href="/team/subscriptions">◈ Subscriptions</Link><Link href="/team/finance">₹ Finance & payments</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/sales">⚡ Sales workspace</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
-      </aside>
+      </aside></details>
 
       <section className={styles.workspace}>
         <header className={styles.header}>
@@ -252,6 +253,6 @@ export default function AdminPage() {
         {view === "tickets" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Operations queue</span><h2>Support tickets</h2></div><Link className={styles.textButton} href="/team/customer-experience">Communications Desk →</Link></div><div className={styles.ticketList}><article><span className={styles.urgentTag}>Urgent</span><div><strong>Groomer waiting · Customer unreachable</strong><p>PS-2838 · 15-minute reminder sent · HSR Layout</p></div><button onClick={() => notify("Ticket assigned to you")}>Resolve</button></article><article><span className={styles.normalTag}>Payment</span><div><strong>Dynamic QR payment not matched</strong><p>PS-2829 · ₹1,899 received · Whitefield</p></div><button onClick={() => notify("Payment matching opened")}>Review</button></article><article><span className={styles.normalTag}>Reschedule</span><div><strong>Preferred groomer unavailable</strong><p>PS-2851 · Customer wants Arun R. · Koramangala</p></div><button onClick={() => notify("Alternative slots displayed")}>Review</button></article></div></section>}
       </section>
       {toast && <div className={styles.toast}>✓ {toast}</div>}
-    </main>
+    </main></StaffModule>
   );
 }

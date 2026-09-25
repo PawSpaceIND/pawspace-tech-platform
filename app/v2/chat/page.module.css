@@ -7,3 +7,25 @@
 .aiLabel{display:flex;align-items:center;gap:8px;margin-bottom:8px;color:#173d32;font-weight:850}
 .aiLabel img{width:24px;height:24px;border-radius:8px}
 @media(max-width:640px){.bubble{max-width:90%}}
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.page { composes:palette from "../../components/brand/brand-surface.module.css"; }
+.page.page { background:linear-gradient(180deg,var(--brand-surface),var(--brand-surface)) !important; color:var(--brand-text) !important; }
+.page .back { border:1px solid var(--brand-line) !important; background:var(--brand-surface) !important; }
+.page .hero { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; }
+.page .hero span { color:var(--brand-gold) !important; font-size:13px !important; }
+.page .hero p { color:var(--brand-hero-text) !important; }
+.page .modes button { border:1px solid var(--brand-line) !important; background:var(--brand-surface) !important; color:var(--brand-text) !important; }
+.page .modes button[aria-pressed=true] { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
+.page .notice, .page .turn, .page .composer { background:var(--brand-warning-bg) !important; border:1px solid var(--brand-line) !important; }
+.page .answer { color:var(--brand-text) !important; }
+.page .composer textarea { border:1px solid var(--brand-line) !important; background:var(--brand-surface) !important; }
+.page .composer button { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
+.page .error { background:var(--brand-danger-bg) !important; color:var(--brand-danger) !important; }
+.page .dock { background:var(--brand-surface) !important; border:1px solid var(--brand-line) !important; }
+.page .dock a { color:var(--brand-text) !important; font-size:13px !important; }
+.page .dock .active { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
+
+.page.page { background:var(--brand-bg) !important; color:var(--brand-text) !important; font-family:"PawSpaceNunito",system-ui,sans-serif !important; --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong); --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line); }
+.page .userBubble { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
+.page .aiBubble, .page .aiLabel { background:var(--brand-surface) !important; border-color:var(--brand-line) !important; color:var(--brand-text) !important; }
+.page .aiLabel { background:transparent !important; }

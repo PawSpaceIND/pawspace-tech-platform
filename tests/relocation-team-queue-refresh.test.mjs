@@ -13,6 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__RELO_QUEUE_DB__", "__RELO_QUEUE_ENV__");
@@ -53,10 +54,15 @@ test("the staff relocation page wires the queue merge into every action response
   );
 });
 
-test("the staff relocation page still renders its initial 'select a case' state", async () => {
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const React = await import("react");
-  const { default: TeamRelocation } = await import("../app/team/relocation/page.tsx");
-  const html = renderToStaticMarkup(React.createElement(TeamRelocation));
+test("the staff relocation page still renders its initial 'select a case' state", () => {
+  // Render in a fresh hook process. The closure-ci hook-path job intentionally installs the same
+  // module hooks hundreds of times; isolating this Next/React render prevents prior hook state from
+  // contaminating the CommonJS bridge while still exercising the real TSX page.
+  const source = 'import React from "react";import {renderToStaticMarkup} from "react-dom/server";const {default:Page}=await import("./app/team/relocation/page.tsx");process.stdout.write(renderToStaticMarkup(React.createElement(Page)));';
+  const html = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./tests/helpers/register-hooks.mjs", "--input-type=module", "--eval", source], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env },
+  });
   assert.match(html, /Select a case/);
 });
