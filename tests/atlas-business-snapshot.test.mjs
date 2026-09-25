@@ -43,8 +43,8 @@ test("Atlas reads mission-period pipeline from canonical revenue opportunities w
  add.run('O1','ready',1000,0.5,now-5000);add.run('O2','review_required',500,0.8,now-4000);add.run('O3','suppressed',900,1,now-3000);add.run('O4','converted',700,1,now-2000);add.run('O5','closed',600,1,now-1000);add.run('O6','ready',999,1,now-20000);
  const summary=await revenue.revenueMissionSummary(db,'MP'),snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:'MP'});
  assert.equal(snapshot.mission.value.achieved,summary.metrics.achieved);assert.equal(snapshot.mission.value.net,400);
- assert.equal(snapshot.mission.value.pipeline_unweighted,1500);assert.equal(snapshot.mission.value.pipeline_weighted,900);assert.equal(snapshot.mission.value.forecast,null);
- assert.match(snapshot.mission.source,/canonical_revenue_opportunities/);
+ assert.equal(snapshot.mission.value.pipeline_unweighted,1500);assert.equal(snapshot.mission.value.pipeline_weighted,900);assert.equal(snapshot.mission.value.forecast,null);assert.equal(snapshot.mission.value.forecast_reason,"canonical_mission_scoped_forecast_not_available");
+ assert.ok(snapshot.limitations.some(item=>item.includes("Mission-scoped revenue forecast is unavailable")));assert.match(snapshot.mission.source,/canonical_revenue_opportunities/);
 });
 test("Atlas leaves pipeline unknown when canonical opportunity data is unavailable",async()=>{
  const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);
@@ -64,6 +64,14 @@ test("tighten-only blocks all four prohibited model-output classes",async()=>{
  assert.deepEqual(atlas.atlasNarrativeIsTightEnough(snapshot,"I assigned provider P-123 to the booking."),{ok:false,reason:"narrative_claims_provider_assignment"});
  assert.deepEqual(atlas.atlasNarrativeIsTightEnough(snapshot,"I captured the payment and refunded INR 100."),{ok:false,reason:"narrative_claims_money_movement"});
 });
+test("Atlas proposal lineage preserves integration-readiness provenance",async()=>{
+ const{db,now}=world(),metric=(value,source)=>({value,source,asOf:now}),snapshot={asOf:now,mission:metric(null,"mission-source"),bookings:metric([],"booking-source"),ops:{open_cases:metric(0,"ops-open"),sla_breaches:metric(0,"ops-sla"),sitting_pending_accepts:metric(0,"ops-sitting"),boarding_pending_accepts:metric(0,"ops-boarding"),cash_collection_holds:metric(null,"ops-cash")},finance:{invoice_completed_gap:metric(null,"finance-invoice"),trainer_earnings:metric(null,"finance-trainer")},integrations:{payments:metric(false,"integration-payments"),maps:metric(true,"integration-maps"),whatsapp:metric(false,"integration-whatsapp"),ai:metric(true,"integration-ai")},limitations:[],insufficient_data:true,production_ready:false};
+ const proposal=await atlas.recordAtlasProposal(db,{proposalType:"report.generate",summary:"Readiness-aware report",snapshot,basisId:"lineage",riskClass:"low",action:{type:"report.generate"},createdBy:"atlas"});
+ for(const source of["integration-payments","integration-maps","integration-whatsapp","integration-ai"])assert.ok(proposal.sourceIds.includes(source));
+ const row=(await atlas.listAtlasProposals(db,1))[0],stored=JSON.parse(row.source_ids_json);for(const source of["integration-payments","integration-maps","integration-whatsapp","integration-ai"])assert.ok(stored.includes(source));
+ const recomputed=await atlas.atlasDecisionInputFingerprint({proposalType:row.proposal_type,snapshotHash:row.snapshot_hash,basisId:row.basis_id,sourceIds:stored,riskClass:row.risk_class,actionJson:row.action_json,createdBy:row.created_by,policyVersion:row.policy_version});assert.equal(recomputed,row.decision_fingerprint);
+});
+
 test("proposal journal supports proposed approved rejected executed lifecycle without executing itself",async()=>{
  const{db,now}=world(),snapshot={asOf:now,mission:{value:null,source:"fixture",asOf:now,reason:"fixture"},bookings:{value:[],source:"fixture",asOf:now},ops:{open_cases:{value:0,source:"fixture",asOf:now},sla_breaches:{value:0,source:"fixture",asOf:now},sitting_pending_accepts:{value:0,source:"fixture",asOf:now},boarding_pending_accepts:{value:0,source:"fixture",asOf:now},cash_collection_holds:{value:null,source:"fixture",asOf:now,reason:"not_available"}},finance:{invoice_completed_gap:{value:null,source:"fixture",asOf:now,reason:"fixture"},trainer_earnings:{value:null,source:"fixture",asOf:now,reason:"fixture"}},integrations:{payments:{value:false,source:"fixture",asOf:now},maps:{value:false,source:"fixture",asOf:now},whatsapp:{value:false,source:"fixture",asOf:now},ai:{value:false,source:"fixture",asOf:now}},limitations:["fixture"],insufficient_data:true,production_ready:false};
  const proposal=await atlas.recordAtlasProposal(db,{proposalType:"staffing_hold",summary:"Hold hiring pending verified demand.",snapshot,basisId:"fixture",riskClass:"medium",createdBy:"atlas"});
@@ -208,23 +216,51 @@ test("invoice gap counts only invoices linked to completed canonical bookings",a
  assert.equal(snapshot.finance.invoice_completed_gap.source,"canonical_bookings + booking_invoices");
 });
 
-test("integration flags reuse canonical credential detectors instead of partial secret heuristics",async()=>{
- const{db,now}=world();
+test("Atlas integration flags require governed readiness plus current credentials",async()=>{
+ const{sqlite,db,now}=world();
+ sqlite.exec("CREATE TABLE integration_registry(integration_code TEXT PRIMARY KEY,readiness_state TEXT NOT NULL,credential_status TEXT NOT NULL);");
+ const add=sqlite.prepare("INSERT INTO integration_registry VALUES (?,?,?)");
+ add.run("INT-PAY-01","sandbox_ready_for_test","configured");
+ add.run("INT-MAPS-01","production_setup_required","configured");
+ add.run("INT-COMMS-01","sandbox_verified","configured");
+ add.run("INT-AI-01","production_ready_for_controlled_test","configured");
  globalThis.__PAWSPACE_TEST_ENV__={
   PAWSPACE_PAYMENT_ENV:"sandbox",
-  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
-  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  RAZORPAY_KEY_ID_SANDBOX:"rzp_test",
+  RAZORPAY_KEY_SECRET_SANDBOX:"secret",
+  RAZORPAY_WEBHOOK_SECRET_SANDBOX:"hook",
   PAWSPACE_COMMUNICATION_ENV:"uat",
   META_WHATSAPP_UAT_DELIVERY_ENABLED:"true",
+  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
+  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  META_WHATSAPP_WABA_ID:"waba",
+  META_WHATSAPP_APP_SECRET:"app",
+  META_WHATSAPP_VERIFY_TOKEN:"verify",
+  META_WHATSAPP_UAT_ALLOWLIST:"919999999999",
+  META_WHATSAPP_TEMPLATE_ALLOWLIST:"uat-template",
   GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps",
   PAWSPACE_AI_PROVIDER_API_KEY:"ai-key"
  };
- const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
- assert.equal(snapshot.integrations.payments.value,false,"payment env alone is not sandbox readiness");
- assert.equal(snapshot.integrations.whatsapp.value,false,"token + phone alone are not Meta UAT readiness");
- assert.equal(snapshot.integrations.maps.value,true);
+ let snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.payments.value,true);
+ assert.equal(snapshot.integrations.whatsapp.value,true);
+ assert.equal(snapshot.integrations.maps.value,false,"credentials alone must not override governed readiness");
+ assert.equal(snapshot.integrations.maps.reason,"integration_readiness_state:production_setup_required");
  assert.equal(snapshot.integrations.ai.value,true);
- assert.match(snapshot.integrations.whatsapp.source,/integration-readiness credential detector/);
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
+ delete globalThis.__PAWSPACE_TEST_ENV__.PAWSPACE_AI_PROVIDER_API_KEY;
+ snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now+1});
+ assert.equal(snapshot.integrations.ai.value,false,"stale registry credential state must not override the current runtime detector");
+ assert.equal(snapshot.integrations.ai.reason,"integration_credentials:missing");
+ globalThis.__PAWSPACE_TEST_ENV__={};
+});
+
+test("Atlas keeps integration readiness unknown when the governed registry is unavailable",async()=>{
+ const{db,now}=world();globalThis.__PAWSPACE_TEST_ENV__={GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps"};
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.maps.value,null);
+ assert.equal(snapshot.integrations.maps.reason,"missing_table:integration_registry");
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
  globalThis.__PAWSPACE_TEST_ENV__={};
 });
 
