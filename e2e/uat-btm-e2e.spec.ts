@@ -686,8 +686,9 @@ async function partnerLifecycle(page: Page) {
     for (const key of Object.keys(v)) { const hit = find(v[key]); if (hit) return hit; }
     return null;
   })((route.body as { data?: unknown })?.data ?? route.body);
-  const target = found ? { latitude: found.lat, longitude: found.lng } : DOORSTEP;
-  log(`${found ? "✅" : "ℹ️"} Doorstep coordinates ${found ? "from the route API" : "not exposed by the route API; using the mocked doorstep"}: ${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}.`);
+  const doorstep = found ? { latitude: found.lat, longitude: found.lng } : DOORSTEP;
+  const target = { latitude: doorstep.latitude + 0.008, longitude: doorstep.longitude - 0.006 };
+  log(`${found ? "✅" : "ℹ️"} Doorstep coordinates ${found ? "from the route API" : "not exposed by the route API; using the mocked doorstep"}: ${doorstep.latitude.toFixed(5)}, ${doorstep.longitude.toFixed(5)}; provider proof point: ${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}.`);
   await page.context().setGeolocation({ ...target, accuracy: 8 });
   await page.locator("nav").getByRole("button", { name: /gps/i }).last().click();
   const gpsPost = page.waitForResponse(r => r.url().includes("/api/grooming-route") && r.request().method() === "POST", { timeout: 30_000 });
