@@ -7,7 +7,7 @@ import Link from "next/link";
 import PartnerJobNotes from "./job-notes";
 import {selectPartnerWorkOrder} from "../../lib/partner-job-selection";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
 import {useDutyTracking} from "./use-duty-tracking";
 import {BEFORE_SERVICE,AFTER_SERVICE,checklistComplete,isGroomerOnDuty} from "../../lib/partner-job-checklists";
@@ -141,6 +141,8 @@ export default function PartnerMobileApp() {
 
 function PartnerMobileAppContent() {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const inV2Partner = pathname.startsWith("/v2/partner");
   const requestedBookingId = searchParams.get("bookingId") || "";
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -613,7 +615,7 @@ function PartnerMobileAppContent() {
           </div>
 
           {feedError&&<p role="alert">{feedError}</p>}
-          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job);return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
+          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job,{v2:inV2Partner});return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
           <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
