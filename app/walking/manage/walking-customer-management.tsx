@@ -1,5 +1,6 @@
 "use client";
-import WalkingOwnerCareSummary from"../../components/walking-owner-care";\nimport CustomerServiceLiveTracking from"../../components/live-tracking/customer-service-live-tracking";
+import WalkingOwnerCareSummary from"../../components/walking-owner-care";
+import CustomerServiceLiveTracking from"../../components/live-tracking/customer-service-live-tracking";
 import Link from"next/link";
 import{resourceScreenState}from"../../../lib/resource-screen-state";
 import{useEffect,useState}from"react";
