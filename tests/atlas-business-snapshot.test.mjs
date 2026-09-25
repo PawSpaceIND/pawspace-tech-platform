@@ -43,8 +43,8 @@ test("Atlas reads mission-period pipeline from canonical revenue opportunities w
  add.run('O1','ready',1000,0.5,now-5000);add.run('O2','review_required',500,0.8,now-4000);add.run('O3','suppressed',900,1,now-3000);add.run('O4','converted',700,1,now-2000);add.run('O5','closed',600,1,now-1000);add.run('O6','ready',999,1,now-20000);
  const summary=await revenue.revenueMissionSummary(db,'MP'),snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:'MP'});
  assert.equal(snapshot.mission.value.achieved,summary.metrics.achieved);assert.equal(snapshot.mission.value.net,400);
- assert.equal(snapshot.mission.value.pipeline_unweighted,1500);assert.equal(snapshot.mission.value.pipeline_weighted,900);assert.equal(snapshot.mission.value.forecast,null);
- assert.match(snapshot.mission.source,/canonical_revenue_opportunities/);
+ assert.equal(snapshot.mission.value.pipeline_unweighted,1500);assert.equal(snapshot.mission.value.pipeline_weighted,900);assert.equal(snapshot.mission.value.forecast,null);assert.equal(snapshot.mission.value.forecast_reason,"canonical_mission_scoped_forecast_not_available");
+ assert.ok(snapshot.limitations.some(item=>item.includes("Mission-scoped revenue forecast is unavailable")));assert.match(snapshot.mission.source,/canonical_revenue_opportunities/);
 });
 test("Atlas leaves pipeline unknown when canonical opportunity data is unavailable",async()=>{
  const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);
