@@ -69,6 +69,18 @@ jobs:
             else console.log('EXPECTED_PHONE_ERROR='+JSON.stringify(d).slice(0,1500));
           }
           console.log('SPECIALIST_IDS='+JSON.stringify({grooming:Boolean(process.env.GROOMING_AGENT_ID),training:Boolean(process.env.TRAINING_AGENT_ID)}));
+          const ar=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(String(process.env.GROOMING_AGENT_ID||'')),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const aj=await ar.json().catch(()=>({}));
+          if(ar.ok){
+            const cc=aj?.conversation_config||{},agent=cc?.agent||{},tts=cc?.tts||{},turn=cc?.turn||{},asr=cc?.asr||{};
+            console.log('GROOMING_AGENT_AUDIO_SAFE='+JSON.stringify({
+              firstMessage:agent?.first_message||null,
+              language:agent?.language||null,
+              tts:{modelId:tts?.model_id||tts?.model||null,voiceId:Boolean(tts?.voice_id),stability:tts?.stability??null,similarityBoost:tts?.similarity_boost??null,speed:tts?.speed??null,style:tts?.style??null,optimizeStreamingLatency:tts?.optimize_streaming_latency??null},
+              turn:{turnTimeout:turn?.turn_timeout??null,silenceEndCallTimeout:turn?.silence_end_call_timeout??null,mode:turn?.mode||null,softTimeout:turn?.soft_timeout??null},
+              asr:{provider:asr?.provider||null,quality:asr?.quality||null,language:asr?.language||null}
+            }));
+          }
           NODE
 
       - name: Inspect latest Grooming specialist conversation without dialing
