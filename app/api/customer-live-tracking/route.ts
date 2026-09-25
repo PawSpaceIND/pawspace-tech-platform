@@ -2,6 +2,9 @@ import{authError,database,requireCustomerOwnership,requirePermission,resolveActo
 import{customerTrackingProjection}from"../../../lib/customer-location-disclosure";
 import{resolveBookingDoorstep}from"../../../lib/booking-doorstep";
 import{liveStaticMapResponse}from"../../../lib/live-static-map";
+import{ensureCanonicalBookingCoreTables}from"../../../lib/canonical-booking-core-schema";
+import{ensureUniversalLocationTables}from"../../../lib/universal-location-recovery";
+import{ensureCustomerLiveTrackingServiceTables}from"../../../lib/customer-live-tracking-schema";
 
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -30,7 +33,7 @@ export async function GET(request:Request){try{
  const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
  const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim(),mapMode=url.searchParams.get("map")==="1";
  if(!bookingId)return json({error:"Booking ID is required"},400);
- const db=await database();
+ const db=await database();await ensureCanonicalBookingCoreTables(db);await ensureUniversalLocationTables(db);await ensureCustomerLiveTrackingServiceTables(db);
  const booking=await db.prepare("SELECT b.id,b.customer_id,b.service_code,b.status,b.provider_id,b.package_name,b.scheduled_start,b.scheduled_end,w.provider_name,w.status work_order_status FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id AND w.provider_id=b.provider_id WHERE b.id=?").bind(bookingId).first<Row>();
  if(!booking)return json({error:"Booking not found"},404);
  const serviceCode=String(booking.service_code||"");if(!SUPPORTED.has(serviceCode))return json({error:"Live tracking is not enabled for this service"},409);
