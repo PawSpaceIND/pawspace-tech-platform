@@ -83,7 +83,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
  const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();
  await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
   .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice");
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});
  const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
