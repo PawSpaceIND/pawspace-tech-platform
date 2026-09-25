@@ -2,6 +2,7 @@ import{authError,database,requireCustomerOwnership,requirePermission,resolveActo
 import{customerTrackingProjection}from "../../../lib/customer-location-disclosure";
 import{resolveBookingDoorstep}from "../../../lib/booking-doorstep";
 import{liveStaticMapResponse}from "../../../lib/live-static-map";
+import{computeGoogleRoute}from "../../../lib/grooming-maps";
 import{ensureCanonicalBookingCoreTables}from "../../../lib/canonical-booking-core-schema";
 import{ensureUniversalLocationTables}from "../../../lib/universal-location-recovery";
 import{ensureCustomerLiveTrackingServiceTables}from "../../../lib/customer-live-tracking-schema";
@@ -29,6 +30,14 @@ function trackingTitle(serviceCode:string,status:string){
  if(serviceCode==="pet_taxi")return ["in_progress","arrived_dropoff","dropoff_confirmed"].includes(status)?"Your Pet Taxi trip is moving":"Your driver is approaching";
  return"Live tracking";
 }
+async function taxiDestination(db:D1Database,bookingId:string,status:string){
+ const row=await db.prepare("SELECT t.origin_label,t.destination_label,d.origin_latitude,d.origin_longitude,d.destination_latitude,d.destination_longitude FROM taxi_trips t LEFT JOIN taxi_ride_booking_details d ON d.booking_id=t.booking_id WHERE t.booking_id=? LIMIT 1").bind(bookingId).first<Row>();
+ if(!row)return null;
+ const inRide=["in_progress","arrived_dropoff","dropoff_confirmed"].includes(status);
+ const latitude=Number(inRide?row.destination_latitude:row.origin_latitude),longitude=Number(inRide?row.destination_longitude:row.origin_longitude),label=String(inRide?row.destination_label:row.origin_label||"");
+ if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||latitude<-90||latitude>90||longitude<-180||longitude>180||label.trim().length<5)return null;
+ return{latitude,longitude,label,phase:inRide?"dropoff":"pickup" as const};
+}
 export async function GET(request:Request){try{
  const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
  const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim(),mapMode=url.searchParams.get("map")==="1";
@@ -46,11 +55,17 @@ export async function GET(request:Request){try{
  const tracking=customerTrackingProjection({bookingStatus:status,hasTrustedLocation:Boolean(point),eta:eta?{providerStatus:eta.provider_status,distanceMeters:eta.distance_meters,durationSeconds:eta.duration_seconds,calculatedAt:eta.calculated_at,staleAfter:eta.stale_after}:null,visibleStatuses:ACTIVE});
  if(mapMode){
   if(tracking.state!=="live"||!point)return new Response("Live map is not available yet",{status:409,headers:{"cache-control":"no-store"}});
-  const taxiInRide=serviceCode==="pet_taxi"&&["in_progress","arrived_dropoff","dropoff_confirmed"].includes(status);
-  if(taxiInRide)return new Response("Pet Taxi destination coordinates are not yet stored canonically for in-ride mapping",{status:409,headers:{"cache-control":"no-store"}});
+  if(serviceCode==="pet_taxi"){
+   const destination=await taxiDestination(db,bookingId,status);
+   if(!destination)return new Response("Pet Taxi verified pickup/drop-off coordinates are unavailable",{status:409,headers:{"cache-control":"no-store"}});
+   const rounded={lat:Math.round(Number(point.latitude)*1000)/1000,lng:Math.round(Number(point.longitude)*1000)/1000};
+   const route=await computeGoogleRoute(rounded,{lat:destination.latitude,lng:destination.longitude});
+   return liveStaticMapResponse({provider:{lat:Number(point.latitude),lng:Number(point.longitude)},destination:{lat:destination.latitude,lng:destination.longitude},polyline:route.status==="configured"?route.polyline:null,privacyRounded:true});
+  }
   const destination=await resolveBookingDoorstep(db,bookingId);
   if(!destination)return new Response("Live map destination is unavailable",{status:409,headers:{"cache-control":"no-store"}});
-  return liveStaticMapResponse({provider:{lat:Number(point.latitude),lng:Number(point.longitude)},destination:{lat:destination.latitude,lng:destination.longitude},privacyRounded:true});
+  let polyline:string|null=null;try{const detail=eta?JSON.parse(String(eta.detail_json||"{}")) as Record<string,unknown>:{};if(typeof detail.polyline==="string")polyline=detail.polyline;}catch{}
+  return liveStaticMapResponse({provider:{lat:Number(point.latitude),lng:Number(point.longitude)},destination:{lat:destination.latitude,lng:destination.longitude},polyline,privacyRounded:true});
  }
- return json({data:{bookingId,serviceCode,status,title:trackingTitle(serviceCode,status),provider:{id:booking.provider_id?String(booking.provider_id):null,name:booking.provider_name?String(booking.provider_name):null},tracking,mapAvailable:tracking.state==="live"&&!(serviceCode==="pet_taxi"&&["in_progress","arrived_dropoff","dropoff_confirmed"].includes(status)),mapVersion:tracking.state==="live"&&eta?Number(eta.calculated_at)||null:null,scheduledStart:booking.scheduled_start,scheduledEnd:booking.scheduled_end}});
+ const taxiMap=serviceCode==="pet_taxi"?await taxiDestination(db,bookingId,status):null;return json({data:{bookingId,serviceCode,status,title:trackingTitle(serviceCode,status),provider:{id:booking.provider_id?String(booking.provider_id):null,name:booking.provider_name?String(booking.provider_name):null},tracking,mapAvailable:tracking.state==="live"&&(serviceCode!=="pet_taxi"||Boolean(taxiMap)),mapVersion:tracking.state==="live"&&eta?Number(eta.calculated_at)||Number(point?.server_received_at)||null:null,journeyPhase:taxiMap?.phase??null,scheduledStart:booking.scheduled_start,scheduledEnd:booking.scheduled_end}});
 }catch(error){return authError(error,"Unable to load customer live tracking");}}

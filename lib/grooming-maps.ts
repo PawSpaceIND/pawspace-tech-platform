@@ -28,14 +28,17 @@ export function validRoutePoint(point:ProviderPoint|null|undefined):boolean{
   return Boolean(point)&&Number.isFinite(point!.lat)&&point!.lat>=-90&&point!.lat<=90&&Number.isFinite(point!.lng)&&point!.lng>=-180&&point!.lng<=180;
 }
 
-export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress:string):Promise<RouteResult>{
+/** Destination is either an address Google resolves, or verified coordinates sent as-is so the route ends exactly there. */
+export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress:string|ProviderPoint):Promise<RouteResult>{
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const mode=String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase();if(mode!=="sandbox")return{status:"configuration_required",error:"Maps UAT adapter is locked to sandbox"};const key=String(runtime.GOOGLE_ROUTES_SERVER_API_KEY_UAT||runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key)return{status:"configuration_required",error:"GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured"};
   // Refuse before spending a provider call, and before a malformed coordinate can reach a third party.
   if(!validRoutePoint(origin))return{status:"route_unavailable",error:"Origin coordinates are missing or out of range"};
-  if(!String(destinationAddress||"").trim())return{status:"route_unavailable",error:"Destination address is required"};
+  if(typeof destinationAddress==="string"){if(!destinationAddress.trim())return{status:"route_unavailable",error:"Destination address is required"};}
+  else if(!validRoutePoint(destinationAddress))return{status:"route_unavailable",error:"Destination coordinates are missing or out of range"};
+  const destination=typeof destinationAddress==="string"?{address:destinationAddress}:{location:{latLng:{latitude:destinationAddress.lat,longitude:destinationAddress.lng}}};
   // A provider that accepts the connection and then never answers must not hold a booking request open.
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),MAPS_REQUEST_TIMEOUT_MS);
-  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination:{address:destinationAddress},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});// The abort can fire AFTER the headers arrive, while the body is still streaming. Swallowing it here
+  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination,travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});// The abort can fire AFTER the headers arrive, while the body is still streaming. Swallowing it here
   // reported "Routes API returned 200" for a request that had in fact timed out, so the caller could not
   // tell a slow provider from an empty answer. Non-abort parse failures still degrade quietly.
   const body=await response.json().catch((error)=>{if(controller.signal.aborted||(error as Error)?.name==="AbortError")throw error;return{};}) as {routes?:Array<{duration?:string;distanceMeters?:number;polyline?:{encodedPolyline?:string}}> ;error?:{message?:string}};

@@ -21,9 +21,12 @@ test("Walking and Taxi share one customer live tracking projection",()=>{
  assert.match(route,/resolveBookingDoorstep/);
 });
 
-test("Taxi never invents an in-ride destination map",()=>{
+test("Taxi in-ride map uses only verified canonical drop-off coordinates",()=>{
  const route=read("app/api/customer-live-tracking/route.ts");
- assert.match(route,/Pet Taxi destination coordinates are not yet stored canonically for in-ride mapping/);
+ assert.match(route,/taxi_ride_booking_details/);
+ assert.match(route,/destination_latitude/);
+ assert.match(route,/destination_longitude/);
+ assert.match(route,/Pet Taxi verified pickup\/drop-off coordinates are unavailable/);
  assert.match(route,/arrived_dropoff/);
  assert.match(route,/dropoff_confirmed/);
 });
