@@ -245,7 +245,7 @@ test("Customer V2 persona — sandbox OTP → unified shell, account, activity a
     await shot(page, "v2-account");
 
     await page.goto("/v2/chat");
-    await expect(page.getByRole("heading", { name: /One conversation for your pet/ })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /Ask PawSpace anything/ })).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: "My PawSpace" }).click();
     await expect(page.getByRole("button", { name: "My PawSpace" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("Your message")).toBeEnabled();
