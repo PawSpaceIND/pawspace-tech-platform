@@ -495,7 +495,7 @@
     "app/v2/booking-confirmation/page.tsx": "bd057c4c54433edb0fe7af9b16e6354ec0af256433ffd4fb5cfe7088ec7ec8c7",
     "app/v2/booking/page.tsx": "c4d251f73641e66fd3947fae43faa1d47d2eb9e9a49cd5209b558965925eb558",
     "app/v2/booking/training-sessions.tsx": "24dd3f0a9058eeee0c14a5f7198262a8732018dc43766b25913756bf8f64ad52",
-    "app/v2/chat/page.module.css": "b576608579a95976332fe2db0d859a3094a722cf61b5e03a6b0c233a4cf35ed9",
+    "app/v2/chat/page.module.css": "b4bea2f5d6dd8d7664e949f13418d1c6fcf96e2d7cf4fcf5c3571d66e5908b74",
     "app/v2/chat/page.tsx": "e6e0bb0e91cfe236be820fe1af3aedb750dd1afad99c6238b66642ec213315df",
     "app/v2/control-center/page.tsx": "c6fad6c2a14b65931137943c3482eee771066f941404b904deee0355e03c4df8",
     "app/v2/crm/page.tsx": "011d842adbd4dd147f7c0431955029079bf68456889f14d592cb93b32091defa",
