@@ -35,6 +35,14 @@ test("AI voice self-test is UAT-only, one-recipient, non-recording and audited",
   has(flatVoice, "canonicalDialNumber(env,phoneKey)", "destination comes from server allowlist only");
 });
 
+
+test("unanswered self-tests cannot deadlock the singleton guard", () => {
+  has(flatVoice, "DIAL_NEGOTIATION_TIMEOUT_MS=90_000", "dial negotiation has a bounded timeout");
+  has(flatVoice, "reconcileStaleDialingSelfTests(db,now)", "stale dialing rows are reconciled before admission");
+  assert.match(voice, /state='failed'.*AgentStream negotiation timed out before connection.*state='dialing'/s);
+  assert.match(voice, /DELETE FROM ai_voice_self_test_active_guard WHERE slot=1 AND call_id IN/);
+});
+
 test("browser cannot choose the destination and staff action requires privileged permissions", () => {
   has(flatRoute, 'action==="uat_ai_self_test"');
   has(flatRoute, 'requirePermission(actor,"settings.manage")');
