@@ -90,7 +90,9 @@ test("V2 built worker: OTP session reads its catalogue and canonical recovery wi
   await expect(page.getByText("Your grooming visit is confirmed", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /do not pay again/i })).toBeDisabled();
   const anonymous = await request.get("/api/v2/grooming-catalogue");
-  expect(anonymous.status()).toBe(401);
+  expect(anonymous.status()).toBe(200);
+  expect(anonymous.headers()["cache-control"]).toBe("no-store");
+  expect(Array.isArray((await anonymous.json()).data?.packages)).toBe(true);
 });
 
 test("V2 built worker: cross-site oversized callbacks retain bounded redirects and strict receipt headers", async ({ request }) => {
