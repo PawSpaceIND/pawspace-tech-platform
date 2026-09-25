@@ -183,7 +183,7 @@ export async function respondToJobOffer(db:Db,input:{providerId:string;bookingId
 
 async function bookingsForProvider(db:Db,providerId:string){
  const rows=await db.prepare("SELECT b.id,b.customer_id,b.service_code,b.package_name,b.scheduled_start,b.scheduled_end,b.status,b.total_amount,p.status pay_status,p.amount_due_now,p.method pay_method FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.provider_id=? ORDER BY b.scheduled_start DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
- const balances=await bookingPaymentBalances(db,rows.results.map(row=>text(row.id)),{includePaymentMetadata:true});
+ const balances=await bookingPaymentBalances(db,rows.results.map(row=>text(row.id)),{includePaymentMetadata:true}).catch(()=>new Map());
  const nowIso=new Date().toISOString();
  const map=(r:Row)=>{
   const balance=balances.get(text(r.id));
