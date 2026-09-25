@@ -35,4 +35,4 @@ description = "Generated UI contract SHA-256 source digests"
 condition = "AND"
 regexTarget = "line"
 regexes = ['''^\s*"[^"]+":\s*"[a-f0-9]{64}",?\s*$''']
-paths = ['''^tests/fixtures/(customer-partner-theme-contract|partner-services-presentation-contract|staff-admin-self-service-contract|staff-crm-control-contract|staff-operations-contract|staff-team-completion-contract|ui-display-truth-contract)\.json$''']
+paths = ['''^tests/fixtures/(customer-partner-theme-contract|inbox-workspace-contract|partner-services-presentation-contract|staff-admin-self-service-contract|staff-crm-control-contract|staff-operations-contract|staff-team-completion-contract|ui-display-truth-contract|ui-mainline-integration-contract)\.json$''']
