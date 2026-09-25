@@ -1,1 +1,64 @@
 .wrap{display:grid;gap:16px}.wrap>header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;padding:22px;border:1px solid #dbe4ea;border-radius:18px;background:#fff}.wrap>header span{font-size:11px;font-weight:800;letter-spacing:.08em;color:#596773}.wrap>header h3{margin:7px 0 6px;font-size:22px}.wrap>header p{max-width:820px;margin:0;color:#53616c;line-height:1.55}.wrap>header aside{min-width:110px;text-align:right}.wrap>header aside strong{display:block;font-size:28px}.wrap>header aside small{color:#687680}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.grid article{display:grid;gap:14px;padding:18px;border:1px solid #dbe4ea;border-radius:16px;background:#fff}.grid article.disabled{border-color:#e4c7c7;background:#fffafa}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.top small{color:#71808a;font-weight:700}.top h4{margin:4px 0 0;font-size:18px}.top b{font-size:12px;padding:6px 9px;border-radius:999px;background:#e8f5ec;color:#245d37}.disabled .top b{background:#fae8e8;color:#8a2f2f}.grid article>p{margin:0;min-height:42px;color:#53616c;line-height:1.45}.grid footer{display:flex;justify-content:space-between;gap:12px;align-items:flex-end}.grid footer small{color:#71808a;line-height:1.35}.grid button{border:0;border-radius:10px;padding:9px 13px;background:#18242d;color:#fff;font-weight:800;cursor:pointer}.grid button:disabled{opacity:.45;cursor:not-allowed}.disabled button{background:#25613c}.error,.note,.loading{padding:14px 16px;border-radius:12px;background:#fff;border:1px solid #dbe4ea}.error{color:#8a2f2f;border-color:#e4c7c7}.note{margin:0;color:#596773}.loading p{margin-bottom:0;color:#596773}@media(max-width:640px){.wrap>header{display:grid}.wrap>header aside{text-align:left}.grid footer{align-items:stretch;flex-direction:column}.grid button{width:100%}}
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .wrap>header {
+    border: 1px solid var(--staff-line, #dbe4ea) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .wrap>header span {
+    font-size: 13px !important;
+    color: var(--staff-muted, #596773) !important
+}
+:global([data-staff-module]) .wrap>header p {
+    color: var(--staff-muted, #53616c) !important
+}
+:global([data-staff-module]) .wrap>header aside small {
+    color: var(--staff-muted, #687680) !important
+}
+:global([data-staff-module]) .grid article {
+    border: 1px solid var(--staff-line, #dbe4ea) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .grid article.disabled {
+    border-color: var(--staff-line, #e4c7c7) !important;
+    background: var(--staff-surface, #fffafa) !important
+}
+:global([data-staff-module]) .top small {
+    color: var(--staff-muted, #71808a) !important
+}
+:global([data-staff-module]) .top b {
+    font-size: 13px !important;
+    background: var(--staff-raised, #e8f5ec) !important;
+    color: var(--staff-success, #245d37) !important
+}
+:global([data-staff-module]) .disabled .top b {
+    background: var(--staff-raised, #fae8e8) !important;
+    color: var(--staff-danger, #8a2f2f) !important
+}
+:global([data-staff-module]) .grid article>p {
+    color: var(--staff-muted, #53616c) !important
+}
+:global([data-staff-module]) .grid footer small {
+    color: var(--staff-muted, #71808a) !important
+}
+:global([data-staff-module]) .grid button {
+    background: var(--staff-primary, #18242d) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .disabled button {
+    background: var(--staff-success, #25613c) !important
+}
+:global([data-staff-module]) .error, :global([data-staff-module]) .note, :global([data-staff-module]) .loading {
+    background: var(--staff-surface, #fff) !important;
+    border: 1px solid var(--staff-line, #dbe4ea) !important
+}
+:global([data-staff-module]) .error {
+    color: var(--staff-danger, #8a2f2f) !important;
+    border-color: var(--staff-line, #e4c7c7) !important
+}
+:global([data-staff-module]) .note {
+    color: var(--staff-muted, #596773) !important
+}
+:global([data-staff-module]) .loading p {
+    color: var(--staff-muted, #596773) !important
+}

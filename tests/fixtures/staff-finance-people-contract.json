@@ -1,0 +1,117 @@
+{
+  "base": "82d4158b339bedebd9485f8bc5324c54475f96de",
+  "files": {
+    "app/team/finance/cash-flow/page.tsx": {
+      "semantic": "e0cb0c0245bdf0e4c6ce621a1d26014291c92900be1e709ca8514edf34f8eb6d",
+      "mainRoots": 1
+    },
+    "app/team/finance/food/food-finance-workspace.tsx": {
+      "semantic": "a771dadfce28a82059592e191861cbc723dbee1c5c1591b7960edf682ea9f636",
+      "mainRoots": 1
+    },
+    "app/team/finance/funeral-memorial/page.tsx": {
+      "semantic": "84a838fbb1ff66c0e6957cd713b616d16004dccdeb26c14128e2382fcac7e5b1",
+      "mainRoots": 1
+    },
+    "app/team/finance/page.tsx": {
+      "semantic": "ff9e5156a619b1ba70232c765fb2dbc53bb38da42f0e051b725e6f9d6a877469",
+      "mainRoots": 1
+    },
+    "app/team/finance/partners/page.tsx": {
+      "semantic": "5ef17517178921b8eec7eb69a48c3ac4970309360fb8cde2394ec4cc784dc79d",
+      "mainRoots": 1
+    },
+    "app/team/finance/relocation/page.tsx": {
+      "semantic": "d902fc96e92811c9d4af2bc5dfe8830e79fc86f594356c99b8f17f72142862a6",
+      "mainRoots": 1
+    },
+    "app/team/finance/sitting/sitting-finance-workspace.tsx": {
+      "semantic": "cce87069a275b580c294efebd7b9646b13781bfda2bcb4a1b07efa4f1eecfd5a",
+      "mainRoots": 1
+    },
+    "app/team/finance/statutory/page.tsx": {
+      "semantic": "5d71f11e680aa01aed9da3a125e01cefe309e2506aece89d93246ad2f11525ed",
+      "mainRoots": 1
+    },
+    "app/team/finance/statutory/service-invoice-ownership.tsx": {
+      "semantic": "c0d2a64f30f5f424504e05e882b62dcb6990216d939c47f4d42274bc8c39ab37",
+      "mainRoots": 0
+    },
+    "app/team/finance/taxi/taxi-finance-workspace.tsx": {
+      "semantic": "a8dbbf9e6484a9afc178db4a3a6fe87f2139bd7ec4a6a371033f3fc3d0a1c23b",
+      "mainRoots": 1
+    },
+    "app/team/finance/training/page.tsx": {
+      "semantic": "c4c7b39c0b93b7f97c3c34a5018f926c5f8d64e035aef73e7dd89fd2f7fb5a9a",
+      "mainRoots": 1
+    },
+    "app/team/finance/unit-economics/page.tsx": {
+      "semantic": "2584e81f0695a00cfe59ef08ce1826fa388976ba55ddb8dacf530e7db269b6a9",
+      "mainRoots": 1
+    },
+    "app/team/finance/walking/walking-finance-workspace.tsx": {
+      "semantic": "0fc8b9c392b8c5badbd3e4061d989a6e61050bdfebb9d688b7cb3dc17fdd7d38",
+      "mainRoots": 1
+    },
+    "app/team/people/finance/page.tsx": {
+      "semantic": "29c756e53af89e9f38897f6d795144771104622b5c8de0e4d95adc0c83568403",
+      "mainRoots": 1
+    },
+    "app/team/people/incentives/page.tsx": {
+      "semantic": "c01683a8fb53c2c183aac4cdd01315471f7a627cf2b14d4a3ae71a31f89aeb47",
+      "mainRoots": 1
+    },
+    "app/team/people/manager-dashboard/page.tsx": {
+      "semantic": "8ff16693dc470d585858b31ac63eead6357a700dcdebdcbffd85c9dcd6186193",
+      "mainRoots": 1
+    },
+    "app/team/people/onboarding/page.tsx": {
+      "semantic": "bd43fcd78fda2a93eb8d9fefbc653689161a9240184015b81086d40fccf7ffff",
+      "mainRoots": 1
+    },
+    "app/team/people/payroll/page.tsx": {
+      "semantic": "8237d51666b444a02bfbfd0b41019aa7a8696baf76ce4ed5c7e28f9cabd5ab59",
+      "mainRoots": 1
+    },
+    "app/team/people/provider-training/page.tsx": {
+      "semantic": "de0d9becb43e914df786a56e0f0b8b63cdb6585321717215437552b95ddd9514",
+      "mainRoots": 1
+    },
+    "app/team/people/reports/page.tsx": {
+      "semantic": "49ea33875f144496b53e050fc504ba4ee1df7d206bb9ff3884597f144cf1144a",
+      "mainRoots": 3
+    },
+    "app/team/people/service-incentives/page.tsx": {
+      "semantic": "e9c2611eade03cbbf54512cdbb7f8f5d3c9580ea8e617a3a58a6ed6ac69e056d",
+      "mainRoots": 1
+    },
+    "app/team/people/time/page.tsx": {
+      "semantic": "405cd516e7ee6e92ffe9f46e2b6b9df8c96c9c09934d0a6fcbebcea2a2123527",
+      "mainRoots": 1
+    }
+  },
+  "pages": [
+    "app/team/finance/cash-flow",
+    "app/team/finance/food",
+    "app/team/finance/funeral-memorial",
+    "app/team/finance",
+    "app/team/finance/partners",
+    "app/team/finance/relocation",
+    "app/team/finance/sitting",
+    "app/team/finance/statutory",
+    "app/team/finance/taxi",
+    "app/team/finance/training",
+    "app/team/finance/unit-economics",
+    "app/team/finance/walking",
+    "app/team/people/finance",
+    "app/team/people/incentives",
+    "app/team/people/manager-dashboard",
+    "app/team/people/onboarding",
+    "app/team/people/payroll",
+    "app/team/people/provider-training",
+    "app/team/people/reports",
+    "app/team/people/service-incentives",
+    "app/team/people/time"
+  ],
+  "protected": {}
+}

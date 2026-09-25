@@ -7,3 +7,288 @@
 .subnav{margin-bottom:10px;padding:4px;display:flex;gap:4px;border:1px solid #e0dce3;border-radius:9px;background:white}.subnav button{padding:8px 11px;border:0;border-radius:6px;background:transparent;color:#706677;font-size:7px;font-weight:800}.subnav button.subnavActive{background:#203b68;color:white}.referralWorkspace{display:grid;grid-template-columns:1.2fr .8fr;gap:10px;align-items:start}.savePolicy{width:100%;margin-top:12px}.ledgerHead,.ledgerRow{display:grid;grid-template-columns:.7fr 1fr 1fr .85fr .8fr .9fr;gap:8px;align-items:center}.ledgerHead{padding:8px;border-radius:7px;background:#f2f1f4;color:#786e7d;font-size:6px;font-weight:900;text-transform:uppercase}.ledgerRow{padding:11px 8px;border-bottom:1px solid #eee9ef;font-size:7px}.ledgerId{font-weight:900;color:#294776}.ledgerReward{font-weight:900;color:#187253}.ledgerFooter{padding-top:10px;display:flex;justify-content:space-between;align-items:center;color:#827887;font-size:7px}.ledgerFooter button{padding:7px;border:1px solid #ddd7df;border-radius:6px;background:white;color:#253b68;font-size:7px}.controlRule,.reviewItem{padding:10px 0;display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;border-bottom:1px solid #eee9ef}.controlRule div,.reviewItem div{display:flex;flex-direction:column;gap:3px}.controlRule strong,.controlRule b,.reviewItem strong,.reviewItem b{font-size:7px}.controlRule small,.reviewItem small{color:#827887;font-size:6px}.controlRule button,.reviewItem button{padding:6px;border:1px solid #ddd7df;border-radius:6px;background:white;color:#253b68;font-size:6px}.reviewItem b{padding:4px 6px;border-radius:99px;background:#fff0da;color:#955b08}
 @media(max-width:1180px){.couponWorkspace,.referralWorkspace{grid-template-columns:1fr}.builderScroll{max-height:none}.couponHead{display:none}.couponRow{grid-template-columns:1fr 1fr 1.5fr .7fr}.couponRow>.liveStatus,.couponRow>.pausedStatus,.couponRow>.rowActions{grid-column:auto}.rowActions{grid-template-columns:1fr 1fr!important}}
 @media(max-width:720px){.offerHero,.referralHero{align-items:flex-start;flex-direction:column}.toolbar{grid-template-columns:1fr}.couponRow{grid-template-columns:1fr 1fr}.couponRow>div:nth-child(3),.couponRow>div:nth-child(4){grid-column:1/-1}.formPair{grid-template-columns:1fr}.subnav{overflow:auto}.subnav button{white-space:nowrap}.ledgerHead{display:none}.ledgerRow{grid-template-columns:1fr 1fr}.ledgerRow span:nth-child(5),.ledgerRow span:nth-child(6){font-weight:900}.ledgerFooter{align-items:flex-start;flex-direction:column}}
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .offerRule {
+    border: 1px solid var(--staff-line, #e2dde5) !important;
+    background: var(--staff-surface, #fbfafc) !important
+}
+:global([data-staff-module]) .offerRule>header b {
+    background: var(--staff-primary, #253b68) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .offerRule>header strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .offerRule>header small {
+    color: var(--staff-muted, #776e7c) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .switch, :global([data-staff-module]) .switchOn {
+    background: var(--staff-raised, #cac4cc) !important
+}
+:global([data-staff-module]) .switchOn {
+    background: var(--staff-success, #35a675) !important
+}
+:global([data-staff-module]) .switch i, :global([data-staff-module]) .switchOn i {
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .ruleFields label, :global([data-staff-module]) .selectField {
+    color: var(--staff-muted, #746a79) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .ruleFields input, :global([data-staff-module]) .selectField input, :global([data-staff-module]) .selectField select {
+    border: 1px solid var(--staff-line, #dcd6df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-text, #271f2e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chips>span {
+    color: var(--staff-muted, #776d7b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chips button {
+    border: 1px solid var(--staff-line, #ddd7df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-muted, #615768) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chips button.chipOn {
+    border-color: var(--staff-line, #294776) !important;
+    background: var(--staff-raised, #eaf0f8) !important;
+    color: var(--staff-primary, #213d69) !important
+}
+:global([data-staff-module]) .offerRule footer {
+    border-top: 1px solid var(--staff-line, #e9e4eb) !important
+}
+:global([data-staff-module]) .offerRule footer label, :global([data-staff-module]) .offerRule footer span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .offerRule footer span {
+    color: var(--staff-muted, #706777) !important
+}
+:global([data-staff-module]) .referralFlow article {
+    background: var(--staff-raised, #f0f4fa) !important
+}
+:global([data-staff-module]) .referralFlow i {
+    background: var(--staff-primary, #253b68) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralFlow b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralFlow span {
+    color: var(--staff-muted, #776d7b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralRules {
+    background: var(--staff-raised, #edf7f2) !important
+}
+:global([data-staff-module]) .referralRules p {
+    color: var(--staff-success, #355a49) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .offerHero, :global([data-staff-module]) .referralHero {
+    background: linear-gradient(120deg,var(--staff-primary, #14213e),var(--staff-primary, #2b4b7e)) !important;
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .referralHero {
+    background: linear-gradient(120deg,var(--staff-success, #123c34),var(--staff-success, #236d58)) !important
+}
+:global([data-staff-module]) .offerHero span, :global([data-staff-module]) .referralHero span {
+    color: var(--staff-on-primary, #b9c8e2) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralHero span {
+    color: var(--staff-success, #bce0d4) !important
+}
+:global([data-staff-module]) .offerHero p, :global([data-staff-module]) .referralHero p {
+    color: var(--staff-on-primary, #ced8e9) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralHero p {
+    color: var(--staff-on-primary, #d3e8e1) !important
+}
+:global([data-staff-module]) .offerHero>button, :global([data-staff-module]) .referralHero>button {
+    background: var(--staff-danger, #f2a21c) !important;
+    color: var(--staff-danger, #2a1a00) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .referralHero>button {
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-success, #165542) !important
+}
+:global([data-staff-module]) .referralHero>button.pauseButton {
+    background: var(--staff-warning-bg, #f1c46f) !important;
+    color: var(--staff-danger, #3d2b06) !important
+}
+:global([data-staff-module]) .toolbar span, :global([data-staff-module]) .builderHead span {
+    color: var(--staff-muted, #756b7b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .toolbar input, :global([data-staff-module]) .toolbar select, :global([data-staff-module]) .formPair input, :global([data-staff-module]) .formPair select, :global([data-staff-module]) .fullField input, :global([data-staff-module]) .fullField select {
+    border: 1px solid var(--staff-line, #dcd6df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-text, #2b2231) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponHead {
+    background: var(--staff-raised, #f3f1f5) !important;
+    color: var(--staff-muted, #756b7b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponRow {
+    border-bottom: 1px solid var(--staff-line, #eee9ef) !important
+}
+:global([data-staff-module]) .couponRow b {
+    background: var(--staff-primary, #253b68) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponRow strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponRow small {
+    color: var(--staff-muted, #807686) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponRow em {
+    background: var(--staff-raised, #fff1d9) !important;
+    color: var(--staff-danger, #8e5907) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .couponRow i {
+    background: var(--staff-raised, #ebe7ed) !important
+}
+:global([data-staff-module]) .couponRow i span {
+    background: var(--staff-success, #35a675) !important
+}
+:global([data-staff-module]) .liveStatus, :global([data-staff-module]) .pausedStatus {
+    background: var(--staff-raised, #e4f4ed) !important;
+    color: var(--staff-success, #187253) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .pausedStatus {
+    background: var(--staff-raised, #eeeaf0) !important;
+    color: var(--staff-muted, #766c7b) !important
+}
+:global([data-staff-module]) .rowActions button, :global([data-staff-module]) .builderHead button {
+    border: 1px solid var(--staff-line, #ddd7df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #294776) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .empty {
+    color: var(--staff-muted, #827887) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderScroll h3, :global([data-staff-module]) .sectionTitle {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderScroll h3 small {
+    color: var(--staff-muted, #8b818f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .formPair label, :global([data-staff-module]) .fullField {
+    color: var(--staff-muted, #746a79) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .choiceGrid button {
+    border: 1px solid var(--staff-line, #ddd7df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-muted, #625967) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .choiceGrid button.selectedChoice {
+    border-color: var(--staff-line, #294776) !important;
+    background: var(--staff-raised, #e9f0f8) !important;
+    color: var(--staff-primary, #213d69) !important
+}
+:global([data-staff-module]) .choiceGrid button.crossChoice {
+    border-color: var(--staff-line, #d89e36) !important;
+    background: var(--staff-raised, #fff4df) !important;
+    color: var(--staff-danger, #80520a) !important
+}
+:global([data-staff-module]) .checkRows label {
+    color: var(--staff-muted, #5f5665) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .help {
+    color: var(--staff-muted, #887e8c) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderFooter {
+    border-top: 1px solid var(--staff-line, #e9e4eb) !important;
+    background: var(--staff-surface, #faf9fb) !important
+}
+:global([data-staff-module]) .builderFooter span {
+    color: var(--staff-muted, #7b7180) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderFooter strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderFooter button, :global([data-staff-module]) .savePolicy {
+    background: var(--staff-primary, #253b68) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .subnav {
+    border: 1px solid var(--staff-line, #e0dce3) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .subnav button {
+    color: var(--staff-muted, #706677) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .subnav button.subnavActive {
+    background: var(--staff-primary, #203b68) !important;
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .ledgerHead {
+    background: var(--staff-raised, #f2f1f4) !important;
+    color: var(--staff-muted, #786e7d) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .ledgerRow {
+    border-bottom: 1px solid var(--staff-line, #eee9ef) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .ledgerId {
+    color: var(--staff-primary, #294776) !important
+}
+:global([data-staff-module]) .ledgerReward {
+    color: var(--staff-success, #187253) !important
+}
+:global([data-staff-module]) .ledgerFooter {
+    color: var(--staff-muted, #827887) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .ledgerFooter button {
+    border: 1px solid var(--staff-line, #ddd7df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #253b68) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .controlRule, :global([data-staff-module]) .reviewItem {
+    border-bottom: 1px solid var(--staff-line, #eee9ef) !important
+}
+:global([data-staff-module]) .controlRule strong, :global([data-staff-module]) .controlRule b, :global([data-staff-module]) .reviewItem strong, :global([data-staff-module]) .reviewItem b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .controlRule small, :global([data-staff-module]) .reviewItem small {
+    color: var(--staff-muted, #827887) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .controlRule button, :global([data-staff-module]) .reviewItem button {
+    border: 1px solid var(--staff-line, #ddd7df) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #253b68) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reviewItem b {
+    background: var(--staff-raised, #fff0da) !important;
+    color: var(--staff-danger, #955b08) !important
+}

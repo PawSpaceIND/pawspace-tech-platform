@@ -1,16 +1,17 @@
 "use client";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import StaffModule from "../../components/staff-workspace/StaffModule";
 
 type Rule = { id: string; name: string; serviceCode: string; cityId: string; ruleType: string; adjustmentType: string; adjustmentValue: number; effectiveFrom: string; effectiveTo: string | null; status: string };
 type Sug = { name: string; serviceCode: string; cityId: string; effectiveFrom: string; effectiveTo: string; adjustmentValue: number; lengthDays: number; holidays: string[] };
 type City = { cityId: string; label: string; source: string };
 type RuleType = "weekend" | "time_band" | "weekday" | "season" | "date_range";
 
-const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
-const card = { background: "white", border: "1px solid #e5dcef", borderRadius: 14 } as const;
-const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid #d9cfe8", borderRadius: 9, font: "inherit", color: "inherit", background: "white", width: "100%" };
-const labelStyle: React.CSSProperties = { display: "block", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "#6c39a8", marginBottom: 4 };
+const wrap = { minHeight: "100vh", background: "var(--staff-bg)", padding: 28, fontFamily: "inherit", color: "var(--staff-text)" } as const;
+const card = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14 } as const;
+const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid var(--staff-line)", borderRadius: 9, font: "inherit", color: "inherit", background: "var(--staff-surface)", width: "100%" };
+const labelStyle: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--staff-primary)", marginBottom: 4 };
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 // Sunday-indexed to match the pricing engine's day numbering (lib/pricing-engine.ts isoDay).
 const DAYS = [{ n: 0, s: "Sun" }, { n: 1, s: "Mon" }, { n: 2, s: "Tue" }, { n: 3, s: "Wed" }, { n: 4, s: "Thu" }, { n: 5, s: "Fri" }, { n: 6, s: "Sat" }];
@@ -142,16 +143,16 @@ export default function PricingRulesPage() {
   }
 
   const needs = NEEDS[ruleType];
-  return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
+  return <StaffModule><main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
-      <div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "#746b7d" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "#E6B34E", color: "#041517", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div><small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
+      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
     </header>
-    {error && <div role="alert" style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
-    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "#fffaf0" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #f0ebf4" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "#746b7d" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
+    {error && <div role="alert" style={{ padding: 12, background: "var(--staff-danger-bg)", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
+    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "var(--staff-warning-bg)" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid var(--staff-line)" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "var(--staff-muted)" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
 
     <form onSubmit={create} style={{ ...card, padding: 18, marginBottom: 16, display: "grid", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }} data-staff-grid="stats">
         <label><span style={labelStyle}>Rule name</span><input name="name" required placeholder="e.g. Weekend morning uplift" style={field} /></label>
         <label><span style={labelStyle}>Service</span><select name="serviceCode" required defaultValue="grooming" style={field}>{SERVICES.map(s => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}</select></label>
         <label><span style={labelStyle}>City</span>
@@ -168,19 +169,19 @@ export default function PricingRulesPage() {
         <label><span style={labelStyle}>Adjustment %</span><input name="adjustmentValue" type="number" step="0.5" required placeholder="+15 or -10" style={field} /></label>
       </div>
 
-      <p style={{ margin: 0, fontSize: 13, color: "#746b7d" }}>{needs.hint}</p>
+      <p style={{ margin: 0, fontSize: 15, color: "var(--staff-muted)" }}>{needs.hint}</p>
 
       {(needs.days || ruleType === "time_band") && <div>
         <span style={labelStyle}>{needs.days ? "Days this rule applies" : "Limit to days (optional)"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {DAYS.map(d => {
             const on = days.includes(d.n);
-            return <button key={d.n} type="button" onClick={() => toggleDay(d.n)} aria-pressed={on} style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontWeight: 700, border: on ? "1px solid #4b168c" : "1px solid #d9cfe8", background: on ? "#4b168c" : "white", color: on ? "white" : "#24133f" }}>{d.s}</button>;
+            return <button key={d.n} type="button" onClick={() => toggleDay(d.n)} aria-pressed={on} style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontWeight: 700, border: on ? "1px solid var(--staff-primary)" : "1px solid var(--staff-line)", background: on ? "var(--staff-primary)" : "var(--staff-surface)", color: on ? "var(--staff-on-primary)" : "var(--staff-text)" }}>{d.s}</button>;
           })}
         </div>
       </div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }} data-staff-grid="stats">
         {needs.times && <>
           <label><span style={labelStyle}>Start time (IST)</span><input name="startTime" type="time" required value={startTime} onChange={e => setStartTime(e.target.value)} style={field} /></label>
           <label><span style={labelStyle}>End time (IST)</span><input name="endTime" type="time" required value={endTime} onChange={e => setEndTime(e.target.value)} style={field} /></label>
@@ -189,13 +190,13 @@ export default function PricingRulesPage() {
         <label><span style={labelStyle}>Effective to {needs.endDate ? "" : "(optional)"}</span><input name="effectiveTo" type="date" required={needs.endDate} min={effectiveFrom} value={effectiveTo} onChange={e => setEffectiveTo(e.target.value)} style={field} /></label>
       </div>
 
-      <div><button disabled={busy || !selectedCity} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 9, fontWeight: 800, padding: "11px 20px", cursor: busy ? "wait" : "pointer" }}>{busy ? "Saving…" : "Add rule"}</button>
-        <small style={{ marginLeft: 12, color: "#746b7d" }}>Rules are created as <b>draft</b> — publishing stays a separate governed step.</small></div>
+      <div><button disabled={busy || !selectedCity} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 9, fontWeight: 800, padding: "11px 20px", cursor: busy ? "wait" : "pointer" }}>{busy ? "Saving…" : "Add rule"}</button>
+        <small style={{ marginLeft: 12, color: "var(--staff-muted)" }}>Rules are created as <b>draft</b> — publishing stays a separate governed step.</small></div>
     </form>
 
     <div style={{ ...card, overflow: "hidden" }}>
-      <div style={{ padding: 14, borderBottom: "1px solid #eee6f5" }}><b>{rows.length} rule{rows.length === 1 ? "" : "s"}</b></div>
-      {rows.length === 0 ? <p style={{ padding: 18, color: "#746b7d" }}>No rules yet.</p> : rows.map(p => <article key={p.id} style={{ padding: 14, borderBottom: "1px solid #f0ebf4", display: "flex", justifyContent: "space-between", gap: 12 }}><div><strong>{p.name}</strong> <small style={{ color: "#746b7d" }}>· {p.serviceCode} · {p.cityId} · {p.ruleType}</small><small style={{ display: "block", marginTop: 3, color: "#746b7d" }}>{p.effectiveFrom}{p.effectiveTo ? ` → ${p.effectiveTo}` : ""} · {p.status}</small></div><div style={{ fontWeight: 800, fontSize: 16 }}>{p.adjustmentValue > 0 ? "+" : ""}{p.adjustmentValue}%</div></article>)}
+      <div style={{ padding: 14, borderBottom: "1px solid var(--staff-line)" }}><b>{rows.length} rule{rows.length === 1 ? "" : "s"}</b></div>
+      {rows.length === 0 ? <p style={{ padding: 18, color: "var(--staff-muted)" }}>No rules yet.</p> : rows.map(p => <article key={p.id} style={{ padding: 14, borderBottom: "1px solid var(--staff-line)", display: "flex", justifyContent: "space-between", gap: 12 }}><div><strong>{p.name}</strong> <small style={{ color: "var(--staff-muted)" }}>· {p.serviceCode} · {p.cityId} · {p.ruleType}</small><small style={{ display: "block", marginTop: 3, color: "var(--staff-muted)" }}>{p.effectiveFrom}{p.effectiveTo ? ` → ${p.effectiveTo}` : ""} · {p.status}</small></div><div style={{ fontWeight: 800, fontSize: 16 }}>{p.adjustmentValue > 0 ? "+" : ""}{p.adjustmentValue}%</div></article>)}
     </div>
-  </div></main>;
+  </div></main></StaffModule>;
 }

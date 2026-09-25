@@ -2,7 +2,7 @@
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
 
-.btnPrimary { background: linear-gradient(135deg, var(--ds-primary-500), var(--ds-primary-400)); color: #fff; box-shadow: var(--ds-shadow-md); }
+.btnPrimary { background: linear-gradient(135deg, var(--ds-primary-500), var(--ds-primary-400)); color: var(--staff-on-primary, #fff); box-shadow: var(--ds-shadow-md); }
 .btnPrimary:hover:not(:disabled) { box-shadow: var(--ds-shadow-lg); }
 
 .btnAccent { background: linear-gradient(135deg, var(--ds-accent-600), var(--ds-accent-400)); color: #2a1600; box-shadow: var(--ds-shadow-md); }

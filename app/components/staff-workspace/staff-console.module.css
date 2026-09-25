@@ -1,0 +1,33 @@
+/* Tokens apply only to the migrated staff consoles, never global or customer routes. */
+.console {
+  --ds-primary-50:var(--staff-raised); --ds-primary-100:var(--staff-line); --ds-primary-400:var(--staff-primary); --ds-primary-500:var(--staff-primary); --ds-primary-600:var(--staff-primary); --ds-primary-700:var(--staff-primary);
+  --ds-accent-400:var(--staff-gold); --ds-accent-500:var(--staff-gold); --ds-accent-600:var(--staff-gold);
+  --ds-surface:var(--staff-surface); --ds-surface-sunken:var(--staff-raised); --ds-border:var(--staff-line); --ds-border-strong:var(--staff-line);
+  --ds-text:var(--staff-text); --ds-text-muted:var(--staff-muted); --ds-text-faint:var(--staff-muted); --ds-on-primary:var(--staff-on-primary);
+  --ds-success-50:var(--staff-success-bg); --ds-success-500:var(--staff-success); --ds-success-600:var(--staff-success);
+  --ds-warning-50:var(--staff-warning-bg); --ds-warning-500:var(--staff-warning); --ds-warning-600:var(--staff-warning);
+  --ds-danger-50:var(--staff-danger-bg); --ds-danger-500:var(--staff-danger); --ds-danger-600:var(--staff-danger);
+  --ds-info-50:var(--staff-raised); --ds-info-500:var(--staff-primary);
+  --ds-text-xs:.8125rem; --ds-text-sm:.875rem; --ds-text-base:1rem; --ds-text-lg:1.125rem; --ds-text-2xl:1.75rem; --ds-text-3xl:2rem;
+  --ds-radius-full:10px; --ds-radius-lg:16px; --ds-shadow-sm:var(--staff-shadow); --ds-shadow-md:var(--staff-shadow);
+  --line:var(--staff-line); --purple:var(--staff-primary); --ink:var(--staff-text); --muted:var(--staff-muted);
+  color:var(--staff-text); background:var(--staff-bg); font-family:"PawSpaceStaffNunito",system-ui,sans-serif; font-size:1rem; line-height:1.55;
+  min-width:0;
+}
+.console :where(h1,h2,h3,h4,button,input,textarea,select) { font-family:inherit; }
+.console :where(h1) { font-size:2rem; line-height:1.25; }
+.console :where(h2) { font-size:1.25rem; }
+.console :where(h3) { font-size:1.125rem; }
+.console :where(small) { font-size:.8125rem; line-height:1.5; }
+.console :where(button) { min-height:42px; white-space:normal; }
+.console :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea) { min-width:0; max-width:100%; min-height:42px; }
+.console :where(input,select,textarea) { color:var(--staff-text); background-color:var(--staff-surface); accent-color:var(--staff-primary); }
+.console :where(code,pre) { overflow-wrap:anywhere; }
+.console :where(p,td,dd) { overflow-wrap:anywhere; }
+.console :where(button,a,input,select,textarea,summary):focus-visible { outline:3px solid var(--staff-gold); outline-offset:3px; }
+@media(max-width:720px) { .console :where(h1) { font-size:1.75rem; } }
+/* Give previously unstyled native fields the same readable form treatment. */
+.console :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),select,textarea) { border:1px solid var(--staff-line); border-radius:9px; padding:9px 11px; font-size:.9375rem; line-height:1.5; }
+.console :where(label:has(>input:not([type="checkbox"]):not([type="radio"])),label:has(>select),label:has(>textarea)) { display:grid; gap:6px; min-width:0; align-content:start; }
+.console :where(h1) { font-weight:750; }
+.console :where(h2,h3) { font-weight:700; }

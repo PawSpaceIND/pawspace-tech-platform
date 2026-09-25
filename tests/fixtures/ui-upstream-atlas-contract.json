@@ -1,0 +1,21 @@
+{
+  "base": "cd83659ec3cd85d89b21343f28036325c867394d",
+  "uiBase": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
+  "files": {
+    "app/team/ai/page.tsx": {
+      "semantic": "e47a213ca61bf84707c0b3e7eb4c7ff5c3fbbef4c1d505407c16229ea558f9df",
+      "sha256": "7764e8319b7752b441011ff26a9eb14a92b9249ba8ef51f87079c29c5269f877",
+      "mainRoots": 1
+    },
+    "app/team/ai/founder-scenario-planner.tsx": {
+      "semantic": "ef3280f45b1f45cece4a41f159cc9709777c4b03f6c648d6c430ca21c87d9e9c",
+      "sha256": "7314dc87598dbb7e796828c41a84529828699233f1ec9dd5fa761ef0c0beb619",
+      "mainRoots": 0
+    },
+    "app/team/ai/decision-commitments.tsx": {
+      "semantic": "d3ff9b0d54d1e3f08210dcd9be0bc6481b66f32efaf9f00a132ec8899ba81032",
+      "sha256": "b30168807c786d932a206f7ae2f6f94c8f2d5293163734fe868ed1077a62ec97",
+      "mainRoots": 0
+    }
+  }
+}
