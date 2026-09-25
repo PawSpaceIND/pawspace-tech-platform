@@ -319,6 +319,16 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(groomingSummaryRoute, /google-static-maps/);
   assert.match(groomingSummaryRoute, /provider-rounded-3dp/);
   assert.match(groomingSummaryRoute, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
+  // The live map is re-fetched only when a new route snapshot lands, not on every summary poll.
+  assert.match(groomingSummaryRoute, /mapVersion:tracking\.state==="live"/);
+  assert.match(groomingLive, /key=\{mapVersion\}/);
+  assert.doesNotMatch(groomingLive, /setMapTick/);
+  // V2 customers reach the live card from their booking page and the Grooming manage page.
+  const [v2Booking, groomingManage] = await Promise.all(["app/v2/booking/page.tsx", "app/grooming/manage/grooming-customer-booking.tsx"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")));
+  for (const surface of [v2Booking, groomingManage]) {
+    assert.match(surface, /import CustomerGroomingLiveCard from "\.\.\/\.\.\/mobile-app\/customer-grooming-live-card"/);
+    assert.match(surface, /customerGroomingLiveCardVisible\([^)]*\)&&<CustomerGroomingLiveCard/);
+  }
   assert.match(groomingLive, /requestVersion=useRef/);
   assert.match(groomingLive, /current\?\.abort\(\)/);
   assert.match(groomingLive, /version===requestVersion\.current/);
