@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import {chromium} from 'playwright';
 const ORIGIN=process.env.STAFF_UI_BASE_URL||'http://127.0.0.1:4318';
 if(!['127.0.0.1','localhost','[::1]'].includes(new URL(ORIGIN).hostname))throw new Error('Fixture tests are loopback-only.');
-const OUT='.ui-audit/phase2';fs.mkdirSync(OUT+'/screens',{recursive:true});
-const browser=await chromium.launch({headless:process.env.STAFF_UI_HEADED!=='1',slowMo:Number(process.env.STAFF_UI_SLOW_MS||0),executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined)});
+const OUT=process.env.STAFF_UI_OUTPUT_DIR||'.ui-audit/phase2';fs.mkdirSync(OUT+'/screens',{recursive:true});
+const browser=await chromium.launch({args:['--remote-debugging-port=9231','--remote-debugging-address=127.0.0.1'],headless:process.env.STAFF_UI_HEADED!=='1',slowMo:Number(process.env.STAFF_UI_SLOW_MS||0),executablePath:process.env.STAFF_UI_CHROMIUM_PATH||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':undefined)});
 const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
 const page=await context.newPage();page.setDefaultTimeout(12000);
 const results=[],reads=[],writes=[],external=[],pageErrors=[];
@@ -78,6 +78,17 @@ await check('CX: populated inbox, routing controls and canonical message',async(
  await open('/team/customer-experience');await page.getByPlaceholder('Reply as PawSpace CX...').waitFor();
  await page.getByText('Please confirm the training appointment.',{exact:true}).last().waitFor();
  assert.ok(await page.getByRole('button',{name:'Chatbot only',exact:true}).isDisabled());await shot('cx-populated');
+});
+await check('Inbox navigation: four keyboard-accessible tools lead to existing workspaces',async()=>{
+ const rail=page.getByRole('navigation',{name:'WhatsApp AI navigation',exact:true});assert.equal(await rail.getByRole('link').count(),4);
+ for(const [name,path] of [['Templates','/team/whatsapp/templates'],['Automation','/team/whatsapp/automation'],['AI handoffs','/team/ai/handoff']]){
+  const link=rail.getByRole('link',{name,exact:true});assert.equal(await link.getAttribute('href'),path);await link.focus();await page.keyboard.press('Enter');await page.waitForURL(ORIGIN+path);await page.getByRole('heading',{level:1}).first().waitFor();await page.goBack();await page.getByPlaceholder('Reply as PawSpace CX...').waitFor();
+ }
+ assert.equal(await page.getByText('AI summary',{exact:true}).count(),0);await page.getByText('Recorded fields',{exact:true}).waitFor();await shot('inbox-linked-tools');
+});
+await check('Inbox navigation: mobile shortcuts remain available in the existing disclosure',async()=>{
+ await page.setViewportSize({width:390,height:960});await open('/team/customer-experience');await page.getByText('Related workspace links',{exact:true}).click();
+ const links=page.getByRole('navigation',{name:'Operations',exact:true});assert.equal(await links.getByRole('link').count(),4);await links.getByRole('link',{name:'Templates',exact:true}).click();await page.waitForURL(ORIGIN+'/team/whatsapp/templates');await page.goBack();await page.setViewportSize({width:1440,height:1000});await open('/team/customer-experience');await page.getByPlaceholder('Reply as PawSpace CX...').waitFor();
 });
 await check('CX: internal note keeps idempotency key and selected thread',async()=>{
  await page.getByRole('textbox',{name:'Internal note',exact:true}).fill('Synthetic note for UI regression');

@@ -263,7 +263,7 @@
     "app/api/ai-business-configuration/route.ts": "88a91784626adeb23ebcb6349b03e22b7819e1fea7b5ef8c8dc4592399cc3cee",
     "app/api/ai-conversation/route.ts": "4e9e3e444728bd72805cb7a5506065d0acf07aa810637ad1291c39100002942a",
     "app/api/ai-human-handoff/route.ts": "ad69f8baa334d813e91244ab732e98e876ee2b23516146c0b5829a0e1a6b41eb",
-    "app/api/ai-intelligence/route.ts": "4d99c3059ea64bed132b4aec844e5c20eb6368084175ee415dead2661ae8aab2",
+    "app/api/ai-intelligence/route.ts": "46f58d684819ba40a9fbb937cb2d37b8ab88a7eb5c33f5308367721fe78424d7",
     "app/api/ai-rollout/route.ts": "b4ec0f143c9a73459f748cefa274991e74ec3ca21e77e4d640c7c4f7f21f1623",
     "app/api/ai-tools/route.ts": "156da4bf8d0a139695d29259aeb921e7c32a9449b4dccae6bbd4796ea11be186",
     "app/api/ai-voice-uat/route.ts": "4835675587caac2d799b484c7201ee1f5ef74c3503f488d3c95c9999e7c2a16c",

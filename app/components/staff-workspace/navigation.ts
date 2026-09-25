@@ -10,7 +10,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "Leads & CRM", href: "/crm", permission: "customers.view" },
     { label: "Daily revenue", href: "/team/daily-revenue", permission: "customers.view" },
     { label: "Customer reminders", href: "/team/customer-reminders", permission: "customers.view" },
-    { label: "Customer inbox", href: "/team/customer-experience", permission: "customers.view" },
+    { label: "Inbox & AI", href: "/team/customer-experience", permission: "communications.manage" },
     { label: "Cases & recovery", href: "/team/cases", permission: "customers.view" },
     { label: "Subscriptions", href: "/team/subscriptions", permission: "customers.view" },
   ] },
