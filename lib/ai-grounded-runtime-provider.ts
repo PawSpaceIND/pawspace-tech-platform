@@ -5,6 +5,7 @@ import type{AiActionRequest,AiProviderInput,AiResponseProvider}from"./ai-convers
 import type{AiToolCode}from"./ai-tool-registry";
 import type{AuthenticatedActor}from"./server-auth";
 import{latestSalesPromptContext,renderProtectedQuotaDirective}from"./ai-sales-goal-orchestrator";
+import{listServiceControls}from"./service-control";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -51,15 +52,16 @@ function knowledgeRefs(result:unknown){if(!result||typeof result!=="object")retu
 export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;intent:AiToolIntent;channel:AiToolChannel;query:string;canonicalContext:Record<string,unknown>}){
  const knowledge=await prepareAiToolExecution(db,{actor:input.actor,toolCode:"approved_knowledge.read",threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:{query:input.query,visibilityScopes:["public"]}});
  const catalogueTool=(input.intent==="service_info"||input.intent==="booking_create")?await prepareAiToolExecution(db,{actor:input.actor,toolCode:"service_catalogue.read",threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:{}}):null;
- const catalogue=await canonicalCatalogueSnapshot(db);
  const subscriptionTable=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='grooming_subscription_plans'").first<Row>();
  const today=new Date().toISOString().slice(0,10);const subscriptions=subscriptionTable?(await db.prepare("SELECT plan_code,name,city_id,zone_id,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,credits_per_pet,max_pets_per_booking,pause_days,grace_days,terms_json,version FROM grooming_subscription_plans WHERE active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY city_id,plan_code LIMIT 30").bind(today,today).all<Row>()).results:[];
+ const catalogue={...await canonicalCatalogueSnapshot(db),groomingSubscriptions:subscriptions};
+ const serviceDirectory=(await listServiceControls(db)).map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled,disabledReason:service.disabledReason}));
  const operationalFaq={
   payments:"Use only server-confirmed payment information. Approved PawSpace knowledge supports secure Razorpay online payment and mentions UPI/GPay; do not claim additional methods without evidence.",
   cancellations:"Cancellation and reschedule eligibility is service-policy specific. Never promise a refund; refund and payment disputes go to a human reviewer.",
   operatingHours:"Do not invent fixed operating hours. State hours only when approved knowledge or a server scheduling/availability tool supplies them for the requested service/location."
  };
- return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue:{...catalogue,groomingSubscriptions:subscriptions},operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyGrounding:true,carrierIndependent:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true},availableActionTools:["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]},groundingRefs:knowledgeRefs(knowledge)};
+ return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,serviceDirectory,operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyGrounding:true,carrierIndependent:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true},availableActionTools:["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]},groundingRefs:knowledgeRefs(knowledge)};
 }
 
 export async function buildRuntimeSystemPrompt(db:D1Database,input:{customerId:string;channel:AiToolChannel;dispatchItemId?:string|null;asOf?:number}){let prompt=pawspaceChannelSystemPrompt(input.channel);if(input.channel!=="voice"&&input.channel!=="whatsapp")return prompt;const sales=input.dispatchItemId?await import("./ai-sales-goal-orchestrator").then(({buildSalesPromptContext})=>buildSalesPromptContext(db,{dispatchItemId:input.dispatchItemId!,customerId:input.customerId,channel:input.channel as "voice"|"whatsapp",asOf:input.asOf})):await latestSalesPromptContext(db,{customerId:input.customerId,channel:input.channel as "voice"|"whatsapp",asOf:input.asOf});if(sales)prompt+=`\n\n${renderProtectedQuotaDirective(sales)}`;return prompt;}
