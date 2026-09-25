@@ -407,3 +407,42 @@
 .page .hero,.page .aiCard { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; }
 .page .hero :is(h1,p),.page .aiCard :is(h3,p) { color:var(--brand-hero-text) !important; }
 .page .hero h1 em { color:var(--brand-gold) !important; }
+
+/* V2-03/04: foregrounds belong to surfaces, not to the selected button colour. */
+.page.page .kicker, .page.page .secondaryAction,
+.page.page .trustRow small, .page.page .aiTop small,
+.page.page .promptChips span { color: var(--brand-hero-text) !important; }
+.page.page .secondaryAction span, .page.page .beta { color: var(--brand-gold) !important; }
+.page.page .primaryAction, .page.page .aiCta, .page.page .aiOrb,
+.page.page .familySignIn > span { color: var(--brand-on-gold) !important; }
+.page.page .floatingCardTop, .page.page .floatingCardBottom,
+.page.page .familyStrip, .page.page .bookingCard, .page.page .navCenter,
+.page.page .aiNav, .page.page .mobileDock {
+  background: var(--brand-surface) !important; color: var(--brand-text) !important;
+  border-color: var(--brand-line) !important;
+}
+.page.page .floatingCardTop b, .page.page .floatingCardBottom b { color: var(--brand-text) !important; }
+.page.page .floatingCardTop small, .page.page .floatingCardBottom small { color: var(--brand-muted) !important; }
+.page.page .familySignIn small, .page.page .familySignIn strong { color: var(--brand-on-primary) !important; }
+.page.page .serviceCard { --accent: var(--brand-gold) !important; --wash: var(--brand-raised) !important; }
+.page.page .serviceCopy > span { color: var(--brand-muted) !important; }
+.page.page .serviceArrow, .page.page .serviceState { background: var(--brand-raised) !important; color: var(--brand-text) !important; }
+.page .serviceIcon { display: none; }
+:global(html[data-paw-style="professional"]) .page .serviceArt { display: none; }
+:global(html[data-paw-style="professional"]) .page .serviceIcon {
+  display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px;
+  margin-bottom: 18px; background: var(--brand-raised); color: var(--brand-text);
+}
+:global(html[data-paw-style="professional"]) .page .serviceCopy { max-width: calc(100% - 24px); }
+:global(html[data-paw-style="professional"]) .page .serviceCard { min-height: 220px; }
+:global(html[data-paw-style="professional"]) .page .serviceHero { grid-column: auto; }
+:global(html[data-paw-style="professional"]) .page .servicesGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 560px) {
+  :global(html[data-paw-style="professional"]) .page .servicesGrid { grid-template-columns: minmax(0, 1fr); }
+}
+/* Keep navigation labels and icon on the same active surface in both modes. */
+.page.page .mobileAi { background: var(--brand-primary) !important; }
+.page.page .mobileAi :is(span,b) { color: var(--brand-on-primary) !important; }
+.page.page .mobileDock { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+.page.page .mobileDock a, .page.page .mobileDock button { min-height: 48px; }
+.page.page .aiNav span { color: var(--brand-text) !important; }
