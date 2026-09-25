@@ -38,6 +38,11 @@ export function extractElevenLabsResponsesInput(body:Row){
 }
 
 function extra(body:Row){return((body.elevenlabs_extra_body||body.metadata||{})as Row);}
+export function voiceThreadIdForCall(voiceCallId:string){
+ const normalized=text(voiceCallId).replace(/[^A-Za-z0-9_-]/g,"").slice(0,96);
+ if(!normalized)throw new Error("invalid_voice_call_id");
+ return `THREAD-VOICE-${normalized}`;
+}
 async function voiceContext(db:D1Database,body:Row){
  const data=extra(body),sessionId=text(data.pawspace_voice_session_id),customerIdHint=text(data.pawspace_customer_id),threadIdHint=text(data.pawspace_thread_id),voiceCallId=text(data.pawspace_voice_call_id);
  if(sessionId){
@@ -55,11 +60,13 @@ async function voiceContext(db:D1Database,body:Row){
  if(voiceCallId){
   const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
   if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call context was not found",{status:409});
-  const customerId=text(call.customer_id);
-  const thread=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
-  let threadId=text(thread?.id);
-  if(!threadId){
-   threadId=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
+  const customerId=text(call.customer_id),threadId=voiceThreadIdForCall(voiceCallId);
+  const existing=await db.prepare("SELECT id,customer_id,status FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
+  if(existing){
+   if(text(existing.customer_id)!==customerId)throw new Response("PawSpace voice thread/customer mismatch",{status:409});
+   if(text(existing.status)==="closed")throw new Response("PawSpace outbound voice thread is closed",{status:409});
+  }else{
+   const now=Date.now();
    await db.batch([
     db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)").bind(threadId,customerId,text(call.booking_id)||null,text(call.lead_id)||null,now,now),
     db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(),threadId,"customer",customerId,customerId,now),
