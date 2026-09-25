@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import styles from "./ops-shell.module.css";
+import StaffWorkspace from "../staff-workspace/StaffWorkspace";
+import consoleStyles from "../staff-workspace/staff-console.module.css";
 
 /**
  * The Operations chrome every internal console renders inside: the same sidebar, brand and workspace
@@ -55,13 +57,20 @@ export default function OpsShell({ eyebrow, title, description, actions, nav = N
   }, "");
 
   return (
-    <main className={styles.opsShell}>
-      <aside className={styles.sidebar}>
-        <div className={styles.brand}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
-          <span>Operations</span>
-        </div>
+    <StaffWorkspace><main className={`${styles.opsShell} ${consoleStyles.console}`}>
+
+
+      <section className={styles.workspace}>
+        <header className={styles.header}>
+          <div>
+            {eyebrow ? <p>{eyebrow}</p> : null}
+            <h1>{title}</h1>
+            {description ? <p className={styles.lede}>{description}</p> : null}
+          </div>
+          {actions ? <div className={styles.headerActions}>{actions}</div> : null}
+        </header>
+        <details className={styles.sidebar}>
+          <summary>Related workspace links</summary>
         <nav aria-label="Operations">
           {nav.map((item) => (
             <Link key={item.href} href={item.href} className={item.href === active ? styles.activeNav : undefined} aria-current={item.href === active ? "page" : undefined}>
@@ -74,19 +83,9 @@ export default function OpsShell({ eyebrow, title, description, actions, nav = N
         <div className={styles.sidebarFooter}>
           {FOOTER.map((item) => <Link key={item.href} href={item.href}>{item.label}</Link>)}
         </div>
-      </aside>
-
-      <section className={styles.workspace}>
-        <header className={styles.header}>
-          <div>
-            {eyebrow ? <p>{eyebrow}</p> : null}
-            <h1>{title}</h1>
-            {description ? <p className={styles.lede}>{description}</p> : null}
-          </div>
-          {actions ? <div className={styles.headerActions}>{actions}</div> : null}
-        </header>
+        </details>
         {children}
       </section>
-    </main>
+    </main></StaffWorkspace>
   );
 }

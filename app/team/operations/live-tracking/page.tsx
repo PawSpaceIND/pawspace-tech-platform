@@ -1,6 +1,7 @@
 "use client";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import Link from "next/link";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 import styles from "./live-tracking.module.css";
 
 type Row=Record<string,unknown>;
@@ -27,7 +28,7 @@ export default function OpsLiveTracking(){
  useEffect(()=>{const first=window.setTimeout(()=>void load(),0);const id=window.setInterval(()=>{setTick(v=>v+1);void load();},10000);return()=>{window.clearTimeout(first);window.clearInterval(id);version.current+=1;request.current?.abort();};},[load]);
  const sessions=useMemo(()=>data?.sessions??[],[data]),recoveries=useMemo(()=>data?.recoveries??[],[data]),events=useMemo(()=>data?.punctualityEvents??[],[data]);
  const liveSessions=sessions.filter(active),openRecoveries=recoveries.filter(row=>!["resolved","cancelled","closed"].includes(String(row.recovery_state||row.status||"").toLowerCase()));
- return <main className={styles.page}>
+ return <StaffModule><main className={styles.page}>
   <header className={styles.head}><div><small>PAWSPACE V2 · OPERATIONS</small><h1>Live tracking control</h1><p>Canonical provider location sessions, punctuality signals and recovery exceptions. Refreshes every 10 seconds.</p></div><div className={styles.headActions}><button onClick={()=>void load()} aria-label="Refresh live tracking">↻</button><Link href="/team/operations">Back to Operations</Link></div></header>
   <section className={styles.kpis}><article><span>Active tracking</span><b>{liveSessions.length}</b><small>provider sessions</small></article><article><span>Open exceptions</span><b>{openRecoveries.length}</b><small>recovery cases</small></article><article><span>Punctuality events</span><b>{events.length}</b><small>latest canonical events</small></article><article><span>Refresh</span><b>{tick}</b><small>10-second cadence</small></article></section>
   {error&&<section className={styles.error} role="alert">{error}</section>}
@@ -38,5 +39,5 @@ export default function OpsLiveTracking(){
   </section>
   <section className={styles.card}><div className={styles.cardHead}><div><small>PUNCTUALITY</small><h2>Latest movement signals</h2></div><span>{events.length}</span></div>{!events.length?<p className={styles.empty}>No punctuality events recorded.</p>:<div className={styles.rows}>{events.slice(0,30).map((row,i)=><div className={styles.row} key={text(row.id,String(i))}><div><b>{text(row.booking_id,"Booking")}</b><small>{text(row.provider_id,"Provider")} · {text(row.event_type||row.event_code,"event").replaceAll("_"," ")}</small></div><div><strong>{text(row.state||row.severity||"recorded").replaceAll("_"," ")}</strong><small>{when(row.created_at||row.occurred_at)}</small></div></div>)}</div>}</section>
   <footer className={styles.foot}>Raw GPS history is deliberately not rendered here. Customer-facing location remains privacy-projected; financial or accountability consequences stay in their governed review flows.</footer>
- </main>;
+ </main></StaffModule>;
 }

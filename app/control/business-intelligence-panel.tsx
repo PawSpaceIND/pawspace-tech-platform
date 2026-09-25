@@ -220,8 +220,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     <nav className={css.tabs}>{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
 
     {view === "Overview" && <>
-      {!liveDataLoaded && <p style={{ padding: 12, color: "#6c39a8" }}>Loading live company data…</p>}
-      {liveDataError && <p style={{ padding: 12, background: "#fff1f1", borderRadius: 10, color: "#9a3d32" }}>Live company data unavailable: {liveDataError}</p>}
+      {!liveDataLoaded && <p style={{ padding: 12, color: "var(--staff-primary, #6c39a8)" }}>Loading live company data…</p>}
+      {liveDataError && <p style={{ padding: 12, background: "var(--staff-danger-bg, #fff1f1)", borderRadius: 10, color: "var(--staff-muted, #9a3d32)" }}>Live company data unavailable: {liveDataError}</p>}
       <section className={css.metrics}>
         <article><span>Gross revenue</span><strong>{money(revenue)}</strong><small>Canonical bookings · GST-inclusive</small></article>
         <article><span>Collected</span><strong>{money(collected)}</strong><small>{revenue > 0 ? `${((collected / revenue) * 100).toFixed(1)}% collection rate` : "No bookings in range"}</small></article>

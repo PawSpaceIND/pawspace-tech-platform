@@ -76,6 +76,7 @@ assert.equal(sqlite.prepare("SELECT status FROM communication_outbox WHERE messa
 const bundle = await build({
   stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import Page from './app/team/customer-experience/page.tsx';import Template from './app/team/customer-experience/template.tsx';createRoot(document.getElementById('root')).render(<Template><Page/></Template>);`, resolveDir: process.cwd(), loader: "tsx" },
   bundle: true, write: false, outfile: "bundle.js", format: "iife", jsx: "automatic",
+  external: ["/fonts/*"],
   define: { "process.env": "{}", "process.env.NODE_ENV": '"development"' },
 });
 
@@ -99,7 +100,7 @@ const server = http.createServer(async (req, res) => {
 let browser;
 try {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...(process.env.PW_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PW_CHROMIUM_EXECUTABLE_PATH } : {}) });
   const page = await browser.newPage({ extraHTTPHeaders: { "oai-authenticated-user-email": ACTOR } });
   await page.goto(`http://127.0.0.1:${server.address().port}/team/customer-experience`);
   const pending = page.getByText("Confirmed - Communication Pending", { exact: true });

@@ -17,3 +17,708 @@
   .customerList > button { padding: 12px 14px; }
   .overview dl div, .petCard, .services > div { padding: 12px; }
 }
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .shell {
+    background: var(--staff-raised, #f5f3f7) !important;
+    color: var(--staff-text, #251c2e) !important;
+    font-family: inherit !important
+}
+:global([data-staff-module]) .sidebar {
+    background: linear-gradient(180deg,var(--staff-primary, #24103c),var(--staff-primary, #37105c) 62%,var(--staff-primary, #201033)) !important;
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .brand {
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .brand img {
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .brand span {
+    background: var(--staff-danger, #f2a11d) !important;
+    color: var(--staff-primary, #2d103f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .workspace span, :global([data-staff-module]) .integrations>span {
+    color: var(--staff-muted, #baaaca) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .workspace strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sidebar nav button {
+    color: var(--staff-on-primary, #d9cde3) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sidebar nav button:hover, :global([data-staff-module]) .sidebar nav .active {
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .sidebar nav b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .integrations p {
+    color: var(--staff-on-primary, #d9cde3) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .integrations p i {
+    background: var(--staff-success, #35c486) !important
+}
+:global([data-staff-module]) .integrations .pending {
+    color: var(--staff-muted, #b6a6c4) !important
+}
+:global([data-staff-module]) .integrations .pending i {
+    background: var(--staff-danger, #f1a21c) !important
+}
+:global([data-staff-module]) .user>span {
+    background: var(--staff-danger, #f2a11d) !important;
+    color: var(--staff-primary, #2d103f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .user strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .user small {
+    color: var(--staff-muted, #b8a9c6) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .main>header p {
+    color: var(--staff-muted, #7e7088) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .main>header label {
+    border: 1px solid var(--staff-line, #e0d9e5) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #765f87) !important
+}
+:global([data-staff-module]) .main>header input {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .main>header>div>button, :global([data-staff-module]) .primary {
+    background: var(--staff-primary, #6524a1) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .health {
+    border: 1px solid var(--staff-line, #d5e8df) !important;
+    background: var(--staff-raised, #f3faf6) !important
+}
+:global([data-staff-module]) .health span {
+    color: var(--staff-success, #31735b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .health small {
+    color: var(--staff-muted, #6e7d76) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .health p i {
+    background: var(--staff-success, #2dbb7e) !important
+}
+:global([data-staff-module]) .health em {
+    color: var(--staff-muted, #8a948f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .health button {
+    color: var(--staff-success, #176f52) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .metrics article, :global([data-staff-module]) .pipelineMetrics article, :global([data-staff-module]) .campaignMetrics article {
+    border: 1px solid var(--staff-line, #e3dce8) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .metrics span, :global([data-staff-module]) .pipelineMetrics span, :global([data-staff-module]) .campaignMetrics span {
+    color: var(--staff-muted, #81758a) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .metrics small, :global([data-staff-module]) .pipelineMetrics small, :global([data-staff-module]) .campaignMetrics small {
+    color: var(--staff-muted, #8e8495) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .warn {
+    color: var(--staff-danger, #b65021) !important
+}
+:global([data-staff-module]) .good {
+    color: var(--staff-success, #157650) !important
+}
+:global([data-staff-module]) .panel {
+    border: 1px solid var(--staff-line, #e2dbe7) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .panelHead span, :global([data-staff-module]) .kicker {
+    color: var(--staff-muted, #7c6b87) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .panelHead button, :global([data-staff-module]) .panelHead select {
+    color: var(--staff-primary, #6524a0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .signal {
+    border-top: 1px solid var(--staff-line, #eee9f1) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .signal>i, :global([data-staff-module]) .task>i {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .signal strong, :global([data-staff-module]) .queue b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .signal small, :global([data-staff-module]) .queue small {
+    color: var(--staff-muted, #897f91) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .signal>b {
+    color: var(--staff-primary, #6725a3) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .urgent {
+    background: var(--staff-raised, #ffe5e7) !important;
+    color: var(--staff-danger, #b72a3b) !important
+}
+:global([data-staff-module]) .sales {
+    background: var(--staff-raised, #e8f1ff) !important;
+    color: var(--staff-primary, #285aa1) !important
+}
+:global([data-staff-module]) .renewal {
+    background: var(--staff-raised, #fff0d7) !important;
+    color: var(--staff-danger, #9a5d08) !important
+}
+:global([data-staff-module]) .capacity {
+    background: var(--staff-raised, #e7f7ef) !important;
+    color: var(--staff-success, #147651) !important
+}
+:global([data-staff-module]) .payment {
+    background: var(--staff-raised, #f0e8fb) !important;
+    color: var(--staff-primary, #6723a5) !important
+}
+:global([data-staff-module]) .high {
+    background: var(--staff-raised, #fff0d7) !important;
+    color: var(--staff-danger, #9a5d08) !important
+}
+:global([data-staff-module]) .win-back {
+    background: var(--staff-raised, #f0edf2) !important;
+    color: var(--staff-muted, #665c6e) !important
+}
+:global([data-staff-module]) .queue {
+    border-bottom: 1px solid var(--staff-line, #eee9f1) !important
+}
+:global([data-staff-module]) .queue>strong {
+    color: var(--staff-primary, #6925a5) !important
+}
+:global([data-staff-module]) .revenue span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .revenue article>div {
+    background: var(--staff-raised, #eee9f1) !important
+}
+:global([data-staff-module]) .revenue i {
+    background: linear-gradient(90deg,var(--staff-primary, #6725a3),var(--staff-danger, #f1a21b)) !important
+}
+:global([data-staff-module]) .revenue strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerList, :global([data-staff-module]) .customer360 {
+    border: 1px solid var(--staff-line, #e2dbe7) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .customerTools select {
+    border: 1px solid var(--staff-line, #e0d7e5) !important;
+    background: var(--staff-surface, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerTools span {
+    color: var(--staff-muted, #8d8294) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerTools button {
+    border: 1px solid var(--staff-line, #ddd4e4) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #63239e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerHead {
+    background: var(--staff-raised, #f6f3f8) !important;
+    color: var(--staff-muted, #8a8091) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerList>button {
+    border-top: 1px solid var(--staff-line, #eee9f1) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-text, #2b2035) !important
+}
+:global([data-staff-module]) .customerList>button:hover, :global([data-staff-module]) .customerList>.selectedCustomer {
+    background: var(--staff-raised, #f8f2fb) !important
+}
+:global([data-staff-module]) .identity>i {
+    background: var(--staff-raised, #ede4f5) !important;
+    color: var(--staff-primary, #6625a0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerList strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerList small {
+    color: var(--staff-muted, #877d8e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .stage {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .active {
+    background: var(--staff-raised, #e7f7ef) !important;
+    color: var(--staff-success, #147651) !important
+}
+:global([data-staff-module]) .follow-up {
+    background: var(--staff-raised, #fff0dc) !important;
+    color: var(--staff-danger, #9a5c09) !important
+}
+:global([data-staff-module]) .vip {
+    background: var(--staff-raised, #efe6f8) !important;
+    color: var(--staff-primary, #65249f) !important
+}
+:global([data-staff-module]) .newlead {
+    background: var(--staff-raised, #e8f1ff) !important;
+    color: var(--staff-primary, #285aa1) !important
+}
+:global([data-staff-module]) .atrisk {
+    background: var(--staff-raised, #ffe5e7) !important;
+    color: var(--staff-danger, #b72a3b) !important
+}
+:global([data-staff-module]) .trial {
+    background: var(--staff-raised, #e7f4f6) !important;
+    color: var(--staff-primary, #146c75) !important
+}
+:global([data-staff-module]) .profileHead>span {
+    background: var(--staff-primary, #64249f) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .profileHead small {
+    color: var(--staff-muted, #8d8394) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .profileHead p {
+    color: var(--staff-muted, #7f7587) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .quick button {
+    border: 1px solid var(--staff-line, #ded5e5) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #63249e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .profileTabs {
+    border-bottom: 1px solid var(--staff-line, #e9e3ed) !important
+}
+:global([data-staff-module]) .profileTabs button {
+    color: var(--staff-muted, #877c8e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .profileTabs .activeTab {
+    border-bottom-color: var(--staff-line, #6a25a6) !important;
+    color: var(--staff-primary, #64229f) !important
+}
+:global([data-staff-module]) .petCard {
+    background: var(--staff-raised, #f7f2fa) !important
+}
+:global([data-staff-module]) .petCard small {
+    color: var(--staff-muted, #887e90) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .petCard strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .petCard p {
+    color: var(--staff-muted, #7d7385) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .petCard button {
+    color: var(--staff-primary, #62239e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .overview dl div {
+    border: 1px solid var(--staff-line, #ece6ef) !important
+}
+:global([data-staff-module]) .overview dt {
+    color: var(--staff-muted, #8c8393) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .overview dd {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .services span {
+    border: 1px dashed var(--staff-line, #d8cedf) !important;
+    color: var(--staff-muted, #897d90) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .services .used {
+    background: var(--staff-raised, #eaf7f1) !important;
+    color: var(--staff-success, #15734f) !important
+}
+:global([data-staff-module]) .timeline article {
+    border-left: 1px solid var(--staff-line, #dcd1e3) !important
+}
+:global([data-staff-module]) .timeline article i {
+    background: var(--staff-primary, #6c29a8) !important
+}
+:global([data-staff-module]) .timeline strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .timeline p {
+    color: var(--staff-muted, #7e7487) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .timeline small {
+    color: var(--staff-muted, #9a929f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .money article {
+    background: var(--staff-raised, #f7f3f9) !important
+}
+:global([data-staff-module]) .money article span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .money article strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .money h3 {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .money>div {
+    border-bottom: 1px solid var(--staff-line, #eee9f1) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .money em {
+    color: var(--staff-success, #187550) !important
+}
+:global([data-staff-module]) .suggestions>span {
+    color: var(--staff-muted, #7c6b87) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .suggestions p {
+    color: var(--staff-muted, #7d7285) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .suggestions button {
+    border: 1px solid var(--staff-line, #ded5e5) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #63249e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .suggestions button:first-of-type {
+    background: var(--staff-danger, #f1a21c) !important;
+    color: var(--staff-danger, #351a00) !important
+}
+:global([data-staff-module]) .nextBar {
+    background: var(--staff-raised, #f3eef7) !important
+}
+:global([data-staff-module]) .nextBar span {
+    color: var(--staff-muted, #83798c) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .nextBar strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .nextBar button {
+    background: var(--staff-primary, #6725a3) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban>div {
+    background: var(--staff-raised, #ece8ef) !important
+}
+:global([data-staff-module]) .kanban>div>header strong, :global([data-staff-module]) .kanban>div>header span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban article {
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .kanban article>span {
+    color: var(--staff-muted, #7d7185) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban h3 {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban p {
+    color: var(--staff-muted, #8b8192) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban footer i {
+    background: var(--staff-raised, #eee5f5) !important;
+    color: var(--staff-primary, #6524a0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .kanban footer b {
+    background: var(--staff-raised, #fff1d9) !important;
+    color: var(--staff-danger, #976006) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .inbox {
+    border: 1px solid var(--staff-line, #e1d9e6) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .channels {
+    border-right: 1px solid var(--staff-line, #eae4ed) !important
+}
+:global([data-staff-module]) .channels button {
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-text, #45384e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .channels button i {
+    background: var(--staff-success, #31bd7c) !important
+}
+:global([data-staff-module]) .threads {
+    border-right: 1px solid var(--staff-line, #eae4ed) !important
+}
+:global([data-staff-module]) .threads>button {
+    border-bottom: 1px solid var(--staff-line, #eee9f1) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .threads>.threadActive {
+    background: var(--staff-raised, #f5eff9) !important
+}
+:global([data-staff-module]) .threads>button>i {
+    background: var(--staff-raised, #ebe2f4) !important;
+    color: var(--staff-primary, #64249f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .threads strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .threads p {
+    color: var(--staff-muted, #776e7f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .threads small, :global([data-staff-module]) .threads>button>span {
+    color: var(--staff-muted, #998fa0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chat>header {
+    border-bottom: 1px solid var(--staff-line, #eee9f1) !important
+}
+:global([data-staff-module]) .chat>header strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chat>header span {
+    color: var(--staff-muted, #84798b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chat>header button {
+    color: var(--staff-primary, #6524a0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .messages {
+    background: var(--staff-surface, #faf8fb) !important
+}
+:global([data-staff-module]) .messages p {
+    background: var(--staff-surface, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .messages .reply {
+    background: var(--staff-primary, #6524a0) !important;
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .messages span {
+    color: var(--staff-muted, #94899b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chat>footer {
+    border-top: 1px solid var(--staff-line, #eee9f1) !important
+}
+:global([data-staff-module]) .chat>footer input {
+    border: 1px solid var(--staff-line, #e1d9e6) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .chat>footer button {
+    background: var(--staff-primary, #6524a0) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .task {
+    border-top: 1px solid var(--staff-line, #eee9f1) !important
+}
+:global([data-staff-module]) .task strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .task small {
+    color: var(--staff-muted, #877d8e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .task>span, :global([data-staff-module]) .task>b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .task>button {
+    border: 1px solid var(--staff-line, #d8cedf) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #6725a3) !important
+}
+:global([data-staff-module]) .sla {
+    background: var(--staff-raised, #f6f2f8) !important
+}
+:global([data-staff-module]) .sla span, :global([data-staff-module]) .sla small {
+    color: var(--staff-muted, #82768a) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sla i {
+    background: var(--staff-success, #31ad76) !important
+}
+:global([data-staff-module]) .panel>h3 {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .workload {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .workload>i {
+    background: var(--staff-raised, #eee8f1) !important
+}
+:global([data-staff-module]) .workload>i b {
+    background: var(--staff-primary, #6826a4) !important
+}
+:global([data-staff-module]) .automationHero {
+    background: linear-gradient(120deg,var(--staff-primary, #2b0a56),var(--staff-primary, #6825a3)) !important;
+    color: var(--staff-on-primary, white) !important
+}
+:global([data-staff-module]) .automationHero span {
+    color: var(--staff-on-primary, #cbb9dc) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationHero p {
+    color: var(--staff-on-primary, #d6cae1) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationHero>div:nth-child(2) small {
+    color: var(--staff-success, #63d39e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationHero>button {
+    background: var(--staff-danger, #f1a21c) !important;
+    color: var(--staff-danger, #321800) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationGrid article {
+    border: 1px solid var(--staff-line, #e2dbe7) !important;
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .automationGrid header strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationGrid header small {
+    color: var(--staff-muted, #887e8f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .toggle, :global([data-staff-module]) .toggleOn {
+    background: var(--staff-raised, #cfc7d4) !important
+}
+:global([data-staff-module]) .toggleOn {
+    background: var(--staff-success, #28aa72) !important
+}
+:global([data-staff-module]) .toggle span, :global([data-staff-module]) .toggleOn span {
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .automationGrid p {
+    color: var(--staff-muted, #756a7e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationGrid footer span, :global([data-staff-module]) .automationGrid footer b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .automationGrid footer b {
+    color: var(--staff-success, #167550) !important
+}
+:global([data-staff-module]) .automationGrid footer button {
+    color: var(--staff-primary, #6524a0) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .campaign {
+    border-top: 1px solid var(--staff-line, #eee9f1) !important
+}
+:global([data-staff-module]) .campaign strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .campaign small, :global([data-staff-module]) .campaign span {
+    color: var(--staff-muted, #847a8b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .campaign b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .campaign button {
+    border: 1px solid var(--staff-line, #ddd4e4) !important;
+    background: var(--staff-surface, white) !important;
+    color: var(--staff-primary, #63249e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .funnel span, :global([data-staff-module]) .leak span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .funnel article>div, :global([data-staff-module]) .leak article>div {
+    background: var(--staff-raised, #eee9f1) !important
+}
+:global([data-staff-module]) .funnel i {
+    background: linear-gradient(90deg,var(--staff-primary, #6725a3),var(--staff-primary, #9956c8)) !important
+}
+:global([data-staff-module]) .leak i {
+    background: linear-gradient(90deg,var(--staff-danger, #f1a21c),var(--staff-danger, #e26939)) !important
+}
+:global([data-staff-module]) .funnel strong, :global([data-staff-module]) .leak strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal {
+    background: var(--staff-surface, white) !important
+}
+:global([data-staff-module]) .modal label {
+    color: var(--staff-muted, #756a7e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal input, :global([data-staff-module]) .modal select {
+    border: 1px solid var(--staff-line, #ddd5e2) !important;
+    background: var(--staff-surface, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal form button {
+    background: var(--staff-primary, #6524a0) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .toast {
+    background: var(--staff-success, #187451) !important;
+    color: var(--staff-on-primary, white) !important;
+    font-size: 13px !important
+}
+@media (min-width: 761px) {
+    :global([data-staff-module]) .workspace span, :global([data-staff-module]) .integrations > span, :global([data-staff-module]) .main > header p, :global([data-staff-module]) .health span, :global([data-staff-module]) .panelHead span, :global([data-staff-module]) .kicker, :global([data-staff-module]) .customerTools span, :global([data-staff-module]) .customerHead, :global([data-staff-module]) .customerList small, :global([data-staff-module]) .stage, :global([data-staff-module]) .profileHead small, :global([data-staff-module]) .petCard small, :global([data-staff-module]) .overview dt, :global([data-staff-module]) .services span, :global([data-staff-module]) .nextBar span {
+        font-size: 13px !important
+    }
+}
+
+/* Shared staff navigation owns the rail; these are local CRM tabs. */
+:global([data-staff-module]) .shell { display:block !important; min-width:0; font-family:inherit !important; background:var(--staff-bg) !important; color:var(--staff-text) !important; }
+:global([data-staff-module]) .sidebar { gap:12px; }
+:global([data-staff-module]) .sidebar .brand { display:flex !important; color:var(--staff-text) !important; }
+:global([data-staff-module]) .sidebar .workspace,:global([data-staff-module]) .sidebar .integrations { display:block !important; margin:0; padding:10px; background:var(--staff-raised) !important; border-color:var(--staff-line); }
+:global([data-staff-module]) .sidebar nav span { display:inline !important; }
+:global([data-staff-module]) .sidebar nav button { display:flex !important; gap:8px; }
+:global([data-staff-module]) .sidebar nav .active { box-shadow:inset 3px 0 var(--staff-gold); font-weight:850; }
+:global([data-staff-module]) .main { padding:24px; min-width:0; }
+:global([data-staff-module]) .main>header { flex-wrap:wrap; }
+:global([data-staff-module]) .main>header>div:last-child { flex-wrap:wrap; max-width:100%; }
+:global([data-staff-module]) .main>header label { min-width:0; max-width:100%; }
+:global([data-staff-module]) .main>header>div>button { min-height:44px; }
+:global([data-staff-module]) .customerLayout { grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); }
+:global([data-staff-module]) .customer360 { position:static; }
+:global([data-staff-module]) .customerList>button>* { min-width:0; overflow-wrap:anywhere; }
+:global([data-staff-module]) .customerList strong,:global([data-staff-module]) .customerList small { display:block; line-height:1.5; }
+:global([data-staff-module]) .nextBar { flex-wrap:wrap; }
+:global([data-staff-module]) .modalBack { z-index:120; overflow:auto; align-items:start; }
+:global([data-staff-module]) .modal { width:min(560px,100%); margin:auto; max-height:90dvh; overflow:auto; display:grid; gap:12px; }
+:global([data-staff-module]) .modal>button[type="button"] { justify-self:end; min-width:44px; }
+:global([data-staff-module]) .modal input[type="checkbox"] { width:20px; height:20px; min-height:20px; flex:none; }
+:global([data-staff-module]) .modal>button[type="submit"] { background:var(--staff-primary); color:var(--staff-on-primary); min-height:46px; border-radius:9px; }
+@media(max-width:1200px){:global([data-staff-module]) .customerLayout{grid-template-columns:1fr;}}
+@media(max-width:760px){:global([data-staff-module]) .main{padding:16px;} :global([data-staff-module]) .modalBack{padding:12px;}}
+
+:global([data-staff-module]) .main>header h1 { font-size:32px !important; font-weight:750; line-height:1.25; }
+:global([data-staff-module]) .main>header input { font-size:15px !important; min-height:44px; }
+:global([data-staff-module]) .customerList strong,:global([data-staff-module]) .overview dd { font-size:14px !important; }
+:global([data-staff-module]) .follow-up { background:var(--staff-warning-bg) !important; color:var(--staff-warning) !important; }
+@media(max-width:650px){:global([data-staff-module]) .main>header h1{font-size:28px !important;}}

@@ -141,7 +141,7 @@ for (const outcome of ["assigned","awaiting_acceptance","ops_escalation","confli
  if(outcome==="notifications")await expect(page.getByRole("status")).toContainText("Notification retry finished: 1 queued. Delivery is not yet confirmed.");
  if(outcome==="assigned")await expect(page.getByRole("status")).toContainText("reassigned to Replacement groomer");
  if(outcome==="awaiting_acceptance")await expect(page.getByRole("status")).toContainText("partner acceptance is still pending");
- if(outcome==="ops_escalation")await expect(page.getByRole("status")).toContainText("Operations follow-up is required (case CASE-REAL)");
+ if(outcome==="ops_escalation")await expect(page.getByRole("status").filter({hasText:"Operations follow-up is required (case CASE-REAL)"})).toBeVisible();
  if(outcome==="conflict"){await expect(page.getByRole("alert")).toContainText("Assignment changed");await expect(submit).toBeDisabled();await expect(page.getByLabel("Recovery reason",{exact:true})).toHaveValue("Original groomer reported illness");await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Recover provider",exact:true})).toBeVisible();}
 });
 

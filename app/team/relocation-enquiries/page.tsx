@@ -1,6 +1,7 @@
 "use client";
 import Link from"next/link";
 import{useEffect,useState}from"react";
+import StaffModule from "../../components/staff-workspace/StaffModule";
 
 type Enquiry={id:string;customerName:string;phonePrimary:string;phoneSecondary:string|null;email:string;petType:string;relocationKind?:string;pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string;status:string;createdAt:number};
 
@@ -22,8 +23,8 @@ export default function TeamRelocationEnquiries(){
     return()=>{live=false;};
   },[]);
 
-  return <main style={{maxWidth:1100,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16}}>
-    <header><Link href="/team">← Team</Link><p style={{color:"var(--ds-primary-500)",letterSpacing:1,fontSize:12}}>PET RELOCATION · ENQUIRIES</p><h1 style={{margin:0}}>Submitted relocation enquiries</h1><p>Customer-submitted pickup/drop enquiries, newest first. Sandbox/UAT — no live money.</p></header>
+  return <StaffModule><main style={{maxWidth:1100,margin:"0 auto",padding:28,fontFamily:"inherit",display:"grid",gap:16}}>
+    <header><Link href="/team">← Team</Link><p style={{color:"var(--ds-primary-500)",letterSpacing:1,fontSize:14}}>PET RELOCATION · ENQUIRIES</p><h1 style={{margin:0}}>Submitted relocation enquiries</h1><p>Customer-submitted pickup/drop enquiries, newest first. Sandbox/UAT — no live money.</p></header>
     {error&&<p role="alert" style={{color:"var(--ds-danger-500)"}}>{error}</p>}
     <section style={box}>
       <div style={{...row,fontWeight:700,color:"var(--ds-text-muted)"}}><span>Customer</span><span>Contact</span><span>Pet</span><span>Pickup</span><span>Drop → Travel</span></div>
@@ -37,5 +38,5 @@ export default function TeamRelocationEnquiries(){
         <span>{enquiry.dropLocation}<br/><small>Travel: {enquiry.expectedTravelDate}</small></span>
       </div>)}
     </section>
-  </main>;
+  </main></StaffModule>;
 }

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 
 type Kind = "groomer" | "trainer" | "sales";
 
@@ -22,10 +23,10 @@ async function loadResult(kind: Kind, employeeId: string, monthStart: string) {
   return p;
 }
 
-const card: React.CSSProperties = { border: "1px solid #e3dbea", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
-const label: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 700, color: "#6a2daf", marginBottom: 4, marginTop: 10 };
-const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid #ddd5e2", borderRadius: 8, fontSize: 13 };
-const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: 8, background: "#6524a0", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" };
+const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: 14, padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
+const label: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 700, color: "var(--staff-primary)", marginBottom: 4, marginTop: 10 };
+const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid var(--staff-line)", borderRadius: 8, fontSize: 15 };
+const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: 8, background: "var(--staff-primary)", color: "var(--staff-on-primary)", fontWeight: 700, fontSize: 15, cursor: "pointer" };
 const row: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 };
 
 function Field({ text, onChange, placeholder }: { text: string; onChange: (v: string) => void; placeholder: string }) {
@@ -67,12 +68,12 @@ export default function ServiceIncentivesPage() {
   const [revEmployee, setRevEmployee] = useState(""), [revDate, setRevDate] = useState(""), [revAmount, setRevAmount] = useState(""), [revRef, setRevRef] = useState("");
 
   return (
-    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "system-ui,sans-serif", color: "#24133f" }}>
-      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "#1a0d2e", color: "white", padding: "11px 18px", borderRadius: 10, fontSize: 13, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
+    <StaffModule><main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "inherit", color: "var(--staff-text)" }}>
+      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "var(--staff-primary)", color: "var(--staff-on-primary)", padding: "11px 18px", borderRadius: 10, fontSize: 15, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "#6a2daf" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--staff-primary)" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Groomer / Trainer / Sales incentive engine</h1>
-        <p style={{ maxWidth: 900, color: "#6e6576" }}>
+        <p style={{ maxWidth: 900, color: "var(--staff-muted)" }}>
           Real, governed calculation - matches the published rate sheets exactly, sourced from real completed bookings.
           Every input here is an explicit record with a real reason, never invented. <Link href="/team/people">Back to People</Link>
         </p>
@@ -80,7 +81,7 @@ export default function ServiceIncentivesPage() {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         {(["groomer", "trainer", "sales"] as Kind[]).map((k) => (
-          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: tab === k ? "2px solid #6524a0" : "1px solid #ddd5e2", background: tab === k ? "#f2ebfa" : "white", color: "#6524a0", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
+          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: tab === k ? "2px solid var(--staff-primary)" : "1px solid var(--staff-line)", background: tab === k ? "var(--staff-raised)" : "var(--staff-surface)", color: "var(--staff-primary)", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
         ))}
       </div>
 
@@ -91,7 +92,7 @@ export default function ServiceIncentivesPage() {
           <div><span style={label}>Month (YYYY-MM-01)</span><Field text={lookupMonth} onChange={setLookupMonth} placeholder="2026-08-01" /></div>
         </div>
         <button style={btn} onClick={runLookup}>Load {tab} breakdown</button>
-        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "#f7f3fa", borderRadius: 8, fontSize: 12, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
+        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "var(--staff-raised)", borderRadius: 8, fontSize: 14, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
       </section>
 
       {tab === "groomer" && (
@@ -153,10 +154,10 @@ export default function ServiceIncentivesPage() {
 
           <section style={card}>
             <h2 style={{ marginTop: 0, fontSize: 16 }}>Monthly incentive review and achievement</h2>
-            <p style={{ color: "#6e6576", fontSize: 13 }}>Save a calculation snapshot for review first. Finalizing is immutable and creates the employee achievement link exactly once; it does not transfer money or run payroll.</p>
+            <p style={{ color: "var(--staff-muted)", fontSize: 15 }}>Save a calculation snapshot for review first. Finalizing is immutable and creates the employee achievement link exactly once; it does not transfer money or run payroll.</p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button style={btn} onClick={() => runAction("save_groomer_incentive_draft", { headGroomerId: gHead, monthStart: gTargetMonth }, "Incentive draft saved")}>Save incentive draft</button>
-              <button style={{ ...btn, background: "#3d1761" }} onClick={() => runAction("finalize_groomer_incentive", { headGroomerId: gHead, monthStart: gTargetMonth }, "Reviewed incentive finalized")}>Finalize reviewed incentive</button>
+              <button style={{ ...btn, background: "var(--staff-primary)" }} onClick={() => runAction("finalize_groomer_incentive", { headGroomerId: gHead, monthStart: gTargetMonth }, "Reviewed incentive finalized")}>Finalize reviewed incentive</button>
             </div>
           </section>
         </>
@@ -217,7 +218,7 @@ export default function ServiceIncentivesPage() {
 
           <section style={card}>
             <h2 style={{ marginTop: 0, fontSize: 16 }}>Attribute a booking to the employee who converted it</h2>
-            <p style={{ fontSize: 12, color: "#6e6576" }}>Only bookings attributed here count toward anyone&apos;s number. A customer&apos;s own direct booking is real revenue but is never credited to an individual.</p>
+            <p style={{ fontSize: 14, color: "var(--staff-muted)" }}>Only bookings attributed here count toward anyone&apos;s number. A customer&apos;s own direct booking is real revenue but is never credited to an individual.</p>
             <div style={row}>
               <div><span style={label}>Booking ID</span><Field text={sBookingId} onChange={setSBookingId} placeholder="real booking ID" /></div>
               <div><span style={label}>Employee ID</span><Field text={sAttribEmployee} onChange={setSAttribEmployee} placeholder="who converted this sale" /></div>
@@ -257,6 +258,6 @@ export default function ServiceIncentivesPage() {
         </div>
         <button style={btn} onClick={() => runAction("record_review_incentive", { employeeId: revEmployee, reviewDate: revDate, amount: Number(revAmount), reviewReference: revRef || undefined }, "Review incentive recorded")}>Record review incentive</button>
       </section>
-    </main>
+    </main></StaffModule>
   );
 }
