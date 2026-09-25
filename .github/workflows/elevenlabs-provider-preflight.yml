@@ -75,10 +75,14 @@ jobs:
             return{status:r.status,headersMs,firstDeltaMs,firstSentenceMs,totalMs,replyChars:acc.length,replyPrefix:acc.slice(0,120)};
           };
 
-          for(let run=1;run<=2;run++){
-            console.log('BLOCKING_'+run+'='+JSON.stringify(await blocking()));
-            console.log('STREAMING_'+run+'='+JSON.stringify(await streaming()));
-          }
+          // Wrapped in an async IIFE: piped over stdin this is parsed as a script, where `await`
+          // inside a loop body is a syntax error rather than top-level await.
+          (async()=>{
+            for(let run=1;run<=2;run++){
+              console.log('BLOCKING_'+run+'='+JSON.stringify(await blocking()));
+              console.log('STREAMING_'+run+'='+JSON.stringify(await streaming()));
+            }
+          })().catch(error=>{console.error(String(error&&error.message||error));process.exit(1);});
           NODE
 
   preflight:
