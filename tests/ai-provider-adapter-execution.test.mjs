@@ -193,6 +193,19 @@ test("a provider that never answers hits the deadline instead of holding the req
   } finally { stub.restore(); }
 });
 
+test("a caller may tighten the provider deadline without extending the configured ceiling", async () => {
+  withEnv({ PAWSPACE_AI_PROVIDER_TIMEOUT_MS: "30000" });
+  const stub = stubFetch((_url, init) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  }));
+  try {
+    const started = Date.now();
+    const result = await adapter.requestAiDraft({ systemPrompt: "sys", userPrompt: "hi", timeoutMs: 1000 });
+    assert.equal(result.failure, "timeout");
+    assert.ok(Date.now() - started < 5_000, "the per-call deadline overrides the longer configured ceiling");
+  } finally { stub.restore(); }
+});
+
 test("headers arriving in time does not buy an unbounded body: the deadline covers the read", async () => {
   // This is the case an `AbortController` released straight after `await fetch` cannot catch. A
   // provider that answers with headers and then trickles bytes was unbounded again.
