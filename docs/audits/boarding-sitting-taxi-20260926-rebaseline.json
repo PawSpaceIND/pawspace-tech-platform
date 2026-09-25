@@ -739,6 +739,159 @@
       "field": "protected.lib/taxi-booking-client.ts",
       "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
       "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/v2-ui-wiring-contract.json",
+      "field": "files.app/v2/stay-experience.tsx",
+      "kind": "AST interaction",
+      "old": {
+        "sha256": "aca43bf737f99a0e95dc5c6055f02579da5ec2d09cb3d305c041d7d60e86c0fc",
+        "functions": 10,
+        "declarations": 11,
+        "interactionProps": 11,
+        "conditions": 3
+      },
+      "new": {
+        "sha256": "e9e92fb2600169e487f07dac8008d0ccd778e741f702dc8cf43a085f2d81f362",
+        "functions": 11,
+        "declarations": 11,
+        "interactionProps": 11,
+        "conditions": 3
+      },
+      "reason": "Inner mode selection now navigates to the matching V2 URL; reload cannot silently restore the wrong service. No authorization/payment handler changed."
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/boarding-customer-wiring.test.mjs",
+      "old": "a24109a0263cd904c0e7da145116da1c3a09327c6c41a33b4ff7e338ea5a659b",
+      "new": "64d8bbe063bb5c4fb9f8ce1a8c77c43ac1785e0d95aebbb0657204e9cf12d3ca",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/customer-payment-gate-uat.test.mjs",
+      "old": "587528f2304cf88ad7f0f9729d97d3a040cbfed04a5cda6b01204d2ce419c4d8",
+      "new": "ab6aa82e5563e67f72b9a6b1d301c9e4b3ad0e23ae303bfd96861f38fe56edc9",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/premium-customer-service-parity.test.mjs",
+      "old": "98526532b365c37a26bf64e2976ebe834ec3468ac99a9120403d702a03a20034",
+      "new": "d183fa0a96eec30048531fa0dc053c82ec2631d7cb0ea88b3713e88468696573",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
     }
   ]
 }
