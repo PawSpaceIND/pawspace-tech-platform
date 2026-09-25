@@ -42,6 +42,7 @@ test("customer Taxi route line starts from privacy-rounded provider GPS",()=>{
 test("existing Taxi staging databases receive additive coordinate columns",()=>{
  const governance=read("lib/taxi-ride-governance.ts");
  for(const column of["origin_latitude","origin_longitude","destination_latitude","destination_longitude","return_drop_latitude","return_drop_longitude"]){
-   assert.match(governance,new RegExp("ALTER TABLE.*"+column));
+   assert.ok(governance.includes('["taxi_ride_quotes","'+column+'"')||governance.includes('["taxi_ride_booking_details","'+column+'"'),column+" must be in the additive migration allowlist");
  }
+ assert.match(governance,/ALTER TABLE \\${table} ADD COLUMN \\${column} \\${type}/);
 });
