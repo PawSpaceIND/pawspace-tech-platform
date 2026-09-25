@@ -1,5 +1,6 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor}from"../../../lib/server-auth";
 import{customerTrackingProjection}from"../../../lib/customer-location-disclosure";
+import{liveStaticMapResponse}from"../../../lib/live-static-map";
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 type Row=Record<string,unknown>;
 async function tableExists(db:D1Database,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first());}
@@ -7,21 +8,15 @@ async function optionalRow(db:D1Database,table:string,sql:string,bindings:unknow
 function parseIds(value:unknown){try{const parsed=JSON.parse(String(value||"[]"));return Array.isArray(parsed)?parsed.map(String):[];}catch{return[];}}
 function finiteCoordinate(value:unknown,min:number,max:number){const n=Number(value);return Number.isFinite(n)&&n>=min&&n<=max?n:null;}
 function roundedProviderPoint(value:number){return Math.round(value*1000)/1000;}
-async function mapsServerKey(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;return String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();}
 async function liveMapResponse(db:D1Database,booking:Row,bookingId:string,tracking:{state:string}){
  if(tracking.state!=="live")return new Response("Live map is not available yet",{status:409,headers:{"cache-control":"no-store"}});
- const point=await optionalRow(db,"universal_provider_location_events","SELECT latitude,longitude,server_received_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? AND trust_state='accepted' ORDER BY server_received_at DESC LIMIT 1",[bookingId,String(booking.provider_id)]);
+ const point=await optionalRow(db,"universal_provider_location_events","SELECT id,latitude,longitude,server_received_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? AND trust_state='accepted' ORDER BY server_received_at DESC LIMIT 1",[bookingId,String(booking.provider_id)]);
  const destination=await optionalRow(db,"booking_service_locations","SELECT latitude,longitude FROM booking_service_locations WHERE booking_id=? AND customer_id=? AND provider_id=? AND status='active'",[bookingId,String(booking.customer_id),String(booking.provider_id)]);
  const providerLat=finiteCoordinate(point?.latitude,-90,90),providerLng=finiteCoordinate(point?.longitude,-180,180),destLat=finiteCoordinate(destination?.latitude,-90,90),destLng=finiteCoordinate(destination?.longitude,-180,180);
  if(providerLat===null||providerLng===null||destLat===null||destLng===null)return new Response("Live map coordinates are unavailable",{status:409,headers:{"cache-control":"no-store"}});
- const key=await mapsServerKey();if(!key)return new Response("Google Maps is not configured",{status:503,headers:{"cache-control":"no-store"}});
- const pLat=roundedProviderPoint(providerLat),pLng=roundedProviderPoint(providerLng),url=new URL("https://maps.googleapis.com/maps/api/staticmap");
- url.searchParams.set("size","640x320");url.searchParams.set("scale","2");url.searchParams.set("maptype","roadmap");
- url.searchParams.append("markers","color:0x1f8f5f|label:P|"+pLat+","+pLng);
- url.searchParams.append("markers","color:0xc7962d|label:H|"+destLat+","+destLng);
- url.searchParams.set("key",key);
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
- try{const response=await fetch(url.toString(),{signal:controller.signal});if(!response.ok)return new Response("Google map is temporarily unavailable",{status:502,headers:{"cache-control":"no-store"}});const bytes=await response.arrayBuffer();return new Response(bytes,{status:200,headers:{"content-type":response.headers.get("content-type")||"image/png","cache-control":"private, no-store, max-age=0","x-pawspace-map-source":"google-static-maps","x-pawspace-location-privacy":"provider-rounded-3dp"}});}catch{return new Response("Google map is temporarily unavailable",{status:502,headers:{"cache-control":"no-store"}});}finally{clearTimeout(timer);}
+ const snapshot=point?.id?await optionalRow(db,"route_eta_snapshots","SELECT detail_json FROM route_eta_snapshots WHERE booking_id=? AND provider_id=? AND origin_location_event_id=? ORDER BY calculated_at DESC LIMIT 1",[bookingId,String(booking.provider_id),String(point.id)]):null;
+ let polyline:string|null=null;try{const detail=snapshot?JSON.parse(String(snapshot.detail_json||"{}")) as Record<string,unknown>:{};if(typeof detail.polyline==="string")polyline=detail.polyline;}catch{}
+ return liveStaticMapResponse({provider:{lat:providerLat,lng:providerLng},destination:{lat:destLat,lng:destLng},polyline,privacyRounded:true});
 }
 /**
  * Provider recovery moves only the WORK ORDER to reassignment_needed; canonical_bookings keeps
