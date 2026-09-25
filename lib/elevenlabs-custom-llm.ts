@@ -77,29 +77,43 @@ async function voiceContext(db:D1Database,body:Row){
  throw new Response("PawSpace voice identity is missing from ElevenLabs custom LLM request",{status:400});
 }
 
+/**
+ * Stage stopwatch for one voice turn, surfaced as a `Server-Timing` header.
+ *
+ * A live caller hears nothing until this whole function resolves, so "which stage owns the wait" is
+ * the only question that matters for phone latency, and it cannot be answered from the outside: the
+ * caller sees one number. Each mark is milliseconds from the start of the turn, so a stage's own cost
+ * is the difference between consecutive marks. Durations only — no customer, thread or reply content.
+ */
+function turnStopwatch(){
+ const started=Date.now(),marks:Record<string,number>={};
+ return{mark:(name:string)=>{marks[name]=Date.now()-started;},marks};
+}
+
 export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
- await ensureCommunicationTables(db);
+ const clock=turnStopwatch();
+ await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
- const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();
+ const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
  await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
-  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});
+  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();clock.mark("inboundWrite");
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});clock.mark("provider");
  const intent=classifyAiIntent(inputText);
  const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
-  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true}});
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true}});clock.mark("model");
   const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
    const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
    await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
-    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run();
-   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId};
+    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run();clock.mark("replyWrite");
+   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"fast",timings:clock.marks};
   }
  }
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
- return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId};
+ return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks};
 }
 
 export function responsesSse(output:string){
