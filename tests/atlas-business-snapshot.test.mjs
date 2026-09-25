@@ -208,23 +208,51 @@ test("invoice gap counts only invoices linked to completed canonical bookings",a
  assert.equal(snapshot.finance.invoice_completed_gap.source,"canonical_bookings + booking_invoices");
 });
 
-test("integration flags reuse canonical credential detectors instead of partial secret heuristics",async()=>{
- const{db,now}=world();
+test("Atlas integration flags require governed readiness plus current credentials",async()=>{
+ const{sqlite,db,now}=world();
+ sqlite.exec("CREATE TABLE integration_registry(integration_code TEXT PRIMARY KEY,readiness_state TEXT NOT NULL,credential_status TEXT NOT NULL);");
+ const add=sqlite.prepare("INSERT INTO integration_registry VALUES (?,?,?)");
+ add.run("INT-PAY-01","sandbox_ready_for_test","configured");
+ add.run("INT-MAPS-01","production_setup_required","configured");
+ add.run("INT-COMMS-01","sandbox_verified","configured");
+ add.run("INT-AI-01","production_ready_for_controlled_test","configured");
  globalThis.__PAWSPACE_TEST_ENV__={
   PAWSPACE_PAYMENT_ENV:"sandbox",
-  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
-  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  RAZORPAY_KEY_ID_SANDBOX:"rzp_test",
+  RAZORPAY_KEY_SECRET_SANDBOX:"secret",
+  RAZORPAY_WEBHOOK_SECRET_SANDBOX:"hook",
   PAWSPACE_COMMUNICATION_ENV:"uat",
   META_WHATSAPP_UAT_DELIVERY_ENABLED:"true",
+  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
+  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  META_WHATSAPP_WABA_ID:"waba",
+  META_WHATSAPP_APP_SECRET:"app",
+  META_WHATSAPP_VERIFY_TOKEN:"verify",
+  META_WHATSAPP_UAT_ALLOWLIST:"919999999999",
+  META_WHATSAPP_TEMPLATE_ALLOWLIST:"uat-template",
   GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps",
   PAWSPACE_AI_PROVIDER_API_KEY:"ai-key"
  };
- const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
- assert.equal(snapshot.integrations.payments.value,false,"payment env alone is not sandbox readiness");
- assert.equal(snapshot.integrations.whatsapp.value,false,"token + phone alone are not Meta UAT readiness");
- assert.equal(snapshot.integrations.maps.value,true);
+ let snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.payments.value,true);
+ assert.equal(snapshot.integrations.whatsapp.value,true);
+ assert.equal(snapshot.integrations.maps.value,false,"credentials alone must not override governed readiness");
+ assert.equal(snapshot.integrations.maps.reason,"integration_readiness_state:production_setup_required");
  assert.equal(snapshot.integrations.ai.value,true);
- assert.match(snapshot.integrations.whatsapp.source,/integration-readiness credential detector/);
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
+ delete globalThis.__PAWSPACE_TEST_ENV__.PAWSPACE_AI_PROVIDER_API_KEY;
+ snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now+1});
+ assert.equal(snapshot.integrations.ai.value,false,"stale registry credential state must not override the current runtime detector");
+ assert.equal(snapshot.integrations.ai.reason,"integration_credentials:missing");
+ globalThis.__PAWSPACE_TEST_ENV__={};
+});
+
+test("Atlas keeps integration readiness unknown when the governed registry is unavailable",async()=>{
+ const{db,now}=world();globalThis.__PAWSPACE_TEST_ENV__={GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps"};
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.maps.value,null);
+ assert.equal(snapshot.integrations.maps.reason,"missing_table:integration_registry");
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
  globalThis.__PAWSPACE_TEST_ENV__={};
 });
 
