@@ -13,7 +13,13 @@ export async function POST(request:Request){
   const result=await runElevenLabsGroundedTurn(await database(),body);
   // Durations only, so the caller's wait can be attributed to a stage from outside the Worker. A live
   // caller hears one number; without this, "the turn took 8s" names no owner. Carries no turn content.
-  const serverTiming=[`path;desc="${result.path}"`,...Object.entries(result.timings||{}).map(([stage,ms])=>`${stage};dur=${ms}`)].join(", ");
+  const serverTiming=[
+   `path;desc="${result.path}"`,
+   ...Object.entries(result.timings||{}).map(([stage,ms])=>`${stage};dur=${ms}`),
+   ...(result.upstreamMs==null?[]:[`upstream;dur=${result.upstreamMs}`]),
+   ...(result.modelRef?[`model;desc="${result.modelRef}"`]:[]),
+   ...(result.providerRef?[`provider_ref;desc="${result.providerRef}"`]:[]),
+  ].join(", ");
   return new Response(responsesSse(result.output),{status:200,headers:{"content-type":"text/event-stream; charset=utf-8","cache-control":"no-store","x-accel-buffering":"no","server-timing":serverTiming}});
  }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return json({error:"PawSpace custom LLM failed safely"},503);}
 }

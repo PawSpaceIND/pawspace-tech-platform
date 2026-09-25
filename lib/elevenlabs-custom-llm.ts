@@ -107,13 +107,17 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
    const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
    await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
     .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run();clock.mark("replyWrite");
-   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"fast",timings:clock.marks};
+   // `latencyMs` brackets only the provider round trip, so the "model" stage minus this is the runtime
+   // control cost (reservation sweep, circuit read, its own schema guard) that precedes every call.
+   // The resolved model ref is reported because the reasoning-effort shortcut applies to exactly one
+   // model id: if an override resolves to anything else, the shortcut silently stops applying.
+   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"fast",timings:clock.marks,modelRef:generated.modelRef||null,providerRef:generated.provider||null,upstreamMs:generated.latencyMs??null};
   }
  }
  const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
- return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks};
+ return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks,modelRef:provider.modelRef??null,providerRef:provider.provider??null,upstreamMs:null as number|null};
 }
 
 export function responsesSse(output:string){
