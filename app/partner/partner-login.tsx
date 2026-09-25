@@ -68,7 +68,7 @@ export default function PartnerLogin({ onLoggedIn, eyebrow = "🐾 Become a care
             style={box}
           />
           {error && <p style={{ color: "#b3261e", fontSize: 13, marginTop: 8 }}>{error}</p>}
-          <button className={styles.primary} style={{ marginTop: 14, width: "100%" }} disabled={busy} onClick={() => void requestOtp()}>
+          <button data-paw-action="primary" className={styles.primary} style={{ marginTop: 14, width: "100%" }} disabled={busy} onClick={() => void requestOtp()}>
             {busy ? "Sending…" : "Send OTP"}
           </button>
           <p style={{ fontSize: 11, color: "var(--ps-muted)", marginTop: 10 }}>
@@ -99,7 +99,7 @@ export default function PartnerLogin({ onLoggedIn, eyebrow = "🐾 Become a care
             style={{ ...box, marginTop: 8 }}
           />
           {error && <p style={{ color: "#b3261e", fontSize: 13, marginTop: 8 }}>{error}</p>}
-          <button className={styles.primary} style={{ marginTop: 14, width: "100%" }} disabled={busy} onClick={() => void verifyOtp()}>
+          <button data-paw-action="primary" className={styles.primary} style={{ marginTop: 14, width: "100%" }} disabled={busy} onClick={() => void verifyOtp()}>
             {busy ? "Verifying…" : "Verify & continue"}
           </button>
           <button style={{ marginTop: 10, background: "none", border: 0, color: "var(--ps-muted)", cursor: "pointer" }} onClick={() => { setStage("phone"); setError(""); }}>

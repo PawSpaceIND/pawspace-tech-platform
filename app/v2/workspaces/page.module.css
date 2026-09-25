@@ -1,1 +1,14 @@
 .page{min-height:100vh;background:linear-gradient(180deg,#fffdf8,#f3f7f3);color:#173d32;padding:28px 20px}.shell{width:min(1180px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;font-weight:850}.brand img{width:44px;height:44px;border-radius:14px}.back{color:inherit;text-decoration:none;border:1px solid #dce4dd;background:#fff;border-radius:999px;padding:10px 14px;font-weight:750}.hero{margin:24px 0;background:#123d31;color:#fff;border-radius:32px;padding:30px;box-shadow:0 24px 60px rgba(18,61,49,.14)}.hero small{color:#dabd7a;font-weight:850;letter-spacing:.14em}.hero h1{font-size:clamp(36px,6vw,64px);line-height:.98;margin:10px 0}.hero p{max-width:760px;color:#deebe5}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{display:grid;gap:10px;background:#fff;border:1px solid #dfe6df;border-radius:24px;padding:22px;text-decoration:none;color:inherit;box-shadow:0 12px 34px rgba(24,56,45,.06)}.card span{font-size:12px;font-weight:850;letter-spacing:.12em;color:#977229}.card h2{margin:0;font-size:26px}.card p{margin:0;color:#68786f}.card b{margin-top:8px}.note{margin-top:18px;background:#fff8df;border-radius:18px;padding:16px;color:#6a5420}@media(max-width:720px){.page{padding:18px 14px}.grid{grid-template-columns:1fr}.hero{padding:24px;border-radius:24px}}
+/* V2-05: the workspace chooser uses the same palette as its destination screens. */
+.page { composes: palette from "../../components/brand/brand-surface.module.css"; }
+.page.page { background: var(--brand-bg); color: var(--brand-text); }
+.page .hero { background: var(--brand-hero); color: var(--brand-hero-text); box-shadow: var(--brand-shadow); }
+.page .hero small { color: var(--brand-gold); }
+.page .hero p { color: var(--brand-hero-text); }
+.page .back, .page .card { background: var(--brand-surface); color: var(--brand-text); border-color: var(--brand-line); }
+.page .card { box-shadow: var(--brand-shadow); }
+.page .card span, .page .card p { color: var(--brand-muted); }
+.page .card b { color: var(--brand-primary); }
+.page .note { background: var(--brand-warning-bg); color: var(--brand-warning); }
+.page .back { min-height: 44px; display: inline-flex; align-items: center; }
+.page .brand img { width: 40px; height: 40px; object-fit: contain; }

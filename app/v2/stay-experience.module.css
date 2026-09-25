@@ -7,7 +7,7 @@
 .page .hero small { color:var(--brand-gold) !important; }
 .page .hero p { color:var(--brand-hero-text) !important; }
 .page .modeSwitch a { background:var(--brand-surface) !important; color:var(--brand-text) !important; }
-.page .modeSwitch .ghost { color:var(--brand-on-primary) !important; }
+.page .modeSwitch .ghost { background:transparent !important; color:var(--brand-hero-text) !important; border:1px solid var(--brand-hero-text); }
 .page .surface { background:var(--brand-surface) !important; border:1px solid var(--brand-line) !important; }
 .page .status { background:var(--brand-raised) !important; color:var(--brand-text) !important; }
 .page .dock { background:var(--brand-surface) !important; border:1px solid var(--brand-line) !important; }

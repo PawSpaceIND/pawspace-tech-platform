@@ -42,3 +42,33 @@
 .shell .hero { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; }
 .shell .hero :is(h1,p,b) { color:var(--brand-hero-text) !important; }
 .shell .hero h1 em,.shell .hero span { color:var(--brand-gold) !important; }
+
+/* V2-01/07 only. The legacy Walking route keeps its existing presentation. */
+.shell[data-v2-walking] > .header:has(nav) {
+  position: static; height: auto; min-height: 0; padding: 12px max(18px, calc((100vw - 1160px)/2));
+  background: var(--brand-bg); border: 0;
+}
+.shell[data-v2-walking] > .header:has(nav) > a { display: none; }
+.shell[data-v2-walking] > .header nav { margin-left: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.shell[data-v2-walking] > .header nav a { padding: 10px 14px; min-height: 44px; border-radius: 14px; background: var(--brand-surface); color: var(--brand-text); }
+.shell[data-v2-walking] .checkout {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  background: var(--brand-surface); color: var(--brand-text); border: 1px solid var(--brand-line);
+  box-shadow: var(--brand-shadow);
+}
+.shell[data-v2-walking] .checkout > div { min-width: 0; gap: 6px 16px; grid-template-columns: minmax(0, 1fr) auto; }
+.shell[data-v2-walking] .checkout span, .shell[data-v2-walking] .checkout em { color: var(--brand-muted); }
+.shell[data-v2-walking] .checkout strong { color: var(--brand-text); white-space: nowrap; }
+.shell[data-v2-walking] .checkout > p { grid-column: 1 / -1; margin: 0; font-size: 14px; line-height: 1.45; }
+.shell[data-v2-walking] .checkout > [role="alert"] { color: var(--brand-danger); }
+.shell[data-v2-walking] .checkout > button { grid-column: 2; grid-row: 1; max-width: none; background: var(--brand-primary); color: var(--brand-on-primary); }
+.shell[data-v2-walking] .quoteDetails { grid-column: 1 / -1; font-size: 14px; line-height: 1.5; }
+.shell[data-v2-walking] .quoteDetails summary { cursor: pointer; min-height: 32px; padding: 5px 0; font-weight: 750; }
+.shell[data-v2-walking] .quoteDetails em { display: block; overflow-wrap: anywhere; max-height: 20vh; overflow: auto; }
+@media (max-width: 820px) {
+  .shell[data-v2-walking] { padding-bottom: 24px; }
+  .shell[data-v2-walking] .checkout { position: static; transform: none; width: auto; margin: 24px 14px; grid-template-columns: minmax(0, 1fr); padding: 18px; }
+  .shell[data-v2-walking] .checkout > button { grid-column: 1; grid-row: auto; width: 100%; }
+  .shell[data-v2-walking] .bookingError { position: static; transform: none; margin: 14px; }
+  .shell[data-v2-walking] .switch { width: 100%; max-width: 340px; }
+}
