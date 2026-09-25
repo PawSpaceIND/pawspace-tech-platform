@@ -794,7 +794,7 @@
     "lib/integration-readiness.ts": "aaf0ad4f5b7abd0743f6bc8e2b622105578d3dbb29d3db7d7c863d91cf3d1984",
     "lib/intelligence/atlas-business-capabilities.ts": "9c36f03fc620ccf9e140e9c27ea376b99655f57dd0e0eca842c9e23ccc1b311a",
     "lib/intelligence/atlas-business-integration-router.ts": "03a670f2192be2701231c8a01c3cfb312f3566b727ba54698714f43a06e31580",
-    "lib/intelligence/atlas-business-snapshot.ts": "c60b5cee23b9ebde033bd0bc44a9d5b7c9f5bb48e03af0d22a4522906898edd7",
+    "lib/intelligence/atlas-business-snapshot.ts": "f3ecfc56d60d6742222c038151269d70452deb8437de257fa56378357459b90f",
     "lib/intelligence/atlas-ceo-operating-engine.ts": "cc26f6bb4d3bfaf93a147e988a21c0777e363983f9bdf2b0721e4ba0a5afeee5",
     "lib/intelligence/atlas-challenge-review.ts": "e65de085eca22f1cdbff7aa8b8e2a5df940d2060785c6ea0b7cec3defe4be7a6",
     "lib/intelligence/atlas-data.ts": "9b0cc6c0331d00b3b2e5606d6c80bab7c6e4553b4b754d0784918d0206faea35",

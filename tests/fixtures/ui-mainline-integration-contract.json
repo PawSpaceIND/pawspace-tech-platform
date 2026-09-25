@@ -1,6 +1,6 @@
 {
   "ui": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
-  "upstream": "7e850b40f55587e75ad20d7c6941a3003ec4814a",
+  "upstream": "733d52f1fb5369017571566b2b23d0834ea26988",
   "protected": {
     ".github/workflows/deploy-staging.yml": "799de25fd9c72a1fc4e82b0d6eb10cee82c31fe2d7cf151c6690a90036a49504",
     ".github/workflows/elevenlabs-provider-preflight.yml": "faf5456e92acd2fb255474981de62fdf166c7f68b62d502259bc84bde3425021",
@@ -38,7 +38,7 @@
     "lib/customer-checkout-client.ts": "cd909caea876c2843e21056b1583d850603d55cbb98c56b0672b23a523ebeb51",
     "lib/elevenlabs-voice-integration.ts": "c1657f4febd635ca620a6f14a3ffa7eb3dd1f71c49e46f6f1d493bac53b18cbd",
     "lib/food-finance-client.ts": "4699b76c79d298d04b7f1f31be1799ff0d5442600e0ccccfdc29749602d45f4b",
-    "lib/intelligence/atlas-business-snapshot.ts": "c60b5cee23b9ebde033bd0bc44a9d5b7c9f5bb48e03af0d22a4522906898edd7",
+    "lib/intelligence/atlas-business-snapshot.ts": "f3ecfc56d60d6742222c038151269d70452deb8437de257fa56378357459b90f",
     "lib/intelligence/atlas-ceo-operating-engine.ts": "cc26f6bb4d3bfaf93a147e988a21c0777e363983f9bdf2b0721e4ba0a5afeee5",
     "lib/intelligence/atlas-commitment-assurance.ts": "c6aeabd98a774715598d7e94d8a669a2c5b3a9e8d0486096fd99909f89102740",
     "lib/intelligence/atlas-data.ts": "9b0cc6c0331d00b3b2e5606d6c80bab7c6e4553b4b754d0784918d0206faea35",
@@ -63,7 +63,7 @@
     "scripts/elevenlabs-provider-preflight.mjs": "efca6623e6c32ade73f4721f914a8e0b1ffc6c3e667b1bb0d5f90781e951d81c",
     "scripts/stage-voice-uat-config.mjs": "00c319928915f91d35a86666c2fa1019234fb7fe85117cc7f7f79576ca2a4e39",
     "tests/ai-voice-self-test-source-contract.test.mjs": "203ae74013681c02e2aca8ec066677e639181674a1b4c756f64da0f55a0d48cd",
-    "tests/atlas-business-snapshot.test.mjs": "5ca198097fdabbe2ab82c0d88554d7957c399845376cc60c5feaccc5d84a7cbb",
+    "tests/atlas-business-snapshot.test.mjs": "4bbddcf550a5c0fab982f4f60e4260ad6ea0fcfb3bfc18c0aed8533b5626ae97",
     "tests/atlas-ceo-operating-engine.test.mjs": "f9fd5eef23c1612cebf3ea022b73d3908d8e19541006315cdf389037839ce944",
     "tests/atlas-commitment-assurance.test.mjs": "e041b08060eafbb99ba1f281031e42c06190a19decb32aa806d05743276112ad",
     "tests/atlas-decision-commitments.test.mjs": "db54225eb9d1acd9622746b9a625640504c4ed6fcdd6a0c5ebef7146ecf92c88",
