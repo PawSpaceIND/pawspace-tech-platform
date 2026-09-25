@@ -180,6 +180,13 @@ test("sign out is a same-origin write: a cross-site DELETE cannot end a partner'
  * ---------------------------------------------------------------------------------------------- */
 const TRAINERS = { uatcap_train_ft: "9000000931", uatcap_train_east: "9000000932", uatcap_train_south: "9000000933",
   uatcap_train_north: "9000000934", uatcap_train_west: "9000000935", uatcap_train_central: "9000000936" };
+const CROSS_VERTICAL_PROVIDERS = {
+  host_arjun_tara: "9000000970", host_maa_meena: "9000000971", host_maya_rohan: "9000000972", host_priya_dev: "9000000973", host_sana: "9000000974",
+  sit_asha: "9000000975", sit_neha: "9000000976", sit_sana: "9000000977",
+  taxi_imran: "9000000978", taxi_maa_arun: "9000000979", taxi_meera: "9000000980", taxi_rahul: "9000000981",
+  uatcap_host_cm: "9000000982", uatcap_sit_cm: "9000000983", uatcap_taxi_ft: "9000000984", uatcap_walk_ft: "9000000985",
+  walk_asha: "9000000986", walk_kiran: "9000000987", walk_maa_divya: "9000000988", walk_nisha: "9000000989",
+};
 async function rosterIdentityStatements() {
   const roster = await source("scripts/uat-staging-provider-capacity.sql");
   const create = roster.match(/^CREATE TABLE IF NOT EXISTS canonical_providers[^\n]*;$/m);
@@ -202,6 +209,20 @@ test("the roster gives every UAT trainer a partner OTP number that is unique and
   }
   const guide = await source("docs/UAT-TESTER-GUIDE.md");
   for (const phone of Object.values(TRAINERS)) assert.match(guide, new RegExp(phone), "testers are told the number");
+});
+
+
+
+test("every active Boarding, Sitting, Walking and Taxi UAT provider has a deterministic Partner OTP identity", async () => {
+  const { statements } = await rosterIdentityStatements();
+  const rows = [...statements[1].matchAll(/\('([a-z0-9_]+)','blr','([^']*)','(\d{10})'/g)].map(([, id, name, phone]) => ({ id, name, phone }));
+  const phones = rows.map(row => row.phone);
+  assert.equal(new Set(phones).size, phones.length, "all staged provider login numbers must stay globally unique");
+  for (const [id, phone] of Object.entries(CROSS_VERTICAL_PROVIDERS)) {
+    const row = rows.find(candidate => candidate.id === id);
+    assert.ok(row, `${id} must have a canonical provider login identity`);
+    assert.equal(row.phone, phone, `${id} keeps its documented deterministic staging number`);
+  }
 });
 
 test("a seeded UAT trainer signs in through the real partner OTP route and the gate opens as that provider", async t => {

@@ -1,6 +1,6 @@
 {
   "ui": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
-  "upstream": "aeb46645b1679762db799af8ab290592eb228a4f",
+  "upstream": "146557175ff9f5dcc4337b842059cfc08d656880",
   "protected": {
     ".github/workflows/deploy-staging.yml": "799de25fd9c72a1fc4e82b0d6eb10cee82c31fe2d7cf151c6690a90036a49504",
     ".github/workflows/elevenlabs-provider-preflight.yml": "faf5456e92acd2fb255474981de62fdf166c7f68b62d502259bc84bde3425021",
@@ -66,7 +66,7 @@
     "tests/atlas-business-snapshot.test.mjs": "f596198aeaacb871eaf49f3158eed25fb09e40cdb310e9556041654e79b26ab2",
     "tests/atlas-ceo-operating-engine.test.mjs": "f9fd5eef23c1612cebf3ea022b73d3908d8e19541006315cdf389037839ce944",
     "tests/atlas-commitment-assurance.test.mjs": "e041b08060eafbb99ba1f281031e42c06190a19decb32aa806d05743276112ad",
-    "tests/atlas-decision-commitments.test.mjs": "02f86afecbc80a4c046b8f91edae4eae86eef67d12f3cee41f2c523ab43d8877",
+    "tests/atlas-decision-commitments.test.mjs": "db54225eb9d1acd9622746b9a625640504c4ed6fcdd6a0c5ebef7146ecf92c88",
     "tests/atlas-founder-cockpit.test.mjs": "7a12424a5d58d0782dcf184f4d8a9b0937a5fa5c93b611a492575d0d509ece7b",
     "tests/atlas-scenario-planning.test.mjs": "50481fba2c4d8c15dd3227add5cb1d84e168fbd43dd945e6eb20d8f780ab9005",
     "tests/boarding-customer-care.test.mjs": "65ff8814f17dcc4f53764659fc9332110191ae4ba11dc50aa13e0b36b15bd14b",
@@ -1020,20 +1020,22 @@
     "lib/workforce-classification.ts": "a082977376abc4fb55dd1296bee852b444dd9f7654e50b53709300e10d66b8e4",
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
     "package-lock.json": "0529313ccf934b3072bc4ca32f39d1dbdd3067e76d897d79e95fe28bd15db4d1",
-    "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362"
+    "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362",
+    "scripts/uat-staging-provider-capacity.sql": "d0a9af4feed66138ac7405c27dca239bb27a715d23a0d804f992447db32c1fd1",
+    "tests/partner-app-login-gate.test.mjs": "e9d0e2e6f4d038854e35cfdd4e04c15caeabeaca068efe78e0ab388055b7a949"
   },
   "presentation": {
     "app/team/ai/decision-commitments.tsx": {
-      "upstreamHash": "b30168807c786d932a206f7ae2f6f94c8f2d5293163734fe868ed1077a62ec97",
-      "semantic": "d3ff9b0d54d1e3f08210dcd9be0bc6481b66f32efaf9f00a132ec8899ba81032"
+      "upstreamHash": "02c2ee7c434bced745e45b1b28a0ecb6c587d603641d7f54baaeb8b50bca41a3",
+      "semantic": "8fb7536b61dd5e6fc64f5eb115a8c9a2e605258c3d2372af60e65502bfc33196"
     },
     "app/team/ai/founder-scenario-planner.tsx": {
       "upstreamHash": "7314dc87598dbb7e796828c41a84529828699233f1ec9dd5fa761ef0c0beb619",
       "semantic": "ef3280f45b1f45cece4a41f159cc9709777c4b03f6c648d6c430ca21c87d9e9c"
     },
     "app/team/ai/page.tsx": {
-      "upstreamHash": "7764e8319b7752b441011ff26a9eb14a92b9249ba8ef51f87079c29c5269f877",
-      "semantic": "e47a213ca61bf84707c0b3e7eb4c7ff5c3fbbef4c1d505407c16229ea558f9df"
+      "upstreamHash": "57dc61259f24d4d08bde29bc42fa7ba646a319fb3a8bd12f2cd0951731c6c456",
+      "semantic": "f87cca0f9eb59cb198e132bcbcce9f934b49911bb5837599cb69f18a80a1d5df"
     }
   }
 }
