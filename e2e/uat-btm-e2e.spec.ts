@@ -817,8 +817,8 @@ test("MAP-DIRECT — existing confirmed booking reaches trusted GPS and Google c
   const gps=await partnerContext.request.post("/api/grooming-route",{data:{
     bookingId,
     providerId:assignedProviderId,
-    latitude:DOORSTEP.latitude,
-    longitude:DOORSTEP.longitude,
+    latitude:DOORSTEP.latitude + 0.008,
+    longitude:DOORSTEP.longitude - 0.006,
     accuracyMeters:8,
     capturedAt:Date.now(),
     idempotencyKey:`maps-direct-${Date.now()}`
