@@ -74,6 +74,10 @@ jobs:
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
         run: |
           node <<'NODE'
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();if(!key||!agentId)throw new Error('inspection prerequisites missing');
@@ -82,7 +86,20 @@ jobs:
           const rows=Array.isArray(list?.conversations)?list.conversations:[];if(!rows.length)throw new Error('no Grooming conversations found');
           const latest=rows.sort((a,b)=>Number(b?.start_time_unix_secs||b?.metadata?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||a?.metadata?.start_time_unix_secs||0))[0];
           const id=String(latest?.conversation_id||'');console.log('::add-mask::'+id);const dResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});const d=await dResponse.json().catch(()=>({}));if(!dResponse.ok)throw new Error(`conversation read failed ${dResponse.status}`);
-          const transcript=Array.isArray(d.transcript)?d.transcript:[];console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(d?.metadata?.call_duration_secs||0),terminationReason:d?.metadata?.termination_reason||null,error:d?.metadata?.error||null,safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const transcript=Array.isArray(d.transcript)?d.transcript:[];
+          const meta=d?.metadata&&typeof d.metadata==='object'?d.metadata:{};
+          const phoneMeta=meta?.phone_call&&typeof meta.phone_call==='object'?meta.phone_call:{};
+          const callSid=String(phoneMeta?.call_sid||phoneMeta?.callSid||meta?.call_sid||meta?.callSid||'').trim();
+          if(callSid) console.log('::add-mask::'+callSid);
+          console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(meta?.call_duration_secs||0),terminationReason:meta?.termination_reason||null,error:meta?.error||null,metadataKeys:Object.keys(meta).sort(),phoneMetadataKeys:Object.keys(phoneMeta).sort(),hasProviderCallSid:Boolean(callSid),safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),host=(String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com');
+          if(callSid&&exKey&&exToken&&exSid){
+            const auth=Buffer.from(exKey+':'+exToken).toString('base64');
+            const er=await fetch(`https://${host}/v1/Accounts/${encodeURIComponent(exSid)}/Calls/${encodeURIComponent(callSid)}.json`,{headers:{authorization:'Basic '+auth},signal:AbortSignal.timeout(30000)});
+            const ej=await er.json().catch(()=>({}));
+            const call=(ej?.Call||ej?.call||ej||{});
+            console.log('EXOTEL_GROOMING_CALL_DETAIL='+JSON.stringify({httpStatus:er.status,status:call.Status||call.status||null,direction:call.Direction||call.direction||null,duration:Number(call.Duration||call.duration||0),startTime:call.StartTime||call.start_time||null,endTime:call.EndTime||call.end_time||null,recordingPresent:Boolean(call.RecordingUrl||call.recording_url),failureCode:call.FailureCode||call.failure_code||null,failureReason:call.FailureReason||call.failure_reason||null}));
+          } else console.log('EXOTEL_GROOMING_CALL_DETAIL='+JSON.stringify({skipped:true,hasCallSid:Boolean(callSid),hasCredentials:Boolean(exKey&&exToken&&exSid)}));
           NODE
 
   specialist-call:
