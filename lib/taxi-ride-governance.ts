@@ -3,6 +3,8 @@ type Row=Record<string,unknown>;
 type RoutePoint={latitude:number;longitude:number};
 export type TaxiRideQuoteInput={originLabel:string;destinationLabel:string;returnDropLabel?:string;origin:RoutePoint;destination:RoutePoint;returnDrop?:RoutePoint;passengerCount:number;petCount:number;luggageCount:number;scheduledStart:string;tripType:TaxiTripType;ridePurpose:TaxiRidePurpose;waitingMinutes:number;distanceKm:number;estimatedDurationMinutes:number;routeProvider:string};
 
+const TAXI_TRIP_TYPES:readonly unknown[]=["one_way","round_trip"] satisfies readonly TaxiTripType[];
+const TAXI_RIDE_PURPOSES:readonly unknown[]=["regular","airport"] satisfies readonly TaxiRidePurpose[];
 function validPoint(point:RoutePoint|undefined){return Boolean(point)&&Number.isFinite(point!.latitude)&&point!.latitude>=-90&&point!.latitude<=90&&Number.isFinite(point!.longitude)&&point!.longitude>=-180&&point!.longitude<=180;}
 
 export async function ensureTaxiRideTables(db:D1Database){await db.batch([
@@ -19,6 +21,9 @@ export async function ensureTaxiRideTables(db:D1Database){await db.batch([
 }
 
 export async function createTaxiRideQuote(db:D1Database,input:TaxiRideQuoteInput){
+ // The route handler passes body fields straight through; the TS union is not a runtime guarantee.
+ if(!TAXI_TRIP_TYPES.includes(input.tripType))throw new Response("Unsupported Pet Taxi trip type",{status:400});
+ if(!TAXI_RIDE_PURPOSES.includes(input.ridePurpose))throw new Response("Unsupported Pet Taxi ride purpose",{status:400});
  await ensureTaxiRideTables(db);
  const start=new Date(input.scheduledStart).getTime();
  if(!Number.isFinite(start)||start<=Date.now())throw new Response("Pet Taxi requires a future pickup date and time",{status:400});

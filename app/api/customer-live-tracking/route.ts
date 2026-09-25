@@ -59,7 +59,7 @@ export async function GET(request:Request){try{
    const destination=await taxiDestination(db,bookingId,status);
    if(!destination)return new Response("Pet Taxi verified pickup/drop-off coordinates are unavailable",{status:409,headers:{"cache-control":"no-store"}});
    const rounded={lat:Math.round(Number(point.latitude)*1000)/1000,lng:Math.round(Number(point.longitude)*1000)/1000};
-   const route=await computeGoogleRoute(rounded,destination.label);
+   const route=await computeGoogleRoute(rounded,{lat:destination.latitude,lng:destination.longitude});
    return liveStaticMapResponse({provider:{lat:Number(point.latitude),lng:Number(point.longitude)},destination:{lat:destination.latitude,lng:destination.longitude},polyline:route.status==="configured"?route.polyline:null,privacyRounded:true});
   }
   const destination=await resolveBookingDoorstep(db,bookingId);
