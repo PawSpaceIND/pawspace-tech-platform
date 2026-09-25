@@ -37,7 +37,7 @@
     },
     "app/control/page.tsx": {
       "beforeHash": "51bb310c99bc5254dde76d5b6e9a67e5e93eff4d25b6e6679cc8f2ef5979b5d9",
-      "afterHash": "4a77a213c073746ffe7a57d91b0495115b6dc35c1ea103085a628ef030a78af4",
+      "afterHash": "3285e04091099c18bfe206557dd7db7bfa67601d579b45e8d0c693258ceb83b6",
       "changes": [
         [
           "import StaffModule from \"../components/staff-workspace/StaffModule\";",
@@ -74,6 +74,10 @@
         [
           "<p className={styles.muted}>No governed changes recorded yet.</p>",
           "<p className={styles.muted}>{tower.loading?\"Loading governed changes…\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
+        ],
+        [
+          "<details data-staff-context=\"true\"><summary>Control sections</summary>",
+          "<details data-staff-context=\"true\" open><summary>Control sections</summary>"
         ]
       ]
     },

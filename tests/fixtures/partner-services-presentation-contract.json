@@ -408,7 +408,7 @@
     "app/control/marketing-control-panel.module.css": "330c8b01a8c00abb2e860f70bc7087aa76dc5a57979866d6afd3b3991b535637",
     "app/control/marketing-control-panel.tsx": "5b9eb56ab4e98e16eb8df7c9eadc1c0cabde21242be5f1252ea7b56944129a9f",
     "app/control/offers-control-panel.module.css": "c4d4bcb2b0d8851bc932bfc3d52c660e9f95d5dafed37301a9c9546739951a5b",
-    "app/control/page.tsx": "4a77a213c073746ffe7a57d91b0495115b6dc35c1ea103085a628ef030a78af4",
+    "app/control/page.tsx": "3285e04091099c18bfe206557dd7db7bfa67601d579b45e8d0c693258ceb83b6",
     "app/control/platform-audit-panel.tsx": "73ae89dbaacce017f118559be27ca32a8a810c657595d6daba1da0fa6f0cf073",
     "app/control/platform-audit.module.css": "1acc0b36e5b4615ce256cea38d547cb00a115aa98cbff7eef605c200665e2d18",
     "app/control/pricing-control-panel.module.css": "6c26fa6a3c3fbb7ef00530c5bd4d9f817b90976a1afd8566ff1cd5a204403b1e",

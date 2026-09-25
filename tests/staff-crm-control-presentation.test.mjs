@@ -14,7 +14,7 @@ test('CRM consent, lead lock, customer identity, payloads and handlers cannot di
  for(const [a,b] of [['/api/crm','/api/other'],['leadLock.current)return','false)return'],['primaryPhone:String','wrongPhone:String'],['whatsappConsent:fd.get','wrongConsent:fd.get'],['onClick={()=>setView(n.id)}','onClick={()=>setView("customers")}']]){assert.ok(s.includes(a));assert.notEqual(staffContextSemanticContract(s.replace(a,b),path),h);}
 });
 test('Control disclosures retain the original permission-filtered buttons',()=>{
- const s=read('app/control/page.tsx');assert.match(s,/data-staff-context="true"/);assert.match(s,/hasPermission\(access.permissions,n.permission\)/);assert.match(s,/aria-current=\{view===n.id/);
+ const s=read('app/control/page.tsx');assert.match(s,/data-staff-context="true" open/);assert.match(s,/hasPermission\(access.permissions,n.permission\)/);assert.match(s,/aria-current=\{view===n.id/);
  assert.equal(hasPermission(['audit.view'],'users.manage'),false);assert.equal(hasPermission(['*'],'users.manage'),true);assert.equal(hasPermission([],'settings.manage'),false);
 });
 test('Layouts no longer overlay the scoped frame with a conflicting global theme',()=>{
