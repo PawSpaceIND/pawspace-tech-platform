@@ -81,7 +81,7 @@ export type GroomingGovernanceResult={
   subscriptionPlan?:{planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
 };
 
-export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput):Promise<GroomingGovernanceResult>{
+export async function quoteGroomingBooking(db:Db,input:Omit<GroomingGovernanceInput,"submittedTotal"|"submittedAmountDueNow">):Promise<GroomingGovernanceResult>{
   let item=groomingCatalogue.find(row=>row.active&&row.code===input.packageCode)??null;
   if(!item)item=await resolveGroomingSubscriptionPlan(db,input.packageCode,input.cityId,input.zoneId);
   if(!item)throw new Error("Grooming package is not active for this city/zone");
@@ -97,9 +97,7 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
     const live=await resolveLivePrice(db,{packageCode:input.packageCode,fallbackPrice:totalAmount,scheduledStart:input.scheduledStart,cityId:input.cityId,zoneId:input.zoneId});
     totalAmount=live.price;
   }
-  if(Math.round(input.submittedTotal)!==Math.round(totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${item.version}`);
   const amountDueNow=input.paymentMode==="prepaid"?totalAmount:0;
-  if(Math.round(input.submittedAmountDueNow)!==Math.round(amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
   if(item.offerType==="subscription"&&input.existingSubscriptionId)throw new Error("A subscription-plan purchase cannot also consume an existing subscription");
   const reserveSessions=petCount*(item.creditsPerPet??1);
   if(item.offerType==="subscription"&&reserveSessions>Number(item.sessions||0))throw new Error("The selected subscription does not contain enough credits for all selected pets");
@@ -110,3 +108,11 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
 }
 
 export function subscriptionExpiry(startedAt:number,validityValue:number,validityUnit:"days"|"months"){if(validityUnit==="months")return addCalendarMonthsClamped(startedAt,validityValue);const date=new Date(startedAt);date.setUTCDate(date.getUTCDate()+validityValue);return date.getTime();}
+
+/** Booking and conversational quote share the same authoritative calculation. */
+export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput):Promise<GroomingGovernanceResult>{
+ const quote=await quoteGroomingBooking(db,input);
+ if(Math.round(input.submittedTotal)!==Math.round(quote.totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${quote.catalogueVersion}`);
+ if(Math.round(input.submittedAmountDueNow)!==Math.round(quote.amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
+ return quote;
+}

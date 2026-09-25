@@ -1,5 +1,5 @@
 import{authError,database}from"../../../../../lib/server-auth";
-import{assertElevenLabsInitWebhook,assertElevenLabsVoiceConfigured,buildElevenLabsInitiation}from"../../../../../lib/elevenlabs-voice-integration";
+import{assertElevenLabsInitWebhook,assertElevenLabsVoiceConfigured,buildElevenLabsInitiation,configuredElevenLabsAgent}from"../../../../../lib/elevenlabs-voice-integration";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../../../lib/voice-safe-fetch";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -11,7 +11,7 @@ export async function POST(request:Request){
   const env=await runtime();assertElevenLabsVoiceConfigured(env);assertElevenLabsInitWebhook(request,env);
   let raw:string;try{raw=await readBoundedRequestText(request,32_768);}catch(error){if(error instanceof VoiceFetchRefused)return json({error:"ElevenLabs initiation payload is too large"},413);throw error;}
   let body:Record<string,unknown>;try{const parsed:unknown=JSON.parse(raw);if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return json({error:"ElevenLabs initiation payload must be a JSON object"},400);body=parsed as Record<string,unknown>;}catch{return json({error:"Malformed ElevenLabs initiation payload"},400);}
-  const agentId=text(body.agent_id),allowedAgentIds=[text(env.ELEVENLABS_AGENT_ID),text(env.ELEVENLABS_GROOMING_AGENT_ID),text(env.ELEVENLABS_TRAINING_AGENT_ID)].filter(Boolean);if(allowedAgentIds.length&&!allowedAgentIds.includes(agentId))return json({error:"ElevenLabs agent identity refused"},403);
+  const agentId=text(body.agent_id);if(!configuredElevenLabsAgent(env,agentId))return json({error:"ElevenLabs agent identity refused"},403);
   const data=await buildElevenLabsInitiation(await database(),{
    providerCallId:text(body.call_sid)||text(body.conversation_id),
    callerId:text(body.caller_id),
