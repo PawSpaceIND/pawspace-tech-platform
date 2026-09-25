@@ -693,7 +693,8 @@ async function partnerLifecycle(page: Page) {
   const gpsPost = page.waitForResponse(r => r.url().includes("/api/grooming-route") && r.request().method() === "POST", { timeout: 30_000 });
   await page.getByRole("button", { name: /Update once/ }).click();
   const gpsRes = await gpsPost;
-  const gpsBody = await gpsRes.json().catch(() => ({})) as { error?: string };
+  const gpsBody = await gpsRes.json().catch(() => ({})) as { error?: string; data?: { route?: { status?: string; distanceMeters?: number; durationSeconds?: number; error?: string } | null } };
+  log(`🗺️ Route evidence after GPS: ${JSON.stringify(gpsBody.data?.route ?? null)}`);
   log(`${gpsRes.ok() ? "✅" : "❌"} GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
   await shot(page, "partner-gps");
 
@@ -711,7 +712,7 @@ async function partnerLifecycle(page: Page) {
       return{http:response.status,body:await response.json().catch(()=>null)};
     },bookingId) as {http:number;body:{data?:{tracking?:{state?:string;etaMinutes?:number|null;distanceKm?:number|null}}}|null};
     expect(summary.http,"customer Grooming summary must load for the owning customer").toBe(200);
-    expect(summary.body?.data?.tracking?.state,"fresh trusted GPS + Routes evidence must expose live customer tracking").toBe("live");
+    expect(summary.body?.data?.tracking?.state,`fresh trusted GPS + Routes evidence must expose live customer tracking; route=${JSON.stringify(gpsBody.data?.route ?? null)} summary=${JSON.stringify(summary.body?.data?.tracking ?? null)}`).toBe("live");
     expect(Number(summary.body?.data?.tracking?.etaMinutes||0),"live tracking must contain a positive ETA").toBeGreaterThan(0);
     const mapUrl=`${BASE}/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}&map=1&proof=${Date.now()}`;
     const mapResponse=await customerPage.goto(mapUrl,{waitUntil:"load",timeout:30_000});
