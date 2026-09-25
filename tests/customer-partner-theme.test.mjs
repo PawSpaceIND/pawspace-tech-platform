@@ -64,3 +64,22 @@ test('Executed route scoping retains original Food and Relocation record identif
  assert.equal(customerScopedHref('/v2/relocation','/relocation?caseId=THEME%2FCASE'),'/v2/relocation?caseId=THEME%2FCASE');
  assert.equal(customerScopedHref('/food/subscriptions','/food/subscription-invoice?invoiceId=THEME%2FINVOICE'),'/food/subscription-invoice?invoiceId=THEME%2FINVOICE');
 });
+
+// Employee AI is embedded in a legacy shell. Its opt-in outer chrome must match the shared palette too.
+test('Employee AI chrome matches all seven shared palette values in both palettes and modes',()=>{
+ const employee=postcss.parse(read('app/mobile-app/employee-ai-mobile.module.css').toString());
+ const brand=postcss.parse(read('app/components/brand/brand-surface.module.css').toString());
+ const names=['bg','surface','text','muted','primary','line','on-primary'];
+ function values(tree,prefix,theme,mode){
+  const out={};tree.walkRules(rule=>{
+   if(rule.selector.includes('data-paw-theme="signature"')&&theme!=='signature')return;
+   if(rule.selector.includes('data-paw-mode="dark"')&&mode!=='dark')return;
+   rule.walkDecls(d=>{if(d.prop.startsWith(prefix)&&!d.value.includes('var('))out[d.prop.slice(prefix.length)]=d.value;});
+  });return out;
+ }
+ for(const theme of ['emerald','signature'])for(const mode of ['light','dark']){
+  const actual=values(employee,'--employee-',theme,mode),expected=values(brand,'--brand-',theme,mode);
+  for(const name of names)assert.equal(actual[name],expected[name],theme+'/'+mode+' '+name);
+ }
+ employee.walkRules(rule=>{if(rule.selector.includes('main[data-pawspace-mobile]'))assert.ok(rule.selectors.every(s=>s.includes(':has(.shell.shell)')),'Legacy chrome changes must be conditional on the employee AI panel');});
+});
