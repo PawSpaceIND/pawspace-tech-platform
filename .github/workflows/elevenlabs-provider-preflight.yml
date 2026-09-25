@@ -140,6 +140,7 @@ jobs:
         env:
           SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
@@ -151,17 +152,21 @@ jobs:
           const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
           const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
           const agentId=useCase==='grooming_sales'?String(process.env.GROOMING_AGENT_ID||'').trim():String(process.env.TRAINING_AGENT_ID||'').trim();
-          if(!access||!elevenKey||!agentId)throw new Error('specialist UAT secrets/agent id unavailable');
+          const allow=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
+          if(!access||!elevenKey||!agentId||allow.length!==1)throw new Error('specialist UAT secrets/agent id/allowlist unavailable');
+          const digits=allow[0].replace(/\D/g,''); const phone=allow[0].startsWith('+')?allow[0]:(digits.length===10?'+91'+digits:'+'+digits);
+          console.log('::add-mask::'+phone);
           const customerId='INBOUND-9513886363';
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
           if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
           const before=Date.now();
-          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'uat_specialist_sales_test',useCase,customerId,cityId:'blr'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey:'voice-specialist-uat:'+useCase+':'+Date.now(),useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
-          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed:Boolean(body?.data?.dialed),phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
-          if(call.status!==201||!body?.data?.callId||body?.data?.state!=='dialing')throw new Error('specialist call was not accepted by PawSpace');
+          const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
+          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
+          if(call.status!==201||!body?.data?.callId||!dialed)throw new Error('specialist call was not accepted by PawSpace');
           console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
           let detail=null,conversationId='';
           for(let attempt=0;attempt<40;attempt++){
