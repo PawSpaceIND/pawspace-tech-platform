@@ -439,4 +439,6 @@ test("intent signals match whole words, not fragments of other words", () => {
   assert.equal(orchestrator.classifyAiIntent("I need a person please").intent, "human_handoff");
   assert.equal(orchestrator.classifyAiIntent("what's the eta?").intent, "booking_status");
   assert.equal(orchestrator.classifyAiIntent("please call me").intent, "human_handoff");
+  assert.equal(orchestrator.classifyAiIntent("What grooming services do you offer?").intent, "service_info");
+  assert.equal(orchestrator.classifyAiIntent("Show me your packages and prices").intent, "service_info");
 });

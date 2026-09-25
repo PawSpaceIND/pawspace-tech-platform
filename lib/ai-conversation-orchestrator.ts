@@ -36,10 +36,11 @@ const intentRules:Array<{intent:AiConversationIntent;signals:string[];risk?:bool
  {intent:"service_info",signals:["price","pricing","service","package","what do you offer","availability"]},
 ];
 
-/* Signals match whole words. Substring matching read "personal" as "person" (an explicit request for a
- * human) and "details" or "vegetarian" as "eta" (booking status), so ordinary sentences paused the AI. */
+/* Signals match whole words, plural included ("services", "packages"). Substring matching read "personal"
+ * as "person" (an explicit request for a human) and "details" or "vegetarian" as "eta" (booking status),
+ * so ordinary sentences paused the AI. */
 const signalPatterns=new Map<string,RegExp>();
-function hasSignal(text:string,signal:string){let pattern=signalPatterns.get(signal);if(!pattern){pattern=new RegExp(`(^|[^a-z0-9])${signal.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}($|[^a-z0-9])`);signalPatterns.set(signal,pattern);}return pattern.test(text);}
+function hasSignal(text:string,signal:string){let pattern=signalPatterns.get(signal);if(!pattern){pattern=new RegExp(`(^|[^a-z0-9])${signal.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}(e?s)?($|[^a-z0-9])`);signalPatterns.set(signal,pattern);}return pattern.test(text);}
 export function classifyAiIntent(input:string):AiIntentDecision{const text=input.trim().toLowerCase();if(!text)return{intent:"unknown",confidence:0,confidenceBasis:"keyword_heuristic_sandbox",signals:[],policyRisk:false};for(const rule of intentRules){const matched=rule.signals.filter(signal=>hasSignal(text,signal));if(matched.length){const confidence=Math.min(0.98,0.82+Math.min(3,matched.length)*0.05);return{intent:rule.intent,confidence,confidenceBasis:"keyword_heuristic_sandbox",signals:matched,policyRisk:Boolean(rule.risk)};}}const forbidden=(forbiddenAutonomousActions as readonly string[]).filter(action=>text.includes(action.replaceAll("_"," ")));return{intent:"unknown",confidence:forbidden.length?0.4:0.25,confidenceBasis:"keyword_heuristic_sandbox",signals:forbidden,policyRisk:forbidden.length>0};}
 
 export async function ensureAiConversationOrchestrator(db:D1Database){await ensureConversationGovernance(db);await db.batch([
