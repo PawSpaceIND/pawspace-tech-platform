@@ -25,6 +25,7 @@ export default defineConfig({
     "e2e/uat-grooming-checkout-ui.spec.ts",
     "e2e/v2-audit-regressions.spec.ts",
     "e2e/v2-customer-shell.spec.ts",
+    "e2e/v2-ui-theme-closure.spec.ts",
     "e2e/v2-grooming.spec.ts",
     "e2e/paid-journey-remediation.spec.ts",
     "e2e/uat-customer-persona.spec.ts",
