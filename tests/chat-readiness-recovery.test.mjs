@@ -35,3 +35,13 @@ test('signed customer session supplies chat identity; explicit foreign identity 
  const ownReplay=await route.POST(post({mode:'authenticated',message:'What grooming services do you offer?',idempotencyKey:'own'},token));assert.equal(ownReplay.status,200);assert.equal((await ownReplay.json()).data.threadId,result.data.threadId);
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE idempotency_key='foreign'").get().n,0);
 });
+
+
+test('public AI answers Pet Relocation from the canonical service directory',async t=>{
+ const {db}=await world(t);
+ const result=await adapter.runPublicAiWebChat(db,{query:'Does PawSpace offer pet relocation?',sessionKey:'relocation-service-check'});
+ assert.equal(result.ai.turn.provider,'canonical_service_directory');
+ assert.equal(result.ai.turn.outcome,'reply_ready');
+ assert.match(result.ai.turn.output,/Yes\. PawSpace offers Pet Relocation\./);
+ assert.equal(result.serviceDirectory.find(service=>service.code==='relocation')?.enabled,true);
+});
