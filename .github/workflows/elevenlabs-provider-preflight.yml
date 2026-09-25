@@ -33,6 +33,7 @@ jobs:
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
         run: |
@@ -181,7 +182,25 @@ jobs:
         run: |
           node <<'NODE'
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
-          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||''), key=String(process.env.ELEVENLABS_API_KEY||'').trim(), phoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim(), agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||''), key=String(process.env.ELEVENLABS_API_KEY||'').trim(), configuredPhoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim(), agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const callerDigits=String(process.env.EXOTEL_CALLER_ID||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10);
+          let phoneId=configuredPhoneId;
+          const elevenHeaders={'xi-api-key':key};
+          if(phoneId){
+            const check=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(phoneId),{headers:elevenHeaders,signal:AbortSignal.timeout(20000)});
+            if(!check.ok) phoneId='';
+          }
+          if(!phoneId){
+            const lr=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers?provider=exotel',{headers:elevenHeaders,signal:AbortSignal.timeout(30000)});
+            const lj=await lr.json().catch(()=>({}));
+            if(!lr.ok) throw new Error('ElevenLabs phone list failed: '+lr.status);
+            const rows=Array.isArray(lj?.phone_numbers)?lj.phone_numbers:Array.isArray(lj)?lj:[];
+            const exact=rows.find(x=>String(x?.phone_number||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10)===callerDigits);
+            const selected=exact||(rows.length===1?rows[0]:null);
+            phoneId=String(selected?.phone_number_id||selected?.id||'').trim();
+            if(!phoneId) throw new Error('No current Exotel phone_number_id could be resolved');
+            console.log('ELEVENLABS_PHONE_ID_FALLBACK=yes');
+          }
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
           const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
           if(!access||!key||!phoneId||!agentId||!exKey||!exToken||!exSid||entries.length!==1)throw new Error('direct Grooming UAT prerequisites missing');
