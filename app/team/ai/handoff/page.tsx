@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 
 type Thread = {
   id: string;
@@ -47,8 +48,8 @@ type Handoff = {
 };
 
 const box = {
-  background: "white",
-  border: "1px solid #e5dcef",
+  background: "var(--staff-surface)",
+  border: "1px solid var(--staff-line)",
   borderRadius: 14,
 };
 
@@ -167,13 +168,13 @@ export default function AiHandoffPage() {
   const transcript = Array.isArray(current?.summary?.transcript) ? current.summary.transcript : [];
 
   return (
-    <main
+    <StaffModule><main
       style={{
         minHeight: "100vh",
-        background: "#f7f4fb",
+        background: "var(--staff-bg)",
         padding: 28,
-        fontFamily: "Arial, sans-serif",
-        color: "#24133f",
+        fontFamily: "inherit",
+        color: "var(--staff-text)",
       }}
     >
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -187,9 +188,9 @@ export default function AiHandoffPage() {
           }}
         >
           <div>
-            <small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · AI GATE 4</small>
+            <small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · AI GATE 4</small>
             <h1 style={{ margin: "6px 0" }}>Human handoff & staff takeover</h1>
-            <p style={{ margin: 0, color: "#756c7d" }}>
+            <p style={{ margin: 0, color: "var(--staff-muted)" }}>
               AI pauses during staff ownership. Return to AI requires an explicit governed staff action.
             </p>
           </div>
@@ -203,8 +204,8 @@ export default function AiHandoffPage() {
             style={{
               padding: 12,
               marginBottom: 14,
-              background: "#fff1f1",
-              border: "1px solid #efc2c2",
+              background: "var(--staff-danger-bg)",
+              border: "1px solid var(--staff-line)",
               borderRadius: 10,
             }}
           >
@@ -217,12 +218,12 @@ export default function AiHandoffPage() {
             display: "grid",
             gridTemplateColumns: "minmax(320px,.8fr) minmax(540px,1.4fr)",
             gap: 16,
-          }}
+          }} data-staff-grid="split"
         >
           <aside style={{ ...box, overflow: "hidden" }}>
-            <div style={{ padding: 16, borderBottom: "1px solid #eee6f5" }}>
+            <div style={{ padding: 16, borderBottom: "1px solid var(--staff-line)" }}>
               <b>Open canonical threads</b>
-              <div style={{ fontSize: 12, color: "#746b7d", marginTop: 4 }}>
+              <div style={{ fontSize: 14, color: "var(--staff-muted)", marginTop: 4 }}>
                 {queue.length === 0
                   ? "No conversation is currently escalated to a human."
                   : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
@@ -237,21 +238,21 @@ export default function AiHandoffPage() {
                * Staff saw that somebody needed them and could not find out who. Selecting a row here
                * opens that thread directly, whether or not it is in the list below. */
               queue.length > 0 && (
-                <div style={{ borderBottom: "1px solid #eee6f5", background: "#fffaf4" }}>
-                  <div style={{ padding: "12px 16px 4px", fontSize: 12, fontWeight: 700, color: "#a35b00", textTransform: "uppercase", letterSpacing: ".06em" }}>Escalated to a human</div>
+                <div style={{ borderBottom: "1px solid var(--staff-line)", background: "var(--staff-warning-bg)" }}>
+                  <div style={{ padding: "12px 16px 4px", fontSize: 14, fontWeight: 700, color: "var(--staff-warning)", textTransform: "uppercase", letterSpacing: ".06em" }}>Escalated to a human</div>
                   {queue.map((entry) => (
                     <button
                       key={entry.threadId}
                       onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined })}
-                      style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", border: 0, background: selected?.id === entry.threadId ? "#f7e9d5" : "transparent" }}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", border: 0, background: selected?.id === entry.threadId ? "var(--staff-raised)" : "transparent" }}
                     >
                       <strong>{entry.customerName || entry.customerId || "Customer"}</strong>
-                      <div style={{ fontSize: 12, color: "#746b7d", marginTop: 2 }}>
+                      <div style={{ fontSize: 14, color: "var(--staff-muted)", marginTop: 2 }}>
                         {/* The id stays visible beside the name: staff match it against CRM and Customer 360. */}
                         {entry.customerId}
                         {entry.customerPhone ? ` · ${entry.customerPhone}` : ""}
                       </div>
-                      <div style={{ fontSize: 12, marginTop: 2 }}>
+                      <div style={{ fontSize: 14, marginTop: 2 }}>
                         {entry.status === "queued" ? "Waiting for staff" : "With staff"} · {label(entry.reason)}
                         {/* Never present a CRM contact's name as the canonical identity, or the absence
                           * of one as if the customer were nameless. */}
@@ -262,7 +263,7 @@ export default function AiHandoffPage() {
                 </div>
               )
             }
-            {threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
+            {threads.length === 0 && <p style={{ padding: 16, color: "var(--staff-muted)" }}>No open conversations.</p>}
             {threads.map((thread) => (
               <button
                 key={thread.id}
@@ -273,12 +274,12 @@ export default function AiHandoffPage() {
                   textAlign: "left",
                   padding: 14,
                   border: 0,
-                  borderBottom: "1px solid #f0ebf4",
-                  background: selected?.id === thread.id ? "#f2ebfa" : "white",
+                  borderBottom: "1px solid var(--staff-line)",
+                  background: selected?.id === thread.id ? "var(--staff-raised)" : "var(--staff-surface)",
                 }}
               >
                 <strong>{thread.customer_name || thread.customer_id || "Customer"}</strong>
-                <div style={{ fontSize: 12, marginTop: 4 }}>
+                <div style={{ fontSize: 14, marginTop: 4 }}>
                   {label(thread.assigned_to)} · {label(thread.status)}
                 </div>
                 {(() => {
@@ -287,7 +288,7 @@ export default function AiHandoffPage() {
                   const entry = queue.find((item) => item.threadId === thread.id);
                   if (!entry) return null;
                   const waiting = entry.status === "queued";
-                  return <span style={{ display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: waiting ? "#fff3e6" : "#eefaf1", color: waiting ? "#a35b00" : "#14663c" }}>{waiting ? "Waiting for staff" : "With staff"} · {label(entry.reason)}</span>;
+                  return <span style={{ display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 14, fontWeight: 700, background: waiting ? "var(--staff-warning-bg)" : "var(--staff-success-bg)", color: waiting ? "var(--staff-warning)" : "var(--staff-success)" }}>{waiting ? "Waiting for staff" : "With staff"} · {label(entry.reason)}</span>;
                 })()}
               </button>
             ))}
@@ -311,7 +312,7 @@ export default function AiHandoffPage() {
                   </div>
                 </div>
 
-                <hr style={{ border: 0, borderTop: "1px solid #eee6f5", margin: "18px 0" }} />
+                <hr style={{ border: 0, borderTop: "1px solid var(--staff-line)", margin: "18px 0" }} />
 
                 {!current ? (
                   <p>No Gate-4 handoff is active or recorded for this thread.</p>
@@ -340,12 +341,12 @@ export default function AiHandoffPage() {
                     </div>
                     <h3>Handoff transcript summary</h3>
                     {transcript.length === 0 ? (
-                      <p style={{ color: "#756c7d" }}>No transcript excerpt captured.</p>
+                      <p style={{ color: "var(--staff-muted)" }}>No transcript excerpt captured.</p>
                     ) : (
                       transcript.map((message, index) => (
                         <div
                           key={index}
-                          style={{ padding: 10, marginBottom: 8, background: "#f6f5f7", borderRadius: 10 }}
+                          style={{ padding: 10, marginBottom: 8, background: "var(--staff-raised)", borderRadius: 10 }}
                         >
                           <small>
                             {label(message.direction)} · {label(message.channel)}
@@ -361,6 +362,6 @@ export default function AiHandoffPage() {
           </article>
         </section>
       </div>
-    </main>
+    </main></StaffModule>
   );
 }

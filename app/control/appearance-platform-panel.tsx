@@ -22,8 +22,8 @@ const card = (on: boolean): React.CSSProperties => ({
   cursor: "pointer",
   minHeight: 140,
 });
-const name: React.CSSProperties = { display: "block", fontSize: 18, fontWeight: 800, color: "#01261F", marginBottom: 6 };
-const tag: React.CSSProperties = { display: "block", fontSize: 14, lineHeight: 1.45, color: "#3D4A46" };
+const name: React.CSSProperties = { display: "block", fontSize: 18, fontWeight: 800, color: "var(--staff-primary, #01261F)", marginBottom: 6 };
+const tag: React.CSSProperties = { display: "block", fontSize: 14, lineHeight: 1.45, color: "var(--staff-muted, #3D4A46)" };
 const swatchRow: React.CSSProperties = { display: "flex", gap: 8, marginTop: 14 };
 const swatch = (bg: string): React.CSSProperties => ({ width: 28, height: 28, borderRadius: 8, background: bg, border: "1px solid #E6DED2" });
 
@@ -40,7 +40,7 @@ export default function AppearancePlatformPanel({ notify }: { notify: (message: 
   }
   return (
     <section aria-label="Platform appearance">
-      <p style={{ fontSize: 15, lineHeight: 1.5, margin: "0 0 16px", color: "#3D4A46" }}>
+      <p style={{ fontSize: 15, lineHeight: 1.5, margin: "0 0 16px", color: "var(--staff-muted, #3D4A46)" }}>
         Customers can still pick a kit in the customer app Appearance panel. This only sets the starting kit on this device.
       </p>
       <div style={grid} role="radiogroup" aria-label="Colour kit">

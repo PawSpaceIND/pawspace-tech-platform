@@ -2,3 +2,147 @@
 .warning{background:#fff3e0;border:1px solid #f0b429;border-radius:12px;padding:14px 18px;margin-bottom:14px}
 .warning strong{color:#a34f00;font-size:14px;display:block;margin-bottom:4px}
 .warning p{margin:0;color:#6e5432;font-size:13px;line-height:1.5}
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .hero {
+    background: linear-gradient(135deg,var(--staff-success, #073d35),var(--staff-success, #146b58)) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .hero>div span, :global([data-staff-module]) .panel header span {
+    font-size: 13px !important;
+    color: var(--staff-success, #9fe5c7) !important
+}
+:global([data-staff-module]) .hero p {
+    color: var(--staff-on-primary, #d7eee7) !important
+}
+:global([data-staff-module]) .hero aside {
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-success, #113f35) !important
+}
+:global([data-staff-module]) .hero aside small {
+    color: var(--staff-muted, #647970) !important
+}
+:global([data-staff-module]) .metrics article, :global([data-staff-module]) .panel, :global([data-staff-module]) .list {
+    background: var(--staff-surface, #fff) !important;
+    border: 1px solid var(--staff-line, #dce8e3) !important
+}
+:global([data-staff-module]) .metrics span {
+    font-size: 13px !important;
+    color: var(--staff-muted, #687b74) !important
+}
+:global([data-staff-module]) .metrics strong {
+    color: var(--staff-success, #123e35) !important
+}
+:global([data-staff-module]) .tabs button {
+    border: 1px solid var(--staff-line, #d5e4de) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-text, #4d645c) !important
+}
+:global([data-staff-module]) .tabs .active {
+    background: var(--staff-success, #0a574a) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .list>div>span {
+    font-size: 13px !important;
+    color: var(--staff-success, #0b7d60) !important
+}
+:global([data-staff-module]) .list button {
+    border: 1px solid var(--staff-line, #e0e9e6) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-success, #183e35) !important
+}
+:global([data-staff-module]) .list button small {
+    color: var(--staff-muted, #6b7c76) !important
+}
+:global([data-staff-module]) .list .selected {
+    border-color: var(--staff-line, #0b7d60) !important
+}
+:global([data-staff-module]) .panel header {
+    border-bottom: 1px solid var(--staff-line, #e5eeeb) !important
+}
+:global([data-staff-module]) .panel h3 {
+    color: var(--staff-success, #183e35) !important
+}
+:global([data-staff-module]) .panel header em {
+    font-size: 13px !important;
+    color: var(--staff-success, #087b58) !important;
+    background: var(--staff-raised, #e8f7f1) !important
+}
+:global([data-staff-module]) .panel label {
+    font-size: 13px !important;
+    color: var(--staff-text, #4a635a) !important
+}
+:global([data-staff-module]) .panel input, :global([data-staff-module]) .panel select, :global([data-staff-module]) .panel textarea {
+    border: 1px solid var(--staff-line, #cfddd8) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-success, #183e35) !important
+}
+:global([data-staff-module]) .callout, :global([data-staff-module]) .note {
+    background: var(--staff-raised, #eef8f4) !important
+}
+:global([data-staff-module]) .callout p, :global([data-staff-module]) .note p {
+    color: var(--staff-muted, #5a7168) !important
+}
+:global([data-staff-module]) .primary {
+    background: var(--staff-success, #0a574a) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .rule {
+    border-bottom: 1px solid var(--staff-line, #edf2f0) !important
+}
+:global([data-staff-module]) .rule small {
+    color: var(--staff-muted, #6c7d77) !important
+}
+:global([data-staff-module]) .up {
+    color: var(--staff-danger, #a04b17) !important
+}
+:global([data-staff-module]) .down {
+    color: var(--staff-success, #087b58) !important
+}
+:global([data-staff-module]) .rule>span {
+    font-size: 13px !important;
+    color: var(--staff-muted, #63776f) !important
+}
+:global([data-staff-module]) .rule>button {
+    border: 1px solid var(--staff-line, #cfe0da) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-success, #315b4d) !important
+}
+:global([data-staff-module]) .breakdown span {
+    border-bottom: 1px solid var(--staff-line, #e8efed) !important;
+    color: var(--staff-muted, #5b7068) !important
+}
+:global([data-staff-module]) .breakdown span:last-child {
+    color: var(--staff-success, #123e35) !important
+}
+:global([data-staff-module]) .audit {
+    border-bottom: 1px solid var(--staff-line, #edf2f0) !important
+}
+:global([data-staff-module]) .audit i {
+    background: var(--staff-raised, #e9f6f1) !important;
+    color: var(--staff-success, #087b58) !important
+}
+:global([data-staff-module]) .audit small {
+    color: var(--staff-muted, #697c75) !important
+}
+:global([data-staff-module]) .audit>span {
+    font-size: 13px !important;
+    color: var(--staff-success, #087b58) !important
+}
+:global([data-staff-module]) .empty {
+    color: var(--staff-muted, #697c75) !important
+}
+:global([data-staff-module]) .note {
+    border-left: 4px solid var(--staff-line, #e5a528) !important;
+    background: var(--staff-raised, #fff8e7) !important
+}
+:global([data-staff-module]) .warning {
+    background: var(--staff-raised, #fff3e0) !important;
+    border: 1px solid var(--staff-line, #f0b429) !important
+}
+:global([data-staff-module]) .warning strong {
+    color: var(--staff-danger, #a34f00) !important
+}
+:global([data-staff-module]) .warning p {
+    color: var(--staff-danger, #6e5432) !important
+}

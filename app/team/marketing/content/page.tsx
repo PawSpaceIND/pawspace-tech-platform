@@ -2,6 +2,7 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 
 type Row=Record<string,unknown>;
 type Overview={blocks:Row[];features:Array<Row&{key:string;enabled:number;description:string;cityIds:string[];serviceCodes:string[]}>;events:Row[];metrics:{published:number;draft:number;enabledFeatures:number}};
@@ -18,14 +19,14 @@ export default function ContentControlsPage(){
  function refresh(){loadOverview().then(data=>{setOverview(data);setError("");}).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load content controls"));}
  useEffect(()=>{loadOverview().then(setOverview).catch(problem=>setError(problem instanceof Error?problem.message:"Unable to load content controls"));},[]);
  async function run(input:Record<string,unknown>,done:string){setBusy(true);setError("");setMessage("");try{await act(input);setMessage(done);refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Content action failed");}finally{setBusy(false);}}
- return <main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:16}}>
+ return <StaffModule><main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"inherit",display:"grid",gap:16}}>
   <header><Link href="/team/marketing">← Marketing home</Link><p>TEAM OS · MARKETING · CONTENT & FEATURES</p><h1>Content & feature controls</h1><p>Versioned, placement-scoped content with an explicit publish window, and governed feature flags with city/service rollout scopes. The public read serves published copy only — drafts never leak.</p></header>
-  {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}}>
+  {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}} data-staff-grid="stats">
    {[["Published blocks",overview.metrics.published],["Drafts",overview.metrics.draft],["Enabled features",overview.metrics.enabledFeatures]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
   </section>}
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
-  <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,alignItems:"start"}}>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,alignItems:"start"}} data-staff-grid="panels">
+   <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
     <h2>Author a content block</h2>
     <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <textarea placeholder="Body (markdown)" value={bodyMd} onChange={event=>setBodyMd(event.target.value)} style={{width:"100%",minHeight:80,marginBottom:6}}/>
@@ -34,7 +35,7 @@ export default function ContentControlsPage(){
     <input placeholder="Service scope (blank = all services)" value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <button disabled={busy} onClick={()=>void run({action:"save_block",title,bodyMd,placement,cityId:cityId||null,serviceCode:serviceCode||null},"Content saved as draft")}>Save draft</button>
    </article>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
     <h2>Feature control</h2>
     <input placeholder="Feature key (e.g. show_referral_banner)" value={featureKey} onChange={event=>setFeatureKey(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Description" value={featureDescription} onChange={event=>setFeatureDescription(event.target.value)} style={{width:"100%",marginBottom:6}}/>
@@ -46,9 +47,9 @@ export default function ContentControlsPage(){
     <ul>{(overview?.features??[]).map(feature=><li key={feature.key}><code>{feature.key}</code> · {Number(feature.enabled)===1?"ON":"off"} · {feature.cityIds.length?`cities: ${feature.cityIds.join(", ")}`:"all cities"}</li>)}</ul>
    </article>
   </section>
-  {overview&&<section style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  {overview&&<section style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
    <h2>Content blocks</h2>
-   {overview.blocks.map(block=><div key={String(block.id)} style={{borderBottom:"1px solid #eee",padding:"8px 0"}}>
+   {overview.blocks.map(block=><div key={String(block.id)} style={{borderBottom:"1px solid var(--staff-line)",padding:"8px 0"}}>
     <b>{String(block.title)}</b> · {label(block.placement)} · v{Number(block.version)} · {label(block.status)} · {block.city_id?`city ${String(block.city_id)}`:"all cities"} · {block.service_code?String(block.service_code):"all services"}
     <div style={{display:"flex",gap:8,marginTop:4}}>
      {String(block.status)==="draft"&&<button disabled={busy} onClick={()=>void run({action:"publish_block",blockId:block.id},"Content published")}>Publish</button>}
@@ -57,5 +58,5 @@ export default function ContentControlsPage(){
    </div>)}
   </section>}
   <footer><small>Public reads at /api/content-controls serve published, in-window blocks and server-evaluated feature flags only.</small></footer>
- </main>;
+ </main></StaffModule>;
 }

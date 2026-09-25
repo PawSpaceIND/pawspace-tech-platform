@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./team.module.css";
+import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
 import TestSyncPanel from "../components/test-sync-panel";
 import { hasPermission, type Permission } from "../../lib/platform-security";
 
@@ -72,11 +73,10 @@ export default function TeamHome() {
   const visibleWorkspaces = data ? workspaces.filter((workspace) => hasPermission(data.actor.permissions, workspace.permission)) : [];
 
   return (
-    <main className={styles.shell}>
+    <StaffWorkspace actor={data?.actor ?? null} actorPending={!data && !error}><main className={styles.shell}>
       <header className={styles.topbar}>
-        <Link href="/" className={styles.brand}><b>paw</b>space <span>TEAM</span></Link>
-        <nav aria-label="PawSpace experiences"><Link href="/">Customer</Link><Link href="/partner">Partner</Link><Link className={styles.active} href="/team">Team</Link><Link href="/control">Control</Link></nav>
-        <div className={styles.user}><span>{data ? initials(data.actor.name, data.actor.email) : "PS"}</span><div><b>{data ? data.actor.name.split(" ")[0] : "Signed in"}</b><small>{data ? data.actor.roleCode.replace(/_/g, " ") : "loading role"}</small></div></div>
+        <div><span>PAWSPACE TEAM</span><b>My workspace</b></div>
+        <div className={styles.user}><span>{data ? initials(data.actor.name, data.actor.email) : "PS"}</span><div><b>{data ? data.actor.name.split(" ")[0] : error ? "Access not verified" : "Loading profile"}</b><small>{data ? data.actor.roleCode.replace(/_/g, " ") : "Role-based workspace"}</small></div></div>
       </header>
       <section className={styles.hero}>
         <div><p>ONE TEAM WORKSPACE</p><h1>{greeting(data?.actor.name ?? "")}</h1><span>Sales, CX, Operations, Finance, HR and Marketing now work from one front door. Your role controls what you can open.</span></div>
@@ -90,7 +90,7 @@ export default function TeamHome() {
         <article><span>7 PM command pack</span><b>{packLabel}</b><small>{packNote}</small></article>
       </section>
       {/* The synthetic transaction engine lived on /admin and /ops; this front door replaced them. */}
-      <TestSyncPanel surface="ops" />
+      <details className={styles.testPanel}><summary>Sandbox test tools</summary><TestSyncPanel surface="ops" /></details>
       <section className={styles.workspaceSection}>
         <div className={styles.sectionHead}><div><p>ROLE-BASED WORKSPACES</p><h2>Choose what you need to run.</h2></div><span>Showing what your role can open</span></div>
         {/* Only the workspaces this role can actually open are shown. A tile the role has no permission
@@ -101,6 +101,6 @@ export default function TeamHome() {
         {data && visibleWorkspaces.length === 0 && <p className={styles.hint ?? ""}>Your role has no team workspaces enabled. Contact an admin if you need access.</p>}
       </section>
       <footer className={styles.footer}><div><i></i><span>UAT workspace · sandbox payments and queued communications</span></div><Link href="/control">Founder &amp; system controls →</Link></footer>
-    </main>
+    </main></StaffWorkspace>
   );
 }

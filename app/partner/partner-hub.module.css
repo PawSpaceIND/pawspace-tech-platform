@@ -1,1 +1,22 @@
 .hub{max-width:1180px;margin:0 auto;padding:36px 24px 72px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#17352d}.hero{position:relative;overflow:hidden;padding:32px;border:1px solid #d8e6e0;border-radius:24px;background:linear-gradient(135deg,#063f33,#01281f);color:#fff;box-shadow:0 18px 44px rgba(1,38,31,.14)}.hero:after{content:"";position:absolute;right:-70px;top:-70px;width:220px;height:220px;border-radius:50%;background:rgba(230,179,78,.1)}.hero small{color:#e6b34e;font-size:10px;font-weight:900;letter-spacing:.12em}.hero h1{margin:8px 0 10px;color:#fff;font-family:Georgia,"Times New Roman",serif;font-size:35px;letter-spacing:-.04em}.hero p{position:relative;z-index:1;max-width:820px;color:#c8ddd5;line-height:1.65}.status{margin-top:16px;padding:12px 14px;border:1px solid rgba(230,179,78,.3);border-radius:12px;background:rgba(230,179,78,.09);color:#f8e8bd!important}.actions{position:relative;z-index:1;display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.primary,.secondary{display:inline-flex;align-items:center;min-height:42px;padding:0 16px;border-radius:11px;text-decoration:none;font-weight:850}.primary{background:#e6b34e;color:#17352d}.secondary{border:1px solid rgba(255,255,255,.28);background:#fff;color:#01261f}.work{margin-top:22px;padding:24px;border:1px solid #dde5e1;border-radius:20px;background:#fff;box-shadow:0 12px 34px rgba(1,38,31,.06)}.work small{color:#a4741d;font-size:10px;font-weight:900;letter-spacing:.1em}.work h2{margin:6px 0 8px;font-family:Georgia,"Times New Roman",serif;font-size:25px;letter-spacing:-.03em;color:#123b30}.work>p{max-width:820px;color:#5f716a;line-height:1.6}@media(max-width:640px){.hub{padding:22px 14px 56px}.hero{padding:22px}.hero h1{font-size:29px}.actions{display:grid}.primary,.secondary{justify-content:center}}
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.hub { composes:palette from "../components/brand/brand-surface.module.css"; }
+.hub.hub { font-family:"PawSpaceNunito",system-ui,sans-serif !important; color:var(--brand-text) !important; }
+.hub .hero { border:1px solid var(--brand-line) !important; background:linear-gradient(135deg,var(--brand-hero),var(--brand-hero)) !important; color:var(--brand-hero-text) !important; }
+.hub .hero small { color:var(--brand-gold) !important; font-size:13px !important; }
+.hub .hero h1 { color:var(--brand-hero-text) !important; font-family:"PawSpaceNunito",system-ui,sans-serif !important; }
+.hub .hero p { color:var(--brand-hero-text) !important; }
+.hub .status { color:var(--brand-on-primary) !important; }
+.hub .primary { background:var(--brand-gold) !important; color:var(--brand-text) !important; }
+.hub .secondary { background:var(--brand-surface) !important; color:var(--brand-text) !important; }
+.hub .work { border:1px solid var(--brand-line) !important; background:var(--brand-surface) !important; }
+.hub .work small { color:var(--brand-warning) !important; font-size:13px !important; }
+.hub .work h2 { font-family:"PawSpaceNunito",system-ui,sans-serif !important; color:var(--brand-text) !important; }
+.hub .work>p { color:var(--brand-muted) !important; }
+
+.hub.hub { background:var(--brand-bg) !important; color:var(--brand-text) !important; font-family:"PawSpaceNunito",system-ui,sans-serif !important; --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong); --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line); }
+
+/* Shared solid hero surface with explicit foreground pairing. */
+.hub .hero { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; }
+.hub .hero :is(h1,p) { color:var(--brand-hero-text) !important; }
+.hub .hero small { color:var(--brand-gold) !important; }
