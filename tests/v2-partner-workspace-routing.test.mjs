@@ -18,7 +18,8 @@ test('V2 Partner workspace routing stays inside /v2/partner',()=>{
     ['pet_taxi','/v2/partner/driver?bookingId=B%20%26%201'],
   ];
   for(const [serviceCode,expected] of cases)assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode},{v2:true}),expected);
-  assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode:'grooming'},{v2:true}),'/partner-app?bookingId=B%20%26%201');
+  assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode:'grooming'},{v2:true}),'/v2/partner?bookingId=B%20%26%201');
+  assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode:'grooming'}),'/partner-app?bookingId=B%20%26%201');
   const shell=read('app/partner-app/page.tsx');
   assert.match(shell,/usePathname/);
   assert.match(shell,/pathname\.startsWith\("\/v2\/partner"\)/);
