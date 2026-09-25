@@ -20,9 +20,10 @@ import { stayCareWindow } from "../../lib/stay-care-window";
 import { createSittingQuote, type SittingQuote } from "../../lib/sitting-commercial-client";
 import { createCanonicalSittingBooking } from "../../lib/sitting-booking-client";
 import StayCarePaymentGate from "./stay-care-payment-gate";
+import BookingReferenceRecovery from "./booking-reference-recovery";
 import {boardingRequirements} from "../../lib/stay-host-requirements";
 import {useInitialBookingReference} from "../../lib/use-initial-booking-reference";
-import {indiaDateOffset,rememberBookingReference,scopedBookingHref,sameReviewedStayQuote} from "../../lib/customer-booking-safety";
+import {indiaDateOffset,rememberBookingReference,sameReviewedStayQuote} from "../../lib/customer-booking-safety";
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
@@ -335,7 +336,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
 
   };
   if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
-  if(recoveryBookingId)return <section className={styles.flow} aria-label="Saved stay booking"><h2>Your stay request is saved</h2><p>{recoveryBookingId}</p><p>Review your saved care instructions before checking payment. Retrying does not require a new booking.</p><Link href={scopedBookingHref(mode,recoveryBookingId,routeScope==="v2")}>Open saved care and requests</Link><p><Link href={`/v2/booking?bookingId=${encodeURIComponent(recoveryBookingId)}`}>View existing booking and payment status</Link></p></section>;
+  if(recoveryBookingId)return <BookingReferenceRecovery bookingId={recoveryBookingId} service={mode} routeScope={routeScope} className={styles.flow}/>;
   if (confirmed)
     return (
       <>
