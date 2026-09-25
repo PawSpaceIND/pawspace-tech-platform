@@ -22,7 +22,7 @@ test('Training recovery rules, prompts and mutations are not presentation change
  }
 });
 test('Training CSS additions are opt-in and do not alter existing admin rules',()=>{
- const css=read('app/admin/admin.module.css'),before=execFileSync('git',['show',contract.base+':app/admin/admin.module.css'],{encoding:'utf8'});
+ const css=read('app/admin/admin.module.css'),before=execFileSync('git',['show',contract.adminCssBase+':app/admin/admin.module.css'],{encoding:'utf8'});
  assert.ok(css.startsWith(before));const added=css.slice(before.length),parsed=postcss.parse(added);
  parsed.walkRules(rule=>{assert.ok(rule.selector.includes(':global([data-staff-module])'),rule.selector);});
  assert.doesNotMatch(added,/display\s*:\s*none|visibility\s*:\s*hidden/);
