@@ -206,3 +206,80 @@ jobs:
           console.log('DIRECT_GROOMING_RESULT='+JSON.stringify({status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,carrier,safeTranscript:tr.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
           if(String(detail.agent_id)!==agentId)throw new Error('wrong ElevenLabs Grooming agent'); if(String(detail.status)==='failed')throw new Error('ElevenLabs Grooming conversation failed');
           NODE
+
+  repair-exotel-import:
+    if: ${{ inputs.confirm == 'repair-exotel-import' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Re-import Exotel UAT number with canonical App ID and E.164
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OLD_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
+          const exToken=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const rawCaller=String(process.env.EXOTEL_CALLER_ID||'').trim();
+          const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!key||!exKey||!exToken||!rawCaller||!agentId) throw new Error('repair prerequisites missing');
+          let digits=rawCaller.replace(/\D/g,'');
+          let phone='';
+          if(digits.length===12&&digits.startsWith('91')) phone='+'+digits;
+          else if(digits.length===11&&digits.startsWith('0')) phone='+91'+digits.slice(1);
+          else if(digits.length===10) phone='+91'+digits;
+          else throw new Error('EXOTEL_CALLER_ID cannot be normalized to Indian E.164');
+          console.log('::add-mask::'+phone);
+          const headers={'xi-api-key':key};
+          if(oldId){
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('OLD_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404){
+              const t=await del.text();
+              throw new Error('old phone delete failed '+del.status+' '+t.slice(0,400));
+            }
+          }
+          const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+            method:'POST',
+            headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({
+              provider:'exotel',
+              label:'PawSpace Voice UAT',
+              phone_number:phone,
+              account_sid:'pawspace2',
+              api_key:exKey,
+              api_token:exToken,
+              api_subdomain:'api.exotel.com',
+              app_id:'1347515'
+            }),
+            signal:AbortSignal.timeout(30000)
+          });
+          const ib=await imp.json().catch(()=>({}));
+          if(!imp.ok||!ib?.phone_number_id){
+            console.log('REIMPORT_ERROR='+JSON.stringify(ib).slice(0,1800));
+            throw new Error('Exotel re-import failed '+imp.status);
+          }
+          const newId=String(ib.phone_number_id);
+          console.log('REIMPORTED_PHONE_NUMBER_ID='+newId);
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(newId),{
+            method:'PATCH',
+            headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),
+            signal:AbortSignal.timeout(30000)
+          });
+          const pb=await patch.json().catch(()=>({}));
+          console.log('ASSIGN_GROOMING_STATUS='+patch.status);
+          if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
+          console.log('REPAIR_COMPLETE=yes');
+          NODE
