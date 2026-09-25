@@ -696,6 +696,33 @@ async function partnerLifecycle(page: Page) {
   const gpsBody = await gpsRes.json().catch(() => ({})) as { error?: string };
   log(`${gpsRes.ok() ? "✅" : "❌"} GPS fix reported to /api/grooming-route (HTTP ${gpsRes.status()})${gpsRes.ok() ? "" : `: ${gpsBody.error ?? ""}`}.`);
   await shot(page, "partner-gps");
+
+  // Customer live-map proof: use a fresh authenticated customer session against the same deployed
+  // staging booking immediately after the trusted provider GPS fix, while the job is still on_the_way.
+  // This proves the real Google Static Maps response, not a mocked screenshot.
+  const proofBrowser=page.context().browser();
+  expect(proofBrowser,"customer live-map proof requires the Playwright browser").not.toBeNull();
+  const customerContext=await proofBrowser!.newContext();
+  try{
+    const customerPage=await customerContext.newPage();
+    await customerOtpLogin(customerPage);
+    const summary=await customerPage.evaluate(async(id)=>{
+      const response=await fetch(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(id)}`,{cache:"no-store",credentials:"include"});
+      return{http:response.status,body:await response.json().catch(()=>null)};
+    },bookingId) as {http:number;body:{data?:{tracking?:{state?:string;etaMinutes?:number|null;distanceKm?:number|null}}}|null};
+    expect(summary.http,"customer Grooming summary must load for the owning customer").toBe(200);
+    expect(summary.body?.data?.tracking?.state,"fresh trusted GPS + Routes evidence must expose live customer tracking").toBe("live");
+    expect(Number(summary.body?.data?.tracking?.etaMinutes||0),"live tracking must contain a positive ETA").toBeGreaterThan(0);
+    const mapUrl=`${BASE}/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}&map=1&proof=${Date.now()}`;
+    const mapResponse=await customerPage.goto(mapUrl,{waitUntil:"load",timeout:30_000});
+    expect(mapResponse,"customer live-map endpoint must answer").not.toBeNull();
+    expect(mapResponse!.status(),"customer live-map endpoint must return the Google map image").toBe(200);
+    expect(mapResponse!.headers()["content-type"]||"","customer live-map response must be an image").toMatch(/^image\//i);
+    expect(mapResponse!.headers()["x-pawspace-map-source"],"customer live-map must come from Google Static Maps").toBe("google-static-maps");
+    expect(mapResponse!.headers()["x-pawspace-location-privacy"],"customer map must use the privacy-rounded provider point").toBe("provider-rounded-3dp");
+    await customerPage.screenshot({path:"test-results/btm-customer-live-google-map.png",fullPage:true});
+    log(`✅ Customer live map: tracking live, ETA ${summary.body?.data?.tracking?.etaMinutes} min, distance ${summary.body?.data?.tracking?.distanceKm} km, Google Static Maps image HTTP 200.`);
+  }finally{await customerContext.close();}
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
   expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
   await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
