@@ -98,7 +98,7 @@ jobs:
           if(trResponse.ok){
             const otlp=await trResponse.json().catch(()=>({}));
             const rawOtlp=JSON.stringify(otlp);
-            const callId=(rawOtlp.match(/pawspace_voice_call_id\\":\\"([^\\"]+)/)||[])[1]||'';
+            const callId=(rawOtlp.match(/pawspace_voice_call_id.{0,80}?(VCALL-[A-Za-z0-9-]+)/)||[])[1]||'';
             const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
             const compact=JSON.stringify(scrub(otlp));
             const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
