@@ -3,30 +3,44 @@ import { writeFileSync } from "node:fs";
 const BASE = String(process.env.STAGING_URL || "https://pawspace-staging.karthik-fce.workers.dev").replace(/\/$/, "");
 const ACCESS_CODE = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
 const FOUNDER_EMAIL = "founder@pawspace.in";
-const CUSTOMER = { phone: "9999999998", name: "UAT Customer", cityId: "blr" };
+// A fresh sandbox customer per run: chat reuses a customer's newest open thread, so a fixed phone would
+// carry old UAT or human conversation into both turns and make the same-thread check meaningless.
+const CUSTOMER = { phone: String(process.env.CERT_CUSTOMER_PHONE || `99999${String(crypto.getRandomValues(new Uint32Array(1))[0] % 100000).padStart(5, "0")}`), name: "UAT Chat Certification", cityId: "blr" };
+const REQUEST_TIMEOUT_MS = 30_000;
+const EVIDENCE_FILE = "staging-ai-chat-certification.json";
 
-if (!ACCESS_CODE) {
-  console.error("PAWSPACE_UAT_ACCESS_CODE is required for the founder configuration check.");
-  process.exit(1);
-}
+// Evidence is built only from allowlisted tokens and numbers, never raw network text.
+const token = (value) => (typeof value === "string" && /^[A-Za-z0-9._:-]{1,80}$/.test(value) ? value : null);
+const count = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0);
+const writeEvidence = (evidence) => writeFileSync(EVIDENCE_FILE, JSON.stringify({ ...evidence, secretValuesRecorded: false }, null, 2));
 
 const fail = (message, detail = {}) => {
   console.error(`FAIL: ${message}`);
   if (Object.keys(detail).length) console.error(JSON.stringify(detail));
+  writeEvidence({ ok: false, failedAt: new Date().toISOString(), stagingOrigin: BASE, failure: message });
   process.exit(1);
 };
+
+if (!ACCESS_CODE) fail("PAWSPACE_UAT_ACCESS_CODE is required for the founder configuration check.");
 
 async function request(method, path, { cookie = "", body } = {}) {
   const headers = { accept: "application/json" };
   if (cookie) headers.cookie = cookie;
   if (body !== undefined) headers["content-type"] = "application/json";
-  const response = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    redirect: "manual",
-  });
-  const raw = await response.text();
+  let response, raw;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "manual",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    raw = await response.text();
+  } catch (error) {
+    const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
+    fail(timedOut ? `Staging did not answer ${method} ${path} within ${REQUEST_TIMEOUT_MS}ms` : `Staging request ${method} ${path} failed`, { error: String(error?.name || "error") });
+  }
   let parsed = null;
   try { parsed = raw ? JSON.parse(raw) : null; } catch {}
   return { response, status: response.status, body: parsed, raw };
@@ -62,19 +76,8 @@ async function ensureAiReady(cookie) {
   status = await request("GET", "/api/ai-business-configuration?mode=status", { cookie });
   if (status.status !== 200) fail("AI configuration status could not be re-read", { status: status.status });
 
-  if (status.body?.data?.rollout?.customersEnabled !== true) {
-    const rollout = await request("POST", "/api/ai-rollout", {
-      cookie,
-      body: { stage: "customers", reason: "UAT-only live V2 Chat AI certification approved by owner on 2026-09-25" },
-    });
-    if (rollout.status < 200 || rollout.status >= 300) {
-      fail("Customer AI rollout could not be enabled for staging", { status: rollout.status });
-    }
-  }
-
-  status = await request("GET", "/api/ai-business-configuration?mode=status", { cookie });
-  if (status.status !== 200) fail("Final AI configuration status could not be read", { status: status.status });
-
+  // Certification verifies the rollout; it never changes it. Enabling customer AI on shared staging is a
+  // governed decision made through /api/ai-rollout by an owner, not a side effect of a CI run.
   const data = status.body?.data || {};
   if (data.provider?.connected !== true) {
     fail("OpenAI provider is not connected", { reason: data.provider?.reason || "unknown" });
@@ -83,7 +86,9 @@ async function ensureAiReady(cookie) {
     fail("Staging is not using OpenAI", { providerRef: data.provider?.providerRef || "unknown" });
   }
   if (data.configurationRequired === true) fail("AI grounding is still incomplete");
-  if (data.rollout?.customersEnabled !== true) fail("Customer rollout is still not active on staging");
+  if (data.rollout?.customersEnabled !== true) {
+    fail("Customer AI rollout is not enabled on staging. Enable it through the governed AI rollout control, then re-run certification.");
+  }
   if (Array.isArray(data.killSwitches) && data.killSwitches.length) {
     fail("An AI kill switch is active; certification will not override a safety control", { count: data.killSwitches.length });
   }
@@ -103,6 +108,9 @@ async function customerSession() {
   });
   const challengeId = String(requested.body?.data?.challengeId || "");
   const sandboxCode = String(requested.body?.data?.sandboxCode || "");
+  if (requested.status >= 200 && requested.status < 300 && requested.body?.data?.liveSmsDelivered === true) {
+    fail("Staging customer OTP is in live SMS mode, so no sandbox code is returned. Certification needs sandbox OTP delivery on staging.");
+  }
   if (
     requested.status < 200 || requested.status >= 300 ||
     requested.body?.data?.sandboxDelivery !== true ||
@@ -191,17 +199,16 @@ const evidence = {
   ok: true,
   certifiedAt: new Date().toISOString(),
   stagingOrigin: BASE,
-  provider: first.provider,
-  modelRef: first.modelRef,
-  customerRollout: readiness.customersEnabled,
-  activeKnowledge: readiness.activeKnowledge,
-  activeIntents: readiness.activeIntents,
-  firstTurn: { outcome: first.outcome, outputChars: first.outputChars },
-  secondTurn: { outcome: second.outcome, outputChars: second.outputChars },
+  provider: token(first.provider),
+  modelRef: token(first.modelRef),
+  customerRollout: readiness.customersEnabled === true,
+  activeKnowledge: count(readiness.activeKnowledge),
+  activeIntents: count(readiness.activeIntents),
+  firstTurn: { outcome: token(first.outcome), outputChars: count(first.outputChars) },
+  secondTurn: { outcome: token(second.outcome), outputChars: count(second.outputChars) },
   sameThread: true,
-  secretValuesRecorded: false,
 };
 
-writeFileSync("staging-ai-chat-certification.json", JSON.stringify(evidence, null, 2));
+writeEvidence(evidence);
 console.log("PASS: PawSpace V2 customer Chat AI completed two authenticated, grounded OpenAI turns on staging.");
 console.log(JSON.stringify(evidence));
