@@ -1,0 +1,49 @@
+name: Grooming live Google Maps proof
+
+on:
+  push:
+    branches:
+      - docs/maps-live-tracking-uat
+    paths:
+      - '.github/workflows/maps-live-proof.yml'
+      - 'e2e/uat-btm-e2e.spec.ts'
+      - 'docs/GROOMING_MAPS_UAT_SETUP.md'
+  workflow_dispatch:
+
+jobs:
+  live-map-proof:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      PW_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      E2E_REPORT: test-results/uat-btm-report.md
+      PW_CUSTOMER_PHONE: '9899901066'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run deployed Grooming browser proof
+        run: npx playwright test --config playwright.uat-btm.config.ts
+      - name: Upload live-map proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grooming-live-google-map-proof
+          path: |
+            test-results/btm-customer-live-google-map.png
+            test-results/uat-btm-report.md
+            playwright-report-uat-btm/**
+          if-no-files-found: warn
