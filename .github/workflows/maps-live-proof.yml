@@ -14,7 +14,7 @@ jobs:
   live-map-proof:
     runs-on: ubuntu-latest
     concurrency:
-      group: pawspace-maps-live-proof
+      group: pawspace-maps-direct-proof
       cancel-in-progress: false
     env:
       NODE_ENV: test
@@ -25,6 +25,10 @@ jobs:
       PW_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
       PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
       E2E_REPORT: test-results/uat-btm-report.md
+      PW_CUSTOMER_PHONE: '9899901066'
+      PW_MAP_BOOKING_ID: 'PS-UAT-MUGQERZ7-2ADF'
+      PW_MAP_PROVIDER_ID: 'uatcap_groom_south_2'
+      PW_MAP_PROVIDER_PHONE: '9000000913'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,9 +39,7 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run deployed Grooming browser proof
-        env:
-          PW_MAP_PROOF_ONLY: '1'
-        run: npx playwright test --config playwright.uat-btm.config.ts --grep "Fallback|Partner"
+        run: npx playwright test --config playwright.uat-btm.config.ts --grep "MAP-DIRECT"
       - name: Upload live-map proof
         if: always()
         uses: actions/upload-artifact@v4
