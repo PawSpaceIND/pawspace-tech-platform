@@ -1,6 +1,7 @@
 "use client";
 
 import Link from"next/link";
+import {formatIndiaDateTimeMedium} from "../../lib/india-time";
 import EarningsLoadState from "./earnings-load-state";
 import {TrainingEvidenceControls,TrainingOwnerHandover} from "./session-proof";
 import{Suspense,useEffect,useMemo,useRef,useState}from"react";
@@ -15,16 +16,16 @@ type Earning={session_id:string;booking_id:string;package_code:string;gross_earn
 type Payout={period_code:string;earned_amount:number;earned_sessions:number;pending_sessions:number;held_sessions:number;status:string;execution_mode:string};
 type EarningsData={providerId:string;earnings:Earning[];payouts:Payout[];livePayout:false;executionMode:string};
 const statusLabel=(status:string)=>({scheduled:"Scheduled",accepted:"Accepted",on_the_way:"On the way",arrived:"Arrived",in_session:"In session",reschedule_requested:"Reschedule requested",completed:"Completed",no_show:"No-show",cancelled:"Cancelled"}[status]||status.replaceAll("_"," "));
-const formatTime=(value:string)=>new Intl.DateTimeFormat("en-IN",{dateStyle:"medium",timeStyle:"short"}).format(new Date(value));
-const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(value||0);
-const editorFrom=(session:TrainerSession):EditorState=>{const progress=session.progress||{};return{attendanceMode:String(session.attendance?.mode||"parent") as "parent"|"trainer_led",parentConfirmed:session.attendance?.parentOrCaretakerConfirmed!==false,safeArea:session.attendance?.safeAreaConfirmed!==false,homework:String(session.homework?.text||""),scores:{focus:Number(progress.focus||7),recall:Number(progress.recall||7),impulse:Number(progress.impulse||7),parent:Number(progress.parent||7)}};};
+const formatTime=(value:string)=>formatIndiaDateTimeMedium(value);
+const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:2,maximumFractionDigits:2}).format(value||0);
+const editorFrom=(session:TrainerSession):EditorState=>{const progress=session.progress||{};return{attendanceMode:String(session.attendance?.mode||"parent") as "parent"|"trainer_led",parentConfirmed:session.attendance?.parentOrCaretakerConfirmed===true,safeArea:session.attendance?.safeAreaConfirmed===true,homework:String(session.homework?.text||""),scores:{focus:Number(progress.focus||7),recall:Number(progress.recall||7),impulse:Number(progress.impulse||7),parent:Number(progress.parent||7)}};};
 async function providerEarnings(providerId:string){const response=await fetch(`/api/training-provider-earnings?providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"}),body=await response.json() as {data?:EarningsData;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load Training earnings");return body.data;}
 
 export default function TrainerPage(){return <Suspense fallback={null}><TrainerPageContent/></Suspense>;}
 
 function TrainerPageContent(){
  const searchParams=useSearchParams(),pathname=usePathname(),inV2=pathname.startsWith("/v2/partner/trainer"),partnerHref=inV2?"/v2/partner":"/partner",trainingHref=inV2?"/v2/training":"/training",requestedBookingId=searchParams.get("bookingId")||"",requestedSessionId=searchParams.get("sessionId")||"";
- const[tab,setTab]=useState<Tab>("today"),[providerId,setProviderId]=useState(""),[sessions,setSessions]=useState<TrainerSession[]>([]),[selectedId,setSelectedId]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[toast,setToast]=useState(""),[evidence,setEvidence]=useState<TrainingEvidenceAsset[]>([]),[earnings,setEarnings]=useState<EarningsData|null>(null),[attendanceMode,setAttendanceMode]=useState<"parent"|"trainer_led">("parent"),[parentConfirmed,setParentConfirmed]=useState(true),[safeArea,setSafeArea]=useState(true),[homework,setHomework]=useState(""),[scores,setScores]=useState<Record<string,number>>({focus:7,recall:7,impulse:7,parent:7});
+ const[tab,setTab]=useState<Tab>("today"),[providerId,setProviderId]=useState(""),[sessions,setSessions]=useState<TrainerSession[]>([]),[selectedId,setSelectedId]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[toast,setToast]=useState(""),[evidence,setEvidence]=useState<TrainingEvidenceAsset[]>([]),[earnings,setEarnings]=useState<EarningsData|null>(null),[attendanceMode,setAttendanceMode]=useState<"parent"|"trainer_led">("parent"),[parentConfirmed,setParentConfirmed]=useState(false),[safeArea,setSafeArea]=useState(false),[homework,setHomework]=useState(""),[scores,setScores]=useState<Record<string,number>>({focus:7,recall:7,impulse:7,parent:7});
  const[evidenceError,setEvidenceError]=useState("");
  const[earningsLoading,setEarningsLoading]=useState(false),[earningsError,setEarningsError]=useState("");
  const earningsRequest=useRef(0);

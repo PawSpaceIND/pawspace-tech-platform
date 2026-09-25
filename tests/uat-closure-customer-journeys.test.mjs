@@ -136,7 +136,9 @@ test("Grooming fails closed until a governed address is resolved and saved for r
   assert.equal(addresses.results.length, 2, "the old address is kept, not deleted");
   assert.equal(addresses.results.filter((row) => Number(row.is_default) === 1).length, 1, "but exactly one is default");
   const current = addresses.results.find((row) => Number(row.is_default) === 1);
-  assert.equal(current.postal_code, "560001", "and it is the one just saved");
+  assert.equal(current.id, "ADDR-OLD", "saving a service doorstep must not silently change the customer default");
+  assert.equal(current.postal_code, "560066", "the original default is preserved");
+  assert.ok(addresses.results.some(row=>row.postal_code==="560001"&&Number(row.is_default)===0), "the verified service address is retained separately");
 });
 
 // ---------------------------------------------------------------------------------------------

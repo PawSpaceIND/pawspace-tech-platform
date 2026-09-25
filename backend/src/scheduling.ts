@@ -44,7 +44,7 @@ type SchedulingRepository=PlatformRepository&{providerUnavailableForWindow?:(pro
 
 export const scheduleRules = {
   grooming: { label:"Grooming", durationMinutes:120, bufferMinutes:30, maxOccurrences:1, capacityMode:"appointment" },
-  dog_training: { label:"Training", durationMinutes:60, bufferMinutes:30, maxOccurrences:12, capacityMode:"appointment" },
+  dog_training: { label:"Training", durationMinutes:60, bufferMinutes:30, maxOccurrences:16, capacityMode:"appointment" },
   boarding: { label:"Boarding", durationMinutes:1440, bufferMinutes:0, maxOccurrences:1, capacityMode:"overnight" },
   pet_sitting: { label:"Pet Sitting", durationMinutes:60, bufferMinutes:30, maxOccurrences:1, capacityMode:"care_mode" },
   pet_taxi: { label:"Pet Taxi", durationMinutes:45, bufferMinutes:20, maxOccurrences:1, capacityMode:"appointment" },
@@ -92,8 +92,8 @@ function validateManualOverride(input:ScheduleRequest){
 export function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
   const requested=recurring?(input.occurrences??1):1;
-  if(requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});
-  if(recurring&&(input.cadenceDays??7)<1)throw Object.assign(new Error("Recurring cadence must be at least one day"),{statusCode:422});
+  if(!Number.isInteger(requested)||requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});
+  if(recurring&&(!Number.isInteger(input.cadenceDays??7)||(input.cadenceDays??7)<1))throw Object.assign(new Error("Recurring cadence must be at least one day"),{statusCode:422});
   // An empty optional list means no weekday filter, just like omitting it for a one-time walk.
   if(input.weekdays?.some(day=>!Number.isInteger(day)||day<0||day>6))throw Object.assign(new Error("Recurring weekdays must use integer values 0–6"),{statusCode:422});
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
