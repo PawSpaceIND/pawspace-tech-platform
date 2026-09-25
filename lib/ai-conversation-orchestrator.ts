@@ -6,7 +6,8 @@ import{resolveAiAudienceGate}from"./ai-audience-rollout";
 import{executeGovernedConversationTool,CONFIRMABLE_SAFE_MUTATIONS}from"./ai-first-control-plane";
 import type{AiToolCode,AiToolIntent}from"./ai-tool-registry";
 import{ensureConversationGovernance}from"./conversation-governance";
-import{buildCustomer360}from"./customer-360";
+import{ensureD1Once}from"./d1-ensure-once.js";
+
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
@@ -46,7 +47,7 @@ const signalPatterns=new Map<string,RegExp>();
 function hasSignal(text:string,signal:string){let pattern=signalPatterns.get(signal);if(!pattern){pattern=new RegExp(`(^|[^a-z0-9])${signal.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}(e?s)?($|[^a-z0-9])`);signalPatterns.set(signal,pattern);}return pattern.test(text);}
 export function classifyAiIntent(input:string):AiIntentDecision{const text=input.trim().toLowerCase();if(!text)return{intent:"unknown",confidence:0,confidenceBasis:"keyword_heuristic_sandbox",signals:[],policyRisk:false};for(const rule of intentRules){const matched=rule.signals.filter(signal=>hasSignal(text,signal));if(matched.length){const confidence=Math.min(0.98,0.82+Math.min(3,matched.length)*0.05);return{intent:rule.intent,confidence,confidenceBasis:"keyword_heuristic_sandbox",signals:matched,policyRisk:Boolean(rule.risk)};}}const forbidden=(forbiddenAutonomousActions as readonly string[]).filter(action=>text.includes(action.replaceAll("_"," ")));return{intent:"unknown",confidence:forbidden.length?0.4:0.25,confidenceBasis:"keyword_heuristic_sandbox",signals:forbidden,policyRisk:forbidden.length>0};}
 
-export async function ensureAiConversationOrchestrator(db:D1Database){await ensureConversationGovernance(db);await db.batch([
+export async function ensureAiConversationOrchestrator(db:D1Database){return ensureD1Once(db,"ai_conversation_orchestrator",async()=>{await ensureConversationGovernance(db);await db.batch([
  // provider_status is stored because the provider NAME cannot answer "was it connected?". A degraded
  // provider still calls itself "anthropic", so a snapshot deriving connectivity from the name reported
  // a degraded provider as connected - which is the reverse of what an operator needs to see.
@@ -62,14 +63,26 @@ export async function ensureAiConversationOrchestrator(db:D1Database){await ensu
  // the already-migrated case is swallowed.
  await db.prepare("ALTER TABLE ai_conversation_sessions ADD COLUMN provider_status TEXT NOT NULL DEFAULT 'not_connected'").run()
   .catch((error:unknown)=>{if(!/duplicate column name/i.test(String((error as Error)?.message)))throw error;});
-}
+});}
 
 function parsePayload(value:unknown){try{return JSON.parse(String(value||"{}")) as Record<string,unknown>}catch{return{};}}
 function messageText(payload:Record<string,unknown>){for(const key of["text","message","body","content"]){const value=payload[key];if(typeof value==="string"&&value.trim())return value.trim();}return"";}
 function isChannel(value:string):value is AiConversationChannel{return value==="whatsapp"||value==="chat"||value==="voice";}
 function isStaffActor(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.manage")||actor.permissions.includes("customers.manage")||actor.permissions.includes("bookings.manage");}
 async function authorizeContext(db:D1Database,actor:AuthenticatedActor,customerId:string){if(isStaffActor(actor))return["conversation:staff","customer:authorized","bookings:authorized","cases:authorized"];await requireCustomerOwnership(db,actor,customerId);return["conversation:customer","customer:owned","bookings:owned","cases:owned"];}
-async function minimumContext(db:D1Database,input:{customerId:string;threadId:string;bookingId?:string|null;ticketId?:string|null}){const records=await buildCustomer360(db,input.customerId),record=records[0];if(!record)throw new Error("Canonical customer context not found");return{customer:{customerId:record.customerId,name:record.name,area:record.area},pets:record.pets.slice(0,5).map(p=>({id:p.id,name:p.name,species:p.species,breed:p.breed,vaccinationStatus:p.vaccinationStatus})),bookings:record.bookings.slice(0,3).map(b=>({id:b.id,serviceCode:b.serviceCode,packageName:b.packageName,status:b.status,scheduledStart:b.scheduledStart,scheduledEnd:b.scheduledEnd})),tickets:record.tickets.filter(t=>t.status!=="resolved").slice(0,3).map(t=>({id:t.id,category:t.category,priority:t.priority,status:t.status,subject:t.subject})),thread:{id:input.threadId,bookingId:input.bookingId||null,ticketId:input.ticketId||null}};}
+async function optionalRows(db:D1Database,sql:string,binds:unknown[]=[]){try{let stmt=db.prepare(sql);if(binds.length)stmt=stmt.bind(...binds);return(await stmt.all<Row>()).results}catch(error){const message=error instanceof Error?error.message:String(error);if(/no such table:/i.test(message))return[];throw error;}}
+async function optionalFirst(db:D1Database,sql:string,binds:unknown[]=[]){try{let stmt=db.prepare(sql);if(binds.length)stmt=stmt.bind(...binds);return await stmt.first<Row>()}catch(error){const message=error instanceof Error?error.message:String(error);if(/no such table:/i.test(message))return null;throw error;}}
+async function minimumContext(db:D1Database,input:{customerId:string;threadId:string;bookingId?:string|null;ticketId?:string|null}){
+ const [canonical,crm,pets,bookings,tickets]=await Promise.all([
+  db.prepare("SELECT id,name,city_id FROM canonical_customers WHERE id=? AND merged_into IS NULL LIMIT 1").bind(input.customerId).first<Row>().catch(async(error)=>{const message=error instanceof Error?error.message:String(error);if(/no such column: merged_into/i.test(message))return optionalFirst(db,"SELECT id,name,city_id FROM canonical_customers WHERE id=? LIMIT 1",[input.customerId]);if(/no such table:/i.test(message))return null;throw error;}),
+  optionalFirst(db,"SELECT id,name,area FROM crm_contacts WHERE id=? AND stage IS NOT 'Merged' LIMIT 1",[input.customerId]),
+  optionalRows(db,"SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at LIMIT 5",[input.customerId]),
+  optionalRows(db,"SELECT id,service_code,package_name,status,scheduled_start,scheduled_end FROM canonical_bookings WHERE customer_id=? ORDER BY scheduled_start DESC LIMIT 3",[input.customerId]),
+  optionalRows(db,"SELECT id,category,priority,status,subject FROM customer_experience_tickets WHERE customer_id=? AND lower(COALESCE(status,''))<>'resolved' ORDER BY updated_at DESC LIMIT 3",[input.customerId]),
+ ]);
+ const customer=canonical||crm;if(!customer)throw new Error("Canonical customer context not found");
+ return{customer:{customerId:input.customerId,name:text(customer.name)||"Customer",area:text(canonical?.city_id||crm?.area)||null},pets:pets.map(row=>({id:text(row.id),name:text(row.name),species:text(row.species)||"other",breed:text(row.breed)||null,vaccinationStatus:text(row.vaccination_status)||"not_provided"})),bookings:bookings.map(row=>({id:text(row.id),serviceCode:text(row.service_code),packageName:text(row.package_name),status:text(row.status),scheduledStart:text(row.scheduled_start),scheduledEnd:text(row.scheduled_end)})),tickets:tickets.map(row=>({id:text(row.id),category:text(row.category),priority:text(row.priority),status:text(row.status),subject:text(row.subject)})),thread:{id:input.threadId,bookingId:input.bookingId||null,ticketId:input.ticketId||null}};
+}
 async function sessionForThread(db:D1Database,threadId:string,customerId:string,provider:AiResponseProvider){const existing=await db.prepare("SELECT id,status,customer_id FROM ai_conversation_sessions WHERE thread_id=?").bind(threadId).first<Row>();const now=Date.now();if(existing){if(String(existing.customer_id)!==customerId)throw new Error("AI conversation session belongs to a different customer");await db.prepare("UPDATE ai_conversation_sessions SET provider=?,provider_status=?,model_ref=?,updated_at=? WHERE id=?").bind(provider.provider,provider.status,provider.modelRef,now,String(existing.id)).run();return{id:String(existing.id),status:String(existing.status)};}const id=`AISES-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO ai_conversation_sessions (id,thread_id,customer_id,status,provider,provider_status,model_ref,created_at,updated_at) VALUES (?,?,?,'ai_active',?,?,?,?,?)").bind(id,threadId,customerId,provider.provider,provider.status,provider.modelRef,now,now).run();return{id,status:"ai_active"};}
 function escalatedReason(intent:AiIntentDecision,fallback:AiHandoffReason):AiHandoffReason{if(intent.intent==="refund_review")return"refund_payment_dispute";if(intent.intent==="funeral_memorial")return"urgent_funeral_memorial";if(intent.intent==="relocation")return"sensitive_relocation";if(intent.intent==="support"&&intent.signals.some(signal=>["complaint","not happy"].includes(signal)))return"complaint";return fallback;}
 async function handoff(db:D1Database,input:{threadId:string;customerId:string;sessionId:string;reason:AiHandoffReason;actorEmail:string;confidence:number}){await requestAiHumanHandoff(db,{threadId:input.threadId,customerId:input.customerId,sessionId:input.sessionId,reason:input.reason,actorEmail:input.actorEmail,confidence:input.confidence});return"I’m routing this conversation to a PawSpace team member so it can be handled safely.";}
