@@ -20,8 +20,8 @@ function makeD1(sqlite){
 }
 function world(){
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite),now=2_000_000_000_000;
- sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,booking_id TEXT,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
- sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1','B2',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
+ sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,booking_id TEXT,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE payment_reconciliation_exceptions(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,exception_type TEXT,severity TEXT,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
+ sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1','B2',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO payment_reconciliation_exceptions VALUES ('PX1','B1','P1','capture_amount_mismatch','critical','open'),('PX2','B2','P2','refund_failed','warning','open'),('PX3','B3','P3','currency_mismatch','critical','resolved'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
  return{sqlite,db,now};
 }
 async function founderMfaContext(sqlite,db){sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)");sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U-FOUNDER','founder@pawspace.test','Founder','founder','active',0,0)").run();await mfa.ensureAdminMfaTables(db);const session=await mfa.issuePrivilegedSession(db,'U-FOUNDER'),actor={userId:'U-FOUNDER',email:'founder@pawspace.test',roleCode:'founder',developmentPreview:false},request=new Request('https://pawspace.test/api/admin/atlas-chat',{headers:{cookie:`pawspace_admin_mfa=${encodeURIComponent(session.token)}`}});return{session,actor,request};}
@@ -171,6 +171,18 @@ test("daily retry never re-offers rejected or executed terminal proposals",async
  const third=await atlasData.runAtlasDailyAnalysis(db,{asOf:now});assert.equal(third.action,null);const latest2=sqlite.prepare("SELECT action_status,proposal_id,content FROM atlas_chat_messages WHERE role='atlas' ORDER BY created_at DESC LIMIT 1").get();assert.equal(latest2.action_status,null);assert.equal(latest2.proposal_id,null);assert.match(latest2.content,/already executed; Atlas will not re-offer/);
 });
 
+
+test("Atlas counts only unresolved critical reconciliation exceptions as cash-collection integrity holds",async()=>{
+ const{sqlite,db,now}=world();let snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.ops.cash_collection_holds.value,1);assert.equal(snapshot.ops.cash_collection_holds.source,"payment_reconciliation_exceptions:open_critical");
+ assert.equal(snapshot.limitations.some(item=>item.includes("Cash-collection integrity holds are unknown")),false);
+ sqlite.prepare("UPDATE payment_reconciliation_exceptions SET status='resolved' WHERE id='PX1'").run();snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now+1});assert.equal(snapshot.ops.cash_collection_holds.value,0);
+});
+
+test("Atlas keeps cash-collection holds unknown when the canonical reconciliation ledger is unavailable",async()=>{
+ const{sqlite,db,now}=world();sqlite.exec("DROP TABLE payment_reconciliation_exceptions");const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.ops.cash_collection_holds.value,null);assert.equal(snapshot.ops.cash_collection_holds.reason,"missing_table:payment_reconciliation_exceptions");assert.ok(snapshot.limitations.some(item=>item.includes("canonical payment reconciliation exception ledger is unavailable")));
+});
 
 test("invoice gap counts only invoices linked to completed canonical bookings",async()=>{
  const{db,now}=world();const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
