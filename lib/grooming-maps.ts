@@ -29,7 +29,7 @@ export function validRoutePoint(point:ProviderPoint|null|undefined):boolean{
 }
 
 export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress:string):Promise<RouteResult>{
-  const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const mode=String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase();if(mode!=="sandbox")return{status:"configuration_required",error:"Maps UAT adapter is locked to sandbox"};const key=String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key)return{status:"configuration_required",error:"GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured"};
+  const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const mode=String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase();if(mode!=="sandbox")return{status:"configuration_required",error:"Maps UAT adapter is locked to sandbox"};const key=String(runtime.GOOGLE_ROUTES_SERVER_API_KEY_UAT||runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key)return{status:"configuration_required",error:"GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured"};
   // Refuse before spending a provider call, and before a malformed coordinate can reach a third party.
   if(!validRoutePoint(origin))return{status:"route_unavailable",error:"Origin coordinates are missing or out of range"};
   if(!String(destinationAddress||"").trim())return{status:"route_unavailable",error:"Destination address is required"};
