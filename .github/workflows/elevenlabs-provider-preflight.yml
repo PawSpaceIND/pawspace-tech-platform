@@ -234,8 +234,24 @@ jobs:
             const exact=rows.find(x=>String(x?.phone_number||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10)===callerDigits);
             const selected=exact||(rows.length===1?rows[0]:null);
             phoneId=String(selected?.phone_number_id||selected?.id||'').trim();
-            if(!phoneId) throw new Error('No current Exotel phone_number_id could be resolved');
-            console.log('ELEVENLABS_PHONE_ID_FALLBACK=yes');
+            if(!phoneId){
+            const fallbackExKey=String(process.env.EXOTEL_API_KEY||'').trim(),fallbackExToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),fallbackExSid=String(process.env.EXOTEL_SID||'').trim(),fallbackExHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+            if(!callerDigits||!fallbackExKey||!fallbackExToken||!fallbackExSid) throw new Error('No current Exotel phone_number_id could be resolved');
+            const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+              method:'POST',headers:{...elevenHeaders,'content-type':'application/json'},
+              body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT',phone_number:'+91'+callerDigits,account_sid:fallbackExSid,api_key:fallbackExKey,api_token:fallbackExToken,api_subdomain:fallbackExHost,app_id:'1347515'}),
+              signal:AbortSignal.timeout(30000)
+            });
+            const ib=await imp.json().catch(()=>({}));
+            if(!imp.ok||!ib?.phone_number_id) throw new Error('Self-heal Exotel phone import failed '+imp.status);
+            phoneId=String(ib.phone_number_id);
+            const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(phoneId),{
+              method:'PATCH',headers:{...elevenHeaders,'content-type':'application/json'},
+              body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),signal:AbortSignal.timeout(30000)
+            });
+            if(!patch.ok) throw new Error('Self-heal Grooming assignment failed '+patch.status);
+            console.log('ELEVENLABS_PHONE_SELF_HEAL=yes');
+          }else console.log('ELEVENLABS_PHONE_ID_FALLBACK=yes');
           }
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
           const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
