@@ -27,7 +27,10 @@ description = "AES-GCM encryption secret assignment"
 regex = '''(?i)(?:AES(?:_256)?_GCM|ENCRYPTION|DATA_ENCRYPTION|KMS)_(?:KEY|SECRET)\s*[:=]\s*["']?[A-Za-z0-9+/_=-]{24,}["']?'''
 keywords = ["AES_GCM", "AES_256_GCM", "ENCRYPTION_KEY", "ENCRYPTION_SECRET", "DATA_ENCRYPTION_KEY", "KMS_KEY"]
 
-[[allowlists]]
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
 description = "Generated UI contract SHA-256 source digests"
 condition = "AND"
 regexTarget = "line"
