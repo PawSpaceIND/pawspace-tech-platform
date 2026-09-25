@@ -1,0 +1,168 @@
+import { expect, test, type Page } from "@playwright/test";
+import { readdirSync } from "node:fs";
+import path from "node:path";
+
+type Appearance = { theme: "emerald" | "signature"; style: "cartoon" | "professional"; mode: "light" | "dark" };
+const origin = process.env.PW_BASE_URL || "http://localhost:4185";
+const local = ["localhost", "127.0.0.1"].includes(new URL(origin).hostname);
+function routesAt(dir: string, prefix = "/v2"): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+    ? routesAt(path.join(dir, entry.name), `${prefix}/${entry.name}`)
+    : entry.name === "page.tsx" ? [prefix] : []);
+}
+const routes = routesAt(path.resolve("app/v2")).sort();
+async function choose(page: Page, appearance: Appearance) {
+  await page.addInitScript(a => {
+    localStorage.setItem("pawspace.customer.theme", a.theme);
+    localStorage.setItem("pawspace.visual-style", a.style);
+    localStorage.setItem("pawspace.customer.appearance", a.mode);
+  }, appearance);
+}
+async function visit(page: Page, route: string, appearance: Appearance) {
+  await page.goto(route, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("[data-pawspace-v2]")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", appearance.theme);
+  await expect(page.locator("html")).toHaveAttribute("data-paw-mode", appearance.mode);
+  await page.evaluate(() => document.fonts.ready);
+  const consent = page.getByRole("button", { name: "Essential only", exact: true });
+  if (await consent.isVisible().catch(() => false)) await consent.click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+}
+test.beforeEach(() => test.skip(!local, "UI fixtures and quote requests run only in the isolated local sandbox."));
+test.use({ video: "off" });
+const variants = [
+  { name: "desktop-brand-professional-light", width: 1440, height: 1000, theme: "signature", style: "professional", mode: "light" },
+  { name: "desktop-brand-professional-dark", width: 1440, height: 1000, theme: "signature", style: "professional", mode: "dark" },
+  { name: "desktop-emerald-illustrated-light", width: 1440, height: 1000, theme: "emerald", style: "cartoon", mode: "light" },
+  { name: "mobile-brand-professional-light", width: 390, height: 844, theme: "signature", style: "professional", mode: "light" },
+] as const;
+for (const variant of variants) test(`V2 route matrix: ${variant.name}`, async ({ page }, info) => {
+  test.setTimeout(480_000);
+  await page.setViewportSize({ width: variant.width, height: variant.height });
+  await choose(page, variant);
+  const evidence: object[] = [];
+  for (const route of routes) {
+    await visit(page, route, variant);
+    await page.waitForTimeout(450);
+    const state = await page.evaluate(() => ({ url: location.pathname, theme: { ...document.documentElement.dataset },
+      canvas: getComputedStyle(document.querySelector("[data-pawspace-v2]")!).backgroundColor,
+      body: getComputedStyle(document.body).backgroundColor, width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+      headings: Array.from(document.querySelectorAll("h1")).map(e => e.textContent),
+      limited: /sign in|signed out|expired|permission denied|incomplete|booking reference/i.test(document.body.innerText) }));
+    expect.soft(state.url, route).toBe(route);
+    expect.soft(state.scrollWidth, `${route} horizontal overflow`).toBeLessThanOrEqual(state.width + 2);
+    expect.soft(state.body, `${route} outer canvas`).toBe(state.canvas);
+    evidence.push({ route, ...state });
+    await page.screenshot({ path: info.outputPath(route.replaceAll("/", "_") + ".jpg"), type: "jpeg", quality: 65 });
+  }
+  await info.attach("v2-route-evidence", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+});
+for (const theme of ["emerald", "signature"] as const) for (const mode of ["light", "dark"] as const) {
+  for (const style of ["cartoon", "professional"] as const) test(`Home artwork and contrast: ${theme}/${mode}/${style}`, async ({ page }) => {
+    const appearance = { theme, mode, style };
+    await choose(page, appearance); await visit(page, "/v2", appearance);
+    await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(style === "professional" ? 0 : 8);
+    await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(style === "professional" ? 8 : 0);
+    const pairs = await page.evaluate(() => {
+      const pick = (selector: string, parent: string) => { const e = document.querySelector(selector)!, p = e.closest(parent)!;
+        return { text: getComputedStyle(e).color, background: getComputedStyle(p).backgroundColor }; };
+      return [pick('[class*="secondaryAction"]', '[class*="hero_"]'), pick('[class*="kicker"]', '[class*="hero_"]'),
+        pick('[class*="floatingCardTop"] b', '[class*="floatingCardTop"]'), pick('[class*="floatingCardBottom"] b', '[class*="floatingCardBottom"]')];
+    });
+    for (const pair of pairs) expect(contrast(pair.text, pair.background)).toBeGreaterThanOrEqual(4.5);
+  });
+  test(`Stay labels and destinations: ${theme}/${mode}`, async ({ page }) => {
+    const appearance: Appearance = { theme, mode, style: "professional" };
+    await choose(page, appearance);
+    for (const route of ["/v2/boarding", "/v2/sitting"]) {
+      await visit(page, route, appearance);
+      const links = page.locator('[class*="modeSwitch"] a'); await expect(links).toHaveCount(2);
+      for (const link of await links.all()) {
+        const pair = await link.evaluate(e => ({ color: getComputedStyle(e).color, bg: getComputedStyle(e).backgroundColor,
+          hero: getComputedStyle(e.closest('section')!).backgroundColor }));
+        expect(contrast(pair.color, pair.bg === "rgba(0, 0, 0, 0)" ? pair.hero : pair.bg)).toBeGreaterThanOrEqual(4.5);
+      }
+      await expect(links.filter({ hasText: route.endsWith("boarding") ? "Boarding" : "Pet Sitting" })).toHaveAttribute("aria-current", "page");
+      await expect(links.nth(0)).toHaveAttribute("href", "/v2/boarding"); await expect(links.nth(1)).toHaveAttribute("href", "/v2/sitting");
+    }
+  });
+}
+function contrast(a: string, b: string) {
+  const luminance = (color: string) => {
+    const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(n => {
+      const v = n / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+    }); return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+  };
+  const values = [luminance(a), luminance(b)].sort((x, y) => x - y); return (values[1] + .05) / (values[0] + .05);
+}
+test("Walking mobile summary stays in flow and quote details remain available", async ({ page }) => {
+  const appearance: Appearance = { theme: "emerald", mode: "light", style: "cartoon" };
+  await page.setViewportSize({ width: 390, height: 844 }); await choose(page, appearance);
+  await visit(page, "/v2/walking", appearance);
+  const summary = page.getByRole("complementary", { name: "Walking order summary" });
+  await expect(summary).toHaveCSS("position", "static");
+  expect((await summary.boundingBox())!.y).toBeGreaterThan(844);
+  await expect(page.locator('[data-v2-walking] > header > a:visible')).toHaveCount(0);
+  await summary.scrollIntoViewIfNeeded();
+  await expect(summary.locator("details")).not.toHaveAttribute("open", "");
+  await summary.getByText("Quote details", { exact: true }).click();
+  await expect(summary.locator("details")).toHaveAttribute("open", "");
+  await expect(summary.locator("details em")).toBeVisible();
+  await expect(summary.locator("button")).toBeDisabled();
+});
+test("V2 actions share the primary control variant", async ({ page }) => {
+  const appearance: Appearance = { theme: "signature", mode: "light", style: "professional" };
+  await choose(page, appearance);
+  for (const route of ["/v2/training", "/v2/food", "/v2/partner", "/v2/boarding", "/v2/chat"]) {
+    await visit(page, route, appearance); const action = page.locator('[data-v2-action], [data-paw-action="primary"]').first();
+    await expect(action).toBeVisible(); await expect(action).toHaveCSS("border-radius", "14px");
+    expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+});
+test("Mobile utilities do not cover dock targets, including the signed-in notification control", async ({ page }) => {
+  const appearance: Appearance = { theme: "signature", mode: "light", style: "professional" };
+  await page.setViewportSize({ width: 390, height: 844 }); await choose(page, appearance);
+  // Presentation fixture only: no auth cookie, protected record, or real notification is created.
+  await page.route("**/api/identity-session", r => r.fulfill({ json: { data: { subjectType: "customer", subjectId: "UI-ONLY-FIXTURE" } } }));
+  await page.route("**/api/order-notifications?*", r => r.fulfill({ json: { data: { items: [], unread: 0, nextCursor: null } } }));
+  for (const route of ["/v2", "/v2/account", "/v2/activity", "/v2/chat", "/v2/boarding"]) {
+    await visit(page, route, appearance);
+    const appearanceButton = page.getByRole("button", { name: "Change PawSpace appearance" });
+    const updates = page.getByRole("button", { name: "Order notifications", exact: true });
+    await expect(updates).toBeVisible();
+    const utilities = [await appearanceButton.boundingBox(), await updates.boundingBox()];
+    const targets = page.locator('nav[aria-label="PawSpace V2 navigation"] a:visible, nav[aria-label="PawSpace mobile navigation"] :is(a,button):visible');
+    for (const target of await targets.all()) {
+      const box = (await target.boundingBox())!;
+      for (const utility of utilities) expect(!utility || utility.y + utility.height <= box.y || utility.x + utility.width <= box.x || utility.x >= box.x + box.width).toBe(true);
+      expect(await target.evaluate(e => { const b = e.getBoundingClientRect(); const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); return hit === e || e.contains(hit); })).toBe(true);
+    }
+    await updates.click(); await expect(page.getByRole("dialog", { name: "PawSpace order notifications" })).toBeVisible();
+    await page.getByRole("button", { name: "Close notifications" }).click();
+    await appearanceButton.click(); await expect(page.getByRole("dialog", { name: "Make PawSpace yours." })).toBeVisible();
+    await page.getByRole("button", { name: "Close appearance settings" }).click();
+  }
+});
+test("Appearance selections persist across V2 navigation, reload and system display changes", async ({ page }) => {
+  await page.goto('/v2');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'emerald');
+  const trigger = page.getByRole('button', {name: 'Change PawSpace appearance'});
+  await trigger.click();
+  const dialog = page.getByRole('dialog', {name: 'Make PawSpace yours.'});
+  await dialog.getByRole('radio', {name: /Brand book/}).check();
+  await dialog.getByRole('radio', {name: /Professional/}).check();
+  await dialog.getByRole('radio', {name: /^dark$/i}).check();
+  await dialog.getByRole('button', {name: 'Done', exact: true}).click();
+  await page.goto('/v2/workspaces'); await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'signature');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-style', 'professional');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'dark');
+  await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(25, 19, 34)');
+  await expect(page.locator('main section').first()).toHaveCSS('background-color', 'rgb(50, 22, 79)');
+  await trigger.click(); await dialog.getByRole('radio', {name: /^system$/i}).check();
+  await dialog.getByRole('button', {name: 'Done', exact: true}).click();
+  await page.emulateMedia({colorScheme: 'light'});
+  await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'light');
+  await page.emulateMedia({colorScheme: 'dark'});
+  await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'dark');
+});

@@ -15,6 +15,7 @@ import {
   type V2ServiceAvailability,
 } from "../../lib/v2/customer-experience-client";
 import styles from "./v2.module.css";
+import V2ServiceIcon from "./service-icon";
 
 type ServiceCard = {
   code: string;
@@ -253,6 +254,7 @@ export default function PawSpaceV2() {
                 const cardStyle = { "--accent": service.accent, "--wash": service.wash } as CSSProperties;
                 const content = (
                   <>
+                    <span className={styles.serviceIcon} aria-hidden="true"><V2ServiceIcon code={service.code} /></span>
                     <div className={styles.serviceCopy}>
                       <span>{service.eyebrow}</span>
                       <h3>{service.name}</h3>
