@@ -44,5 +44,5 @@ test("existing Taxi staging databases receive additive coordinate columns",()=>{
  for(const column of["origin_latitude","origin_longitude","destination_latitude","destination_longitude","return_drop_latitude","return_drop_longitude"]){
    assert.ok(governance.includes('["taxi_ride_quotes","'+column+'"')||governance.includes('["taxi_ride_booking_details","'+column+'"'),column+" must be in the additive migration allowlist");
  }
- assert.match(governance,/ALTER TABLE \\${table} ADD COLUMN \\${column} \\${type}/);
+ assert.ok(governance.includes("ALTER TABLE ${table} ADD COLUMN ${column} ${type}"),"dynamic additive ALTER executor must remain present");
 });
