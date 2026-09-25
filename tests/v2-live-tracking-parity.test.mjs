@@ -22,13 +22,14 @@ test("Walking and Taxi share one customer live tracking projection",()=>{
 });
 
 test("Taxi in-ride map uses only verified canonical drop-off coordinates",()=>{
- const route=read("app/api/customer-live-tracking/route.ts");
- assert.match(route,/taxi_ride_booking_details/);
- assert.match(route,/destination_latitude/);
- assert.match(route,/destination_longitude/);
+ const route=read("app/api/customer-live-tracking/route.ts"),journey=read("lib/live-journey-destination.ts");
+ assert.match(route,/resolveLiveJourneyDestination/);
+ assert.match(journey,/taxi_ride_booking_details/);
+ assert.match(journey,/destination_latitude/);
+ assert.match(journey,/destination_longitude/);
  assert.match(route,/Pet Taxi verified pickup\/drop-off coordinates are unavailable/);
- assert.match(route,/arrived_dropoff/);
- assert.match(route,/dropoff_confirmed/);
+ assert.match(journey,/arrived_dropoff/);
+ assert.match(journey,/dropoff_confirmed/);
 });
 
 test("Walking and Taxi customer manage screens render the shared tracker",()=>{
