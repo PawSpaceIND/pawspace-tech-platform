@@ -77,19 +77,23 @@ function workspace() {
   return dirPromise;
 }
 
+/* lib/ is TypeScript except for the odd plain-JavaScript module kept Node-importable on purpose
+ * (lib/d1-ensure-once.js). Both are emitted the same way; transpiling JavaScript is a no-op. */
+const libSource = (name) => [".ts", ".js"].map((ext) => path.join(LIB, `${name}${ext}`)).find((file) => existsSync(file)) ?? null;
+
 /** Transpile one lib module into `dir`, resolving to the lib/ modules it imports. */
 function emitOne(dir, name) {
   const existing = emitted.get(name);
   if (existing) return existing;
   const write = (async () => {
-    const source = await readFile(path.join(LIB, `${name}.ts`), "utf8");
+    const source = await readFile(libSource(name), "utf8");
     const deps = [];
     /* Point every relative import at the .mjs sibling this loader is about to write. A specifier
      * that names no lib/ file is left exactly as it was - it resolves for Node already, and
      * rewriting it would break it. */
     const rewritten = source.replace(RELATIVE_IMPORT, (match, head, quote, target) => {
       const bare = target.replace(/\.(ts|tsx|js|mjs)$/, "");
-      if (!existsSync(path.join(LIB, `${bare}.ts`))) return match;
+      if (!libSource(bare)) return match;
       deps.push(bare);
       return `${head}${quote}./${bare}.mjs${quote}`;
     });
