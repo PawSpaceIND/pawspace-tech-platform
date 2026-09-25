@@ -25,7 +25,7 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/training-sessions"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reschedule","replace_provider","cancel_session"].includes(String(body.action))?undefined:{permission:"bookings.view",subjectType:"provider"};}
   if(url.pathname==="/api/training-session-media"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/grooming-service-location"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")};}
-  if(url.pathname==="/api/customer-grooming-summary"&&method==="GET")return{permission:"scheduling.book",subjectType:"customer"};
+  if((url.pathname==="/api/customer-grooming-summary"||url.pathname==="/api/customer-live-tracking")&&method==="GET")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/grooming-booking-change"&&method==="GET")return{permission:"scheduling.book",subjectType:"customer"};
   // The route performs authoritative booking/customer ownership checks itself. Do not consume a
   // cloned browser request body here: on streamed browser POSTs this can stall the downstream body

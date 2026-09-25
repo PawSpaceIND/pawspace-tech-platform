@@ -52,6 +52,17 @@ async function readyForCheckIn(world) {
 }
 
 // ---------------------------------------------------------------------------------------------
+test("Boarding Gate 2 refuses host acceptance until the customer payment is captured", async () => {
+  const world = await stayWorld({ bookingId: "BKG-BOARD-UNPAID", paymentStatus: "created", amountDueNow: 499 });
+  const refused = await refusal(world.act("accept"));
+  assert.equal(refused?.status, 409);
+  assert.match(refused.message, /requires captured customer payment/);
+  assert.equal((await world.stayRow()).status, "awaiting_host_acceptance", "unpaid stays remain pending");
+  const locks = await world.db.prepare("SELECT COUNT(*) n FROM boarding_capacity_locks WHERE stay_id=? AND status='active'").bind(world.stayId).all();
+  assert.equal(Number(locks.results[0].n), 0, "unpaid acceptance cannot lock host capacity");
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Boarding Gate 2 owns stay acceptance and takes the host's capacity when it is granted", async () => {
   const world = await stayWorld();
   assert.equal((await world.stayRow()).status, "awaiting_host_acceptance");
@@ -319,6 +330,12 @@ test("Boarding Gate 2 host and customer surfaces call canonical stay actions, no
     "the replacement host must see the same recovery-pending stay in the response queue");
   assert.match(host, /Accept replacement & lock capacity/,
     "the replacement offer must expose the canonical host acceptance action");
+  assert.match(host, /selectedPaymentCaptured=selected\?\.payment_status==="captured"/,
+    "the host workspace must derive acceptance eligibility from canonical captured payment state");
+  assert.match(host, /disabled=\{!selectedPaymentCaptured\|\|isBusy\(selected,"accept"\)\}/,
+    "an unpaid V2 Boarding offer cannot expose an enabled accept action");
+  assert.match(host, /Payment pending · acceptance locked/,
+    "the provider sees why acceptance is unavailable instead of a dead control");
   assert.match(panel, /saveCustomerBoardingCare/);
   const careClient = await readFile(new URL("../lib/boarding-customer-care.ts", import.meta.url), "utf8");
   assert.match(careClient, /submit_care_plan/);

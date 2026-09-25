@@ -32,7 +32,7 @@ test('New customer management layouts preserve their only child and reuse existi
 });
 test('Browser appearance inventory includes every Customer V2 page without claiming staff aliases',()=>{
  const pages=fs.readdirSync(new URL('app/v2',base),{recursive:true}).filter(p=>p==='page.tsx'||p.endsWith('/page.tsx'));
- const expected=pages.map(p=>'/v2'+(p==='page.tsx'?'':'/'+p.slice(0,-9))).filter(p=>!['/v2/partner','/v2/workspaces','/v2/crm','/v2/control-center'].includes(p)).sort();
+ const expected=pages.map(p=>'/v2'+(p==='page.tsx'?'':'/'+p.slice(0,-9))).filter(p=>!['/v2/partner','/v2/workspaces','/v2/crm','/v2/control-center'].includes(p)&&!p.startsWith('/v2/partner/')).sort();
  const script=read('scripts/verify-customer-partner-theme-ui.mjs').toString(),array=script.match(/const paths=(\[[^;]+\]);/);
  assert.ok(array,'Explicit browser route inventory is required');
  const actual=[...array[1].matchAll(/'([^']+)'/g)].map(m=>m[1].split('?')[0]).filter(p=>p!=='/partner'&&p!=='/v2/partner').sort();
