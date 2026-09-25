@@ -62,8 +62,6 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
  try{
   await ensureAiProviderRuntimeControl(db);
   sweepExpiredReservations(db,env,now);
-  const circuit=await db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>();
-  if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
 
   const requestsPerMinute=integer(env,"PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE",240,1,10_000);
   const tokensPerDay=integer(env,"PAWSPACE_AI_MAX_RESERVED_TOKENS_PER_DAY",5_000_000,1_000,1_000_000_000);
@@ -72,21 +70,29 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
   const reservedTokens=estimateAiTokenReservation(input.systemPrompt,input.userPrompt,input.maxOutputTokens);
   const reservedCostMicros=costPer1k>0?Math.ceil((reservedTokens/1000)*costPer1k):0;
   const id=uid();
-  await db.prepare("INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'reserved',?,?)")
-   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now).run();
 
+  // The circuit read and both quota reads are independent of each other, so they cost one round trip
+  // rather than three. They now run BEFORE the reservation insert instead of after it, which is why
+  // this turn's own usage is added to each total below: the previous order inserted first and then
+  // counted the new row, so counting it explicitly here keeps the identical limit, and a refusal now
+  // costs no write at all rather than an insert followed by an update marking it blocked.
   const minute=now-60_000,start=dayStart(now);
-  const [rpm,daily]=await Promise.all([
+  const [circuit,rpm,daily]=await Promise.all([
+   db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>(),
    db.prepare("SELECT COUNT(*) count FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')").bind(minute).first<Row>(),
    db.prepare("SELECT COALESCE(SUM(reserved_tokens),0) tokens,COALESCE(SUM(reserved_cost_micros),0) cost FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')").bind(start).first<Row>(),
   ]);
-  const overRequests=Number(rpm?.count||0)>requestsPerMinute;
-  const overTokens=Number(daily?.tokens||0)>tokensPerDay;
-  const overCost=costPerDay>0&&Number(daily?.cost||0)>costPerDay;
-  if(overRequests||overTokens||overCost){
-   await db.prepare("UPDATE ai_provider_runtime_requests SET status='blocked',failure_class='quota_exceeded',updated_at=? WHERE id=? AND status='reserved'").bind(now,id).run();
-   return{allowed:false,reason:"quota_exceeded"};
-  }
+  if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
+
+  // "+1" and "+reserved…" are this turn counting itself, exactly as the previous insert-then-count
+  // order did. Without them the limit would quietly allow one request more than it is configured to.
+  const overRequests=Number(rpm?.count||0)+1>requestsPerMinute;
+  const overTokens=Number(daily?.tokens||0)+reservedTokens>tokensPerDay;
+  const overCost=costPerDay>0&&Number(daily?.cost||0)+reservedCostMicros>costPerDay;
+  if(overRequests||overTokens||overCost)return{allowed:false,reason:"quota_exceeded"};
+
+  await db.prepare("INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'reserved',?,?)")
+   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now).run();
   return{allowed:true,reservation:{id,reservedTokens,reservedCostMicros}};
  }catch{return{allowed:false,reason:"runtime_control_unavailable"};}
 }

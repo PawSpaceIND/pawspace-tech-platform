@@ -301,3 +301,40 @@ test("reservation preflight sweeps stale rows at most once per TTL, and keeps ci
  assert.ok(prepared.some(sql=>/SELECT COUNT\(\*\) count FROM ai_provider_runtime_requests/.test(sql)),"per-minute rate limit must still be read");
  assert.ok(prepared.some(sql=>/COALESCE\(SUM\(reserved_tokens\),0\)/.test(sql)),"daily token and cost quota must still be read");
 });
+
+// Moving the quota reads ahead of the reservation insert changes what the counts contain, so the
+// limit has to count this turn explicitly or it would quietly allow one request more than configured.
+test("reservation preflight enforces the same limit after the reads moved ahead of the insert",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db}=freshCountingD1();
+ const prepared=[];
+ const recording={...db,prepare:sql=>{prepared.push(String(sql));return db.prepare(sql);}};
+ const env={PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE:"1"};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+
+ const first=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(first.allowed,true,"the first turn is inside a limit of one per minute");
+
+ prepared.length=0;
+ const second=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(second.allowed,false,"the second turn must be refused by the per-minute limit");
+ assert.equal(second.reason,"quota_exceeded");
+ // The old order inserted a row and then marked it blocked; a refusal should cost no write at all.
+ assert.ok(!prepared.some(sql=>/INSERT INTO ai_provider_runtime_requests/.test(sql)),"a refused turn must not write a reservation");
+ assert.ok(!prepared.some(sql=>/status='blocked'/.test(sql)),"a refused turn must not need a compensating update");
+});
+
+test("an open circuit still refuses before any reservation is written",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db,sqlite}=freshCountingD1();
+ const env={};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+ await control.reserveAiProviderRequest(db,env,input);
+ sqlite.prepare("INSERT INTO ai_provider_runtime_circuit (provider,model_ref,consecutive_failures,open_until,updated_at) VALUES (?,?,?,?,?)")
+  .run("openai","gpt-5.6-luna",5,Date.now()+60_000,Date.now());
+ const blocked=await control.reserveAiProviderRequest(db,env,input);
+ assert.equal(blocked.allowed,false,"an open circuit must still stop the call");
+ assert.equal(blocked.reason,"circuit_open");
+});
