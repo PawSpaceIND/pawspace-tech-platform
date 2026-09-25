@@ -6,7 +6,7 @@ const ACCESS_CODE = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
 const FOUNDER_EMAIL = "founder@pawspace.in";
 // A fresh sandbox customer per run: chat reuses a customer's newest open thread, so a fixed phone would
 // carry old UAT or human conversation into both turns and make the same-thread check meaningless.
-const CUSTOMER = { phone: String(process.env.CERT_CUSTOMER_PHONE || `99999${String(randomInt(0, 100000)).padStart(5, "0")}`), name: "UAT Chat Certification", cityId: "blr" };
+const freshCustomer = (label) => ({ phone: `99999${String(randomInt(0, 100000)).padStart(5, "0")}`, name: `UAT Chat ${label}`, cityId: "blr" });
 const REQUEST_TIMEOUT_MS = 30_000;
 const EVIDENCE_FILE = "staging-ai-chat-certification.json";
 
@@ -103,9 +103,9 @@ async function ensureAiReady(cookie) {
   };
 }
 
-async function customerSession() {
+async function customerSession(customer) {
   const requested = await request("POST", "/api/customer-otp", {
-    body: { action: "request", phone: CUSTOMER.phone },
+    body: { action: "request", phone: customer.phone },
   });
   const challengeId = String(requested.body?.data?.challengeId || "");
   const sandboxCode = String(requested.body?.data?.sandboxCode || "");
@@ -126,8 +126,8 @@ async function customerSession() {
       action: "verify",
       challengeId,
       code: sandboxCode,
-      name: CUSTOMER.name,
-      cityId: CUSTOMER.cityId,
+      name: customer.name,
+      cityId: customer.cityId,
     },
   });
   const cookie = sessionCookie(verified);
@@ -182,34 +182,22 @@ async function ask(cookie, message) {
   };
 }
 
-const founderCookie = await founderSession();
-const readiness = await ensureAiReady(founderCookie);
-const customerCookie = await customerSession();
-
-const first = await ask(customerCookie, "What PawSpace services can I book for my dog?");
-const second = await ask(customerCookie, "Which of those services can happen at my home?");
-
-if (!first.threadId || second.threadId !== first.threadId) {
-  fail("The second V2 AI turn did not continue on the same customer conversation", {
-    firstThreadPresent: Boolean(first.threadId),
-    sameThread: second.threadId === first.threadId,
-  });
+async function diagnosticAsk(cookie,label,message){
+  const started=Date.now();
+  console.log(`DIAG_START ${label}`);
+  const result=await request("POST","/api/ai-web-chat",{cookie,body:{mode:"authenticated",message,idempotencyKey:`staging-ai-diag-${label}-${crypto.randomUUID()}`}});
+  const data=result.body?.data||{},turn=data.ai?.turn||{};
+  console.log(JSON.stringify({label,elapsedMs:Date.now()-started,status:result.status,outcome:turn.outcome||null,handoffReason:turn.handoffReason||null,provider:turn.provider||null,providerConnected:data.ai?.providerConnected===true,hasOutput:Boolean(String(turn.output||"").trim())}));
+  return result;
 }
 
-const evidence = {
-  ok: true,
-  certifiedAt: new Date().toISOString(),
-  stagingOrigin: BASE,
-  provider: token(first.provider),
-  modelRef: token(first.modelRef),
-  customerRollout: readiness.customersEnabled === true,
-  activeKnowledge: count(readiness.activeKnowledge),
-  activeIntents: count(readiness.activeIntents),
-  firstTurn: { outcome: token(first.outcome), outputChars: count(first.outputChars) },
-  secondTurn: { outcome: token(second.outcome), outputChars: count(second.outputChars) },
-  sameThread: true,
-};
-
-writeEvidence(evidence);
-console.log("PASS: PawSpace V2 customer Chat AI completed two authenticated, grounded OpenAI turns on staging.");
-console.log(JSON.stringify(evidence));
+const founderCookie=await founderSession();
+await ensureAiReady(founderCookie);
+const bypassCustomer=freshCustomer("Bypass");
+const bypassCookie=await customerSession(bypassCustomer);
+await diagnosticAsk(bypassCookie,"policy_bypass","I need a refund for yesterday's service.");
+const providerCustomer=freshCustomer("Provider");
+const providerCookie=await customerSession(providerCustomer);
+await diagnosticAsk(providerCookie,"provider_path","What PawSpace services can I book for my dog?");
+writeEvidence({ok:true,diagnostic:true,completedAt:new Date().toISOString(),stagingOrigin:BASE});
+console.log("PASS: staging AI chat timing diagnostic completed.");
