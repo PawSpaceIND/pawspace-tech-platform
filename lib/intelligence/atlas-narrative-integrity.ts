@@ -51,12 +51,12 @@ export function atlasFinancialClaimsFit(snapshot: AtlasBusinessSnapshot, narrati
     }
   }
 
-  for (const match of text.matchAll(/\\b([0-9]+(?:\\.[0-9]+)?)\\s*(?:%|percent)\\s*(?:of\\s+(?:the\\s+)?target|achieved|achievement)/gi)) {
+  for (const match of text.matchAll(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent)\s*(?:of\s+(?:the\s+)?target|achieved|achievement)/gi)) {
     if (!mission) return { ok: false as const, reason: 'narrative_invents_missing_mission' };
     if (Number(match[1]) > mission.percent + 0.01) return { ok: false as const, reason: 'narrative_overstates_achievement' };
   }
 
-  for (const match of text.matchAll(/(?:INR|Rs\\.?|\\u20b9)\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*(lakh[s]?|lac[s]?|cr|crore[s]?|million|billion|thousand|k)?\\s+(?:was\\s+|has\\s+been\\s+)?(collected|booked|achieved|achievement|target|net(?:\\s+collected)?)\\b/gi)) {
+  for (const match of text.matchAll(/(?:INR|Rs\.?|\u20b9)\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(lakh[s]?|lac[s]?|cr|crore[s]?|million|billion|thousand|k)?\s+(?:was\s+|has\s+been\s+)?(collected|booked|achieved|achievement|target|net(?:\s+collected)?)\b/gi)) {
     if (!mission) return { ok: false as const, reason: 'narrative_invents_missing_mission' };
     const rawKey = match[3].toLowerCase(), key = rawKey === 'achievement' ? 'achieved' : rawKey.startsWith('net') ? 'net' : rawKey;
     const expected = key === 'achieved' ? mission.net : mission[key as 'collected'|'booked'|'target'|'net'];
