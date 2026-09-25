@@ -182,12 +182,14 @@ async function ask(cookie, message) {
   };
 }
 
-async function diagnosticAsk(cookie,label,message){
+async function diagnosticAsk(cookie,label,message,threadId=null){
   const started=Date.now();
   console.log(`DIAG_START ${label}`);
-  const result=await request("POST","/api/ai-web-chat",{cookie,body:{mode:"authenticated",message,idempotencyKey:`staging-ai-diag-${label}-${crypto.randomUUID()}`}});
+  const body={mode:"authenticated",message,idempotencyKey:`staging-ai-diag-${label}-${crypto.randomUUID()}`};
+  if(threadId)body.threadId=threadId;
+  const result=await request("POST","/api/ai-web-chat",{cookie,body});
   const data=result.body?.data||{},turn=data.ai?.turn||{};
-  console.log(JSON.stringify({label,elapsedMs:Date.now()-started,status:result.status,outcome:turn.outcome||null,handoffReason:turn.handoffReason||null,provider:turn.provider||null,providerConnected:data.ai?.providerConnected===true,hasOutput:Boolean(String(turn.output||"").trim())}));
+  console.log(JSON.stringify({label,elapsedMs:Date.now()-started,status:result.status,threadId:data.thread?.id||null,outcome:turn.outcome||null,handoffReason:turn.handoffReason||null,provider:turn.provider||null,providerConnected:data.ai?.providerConnected===true,hasOutput:Boolean(String(turn.output||"").trim())}));
   return result;
 }
 
@@ -198,6 +200,9 @@ const bypassCookie=await customerSession(bypassCustomer);
 await diagnosticAsk(bypassCookie,"policy_bypass","I need a refund for yesterday's service.");
 const providerCustomer=freshCustomer("Provider");
 const providerCookie=await customerSession(providerCustomer);
-await diagnosticAsk(providerCookie,"provider_path","What PawSpace services can I book for my dog?");
+const firstProvider=await diagnosticAsk(providerCookie,"provider_path","What PawSpace services can I book for my dog?");
+const firstThreadId=String(firstProvider.body?.data?.thread?.id||firstProvider.body?.data?.ai?.turn?.threadId||"");
+if(!firstThreadId)fail("Diagnostic provider turn did not return a thread id");
+await diagnosticAsk(providerCookie,"provider_followup","Which of those services can happen at my home?",firstThreadId);
 writeEvidence({ok:true,diagnostic:true,completedAt:new Date().toISOString(),stagingOrigin:BASE});
 console.log("PASS: staging AI chat timing diagnostic completed.");
