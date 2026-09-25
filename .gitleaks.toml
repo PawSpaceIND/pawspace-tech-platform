@@ -26,3 +26,10 @@ id = "pawspace-aes-gcm-secret"
 description = "AES-GCM encryption secret assignment"
 regex = '''(?i)(?:AES(?:_256)?_GCM|ENCRYPTION|DATA_ENCRYPTION|KMS)_(?:KEY|SECRET)\s*[:=]\s*["']?[A-Za-z0-9+/_=-]{24,}["']?'''
 keywords = ["AES_GCM", "AES_256_GCM", "ENCRYPTION_KEY", "ENCRYPTION_SECRET", "DATA_ENCRYPTION_KEY", "KMS_KEY"]
+
+[[allowlists]]
+description = "Generated UI contract SHA-256 source digests"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^[a-f0-9]{64}$''']
+paths = ['''^tests/fixtures/(customer-partner-theme-contract|partner-services-presentation-contract|staff-admin-self-service-contract|staff-crm-control-contract|staff-operations-contract|staff-team-completion-contract|ui-display-truth-contract)\.json$''']
