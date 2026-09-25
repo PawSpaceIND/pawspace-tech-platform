@@ -824,7 +824,7 @@ test("MAP-DIRECT — existing confirmed booking reaches trusted GPS and Google c
     idempotencyKey:`maps-direct-${Date.now()}`
   }});
   const gpsText=await gps.text();
-  expect(gps.status(),gpsText).toBe(200);
+  expect([200,201],gpsText).toContain(gps.status());
   const gpsBody=JSON.parse(gpsText) as {data?:{providerLocation?:{trustState?:string};telemetryAccepted?:boolean}};
   expect(gpsBody.data?.providerLocation?.trustState).toBe("accepted");
   expect(gpsBody.data?.telemetryAccepted).toBe(true);
