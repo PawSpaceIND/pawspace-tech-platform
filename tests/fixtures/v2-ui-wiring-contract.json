@@ -1,0 +1,82 @@
+{
+  "base": "7d3e947b",
+  "files": {
+    "app/food/canonical-food-page.tsx": {
+      "sha256": "0d077d23995a977337ce33d6c56357805e29440fed8cdb681c2e716175a86841",
+      "functions": 28,
+      "declarations": 37,
+      "interactionProps": 21,
+      "conditions": 18
+    },
+    "app/food/subscriptions/page.tsx": {
+      "sha256": "d7fe7d4e980d127aba2b608e0e0ca83354f3b2ebd04e89cee968450548cff6ea",
+      "functions": 14,
+      "declarations": 20,
+      "interactionProps": 19,
+      "conditions": 6
+    },
+    "app/mobile-app/customer-login.tsx": {
+      "sha256": "00779d08a8457b8692b6f28393436a0de11ef4f12543ee4a2b745ac3f0cf0716",
+      "functions": 10,
+      "declarations": 20,
+      "interactionProps": 15,
+      "conditions": 11
+    },
+    "app/partner/partner-login.tsx": {
+      "sha256": "3b683b0b6bf988b59b0949daf80e9489b3fd20f02f9ad19f4768b9cea455509f",
+      "functions": 8,
+      "declarations": 15,
+      "interactionProps": 14,
+      "conditions": 4
+    },
+    "app/taxi/canonical-taxi-page.tsx": {
+      "sha256": "3f2f2b5e50ec64dff296e5142676b0afe5309f908759761f9c3b7c1a4a8c8eb0",
+      "functions": 28,
+      "declarations": 38,
+      "interactionProps": 25,
+      "conditions": 11
+    },
+    "app/training/page.tsx": {
+      "sha256": "0c20d20876643e88b61f1aab503184d586a2044a6fe90d76ce406d4e2b377fa7",
+      "functions": 64,
+      "declarations": 83,
+      "interactionProps": 32,
+      "conditions": 28
+    },
+    "app/v2/chat/page.tsx": {
+      "sha256": "1e9f43bdad40e4f3ea1536b3597c116175116b33e6a534bb0d26814a3bd3c6d3",
+      "functions": 39,
+      "declarations": 52,
+      "interactionProps": 15,
+      "conditions": 23
+    },
+    "app/v2/page.tsx": {
+      "sha256": "c5669784ab9bb08c21ac84e6cc43a77cf2794bcf20429248d83020c35109d9a8",
+      "functions": 24,
+      "declarations": 34,
+      "interactionProps": 30,
+      "conditions": 8
+    },
+    "app/v2/service-bridge-shell.tsx": {
+      "sha256": "31e8ed403feb187b7e9b13e1fb78a3c810fdb2dc1305a121a2a3b59e542013f7",
+      "functions": 0,
+      "declarations": 0,
+      "interactionProps": 5,
+      "conditions": 0
+    },
+    "app/v2/stay-experience.tsx": {
+      "sha256": "aca43bf737f99a0e95dc5c6055f02579da5ec2d09cb3d305c041d7d60e86c0fc",
+      "functions": 10,
+      "declarations": 11,
+      "interactionProps": 11,
+      "conditions": 3
+    },
+    "app/walking/page.tsx": {
+      "sha256": "fe989f6c38e30a949eea1506e729996a32ee62b07721b062620f23a059d04e67",
+      "functions": 34,
+      "declarations": 48,
+      "interactionProps": 42,
+      "conditions": 12
+    }
+  }
+}
