@@ -297,13 +297,20 @@ jobs:
           else throw new Error('EXOTEL_CALLER_ID cannot be normalized to Indian E.164');
           console.log('::add-mask::'+phone);
           const headers={'xi-api-key':key};
-          if(oldId){
+          const currentResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{headers,signal:AbortSignal.timeout(30000)});
+          const currentBody=await currentResponse.json().catch(()=>({}));
+          if(!currentResponse.ok) throw new Error('current ElevenLabs phone list failed '+currentResponse.status);
+          const currentPhones=Array.isArray(currentBody?.phone_numbers)?currentBody.phone_numbers:Array.isArray(currentBody)?currentBody:[];
+          for(const existing of currentPhones.filter(x=>String(x?.provider||'').toLowerCase()==='exotel'&&String(x?.label||'')==='PawSpace Voice UAT')){
+            const id=String(existing?.phone_number_id||existing?.id||'').trim(); if(!id) continue;
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(id),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('CURRENT_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('current phone delete failed '+del.status);
+          }
+          if(oldId&&!currentPhones.some(x=>String(x?.phone_number_id||x?.id||'')===oldId)){
             const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
             console.log('OLD_PHONE_DELETE_STATUS='+del.status);
-            if(!del.ok&&del.status!==404){
-              const t=await del.text();
-              throw new Error('old phone delete failed '+del.status+' '+t.slice(0,400));
-            }
+            if(!del.ok&&del.status!==404) throw new Error('old phone delete failed '+del.status);
           }
           const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
             method:'POST',
