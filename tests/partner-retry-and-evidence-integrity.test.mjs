@@ -34,7 +34,7 @@ test("walker, driver and sitter lifecycle actions key retries by intent, not by 
     const page = source(path);
     assert.match(page, new RegExp(`useIntentIdempotency\\("${prefix}"\\)`), path);
     assert.match(page, /idempotencyKey:intents\.keyFor\(intent\)/, path);
-    assert.match(page, /intents\.settle\(intent\)/, `${path}: the key is released only after a confirmed response`);
+    assert.match(page, /await refresh\(\);intents\.settle\(intent\)\}/, `${path}: the key is released only after the action and the follow-up refresh are confirmed`);
     assert.doesNotMatch(page, new RegExp(`\`${prefix}:\\$\\{bookingId\\}:\\$\\{action\\}[^\`]*Date\\.now\\(\\)`), `${path}: a clock-based lifecycle key defeats retry replay`);
   }
 });
@@ -67,7 +67,7 @@ test("listing Boarding stays reads child tables a fixed number of times, whateve
   const first = await seedBoardingStay(db, sqlite, { bookingId: "BKG-BOARD-N1", customerId: "CUST-N1" });
   const now = Date.now();
   sqlite.prepare("INSERT INTO boarding_care_plan_snapshots (stay_id,booking_id,plan_json,status,updated_by,updated_at) VALUES (?,?,?,?,?,?)").run(first.stayId, first.bookingId, JSON.stringify({ feeding: "Twice daily" }), "ready", "owner", now);
-  for (const [id, at] of [["EXT-OLD", now - 5000], ["EXT-NEW", now]]) sqlite.prepare("INSERT INTO boarding_extension_requests (id,stay_id,booking_id,requested_end,status,reason,actor_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run(id, first.stayId, first.bookingId, "2030-01-02T10:00:00.000Z", "commercial_quote_required", id, "owner", at, at);
+  for (const [id, at] of [["EXT-OLD", now - 5000], ["EXT-SAME-MS-FIRST", now], ["EXT-NEW", now]]) sqlite.prepare("INSERT INTO boarding_extension_requests (id,stay_id,booking_id,requested_end,status,reason,actor_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run(id, first.stayId, first.bookingId, "2030-01-02T10:00:00.000Z", "commercial_quote_required", id, "owner", at, at);
   for (let index = 0; index < 35; index++) sqlite.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").run(`EV-${index}`, first.stayId, first.bookingId, "care_meal", "host", JSON.stringify({ index }), now + index);
 
   const probe = countingSelects(db);
@@ -75,7 +75,7 @@ test("listing Boarding stays reads child tables a fixed number of times, whateve
   const readsForOne = childReads(probe.seen);
   assert.equal(one.carePlan.status, "ready");
   assert.deepEqual(one.carePlan.plan, { feeding: "Twice daily" });
-  assert.equal(one.extension.id, "EXT-NEW", "only the latest extension is returned");
+  assert.equal(one.extension.id, "EXT-NEW", "only the latest extension is returned, with same-millisecond requests broken by insertion order");
   assert.equal("stay_id" in one.extension, false, "the batched read does not leak its grouping column");
   assert.equal(one.events.length, 30, "events stay capped at the newest 30");
   assert.equal(one.events[0].id, "EV-34");
