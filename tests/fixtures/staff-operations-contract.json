@@ -1145,5 +1145,5 @@
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
     "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
   },
-  "adminCssBase": "9e16ef6c44ed61f1668270442b3f6372a42affb2"
+  "adminCssPrefixHash": "cc386f751e84d43e16bb66e5522632461eeacac4c58048b39a9254737af529bc"
 }

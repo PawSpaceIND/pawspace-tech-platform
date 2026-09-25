@@ -3,7 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
 import postcss from 'postcss';
 import {staffSemanticContract} from './helpers/staff-presentation-contract.mjs';
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
@@ -22,8 +21,9 @@ test('Training recovery rules, prompts and mutations are not presentation change
  }
 });
 test('Training CSS additions are opt-in and do not alter existing admin rules',()=>{
- const css=read('app/admin/admin.module.css'),before=execFileSync('git',['show',contract.adminCssBase+':app/admin/admin.module.css'],{encoding:'utf8'});
- assert.ok(css.startsWith(before));const added=css.slice(before.length),parsed=postcss.parse(added);
+ const css=read('app/admin/admin.module.css'),marker='\n/* Opt-in staff Training presentation. Existing admin/customer rules above remain unchanged. */',markerIndex=css.indexOf(marker);
+ assert.ok(markerIndex>0,'Training presentation marker must remain present');const before=css.slice(0,markerIndex),beforeHash=createHash('sha256').update(before).digest('hex');
+ assert.equal(beforeHash,contract.adminCssPrefixHash);const added=css.slice(markerIndex),parsed=postcss.parse(added);
  parsed.walkRules(rule=>{assert.ok(rule.selector.includes(':global([data-staff-module])'),rule.selector);});
  assert.doesNotMatch(added,/display\s*:\s*none|visibility\s*:\s*hidden/);
  assert.match(added,/trainingMetrics article:nth-child\(n\) \{ display:flex/);
