@@ -828,6 +828,9 @@ test("MAP-DIRECT — existing confirmed booking reaches trusted GPS and Google c
   const gpsBody=JSON.parse(gpsText) as {data?:{providerLocation?:{trustState?:string};telemetryAccepted?:boolean}};
   expect(gpsBody.data?.providerLocation?.trustState).toBe("accepted");
   expect(gpsBody.data?.telemetryAccepted).toBe(true);
+  const routeProbe=await partnerContext.request.get(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(assignedProviderId)}&proof=${Date.now()}`,{headers:{"cache-control":"no-store"}});
+  const routeProbeBody=await routeProbe.json().catch(()=>null);
+  log(`🗺️ MAP-DIRECT route probe HTTP ${routeProbe.status()}: ${JSON.stringify(routeProbeBody?.data?.route ?? routeProbeBody)}`);
 
   let summary:any=null;
   await expect.poll(async()=>{
